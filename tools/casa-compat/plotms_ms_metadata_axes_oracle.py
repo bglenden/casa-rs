@@ -235,7 +235,6 @@ def compare_averaged_coordinates(root, native):
 
 
 def compare_wavelength_frame_selection(work, native):
-    from casars.tasks import TaskExecutionError
     from plotms_ms_spw_average_oracle import make_fixture as make_spw_fixture
 
     topo = make_spw_fixture(work)
@@ -263,14 +262,11 @@ def compare_wavelength_frame_selection(work, native):
     np.testing.assert_allclose([float(row[10]) for row in points], [90.001, 100.003287289], rtol=0, atol=1e-6)
     np.testing.assert_allclose([float(row[0]) for row in points],
                                [10 * float(row[10]) * 1e9 / SPEED_OF_LIGHT for row in points], rtol=1.2e-5)
-    try:
-        native(**selection, plotfile=str(actual))
-    except TaskExecutionError as error:
-        assert "different native spectral frames require reporting-frame transforms (#1032)" in str(error)
-    else:
-        raise AssertionError("An unconverted mixed-frame wavelength export would use the wrong frequency")
-    assert not actual.exists()
-    print("wavelength-frames: two paired same-frame points and one mixed-frame refusal", flush=True)
+    assert native(**selection, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 2
+    np.testing.assert_allclose([float(point[10]) for point in rows(actual)],
+                               [float(point[10]) for point in points], rtol=0, atol=1e-7)
+    print("wavelength-frames: two paired same-frame and two mixed-frame points", flush=True)
 
 
 def make_horizontal_fixture(work):
@@ -646,9 +642,9 @@ def compare_ephemeris_axes(root, native, app_run):
 
 
 def compare_static_metadata_coordinates(root, native):
-    from casars.tasks import TaskExecutionError, TaskParameterError
     from plotms_ms_columns_oracle import compare_empty_export
     from plotms_ms_iterated_ordinates_oracle import compare_figures
+    from plotms_ms_reporting_frames_oracle import compare_channel_frequency_transform
 
     work = root / "static-metadata-coordinates"
     work.mkdir()
@@ -725,15 +721,7 @@ def compare_static_metadata_coordinates(root, native):
         empty_options = dict(options, vis=str(empty))
         del empty_options["expformat"]
         compare_empty_export(work, native, f"{name}-all-flagged", empty_options, (xlabel, ylabel))
-    transformed = base | dict(xaxis="channel", yaxis=["frequency"], transform=True, freqframe="LSRK")
-    output = work / "reporting-frame.native.txt"
-    try:
-        native(**transformed, plotfile=str(output))
-    except (TaskExecutionError, TaskParameterError) as error:
-        assert "Channel/Frequency reporting frames are pending (#1032)" in str(error)
-    else:
-        raise AssertionError("Reporting-frame TXT requires consistent ordinate and metadata frequencies")
-    assert not output.exists()
+    compare_channel_frequency_transform(work, native, base, rows(work / "channel-frequency.casa.txt"))
     verify_source(vis, before)
 
 
@@ -1491,6 +1479,10 @@ def main():
             from plotms_ms_reporting_frames_oracle import compare_wavelength_reporting_frames
 
             compare_wavelength_reporting_frames(root / "reporting-wavelengths", native)
+        if args.only == "reporting-wavelengths":
+            work = root / "average-wavelength-frames"
+            work.mkdir()
+            compare_wavelength_frame_selection(work, native)
         if args.only == "metadata-flag-symbols":
             compare_selected_metadata_flag_symbols(root, native)
         if args.only in ("raw-row-axes", "averaged-row-axes"):

@@ -2053,7 +2053,11 @@ impl MsPlotSpec {
                 "averaged PlotMS interval and wavelength coordinates are pending (#1032)".into(),
             );
         }
-        if self.transforms.freqframe.is_some() {
+        if self.transforms.freqframe.is_some()
+            && !std::iter::once(self.x_axis)
+                .chain(self.y_axes.iter().copied())
+                .any(MsAxis::uses_wavelengths)
+        {
             return Err("PlotMS reporting-frame transforms for interval and wavelength plots are pending (#1032)".into());
         }
         if self.y_axes.iter().copied().any(|y| {
@@ -6153,8 +6157,9 @@ fn build_generic_visibility_scatter_with_averaging(
         && std::iter::once(spec.x_axis)
             .chain(spec.y_axes.iter().copied())
             .any(MsAxis::uses_wavelengths);
-    let mut wavelength_spectra = time_wavelengths.then(HashMap::<i32, Vec<f64>>::new);
-    let mut wavelength_frame = None;
+    let mut wavelength_spectra =
+        time_wavelengths.then(HashMap::<i32, (FrequencyRef, Vec<f64>)>::new);
+    let mut wavelength_frame = requested_freqframe;
     let mut baseline_groups = plotms_ordinates::BaselineIntegrationGroups::default();
     let mut scalar_time_bounds = HashMap::<usize, (f64, f64)>::new();
     let mut averaged_rows = std::collections::BTreeSet::new();
@@ -6590,28 +6595,23 @@ fn build_generic_visibility_scatter_with_averaging(
         };
         let spectral_context = if let Some(spectra) = &mut wavelength_spectra {
             use std::collections::hash_map::Entry;
-            let frequencies = match spectra.entry(selected_data_desc_ids[row_slot]) {
+            let (_, frequencies) = match spectra.entry(selected_data_desc_ids[row_slot]) {
                 Entry::Occupied(entry) => entry.into_mut(),
                 Entry::Vacant(entry) => {
                     let window = usize::try_from(spw_id).map_err(|_| {
                         format!("invalid DATA_DESCRIPTION::SPECTRAL_WINDOW_ID {spw_id}")
                     })?;
-                    let frame = chan_freq
+                    let chan_freq = chan_freq
                         .as_ref()
-                        .expect("wavelength coordinates use channel frequencies")
+                        .expect("wavelength coordinates use channel frequencies");
+                    let frame = chan_freq
                         .frequency_reference(window)
                         .map_err(|error| error.to_string())?;
-                    if *wavelength_frame.get_or_insert(frame) != frame {
-                        return Err(
-                            "PlotMS averaged wavelength coordinates across different native spectral frames require reporting-frame transforms (#1032)"
-                                .into(),
-                        );
-                    }
-                    entry.insert(
-                        load_spectrum()?
-                            .ok_or("Missing frequency grid for PlotMS wavelength coordinates")?
-                            .channel_frequencies_hz,
-                    )
+                    wavelength_frame.get_or_insert(frame);
+                    let frequencies = chan_freq
+                        .get_frequencies(window)
+                        .map_err(|error| error.to_string())?;
+                    entry.insert((frame, frequencies.iter().map(MFrequency::hz).collect()))
                 }
             };
             if frequencies.len() != chan_count {
@@ -7309,6 +7309,14 @@ fn build_generic_visibility_scatter_with_averaging(
         || (combined_vector_average && !collapse_baselines && iteraxis.is_none());
     let mut contributing_points = 0usize;
     let mut finalized_panels = Vec::new();
+    let report_wavelength_frequencies = wavelength_spectra.as_ref().is_some_and(|spectra| {
+        requested_freqframe.is_some()
+            || spectra
+                .values()
+                .any(|(frame, _)| Some(*frame) != wavelength_frame)
+    });
+    let mut converted_wavelengths = HashMap::new();
+    let mut wavelength_engine = None;
     let x_projection_axis = visibility_columns.projection_axis(0, spec.x_axis);
     if paged_iteration {
         panel_order.sort_by_key(|key| panels[key].iteration_rank);
@@ -7408,6 +7416,52 @@ fn build_generic_visibility_scatter_with_averaging(
                             .and_then(plotms_ordinates::VisibilityTimeBounds::midpoint)
                     }
                 });
+                let wavelength_frequency =
+                    if let (Some(spectra), Some(frame), Some(bins), Some(group)) =
+                        (&wavelength_spectra, wavelength_frame, time_bins, group)
+                    {
+                        let slot = bins.first_row_slot(group);
+                        let ddid = selected_data_desc_ids[slot];
+                        let (native_frame, frequencies) = spectra
+                            .get(&ddid)
+                            .ok_or("Missing selected frequency grid for PlotMS wavelengths")?;
+                        let frequency = *frequencies
+                            .get(channel_start)
+                            .ok_or("Missing selected channel frequency for PlotMS wavelengths")?;
+                        Some(if *native_frame == frame {
+                            frequency
+                        } else {
+                            use std::collections::hash_map::Entry;
+                            match converted_wavelengths.entry((group, ddid, channel_start)) {
+                                Entry::Occupied(entry) => *entry.get(),
+                                Entry::Vacant(entry) => {
+                                    let engine = match &derived_engine {
+                                        Some(engine) => engine,
+                                        None => wavelength_engine
+                                            .get_or_insert_with(|| MsCalEngine::for_calibration(ms))
+                                            .as_ref()
+                                            .map_err(|error| error.to_string())?,
+                                    };
+                                    let field = usize::try_from(selected_field_ids[slot]).map_err(
+                                        |_| "Invalid FIELD_ID for PlotMS wavelength conversion",
+                                    )?;
+                                    *entry.insert(
+                                        convert_frequency_to_frame(
+                                            *native_frame,
+                                            frame,
+                                            frequency,
+                                            planned_time.unwrap_or(selected_times[slot]),
+                                            field,
+                                            engine,
+                                        )
+                                        .map_err(|error| error.to_string())?,
+                                    )
+                                }
+                            }
+                        })
+                    } else {
+                        None
+                    };
                 let project = |axis: MsAxis, x_axis| {
                     if let Some(channel) = spectral_channel
                         && matches!(axis, MsAxis::Channel | MsAxis::Frequency)
@@ -7439,11 +7493,7 @@ fn build_generic_visibility_scatter_with_averaging(
                         let uvw = *time_uvws.as_ref()?.get(&order?)?;
                         let metres = uvw_metres_coordinate(axis, uvw);
                         if axis.uses_wavelengths() {
-                            let slot = time_bins?.first_row_slot(group?);
-                            let ddid = selected_data_desc_ids[slot];
-                            let spectrum = wavelength_spectra.as_ref()?.get(&ddid)?;
-                            let frequency_hz = *spectrum.get(channel_start)?;
-                            Some(metres_to_wavelengths(metres, frequency_hz))
+                            Some(metres_to_wavelengths(metres, wavelength_frequency?))
                         } else {
                             Some(metres)
                         }
@@ -7483,18 +7533,22 @@ fn build_generic_visibility_scatter_with_averaging(
                 output.points.push((x_value, y_value));
                 output.provenance.push(representative);
                 if calibration.is_some() {
-                    if spec.transforms.freqframe.is_some() {
-                        let reporting_frequency = if x_projection_axis == MsAxis::Frequency {
-                            Some(x_value)
-                        } else if y_projection_axis == MsAxis::Frequency {
-                            Some(y_value)
-                        } else {
-                            None
-                        };
-                        output
-                            .plotms_reporting_frequencies_hz
-                            .extend(reporting_frequency);
-                    }
+                    let reporting_frequency = if report_wavelength_frequencies {
+                        wavelength_frequency
+                    } else if requested_freqframe.is_some()
+                        && x_projection_axis == MsAxis::Frequency
+                    {
+                        Some(x_value)
+                    } else if requested_freqframe.is_some()
+                        && y_projection_axis == MsAxis::Frequency
+                    {
+                        Some(y_value)
+                    } else {
+                        None
+                    };
+                    output
+                        .plotms_reporting_frequencies_hz
+                        .extend(reporting_frequency);
                     output.plotms_metadata.push(MsScatterPlotMsMetadata {
                         channel: spectral_channel
                             .map_or(accumulator.display_channel, |channel| channel.number),
@@ -10481,7 +10535,7 @@ mod tests {
             y_index: 0,
             points: (0..5).map(|index| (index as f64, index as f64)).collect(),
             plotms_metadata: Vec::new(),
-            plotms_reporting_frequencies_hz: Vec::new(),
+            plotms_reporting_frequencies_hz: vec![88e9, 89e9, 90e9, 91e9, 92e9],
             plotms_averaged_ids: None,
             provenance: (0..5)
                 .map(|index| MsScatterPointRef {
@@ -10497,6 +10551,10 @@ mod tests {
         assert_eq!(original_points, 5);
         assert_eq!(kept_points, 3);
         assert_eq!(compacted.len(), 1);
+        assert_eq!(
+            compacted[0].plotms_reporting_frequencies_hz,
+            [88e9, 90e9, 92e9]
+        );
         assert_eq!(
             compacted[0].points,
             vec![(0.0, 0.0), (2.0, 2.0), (4.0, 4.0)]
