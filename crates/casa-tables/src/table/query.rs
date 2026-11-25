@@ -435,8 +435,9 @@ impl Table {
     /// constituent tables. Row reads dispatch to the correct underlying table
     /// via binary search on cumulative row offsets. No data is copied.
     ///
-    /// All tables must have identical schemas. Returns
-    /// [`TableError::SchemaMismatch`] if they differ, or
+    /// Tables must have matching column names and types. Differing fixed
+    /// array shapes become variable. Returns
+    /// [`TableError::SchemaMismatch`] for incompatible columns, or
     /// [`TableError::ConcatEmpty`] if the vector is empty.
     ///
     /// # C++ equivalent

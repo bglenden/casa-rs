@@ -4055,6 +4055,12 @@ impl CompositeStorage {
                 schema = sub_snapshot.schema;
                 keywords = sub_snapshot.keywords;
                 column_keywords = sub_snapshot.column_keywords;
+                rebase_table_keywords(&mut keywords, &abs_path, table_path);
+                for record in column_keywords.values_mut() {
+                    rebase_table_keywords(record, &abs_path, table_path);
+                }
+            } else {
+                concat_projection::merge_member_schema(&mut schema, sub_snapshot.schema)?;
             }
             all_rows.extend(sub_snapshot.rows);
             undefined_cells.extend(sub_snapshot.undefined_cells);

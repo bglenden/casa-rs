@@ -10,16 +10,19 @@ impl CompositeStorage {
         path: &Path,
         concat: &ConcatTableDatContents,
     ) -> Result<StorageSnapshot, StorageError> {
-        let mut part_metadata = concat
-            .table_paths
-            .iter()
-            .map(|part| self.load_metadata_only(&add_directory_for_link(part, path)));
-        let Some(first) = part_metadata.next() else {
+        let Some((first, parts)) = concat.table_paths.split_first() else {
             return self.load_concat_table(path, concat);
         };
-        let mut output = first?;
-        for part in part_metadata {
-            output.row_count += part?.row_count;
+        let first_path = add_directory_for_link(first, path);
+        let mut output = self.load_metadata_only(&first_path)?;
+        rebase_table_keywords(&mut output.keywords, &first_path, path);
+        for keywords in output.column_keywords.values_mut() {
+            rebase_table_keywords(keywords, &first_path, path);
+        }
+        for part in parts {
+            let part = self.load_metadata_only(&add_directory_for_link(part, path))?;
+            merge_member_schema(&mut output.schema, part.schema)?;
+            output.row_count += part.row_count;
         }
         output.table_info = load_table_info(path);
         output.virtual_columns.clear();
@@ -133,4 +136,18 @@ impl CompositeStorage {
         })?;
         Ok(Some(shapes))
     }
+}
+
+pub(super) fn merge_member_schema(
+    combined: &mut Option<crate::TableSchema>,
+    member: Option<crate::TableSchema>,
+) -> Result<(), StorageError> {
+    if let (Some(combined), Some(member)) = (combined, member)
+        && combined.merge_concatenation(&member)
+    {
+        return Ok(());
+    }
+    Err(StorageError::Schema(
+        "incompatible concatenated table columns".into(),
+    ))
 }
