@@ -212,3 +212,30 @@ def test_addephemeris_with_a_retained_lock(ephemeris_dataset, tmp_path, writer_a
     assert tool.done()
     ephemeris_id = 1 if unselected else 0
     assert (dataset / "FIELD" / f"EPHEM{ephemeris_id}_locked.tab").is_dir()
+
+
+def test_addephemeris_refreshes_an_existing_metadata_tool(ephemeris_dataset, tmp_path, writer_api):
+    casa = pytest.importorskip("casatools")
+    dataset, _ = ephemeris_dataset
+    external = tmp_path / "shifted.tab"
+    copytree(dataset / "FIELD" / "EPHEM0_TEST.tab", external)
+    table = casa.table()
+    assert table.open(str(external), nomodify=False)
+    assert table.putcol("RA", table.getcol("RA") + 3.0)
+    assert table.done()
+
+    tool = writer_api.ms()
+    assert tool.open(str(dataset), nomodify=False)
+    metadata = tool.metadata()
+    previous = metadata.phasecenter()
+    assert tool.addephemeris(0, str(external), "shifted", [0])
+    current = metadata.phasecenter()
+    assert metadata.done()
+    assert tool.done()
+    fresh = casa.msmetadata()
+    assert fresh.open(str(dataset))
+    assert fresh.phasecenter() == current
+    assert fresh.done()
+    assert current["m0"]["value"] - previous["m0"]["value"] == pytest.approx(
+        np.deg2rad(3.0), abs=2e-11,
+    )
