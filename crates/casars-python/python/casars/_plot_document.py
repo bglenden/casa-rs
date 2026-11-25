@@ -91,12 +91,12 @@ def _render_document(document, payload, figure, use_native_limits, axes, preserv
             axis.set_xlabel(x["label"], **font)
             if use_native_limits:
                 axis.set_xlim(x["lower"], x["upper"])
-            axis.set_xscale(x.get("scale", "linear"))
+            axis.set_xscale(_matplotlib_scale(x))
         for y, target in zip(ordinates, ordinate_axes, strict=True):
             target.set_ylabel(y["label"], **font)
             if use_native_limits:
                 target.set_ylim(y["lower"], y["upper"])
-            target.set_yscale(y.get("scale", "linear"))
+            target.set_yscale(_matplotlib_scale(y))
         aspect = panel.get("aspect") or layout.get("aspect")
         if aspect == "equal_data_limits":
             if panel.get("axes"):
@@ -115,6 +115,11 @@ def _render_document(document, payload, figure, use_native_limits, axes, preserv
         left, right, bottom, top, wspace, hspace = layout["margins"]
         figure.subplots_adjust(left=left, right=right, bottom=bottom, top=top, wspace=wspace, hspace=hspace)
     return figure, axes[0] if len(axes) == 1 else axes
+
+
+def _matplotlib_scale(axis):
+    scale = axis.get("scale", "linear")
+    return "linear" if isinstance(scale, Mapping) else scale
 
 
 def render_current(document, payload_path, preserve_title=False):

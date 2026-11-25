@@ -180,6 +180,11 @@ pub enum PlotAxisScale {
     Linear,
     /// Logarithmic scale.
     Log,
+    /// Linear Modified Julian Date seconds displayed as clock ticks.
+    MjdSecondsClock {
+        /// Midnight UTC of the earliest selected observation day in MJD seconds.
+        reference_mjd_seconds: i64,
+    },
 }
 
 /// How a renderer draws a layer.

@@ -32,7 +32,8 @@
         "ms-static-grid-placement",
         "ms-iterated-visibility-ordinates",
         "ms-averaged-iterated-visibility-ordinates",
-        "ms-iteration-axes-and-offset-pages"
+        "ms-iteration-axes-and-offset-pages",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "pages"
@@ -46,7 +47,8 @@
         "ms-static-grid-placement",
         "ms-iterated-grid-start",
         "ms-averaged-iterated-visibility-ordinates",
-        "ms-iteration-axes-and-offset-pages"
+        "ms-iteration-axes-and-offset-pages",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "pages"
@@ -88,7 +90,7 @@
       ]
     },
     "xaxis": {
-      "scope": "Plot x-axis (blank for default/current) Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. Unaveraged channel plots can combine three or more visibility and metre baseline or observatory elevation ordinates with separate sample masks. Pair raw Antenna1/2, Observation, Intent and Feed1/2 with a visibility axis. Row uses the selected table's numbers for a single spectral window. Unaveraged Time and Channel can be paired with row or buffer identifiers using their collapsed sample masks. Unaveraged antenna pointing pairs use degree coordinates in the requested direction frame. Channel and Time can be paired with one channel-averaged derived visibility ordinate. Time can be paired with one ordinary vector-time-averaged observed or corrected model expression. Unaveraged Row abscissae can address both selected windows or pair with read-only corrected visibility. Row can identify vector time-averaged visibility groups within each iterator chunk. U uses transformed baseline weights for supported vector time and spectral-window visibility averages. Vector time averages without channel rebinning support Interval and same-frame wavelength coordinates. Wt*Amp also accepts a visibility column on the abscissa. Averaged spectral weight can be used on the abscissa. Selected Channel pairs with raw array horizontal coordinates on the buffer grid. Selected Channel also pairs with unaveraged antenna horizontal coordinates. Channel and Time support the attached ephemeris radial velocity and distance pairs, respectively. Channel/Frequency retains the selected channel grid, while array Elevation/Time uses the visibility buffer grid. Pair Ant-Ra with Channel and Ant-Dec with Real using the selected visibility-cell masks. Supported spectral coordinates include requested reporting frames against visibility data and converted Frequency on the raw Channel/Frequency grid.",
+      "scope": "Plot x-axis (blank for default/current) Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. Unaveraged channel plots can combine three or more visibility and metre baseline or observatory elevation ordinates with separate sample masks. Pair raw Antenna1/2, Observation, Intent and Feed1/2 with a visibility axis. Row uses the selected table's numbers for a single spectral window. Unaveraged Time and Channel can be paired with row or buffer identifiers using their collapsed sample masks. Unaveraged antenna pointing pairs use degree coordinates in the requested direction frame. Channel and Time can be paired with one channel-averaged derived visibility ordinate. Time can be paired with one ordinary vector-time-averaged observed or corrected model expression. Unaveraged Row abscissae can address both selected windows or pair with read-only corrected visibility. Row can identify vector time-averaged visibility groups within each iterator chunk. U uses transformed baseline weights for supported vector time and spectral-window visibility averages. Vector time averages without channel rebinning support Interval and same-frame wavelength coordinates. Wt*Amp also accepts a visibility column on the abscissa. Averaged spectral weight can be used on the abscissa. Selected Channel pairs with raw array horizontal coordinates on the buffer grid. Selected Channel also pairs with unaveraged antenna horizontal coordinates. Channel and Time support the attached ephemeris radial velocity and distance pairs, respectively. Channel/Frequency retains the selected channel grid, while array Elevation/Time uses the visibility buffer grid. Pair Ant-Ra with Channel and Ant-Dec with Real using the selected visibility-cell masks. Supported spectral coordinates include requested reporting frames against visibility data and converted Frequency on the raw Channel/Frequency grid. Time figures display the UTC reference date and clock ticks, including hours beyond 24 across midnight. A time-averaged figure uses the earliest displayed averaged epoch to choose its reference day.",
       "evidence": [
         "paired",
         "ms-interval-wavelength",
@@ -130,7 +132,8 @@
         "ms-pointing-sample-masks-and-pages",
         "ms-reporting-frequency-and-wavelengths",
         "ms-phasecenter-compositions",
-        "ms-iteration-axes-and-offset-pages"
+        "ms-iteration-axes-and-offset-pages",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "coordinates"
@@ -214,7 +217,7 @@
       "status": "Partial"
     },
     "yaxis": {
-      "scope": "Plot a single ordinate or a list. Unaveraged and channel-only averaged MeasurementSet visibility lists can contain more than two independent ordinates. Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. Unaveraged channel plots can combine three or more visibility and metre baseline or observatory elevation ordinates with separate sample masks. Pair raw Antenna1/2, Observation, Intent and Feed1/2 with a visibility axis. Row uses the selected table's numbers for a single spectral window. Unaveraged Time and Channel can be paired with row or buffer identifiers using their collapsed sample masks. Unaveraged antenna pointing pairs use degree coordinates in the requested direction frame. Independent stored visibility ordinate lists also support ordinary vector and scalar time averages. Spectral-window averaged visibility ordinates retain requested order in standalone and iterated plots. Standalone spectral-window averaging accepts two independently selected visibility ordinates. Two channel-axis callibrary ordinates can display stored and transient corrected visibilities. Atmospheric transmission can accompany independently selected model and corrected visibility ordinates. A visibility abscissa can use independent Row and Elevation ordinates, and Time can use Row in scan pages. Wavelength ordinates use each selected channel on supported vector time averages. Vector time/channel averages include weight and sigma spectra and Wt*Amp. Array Azimuth, Elevation, Hour Angle and Parallactic Angle use the mean antenna position in Channel plots. The MeasurementSet Poln axis is refused. Ant-Azimuth, Ant-Elevation and Ant-ParAngle use each antenna position in raw Channel plots. Radial Velocity and Distance (rho) use the first time and FIELD of each selected buffer for the Channel and Time pairs. Frequency and Time are supported for the raw Channel/Frequency and Elevation/Time metadata pairs. A scalar antenna direction ordinate can expand into several layers through its list-valued interpolation control. A generic axis list involving an antenna direction is refused. Channel and Real can use antenna direction as the abscissa. Channel can also be plotted against antenna latitude. Supported spectral coordinates include requested reporting frames against visibility data and converted Frequency on the raw Channel/Frequency grid.",
+      "scope": "Plot a single ordinate or a list. Unaveraged and channel-only averaged MeasurementSet visibility lists can contain more than two independent ordinates. Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. Unaveraged channel plots can combine three or more visibility and metre baseline or observatory elevation ordinates with separate sample masks. Pair raw Antenna1/2, Observation, Intent and Feed1/2 with a visibility axis. Row uses the selected table's numbers for a single spectral window. Unaveraged Time and Channel can be paired with row or buffer identifiers using their collapsed sample masks. Unaveraged antenna pointing pairs use degree coordinates in the requested direction frame. Independent stored visibility ordinate lists also support ordinary vector and scalar time averages. Spectral-window averaged visibility ordinates retain requested order in standalone and iterated plots. Standalone spectral-window averaging accepts two independently selected visibility ordinates. Two channel-axis callibrary ordinates can display stored and transient corrected visibilities. Atmospheric transmission can accompany independently selected model and corrected visibility ordinates. A visibility abscissa can use independent Row and Elevation ordinates, and Time can use Row in scan pages. Wavelength ordinates use each selected channel on supported vector time averages. Vector time/channel averages include weight and sigma spectra and Wt*Amp. Array Azimuth, Elevation, Hour Angle and Parallactic Angle use the mean antenna position in Channel plots. The MeasurementSet Poln axis is refused. Ant-Azimuth, Ant-Elevation and Ant-ParAngle use each antenna position in raw Channel plots. Radial Velocity and Distance (rho) use the first time and FIELD of each selected buffer for the Channel and Time pairs. Frequency and Time are supported for the raw Channel/Frequency and Elevation/Time metadata pairs. A scalar antenna direction ordinate can expand into several layers through its list-valued interpolation control. A generic axis list involving an antenna direction is refused. Channel and Real can use antenna direction as the abscissa. Channel can also be plotted against antenna latitude. Supported spectral coordinates include requested reporting frames against visibility data and converted Frequency on the raw Channel/Frequency grid. A raw Time ordinate paired with visibility data displays the calendar date and clock for each tick.",
       "evidence": [
         "paired",
         "ms-multiple-visibility-ordinates",
@@ -249,7 +252,8 @@
         "ms-pointing-sample-masks-and-pages",
         "ms-reporting-frequency-and-wavelengths",
         "ms-phasecenter-compositions",
-        "ms-iteration-axes-and-offset-pages"
+        "ms-iteration-axes-and-offset-pages",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "coordinates"
@@ -359,7 +363,8 @@
         "ms-two-spw-visibility-ordinates",
         "callibrary-independent-ordinates",
         "ms-pointing-list-controls",
-        "ms-pointing-sample-masks-and-pages"
+        "ms-pointing-sample-masks-and-pages",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "coordinates"
@@ -557,7 +562,7 @@
       "status": "Implemented"
     },
     "avgchannel": {
-      "scope": "Average selected channels into bins. MeasurementSet data, corrected and model axes use the corresponding spectral weights when available, including lists of independent ordinates. Channel averaging composes with ordinary vector time averaging. Vector baseline averaging can follow channel averaging at each integration. Vector time and channel averages can both precede the baseline reducer. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. A selected fully masked combined vector average exports an empty product. Channel-only corrected vector and scalar residuals and ratios project their stored complex operands after averaging with calibrated weights. Observed and model operands can use independent selected spectra before vector or scalar projection. A lone derived visibility ordinate uses the same separate stored operand spectra and observed-cube mask with a Channel or Time abscissa. Time and channel averaging can compose before projecting a stored observed or corrected vector or scalar residual or ratio against Channel or Time, with the selected cube mask and separate operand sums. Observed spectra follow the weight-to-sigma conversion between stages. With both time and channel averaging, independent visibility axes can also pair stored or derived observed, corrected and model coordinates. Supported derived plots with channel and scalar time averaging reduce complex channels before reducing amplitude and phase in time. Stored visibility plots can use complex channel averaging followed by scalar time averaging with independent columns and two stored ordinates. Complex channels can be averaged before per-antenna reduction. The per-antenna stage uses the transformed spectral weight and retains the output antenna identity and order. Vector time and complex channel averages compose before antenna reduction, using the transformed weight spectrum to reduce by antenna. Ordinary stored visibility plots can use vector time and channel transforms with independent spectra, equal stored-model channel means and cube-flag masks. Supported channel and channel/time residuals and ratios use selected virtual or default model operands. Channel-averaged visibility ordinate lists can produce static correlation, scan and field panels. Channel and time averages of independent stored ordinate lists can also span scans and fields. Supported channel and baseline averaging accepts lists of independent stored visibility ordinates. Supported per-antenna channel and time averaging accepts lists of independent stored visibility ordinates. Channel bins compose with independent stored visibility ordinate lists in spectral-window averages. Channel bins compose with per-antenna ordinate lists across scan and field boundaries. Scalar field-spanning residuals can use selected virtual model operands with channel bins. Supported vector field-spanning virtual models and residuals compose with masked channel bins. Channel and antenna or baseline averages can compose with selected virtual model cells. Channel and spectral-window averages can use selected virtual model cells. Channel averaging can compose with spanned time and spectral-window averages over virtual model cells. Channel averaging can compose with vector time and spectral-window averages in static iteration. Channel and time-averaged SPW plots support two independent visibility ordinates. Supported channel/time compositions with SPW or antenna averaging can project derived visibility axes. Two supported callibrary ordinates use the observed and calibrated channel spectra separately. Weighted amplitude uses the output row weight after channel averaging. The supported single visibility pair can display fully flagged vector channel averages. Float-only and mixed MeasurementSets can average one signed float ordinate in supported channel and two-window selections. A channel-average request with metadata-only Channel and antenna direction axes retains the selected raw channels, with the requested width in TXT metadata.",
+      "scope": "Average selected channels into bins. MeasurementSet data, corrected and model axes use the corresponding spectral weights when available, including lists of independent ordinates. Channel averaging composes with ordinary vector time averaging. Vector baseline averaging can follow channel averaging at each integration. Vector time and channel averages can both precede the baseline reducer. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. A selected fully masked combined vector average exports an empty product. Channel-only corrected vector and scalar residuals and ratios project their stored complex operands after averaging with calibrated weights. Observed and model operands can use independent selected spectra before vector or scalar projection. A lone derived visibility ordinate uses the same separate stored operand spectra and observed-cube mask with a Channel or Time abscissa. Time and channel averaging can compose before projecting a stored observed or corrected vector or scalar residual or ratio against Channel or Time, with the selected cube mask and separate operand sums. Observed spectra follow the weight-to-sigma conversion between stages. With both time and channel averaging, independent visibility axes can also pair stored or derived observed, corrected and model coordinates. Supported derived plots with channel and scalar time averaging reduce complex channels before reducing amplitude and phase in time. Stored visibility plots can use complex channel averaging followed by scalar time averaging with independent columns and two stored ordinates. Complex channels can be averaged before per-antenna reduction. The per-antenna stage uses the transformed spectral weight and retains the output antenna identity and order. Vector time and complex channel averages compose before antenna reduction, using the transformed weight spectrum to reduce by antenna. Ordinary stored visibility plots can use vector time and channel transforms with independent spectra, equal stored-model channel means and cube-flag masks. Supported channel and channel/time residuals and ratios use selected virtual or default model operands. Channel-averaged visibility ordinate lists can produce static correlation, scan and field panels. Channel and time averages of independent stored ordinate lists can also span scans and fields. Supported channel and baseline averaging accepts lists of independent stored visibility ordinates. Supported per-antenna channel and time averaging accepts lists of independent stored visibility ordinates. Channel bins compose with independent stored visibility ordinate lists in spectral-window averages. Channel bins compose with per-antenna ordinate lists across scan and field boundaries. Scalar field-spanning residuals can use selected virtual model operands with channel bins. Supported vector field-spanning virtual models and residuals compose with masked channel bins. Channel and antenna or baseline averages can compose with selected virtual model cells. Channel and spectral-window averages can use selected virtual model cells. Channel averaging can compose with spanned time and spectral-window averages over virtual model cells. Channel averaging can compose with vector time and spectral-window averages in static iteration. Channel and time-averaged SPW plots support two independent visibility ordinates. Supported channel/time compositions with SPW or antenna averaging can project derived visibility axes. Two supported callibrary ordinates use the observed and calibrated channel spectra separately. Weighted amplitude uses the output row weight after channel averaging. The supported single visibility pair can display fully flagged vector channel averages. Float-only and mixed MeasurementSets can average one signed float ordinate in supported channel and two-window selections. A channel-average request with metadata-only Channel and antenna direction axes retains the selected raw channels, with the requested width in TXT metadata. Binned Channel figures display an Average Channel label or the Average prefix on the supplied label.",
       "evidence": [
         "paired",
         "ms-channel-columns",
@@ -611,7 +616,8 @@
         "ms-combined-spw-baseline-antenna-ids",
         "ms-pointing-sample-masks-and-pages",
         "ms-reporting-frequency-and-wavelengths",
-        "ms-phasecenter-compositions"
+        "ms-phasecenter-compositions",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "averaging"
@@ -619,7 +625,7 @@
       "status": "Partial"
     },
     "avgtime": {
-      "scope": "Average selected samples over the requested interval in seconds. Ordinary MeasurementSet vector time averaging can use two independent stored ordinate columns with a visibility, time, channel or frequency abscissa. Channel and time averaging can be combined for those axes. The baseline reducer can combine the visibility iterator’s vector time averages. Vector time and channel averages can both precede the baseline reducer. The ordinary scalar mode uses PlotMS visibility-buffer boundaries. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. A selected fully masked combined vector average exports an empty product. Ordinary vector time averaging can pair Time with one stored observed or corrected vector or scalar residual or ratio, using separate operand weights and the selected cube mask before projection. Ordinary vector time averaging pairs separately weighted observed, corrected or model coordinates and vector or scalar model expressions on the two visibility axes. Time and channel averaging can compose before projecting a stored observed or corrected vector or scalar residual or ratio against Channel or Time, with the selected cube mask and separate operand sums. Observed spectra follow the weight-to-sigma conversion between stages. With both time and channel averaging, independent visibility axes can also pair stored or derived observed, corrected and model coordinates. With scalar=True, Time can be paired with one stored corrected residual formed by subtracting the separately averaged amplitudes and phases. Ordinary scalar time averaging also supports stored observed and corrected residuals and ratios paired with Time, Channel, or an independently selected visibility coordinate. Supported derived plots with channel and scalar time averaging reduce complex channels before reducing amplitude and phase in time. Stored visibility plots can use complex channel averaging followed by scalar time averaging with independent columns and two stored ordinates. Scalar per-antenna averages can use closed time intervals with their original buffer interval centers, including after complex channel averaging. Ordinary vector time averages can feed per-antenna reduction using the transformed weight spectrum and closed second-stage time intervals. Vector time and complex channel averages compose before antenna reduction, using the transformed weight spectrum to reduce by antenna. Ordinary stored visibility plots can use vector time and channel transforms with independent spectra, equal stored-model channel means and cube-flag masks. Ordinary vector and scalar time averaging also accepts lists of three or more independent stored visibility ordinates, with optional complex channel bins. Selected virtual models can be predicted before ordinary vector and scalar time averages, including optional channel bins and independent observed or corrected axes. Supported vector and scalar time residuals and ratios also use selected virtual or default model operands. Supported ordinary time-averaged visibility ordinate lists can produce static correlation, scan and field panels. Supported vector and scalar time averages of stored visibility ordinate lists can span scans and fields. Supported baseline and time averaging can retain three or more independent stored ordinate columns. Supported antenna and time averages accept independent stored visibility ordinate lists. Time and spectral-window averaging can compose with independent stored visibility ordinate lists and scan and field spans. Time and antenna averages can compose with independent stored ordinate lists across scans and fields. Scalar time averages across scans and fields can use selected virtual visibility model cells. Vector scan and field spans use the first selected row of each input chunk as the phase reference for selected virtual models. Supported per-antenna time averages can use selected virtual model cells. Ordinary time and spectral-window averages can compose over virtual model cells. Time and spectral-window averages over virtual model cells can cross selected scans or fields. Static iterated SPW averages can compose with supported vector and scalar time intervals. Two independent SPW ordinates compose with supported scalar and vector time averages. Spectral-window and antenna time averages retain both operands for derived visibility axes. Ordinary vector averages can retain chunk-local Row identifiers. The supported U abscissa follows the same time-bin and window weighting as CASA. Interval is shared across the buffer from its first averaged baseline; wavelengths use the averaged UVW. Plotted visibility statistics follow the transformed observed/calibrated weighting roles. Float-only and mixed MeasurementSets can average one Amp or Real float ordinate in vector and scalar mode, including channel averaging. A time-average request with metadata-only time and antenna direction axes retains the selected raw timestamps and direction values, with the requested interval in TXT metadata.",
+      "scope": "Average selected samples over the requested interval in seconds. Ordinary MeasurementSet vector time averaging can use two independent stored ordinate columns with a visibility, time, channel or frequency abscissa. Channel and time averaging can be combined for those axes. The baseline reducer can combine the visibility iterator’s vector time averages. Vector time and channel averages can both precede the baseline reducer. The ordinary scalar mode uses PlotMS visibility-buffer boundaries. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. A selected fully masked combined vector average exports an empty product. Ordinary vector time averaging can pair Time with one stored observed or corrected vector or scalar residual or ratio, using separate operand weights and the selected cube mask before projection. Ordinary vector time averaging pairs separately weighted observed, corrected or model coordinates and vector or scalar model expressions on the two visibility axes. Time and channel averaging can compose before projecting a stored observed or corrected vector or scalar residual or ratio against Channel or Time, with the selected cube mask and separate operand sums. Observed spectra follow the weight-to-sigma conversion between stages. With both time and channel averaging, independent visibility axes can also pair stored or derived observed, corrected and model coordinates. With scalar=True, Time can be paired with one stored corrected residual formed by subtracting the separately averaged amplitudes and phases. Ordinary scalar time averaging also supports stored observed and corrected residuals and ratios paired with Time, Channel, or an independently selected visibility coordinate. Supported derived plots with channel and scalar time averaging reduce complex channels before reducing amplitude and phase in time. Stored visibility plots can use complex channel averaging followed by scalar time averaging with independent columns and two stored ordinates. Scalar per-antenna averages can use closed time intervals with their original buffer interval centers, including after complex channel averaging. Ordinary vector time averages can feed per-antenna reduction using the transformed weight spectrum and closed second-stage time intervals. Vector time and complex channel averages compose before antenna reduction, using the transformed weight spectrum to reduce by antenna. Ordinary stored visibility plots can use vector time and channel transforms with independent spectra, equal stored-model channel means and cube-flag masks. Ordinary vector and scalar time averaging also accepts lists of three or more independent stored visibility ordinates, with optional complex channel bins. Selected virtual models can be predicted before ordinary vector and scalar time averages, including optional channel bins and independent observed or corrected axes. Supported vector and scalar time residuals and ratios also use selected virtual or default model operands. Supported ordinary time-averaged visibility ordinate lists can produce static correlation, scan and field panels. Supported vector and scalar time averages of stored visibility ordinate lists can span scans and fields. Supported baseline and time averaging can retain three or more independent stored ordinate columns. Supported antenna and time averages accept independent stored visibility ordinate lists. Time and spectral-window averaging can compose with independent stored visibility ordinate lists and scan and field spans. Time and antenna averages can compose with independent stored ordinate lists across scans and fields. Scalar time averages across scans and fields can use selected virtual visibility model cells. Vector scan and field spans use the first selected row of each input chunk as the phase reference for selected virtual models. Supported per-antenna time averages can use selected virtual model cells. Ordinary time and spectral-window averages can compose over virtual model cells. Time and spectral-window averages over virtual model cells can cross selected scans or fields. Static iterated SPW averages can compose with supported vector and scalar time intervals. Two independent SPW ordinates compose with supported scalar and vector time averages. Spectral-window and antenna time averages retain both operands for derived visibility axes. Ordinary vector averages can retain chunk-local Row identifiers. The supported U abscissa follows the same time-bin and window weighting as CASA. Interval is shared across the buffer from its first averaged baseline; wavelengths use the averaged UVW. Plotted visibility statistics follow the transformed observed/calibrated weighting roles. Float-only and mixed MeasurementSets can average one Amp or Real float ordinate in vector and scalar mode, including channel averaging. A time-average request with metadata-only time and antenna direction axes retains the selected raw timestamps and direction values, with the requested interval in TXT metadata. An ordinary Time/DATA plot uses the observed weights in the existing vector time reducer.",
       "evidence": [
         "paired",
         "ms-time-columns",
@@ -680,7 +686,8 @@
         "ms-combined-spw-baseline-antenna-ids",
         "ms-pointing-sample-masks-and-pages",
         "ms-reporting-frequency-and-wavelengths",
-        "ms-phasecenter-compositions"
+        "ms-phasecenter-compositions",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "averaging"
@@ -961,7 +968,8 @@
         "ms-static-metadata-coordinates",
         "ms-pointing-sample-masks-and-pages",
         "ms-phasecenter-compositions",
-        "ms-iteration-axes-and-offset-pages"
+        "ms-iteration-axes-and-offset-pages",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "pages"
@@ -969,9 +977,10 @@
       "status": "Implemented"
     },
     "xselfscale": {
-      "scope": "When True, iterated plots have a common x-axis range (scale).",
+      "scope": "When True, iterated plots have a common x-axis range (scale). Use limits common to all iteration pages while keeping individual labels when xsharedaxis is false.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "pages"
@@ -979,9 +988,10 @@
       "status": "Partial"
     },
     "yselfscale": {
-      "scope": "When True, iterated plots have a common y-axis range (scale).",
+      "scope": "When True, iterated plots have a common y-axis range (scale). The left and right ordinate limits are computed independently across all iteration pages.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "pages"
@@ -989,9 +999,10 @@
       "status": "Partial"
     },
     "xsharedaxis": {
-      "scope": "Iterated plots on a grid share a common external x-axis per column. Must also set xselfscale=True and gridrows>1.",
+      "scope": "Iterated plots on a grid share a common external x-axis per column. Must also set xselfscale=True and gridrows>1. Matplotlib labels the bottom occupied panel in each column, including the final partial page.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "pages"
@@ -999,9 +1010,10 @@
       "status": "Partial"
     },
     "ysharedaxis": {
-      "scope": "Iterated plots on a grid share a common external y-axis per row. Must also set yselfscale=True and gridcols>1.",
+      "scope": "Iterated plots on a grid share a common external y-axis per row. Must also set yselfscale=True and gridcols>1. Matplotlib labels the outer occupied edge of each row for the displayed ordinate side.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "pages"
@@ -1184,7 +1196,8 @@
     "plotrange": {
       "scope": "Plot limits in `xmin`, `xmax`, `ymin`, `ymax` order.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "coordinates"
@@ -1194,7 +1207,8 @@
     "title": {
       "scope": "Title at top of plot",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "presentation"
@@ -1206,7 +1220,8 @@
       "evidence": [
         "paired",
         "ms-static-grid-placement",
-        "ms-iterated-grid-start"
+        "ms-iterated-grid-start",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "presentation"
@@ -1214,9 +1229,10 @@
       "status": "Partial"
     },
     "xlabel": {
-      "scope": "Text for horizontal x-axis. Blank for default.",
+      "scope": "Text for horizontal x-axis. Blank for default. A Channel label gains the Average prefix when the channels are binned. A supplied label replaces the default Channel wording.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "presentation"
@@ -1226,7 +1242,8 @@
     "xaxisfont": {
       "scope": "Font size for x-axis label",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "presentation"
@@ -1234,9 +1251,10 @@
       "status": "Partial"
     },
     "ylabel": {
-      "scope": "Text for vertical y-axis. Blank for default.",
+      "scope": "Text for vertical y-axis. Blank for default. The standard Time label includes the selected UTC reference date. Verbose TXT retains MJD seconds.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "presentation"
@@ -1246,7 +1264,8 @@
     "yaxisfont": {
       "scope": "Font size for y-axis label",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "presentation"
@@ -1256,7 +1275,8 @@
     "showmajorgrid": {
       "scope": "Show major grid lines",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "presentation"
@@ -1266,7 +1286,8 @@
     "majorwidth": {
       "scope": "Line width in pixels of major grid lines",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "presentation"
@@ -1276,7 +1297,8 @@
     "majorstyle": {
       "scope": "Major grid line style",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "presentation"
@@ -1284,9 +1306,10 @@
       "status": "Partial"
     },
     "majorcolor": {
-      "scope": "Color (name or hex code) of major grid lines",
+      "scope": "Color (name or hex code) of major grid lines Casa-rs uses the requested color. Pinned CASA 6.7.6.14 can render its gray major pen despite an accepted color.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "presentation"
@@ -1296,7 +1319,8 @@
     "showminorgrid": {
       "scope": "Show minor grid lines",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "presentation"
@@ -1306,7 +1330,8 @@
     "minorwidth": {
       "scope": "Line width in pixels of minor grid lines",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "presentation"
@@ -1314,9 +1339,10 @@
       "status": "Partial"
     },
     "minorstyle": {
-      "scope": "Minor grid line style",
+      "scope": "Minor grid line style The dotted minor grid pairs with the pinned task when the major grid is enabled with its stroke hidden.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "presentation"
@@ -1326,7 +1352,8 @@
     "minorcolor": {
       "scope": "Color (name or hex code) of minor grid lines",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "presentation"
@@ -1336,7 +1363,8 @@
     "showlegend": {
       "scope": "Show a legend on the plot.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "presentation"
@@ -1344,9 +1372,10 @@
       "status": "Partial"
     },
     "legendposition": {
-      "scope": "Legend position, default upperRight.",
+      "scope": "Legend position, default upperRight. Reserve room for the exterior legend inside the requested figure dimensions.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "behaviors": [
         "presentation"
@@ -1652,12 +1681,13 @@
       "id": "presentation",
       "title": "Render the shared plot document",
       "status": "Partial",
-      "scope": "Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend, page headers and export sizing. Show or hide the clear and flagged symbols independently for unaveraged MeasurementSet visibility pairs. Page selected MeasurementSet iteration panels in CASA order, including offset rows and titles and filenames for antenna, baseline and time.",
+      "scope": "Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend, page headers and export sizing. Show or hide the clear and flagged symbols independently for unaveraged MeasurementSet visibility pairs. Page selected MeasurementSet iteration panels in CASA order, including offset rows and titles and filenames for antenna, baseline and time. Static MeasurementSet iteration supports common per-side limits and shared grid labels. Time displays UTC clock and date ticks, and Channel bins label their averaging. Static fonts, grids and legend placement are paired with the pinned task.",
       "evidence": [
         "paired",
         "calibration-controls",
         "ms-raw-flag-symbols",
-        "ms-iteration-axes-and-offset-pages"
+        "ms-iteration-axes-and-offset-pages",
+        "ms-axis-ranges-clock-labels-and-style"
       ],
       "gap": "Renderer-specific marker fill patterns and interactive editing remain open."
     },
@@ -3319,6 +3349,23 @@
         "https://github.com/bglenden/casa-rs/pull/2313",
         "https://github.com/bglenden/casa-rs/pull/2205",
         "https://github.com/bglenden/casa-rs/pull/2292"
+      ]
+    },
+    "ms-axis-ranges-clock-labels-and-style": {
+      "kind": "Same-input static MeasurementSet axis ranges, labels and style",
+      "state": "passed",
+      "scope": "Public Python CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs on the same MeasurementSets. Five-scan independent and common ranges, shared grid axes, calendar day and midnight clocks, raw and binned Channel labels, and 500 by 360 grid, font and legend controls.",
+      "result": "Match 120 ordered TXT coordinates and 23 PNG pairs. The range fixture has 48 coordinates with independent left and right ordinates and two pages of each mode. Common limits are 10–70 for X, 20–140 on the left and 100–550 on the right. Visible grid labels stay within the canvas and clear of neighboring panels. The case includes a positive single-ordinate shared-axis request and two exact refusal messages. Clock cases retain 30 MJD-second coordinates, including six weighted averages. An average whose first transformed point is after midnight uses the next UTC date. X ticks can show 24:00:10, while Y ticks use an absolute date and roll over to 00:00:10. Channel cases retain 42 samples with unbinned, binned and custom binned labels. Style cases verify the minor stroke and color, both legend anchors including exterior top alignment, visible title and label fonts, a four-value range with automatic Y in one case, and the invalid-range refusal. Native honors the requested major color, which pinned CASA displays gray.",
+      "casa_version": "6.7.6.14",
+      "revision": "c754658012c196e3310c18e3d2b97f90e62fad9b",
+      "source_revision": "c754658012c196e3310c18e3d2b97f90e62fad9b",
+      "command": "casa-python tools/casa-compat/plotms_ms_axes_presentation_oracle.py --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-axis-presentation-20261125.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2314",
+        "https://github.com/bglenden/casa-rs/pull/2216",
+        "https://github.com/bglenden/casa-rs/pull/2232",
+        "https://github.com/bglenden/casa-rs/pull/2261"
       ]
     }
   }

@@ -275,7 +275,8 @@ def compare_flagged_figure(root, native, name, controls, marker_color, *,
     def record(figure, axes, document, options):
         configure(figure, axes, document, options)
         [axis] = figure.axes
-        assert (axis.get_title(), axis.get_xlabel(), axis.get_ylabel()) == labels
+        assert axis.get_title() == ""
+        assert (figure._suptitle.get_text(), axis.get_xlabel(), axis.get_ylabel()) == labels
         captured.extend(axis.lines)
 
     figure = controls | dict(width=500, height=360, dpi=100, expformat="png")

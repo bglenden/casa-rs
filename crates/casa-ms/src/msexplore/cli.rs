@@ -477,9 +477,13 @@ fn run_visibility_plot(
     if output.is_some() || show {
         let spec = build_explore_spec(&options, pointing.is_some(), true)
             .map_err(TaskFailure::validation)?;
-        let payload = match &calibrated {
+        let plot = &spec.plots[0];
+        let clock_labels = (show || figure_file.is_some())
+            && (plot.x_axis == MsAxis::Time || plot.y_axes.contains(&MsAxis::Time));
+        let (payload, clock_reference) = match &calibrated {
             Some(input) => {
                 build_calibrated_plotms_payload(&ms, &spec, input, options.secondary_y_data_column)
+                    .map(|payload| (payload, None))
             }
             None => build_uncalibrated_plotms_payload(
                 &ms,
@@ -497,6 +501,7 @@ fn run_visibility_plot(
                 },
                 prefer_float_data,
                 load_models,
+                clock_labels,
             ),
         }
         .map_err(TaskFailure::execution)?;
@@ -522,7 +527,15 @@ fn run_visibility_plot(
                 figure_file,
                 show,
                 &overlays,
-                options.figure_axis_columns(axis_columns, calibrated.is_some(), pointing.as_ref()),
+                super::plotms_figure::AxisPresentation {
+                    columns: options.figure_axis_columns(
+                        axis_columns,
+                        calibrated.is_some(),
+                        pointing.as_ref(),
+                    ),
+                    spec: plot,
+                    clock_reference,
+                },
             )?;
             if let Some(layout) = static_grid {
                 plots[0].document.layout = Some(layout);
