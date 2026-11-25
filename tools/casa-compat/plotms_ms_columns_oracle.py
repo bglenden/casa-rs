@@ -151,7 +151,115 @@ def compare_raw_flag_symbols(root, vis, native):
                          ("Amp", "Phase:corrected (degrees)"))
 
 
-def compare_flagged_figure(root, native, name, controls, marker_color):
+def compare_channel_averaged_flag_symbols(root, vis, native):
+    work = root / "channel-averaged-flag-symbols"
+    work.mkdir()
+    selected_ms = work / "flagged-channels.ms"
+    copy_ms(vis, selected_ms)
+    with opened(selected_ms, True) as table:
+        flags = table.getcol("FLAG")
+        fields = table.getcol("FIELD_ID")
+        antenna1, antenna2 = [table.getcol(column) for column in ("ANTENNA1", "ANTENNA2")]
+        selected = (fields == 0) & (antenna1 == 0) & (antenna2 == 1)
+        flags[:, :, selected] = False
+        # The three two-channel bins are clear, partly flagged and fully flagged.
+        flags[0, 2, selected] = True
+        flags[0, 4:6, selected] = True
+        table.putcol("FLAG", flags)
+        flag_rows = table.getcol("FLAG_ROW")
+    base = request(selected_ms) | dict(spw="0:0~5", averagedata=True, avgchannel="2",
+                                       title="Flagged visibility", expformat="txt")
+    marker_color = "dd2255"
+    marked = base | dict(customflaggedsymbol=True, flaggedsymbolshape="diamond",
+                         flaggedsymbolcolor=marker_color, flaggedsymbolsize=4,
+                         flaggedsymbolfill="fill", flaggedsymboloutline=False)
+    first_x = [1.5, 4.0, 5.5]
+    modes = (
+        ("channel-averages-clear", base, [0, 1]),
+        ("channel-averages-marked", marked, [0, 1, 2]),
+        ("channel-averages-flagged", marked | dict(customsymbol=True, symbolshape="nosymbol"), [2]),
+    )
+    for name, options, channels in modes:
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        points = rows(expected)
+        assert [int(point[2]) for point in points] == channels * 6
+        np.testing.assert_allclose([float(point[0]) for point in points[:len(channels)]],
+                                   [first_x[channel] for channel in channels], rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(points)
+        print(f"{name}: {len(points)} matching channel-average coordinates and flags", flush=True)
+    compare_flagged_figure(work, native, "channel-averages-marked", marked, marker_color)
+    with opened(selected_ms) as table:
+        np.testing.assert_array_equal(table.getcol("FLAG"), flags)
+        np.testing.assert_array_equal(table.getcol("FLAG_ROW"), flag_rows)
+    weighted = work / "weighted-flagged-channels.ms"
+    copy_ms(selected_ms, weighted)
+    spectra = {}
+    with opened(weighted, True) as table:
+        shape = table.getcol("DATA").shape
+        descriptor = table.getcoldesc("DATA")
+        for name, pair in (("WEIGHT_SPECTRUM", [1, 9]), ("SIGMA_SPECTRUM", [1, 0.5])):
+            table.addcols({name: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                      dataManagerGroup=name)})
+            values = np.resize(np.array(pair, dtype=np.float32), shape[1])[None, :, None]
+            spectra[name] = np.broadcast_to(values, shape)
+            table.putcol(name, spectra[name])
+    expected, actual = (work / f"weighted-marked.{engine}.txt" for engine in ("casa", "native"))
+    options = marked | dict(vis=str(weighted))
+    assert reference(**options, plotfile=str(expected)) is None
+    np.testing.assert_allclose([float(point[0]) for point in rows(expected)[:3]],
+                               [1.8, 4.0, 5.8], rtol=1.2e-5)
+    assert native(**options, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 18
+    with opened(weighted) as table:
+        np.testing.assert_array_equal(table.getcol("FLAG"), flags)
+        for name, values in spectra.items():
+            np.testing.assert_array_equal(table.getcol(name), values)
+    print("weighted-marked: 18 matching channel averages with flagged spectra", flush=True)
+    compare_flagged_channel_edge_values(work, weighted, native, marked)
+
+
+def compare_flagged_channel_edge_values(work, weighted, native, marked):
+    from plotms_callibrary_oracle import snapshot, verify_source
+
+    vis = work / "flagged-channel-edge-values.ms"
+    copy_ms(weighted, vis)
+    with opened(vis, True) as table:
+        selected = ((table.getcol("FIELD_ID") == 0) & (table.getcol("ANTENNA1") == 0)
+                    & (table.getcol("ANTENNA2") == 1))
+        sigma = table.getcol("SIGMA_SPECTRUM")
+        sigma[0, :2, selected] = 0
+        table.putcol("SIGMA_SPECTRUM", sigma)
+        data = table.getcol("DATA")
+        data[0, 4, np.flatnonzero(selected)[0]] = np.complex64(np.nan + 0j)
+        table.putcol("DATA", data)
+    before = snapshot(vis)
+    modes = (
+        ("clear", dict(customflaggedsymbol=False), [1]),
+        ("both", {}, [0, 1, 2]),
+        ("flagged", dict(customsymbol=True, symbolshape="nosymbol"), [0, 2]),
+    )
+    for mode, style, channels in modes:
+        expected, actual = (work / f"edge-values-{mode}.{engine}.txt" for engine in ("casa", "native"))
+        options = marked | dict(vis=str(vis)) | style
+        assert reference(**options, plotfile=str(expected)) is None
+        points = rows(expected)
+        assert [int(point[2]) for point in points] == channels * 6
+        if mode == "both":
+            assert float(points[0][0]) == 0 and np.isnan(float(points[2][0]))
+            np.testing.assert_allclose([float(points[index][1]) for index in (0, 2)],
+                                       [64.6538, 22.1412], rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(points)
+        print(f"edge-values-{mode}: {len(points)} matching zero-weight and nonfinite coordinates",
+              flush=True)
+    verify_source(vis, before)
+
+
+def compare_flagged_figure(root, native, name, controls, marker_color, *,
+                           labels=("Flagged visibility", "Amp", "Phase:corrected (degrees)"),
+                           is_flagged=lambda point: point[2] == "2" and point[12] == "XX"):
     from casars.tasks import _plotms_plot
     from matplotlib.colors import to_rgba
 
@@ -161,9 +269,7 @@ def compare_flagged_figure(root, native, name, controls, marker_color):
     def record(figure, axes, document, options):
         configure(figure, axes, document, options)
         [axis] = figure.axes
-        assert (axis.get_title(), axis.get_xlabel(), axis.get_ylabel()) == (
-            "Flagged visibility", "Amp", "Phase:corrected (degrees)",
-        )
+        assert (axis.get_title(), axis.get_xlabel(), axis.get_ylabel()) == labels
         captured.extend(axis.lines)
 
     figure = controls | dict(width=500, height=360, dpi=100, expformat="png")
@@ -176,7 +282,7 @@ def compare_flagged_figure(root, native, name, controls, marker_color):
     assert to_rgba(flagged.get_markerfacecolor()) == to_rgba(f"#{marker_color}")
     points = rows(root / f"{name}.casa.txt")
     for artist, masked in ((ordinary, False), (flagged, True)):
-        coordinates = np.array([point[:2] for point in points if (point[2] == "2" and point[12] == "XX") == masked],
+        coordinates = np.array([point[:2] for point in points if is_flagged(point) == masked],
                                dtype=float)
         np.testing.assert_allclose(artist.get_xydata(), coordinates, rtol=1.2e-5, atol=1e-7)
     rgb = np.round(np.array(to_rgba(f"#{marker_color}")[:3]) * 255).astype(np.uint8)
@@ -297,6 +403,7 @@ def compare(root, vis, native):
                     "Amp:data/model (scalar)", "Phase:corrected/model (scalar) (degrees)"))
     compare_channel_vector_residual(root, native, vis)
     compare_raw_flag_symbols(root, vis, native)
+    compare_channel_averaged_flag_symbols(root, vis, native)
 
 
 def compare_missing_corrected(root, vis, source, native):
@@ -1920,7 +2027,7 @@ def main():
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
-    parser.add_argument("--only", choices=("time-statistics",))
+    parser.add_argument("--only", choices=("time-statistics", "channel-flag-symbols"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -1936,6 +2043,9 @@ def main():
             compare_time_averaged_statistics(root, native)
             return
         vis, source = fixture(root)
+        if args.only == "channel-flag-symbols":
+            compare_channel_averaged_flag_symbols(root, vis, native)
+            return
         compare(root, vis, native)
         with opened(vis) as table:
             for name, values in source.items():

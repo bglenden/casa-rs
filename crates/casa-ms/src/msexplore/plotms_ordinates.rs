@@ -220,11 +220,13 @@ impl BinBuffer {
         spectra: [Option<&FloatGrid>; 2],
         corr: usize,
         bin: &ChannelBin,
+        include_flagged: bool,
     ) {
         self.values.clear();
         self.weights.clear();
         self.projection = None;
-        if let Some((projection, operands)) = channel_averaged_grid(grid, flags, spectra, corr, bin)
+        if let Some((projection, operands)) =
+            channel_averaged_grid(grid, flags, spectra, corr, bin, include_flagged)
         {
             if let Some(projection) = projection {
                 self.projection = Some((projection, operands));
@@ -250,6 +252,7 @@ fn channel_averaged_grid(
     spectra: [Option<&FloatGrid>; 2],
     corr: usize,
     bin: &ChannelBin,
+    include_flagged: bool,
 ) -> Option<(Option<VisibilityColumnProjection>, [Complex64; 2])> {
     if let Some((projection, model)) = grid.model.as_ref() {
         let operands = channel_averaged_operands(
@@ -259,6 +262,7 @@ fn channel_averaged_grid(
             spectra,
             corr,
             bin,
+            include_flagged,
         )?;
         Some((Some(*projection), operands))
     } else {
@@ -269,6 +273,7 @@ fn channel_averaged_grid(
             [spectra[0]],
             corr,
             bin,
+            include_flagged,
         )?;
         Some((None, [value, Complex64::default()]))
     }
@@ -281,17 +286,18 @@ fn channel_averaged_operands<const N: usize>(
     spectra: [Option<&FloatGrid>; N],
     corr: usize,
     bin: &ChannelBin,
+    include_flagged: bool,
 ) -> Option<[Complex64; N]> {
     let mut sums = [Complex32::new(0.0, 0.0); N];
     let mut total_weights = [0.0_f32; N];
     let mut sample_count = 0_usize;
     for channel in bin.channels() {
-        if channel >= channel_count || flags[(corr, channel)] {
+        if channel >= channel_count || !include_flagged && flags[(corr, channel)] {
             continue;
         }
         let index = corr * channel_count + channel;
-        // The channel iterator accumulates clear visibility values in Complex32.
-        // In particular it retains any nonfinite value on a clear channel.
+        // The channel iterator accumulates the selected flag class in
+        // Complex32, including nonfinite values.
         for operand in 0..N {
             let value = inputs[operand][index];
             let weight = spectra[operand].map_or(1.0, |weights| weights.values[index] as f32);
@@ -688,7 +694,7 @@ impl AveragedVisibility {
     ) -> bool {
         let mut sample = if let Some(spectra) = options.channel_spectra {
             let Some((projection, operands)) =
-                channel_averaged_grid(grid, flags, spectra, corr, bin)
+                channel_averaged_grid(grid, flags, spectra, corr, bin, false)
             else {
                 return false;
             };
@@ -1067,7 +1073,43 @@ pub(super) struct PointIndex {
     pub(super) correlation: usize,
 }
 
-/// Keep one clear sample per point in the pair's collapsed visibility shape.
+/// A collapsed metadata point is flagged when every selected cube cell it
+/// represents is flagged.
+pub(super) fn metadata_symbol_flags<'a>(
+    projected: &mut Vec<bool>,
+    dimensions: PointDimensions,
+    rows: impl Iterator<Item = Result<ArrayView2<'a, bool>, String>>,
+    channels: &[ChannelBin],
+    correlations: &[(usize, String)],
+) -> Result<(), String> {
+    projected.clear();
+    projected.resize(
+        if dimensions.channel {
+            channels.len()
+        } else {
+            1
+        },
+        true,
+    );
+    for flags in rows {
+        let flags = flags?;
+        for channel in channels {
+            let slot = if dimensions.channel {
+                channel.ordinal
+            } else {
+                0
+            };
+            if projected[slot] {
+                projected[slot] = correlations.iter().all(|(correlation, _)| {
+                    channel.channels().all(|index| flags[(*correlation, index)])
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Keep one sample per point in the pair's collapsed visibility shape.
 #[derive(Default)]
 pub(super) struct CollapsedPointMask {
     row: HashSet<(usize, usize)>,
@@ -1084,7 +1126,7 @@ impl CollapsedPointMask {
         }
     }
 
-    pub(super) fn project_clear_sample(
+    pub(super) fn project_sample(
         &mut self,
         ordinate: usize,
         row: usize,
