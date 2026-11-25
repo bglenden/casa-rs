@@ -335,22 +335,20 @@ fn run_task(
             .any(MsAxis::is_row_identifier);
         let uncalibrated_columns =
             calibration.is_none() && (columns.is_some() || row_identifier_axes);
-        if uncalibrated_columns {
-            if let Some(columns) = columns {
-                plotms_columns::check_averaging(
-                    options.plotms_averaging_active(),
-                    options.plotms_extended_averaging()
-                        && options.secondary_y_data_column.is_some()
-                        && !iterated_averaging
-                        && !options.plotms_independent_average(
-                            atmosphere.is_none()
-                                && (options.avgspw || !options.additional_ordinates.is_empty()),
-                        ),
-                    options.supports_channel_derived(columns)
-                        || options.supports_extended_derived(columns),
-                    columns,
-                )?;
-            }
+        if uncalibrated_columns && let Some(columns) = columns {
+            plotms_columns::check_averaging(
+                options.plotms_averaging_active(),
+                options.plotms_extended_averaging()
+                    && options.secondary_y_data_column.is_some()
+                    && !iterated_averaging
+                    && !options.plotms_independent_average(
+                        atmosphere.is_none()
+                            && (options.avgspw || !options.additional_ordinates.is_empty()),
+                    ),
+                options.supports_channel_derived(columns)
+                    || options.supports_extended_derived(columns),
+                columns,
+            )?;
         }
         if uncalibrated_columns || calibrated_ordinates {
             let symbols = task.value("customflaggedsymbol");
@@ -608,7 +606,11 @@ fn run_visibility_plot(
                 path,
                 library,
                 &overlays,
-                &spec.plots[0].y_axes,
+                super::plotms_text::ExportAxes {
+                    ordinates: &spec.plots[0].y_axes,
+                    channel_major: calibrated.is_none()
+                        || options.secondary_y_data_column.is_some(),
+                },
             )?;
         }
     }

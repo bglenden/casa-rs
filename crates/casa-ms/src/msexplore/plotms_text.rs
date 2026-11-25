@@ -21,6 +21,11 @@ use crate::MeasurementSet;
 use crate::columns::main_ids;
 use crate::columns::time_columns::TimeColumn;
 
+pub(super) struct ExportAxes<'a> {
+    pub ordinates: &'a [MsAxis],
+    pub channel_major: bool,
+}
+
 pub(super) fn write_export(
     task: &TaskInvocation<'_>,
     ms: &MeasurementSet,
@@ -28,7 +33,7 @@ pub(super) fn write_export(
     output: &Path,
     library: &[String],
     overlays: &[Vec<Curve>],
-    ordinates: &[MsAxis],
+    axes: ExportAxes<'_>,
 ) -> Result<(), TaskFailure> {
     let parent = output
         .parent()
@@ -42,7 +47,6 @@ pub(super) fn write_export(
     write_header(&mut writer, task, &task.path("vis")?, library)?;
     let index = task.integer("plotindex")?;
     let verbose = task.flag("verbose")?;
-    let channel_major = library.is_empty() || ordinates.len() > 1;
     let mut metadata = Metadata::new(ms).map_err(io)?;
     metadata.averaged_baselines = task.flag("averagedata")? && task.flag("avgbaseline")?;
     match payload {
@@ -53,9 +57,9 @@ pub(super) fn write_export(
                 &mut metadata,
                 plot.x_axis,
                 &plot.series,
-                ordinates,
+                axes.ordinates,
                 verbose,
-                channel_major,
+                axes.channel_major,
             )
             .map_err(io)?;
             if let Some(curves) = overlays.first() {
@@ -79,9 +83,9 @@ pub(super) fn write_export(
                     &mut metadata,
                     grid.x_axis,
                     &plot.series,
-                    ordinates,
+                    axes.ordinates,
                     verbose,
-                    channel_major,
+                    axes.channel_major,
                 )
                 .map_err(io)?;
                 if let Some(curves) = overlays.get(panel) {
