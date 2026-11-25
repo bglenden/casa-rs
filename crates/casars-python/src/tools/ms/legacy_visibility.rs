@@ -7,7 +7,7 @@ use casa_ms::tool_visibility::{
 };
 use pyo3::prelude::*;
 
-use super::legacy_selection::deprecation;
+use super::legacy_selection::{LegacySelection, deprecation};
 use super::metadata_link::compose_rows;
 use super::visibility::{channel_argument, integer_argument, requested_strings, sampled_rows};
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
@@ -18,6 +18,21 @@ pub(super) struct LegacyAxes {
     channels: Option<VisibilityChannels>,
     polarization: Option<VisibilityPolarization>,
     labels: Option<Vec<String>>,
+}
+
+impl LegacySelection {
+    pub(super) fn visibility_options(&self) -> VisibilityReadOptions<'_> {
+        VisibilityReadOptions {
+            baseline_pairs: self.baselines.as_deref(),
+            channels: self.axes.channels,
+            polarization: self.axes.polarization.as_ref(),
+            legacy_axes: Some(LegacyVisibilityAxes {
+                descriptions: self.descriptions(),
+                correlation_labels: self.axes.labels.as_deref(),
+            }),
+            ..VisibilityReadOptions::default()
+        }
+    }
 }
 
 #[pymethods]
@@ -168,7 +183,6 @@ impl AttachedMs {
         };
         let stride = sampled_rows(count, count, i64::from(increment as i32))?;
         let projected = compose_rows(rows.as_deref(), Some(&stride));
-        let axes = &self.legacy_selection.axes;
         let snapshot = items
             .iter()
             .any(|name| name.eq_ignore_ascii_case("axis_info"))
@@ -177,14 +191,9 @@ impl AttachedMs {
             .map_err(runtime_error)?;
         let main = self.visibility.main(&self.path)?;
         let options = VisibilityReadOptions {
-            baseline_pairs: self.legacy_selection.baselines.as_deref(),
-            channels: axes.channels,
-            polarization: axes.polarization.as_ref(),
-            legacy_axes: Some(LegacyVisibilityAxes {
-                descriptions: self.legacy_selection.descriptions(),
-                correlation_labels: axes.labels.as_deref(),
-            }),
-            ..options
+            average: options.average,
+            baseline_gap: options.baseline_gap,
+            ..self.legacy_selection.visibility_options()
         };
         let record = main.read_rows(
             projected.as_deref().expect("sampled rows are present"),

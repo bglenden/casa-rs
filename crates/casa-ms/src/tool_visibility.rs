@@ -569,6 +569,26 @@ impl<'a> VisibilityRead<'a> {
         })
     }
 
+    pub(crate) fn range_matrix_cells(&self, name: &str, convert: bool) -> MsResult<ArrayValue> {
+        if !self.legacy {
+            return self.raw_matrix_cells(name, false);
+        }
+        let values = self.matrix_cells(name, false)?;
+        let Some(plan) = self
+            .polarization
+            .filter(|plan| convert && plan.is_conversion())
+        else {
+            return Ok(values);
+        };
+        match values {
+            ArrayValue::Bool(flags) => plan
+                .converted_flags(&flags, self.polarization_ids()?)
+                .map(ArrayValue::Bool),
+            ArrayValue::Complex32(_) => plan.apply_conversion(values, self.polarization_ids()?),
+            _ => Ok(values),
+        }
+    }
+
     fn raw_flags(&self) -> MsResult<&ArrayD<bool>> {
         if let Some(flags) = self.raw_flags.get() {
             return Ok(flags);
@@ -842,7 +862,7 @@ impl<'a> VisibilityRead<'a> {
                 let sums = if let Some(grid) = grid {
                     grid.flag_sums(flag)?
                 } else {
-                    row_flag_sums(flag, self.rows.is_empty())?
+                    averaging::row_flag_sums(flag, self.rows.is_empty())?
                 };
                 fields.insert("flag_sum".into(), Value::Array(ArrayValue::Int64(sums)));
             }
@@ -1129,14 +1149,10 @@ impl<'a> VisibilityRead<'a> {
     }
 
     fn legacy_flags(&self) -> MsResult<ArrayD<bool>> {
-        let ArrayValue::Bool(flags) = self.matrix_cells("FLAG", false)? else {
+        let ArrayValue::Bool(flags) = self.range_matrix_cells("FLAG", true)? else {
             return Err(input("FLAG cells must be Boolean"));
         };
-        if let Some(plan) = self.polarization.filter(|plan| plan.is_conversion()) {
-            plan.converted_flags(&flags, self.polarization_ids()?)
-        } else {
-            Ok(flags)
-        }
+        Ok(flags)
     }
 }
 
@@ -1167,25 +1183,6 @@ fn insert_visibility_components(
         }
     }
     Ok(())
-}
-
-fn row_flag_sums(flags: &ArrayD<bool>, empty: bool) -> MsResult<ArrayD<i64>> {
-    let (shape, rows) = match flags.shape() {
-        [correlations, channels, rows] => ([*correlations, *channels], *rows),
-        _ if empty => ([0, 0], 0),
-        _ => return Err(input("FLAG column has no row axis")),
-    };
-    let samples = shape.iter().product();
-    let mut sums = vec![0_i64; samples];
-    let memory = flags
-        .as_slice_memory_order()
-        .ok_or_else(|| input("FLAG block is not contiguous"))?;
-    for row in memory.chunks_exact(samples.max(1)).take(rows) {
-        for (sum, &flagged) in sums.iter_mut().zip(row) {
-            *sum += i64::from(flagged);
-        }
-    }
-    shaped(&shape, sums)
 }
 
 fn visibility_product(name: &str) -> bool {

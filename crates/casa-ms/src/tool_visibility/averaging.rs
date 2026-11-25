@@ -265,6 +265,25 @@ fn sum_row_values(
     Ok(ArrayValue::Float32(shaped(&shape, squares)?))
 }
 
+pub(super) fn row_flag_sums(flags: &ArrayD<bool>, empty: bool) -> MsResult<ArrayD<i64>> {
+    let (shape, rows) = match flags.shape() {
+        [correlations, channels, rows] => ([*correlations, *channels], *rows),
+        _ if empty => ([0, 0], 0),
+        _ => return Err(input("FLAG column has no row axis")),
+    };
+    let samples = shape.iter().product();
+    let mut sums = vec![0_i64; samples];
+    let memory = flags
+        .as_slice_memory_order()
+        .ok_or_else(|| input("FLAG block is not contiguous"))?;
+    for row in memory.chunks_exact(samples.max(1)).take(rows) {
+        for (sum, &flagged) in sums.iter_mut().zip(row) {
+            *sum += i64::from(flagged);
+        }
+    }
+    shaped(&shape, sums)
+}
+
 fn memory_order<Value>(array: &ArrayD<Value>) -> MsResult<&[Value]> {
     array
         .as_slice_memory_order()

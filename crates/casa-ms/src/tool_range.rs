@@ -66,13 +66,13 @@ impl ToolRangeRequest {
         SPECTRAL_ITEMS.iter().any(|&name| self.names.contains(name))
     }
 
-    /// Whether the requested ranges depend on channel and polarization axes.
-    pub fn uses_visibility_axes(&self) -> bool {
+    fn uses_visibility_axes(&self) -> bool {
         self.wants_samples || self.has_spectral_items()
     }
 
     /// Read ranges over logical MAIN rows in the supplied view.
-    /// In-row channel and polarization selections do not affect these ranges.
+    /// Legacy channel and polarization selections affect sample extrema.
+    /// The spectral coordinates still describe the recorded data.
     ///
     /// # Errors
     /// A requested column, descriptor, or subtable cannot be read.
@@ -82,6 +82,7 @@ impl ToolRangeRequest {
         members: &[Table],
         reference: Option<&PlainReferenceRead>,
         rows: &[usize],
+        options: VisibilityReadOptions<'_>,
         read_linked: impl FnOnce(&[SubtableId]) -> MsResult<HashMap<SubtableId, T>>,
     ) -> MsResult<RecordValue> {
         if rows.is_empty() {
@@ -113,7 +114,14 @@ impl ToolRangeRequest {
         };
         name_ranges(&linked_subtable, &self.names, &mut result)?;
         if spectral {
-            let descriptions = selected_descriptions(main, members, reference, rows)?;
+            let descriptions = if let Some(legacy) = options
+                .legacy_axes
+                .filter(|axes| !axes.descriptions.is_empty())
+            {
+                legacy.descriptions.iter().copied().collect()
+            } else {
+                selected_descriptions(main, members, reference, rows)?
+            };
             let description = linked_subtable(SubtableId::DataDescription)?;
             let windows = linked_subtable(SubtableId::SpectralWindow)?;
             let polarization = linked_subtable(SubtableId::Polarization)?;
@@ -127,14 +135,16 @@ impl ToolRangeRequest {
             )?;
             axes.selected_items(&self.names, &mut result)?;
             if axes.has_common_shape() && self.wants_samples {
-                result.extend(RangeSamples::new(main, &self.names, self.use_flags).read(
-                    main,
-                    members,
-                    reference,
-                    rows,
-                    axes.shape(),
-                    self.block_bytes,
-                )?);
+                result.extend(
+                    RangeSamples::new(main, &self.names, self.use_flags, options).read(
+                        main,
+                        members,
+                        reference,
+                        rows,
+                        axes.shape(),
+                        self.block_bytes,
+                    )?,
+                );
             }
         }
         Ok(RecordValue::new(

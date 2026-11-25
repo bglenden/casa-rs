@@ -2,7 +2,7 @@
 //! Selected MAIN column ranges through the public MS tool.
 
 use casa_ms::tool_range::ToolRangeRequest;
-use pyo3::exceptions::{PyNotImplementedError, PySystemError, PyTypeError};
+use pyo3::exceptions::{PySystemError, PyTypeError};
 use pyo3::prelude::*;
 
 use super::legacy_selection::deprecation;
@@ -39,33 +39,44 @@ impl PyMsTool {
         py: Python<'_>,
         items: Option<&Bound<'_, PyAny>>,
         #[pyo3(from_py_with = strict_bool)] useflags: bool,
-        #[pyo3(from_py_with = blocksize_argument)] blocksize: i64,
+        #[pyo3(from_py_with = legacy_blocksize_argument)] blocksize: i64,
     ) -> PyResult<Py<PyAny>> {
         let items = requested_strings(items, "items")?;
         deprecation(py, "rangeold", "range")?;
-        let request = ToolRangeRequest::new(&items, useflags, blocksize);
+        let request = ToolRangeRequest::new(&items, useflags, i64::from(blocksize as i32));
         let reply = py.detach(|| {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
-            let Some(ms) = attached.as_mut() else { return Ok(CasaValue::empty_record()) };
-            if request.uses_visibility_axes() {
-                return Err(PyNotImplementedError::new_err(
-                    "ms.rangeold visibility and spectral-axis ranges are not yet implemented in casa-rs (#1030)",
-                ));
-            }
+            let Some(ms) = attached.as_mut() else {
+                return Ok(CasaValue::empty_record());
+            };
             let link = ms.working_metadata_link();
             let base = link.selected_rows().map_err(runtime_error)?;
             let rows = compose_rows(base.as_deref(), ms.legacy_selection.rows());
-            ms.visibility.range_for_rows(&ms.path, &link, rows.as_deref(), &request)
+            ms.visibility.range_for_rows(
+                &ms.path,
+                &link,
+                rows.as_deref(),
+                &request,
+                ms.legacy_selection.visibility_options(),
+            )
         })?;
         reply.into_python(py)
     }
 }
 
 fn blocksize_argument(value: &Bound<'_, PyAny>) -> PyResult<i64> {
+    parse_blocksize(value, "ms_range")
+}
+
+fn legacy_blocksize_argument(value: &Bound<'_, PyAny>) -> PyResult<i64> {
+    parse_blocksize(value, "ms_rangeold")
+}
+
+fn parse_blocksize(value: &Bound<'_, PyAny>, method: &str) -> PyResult<i64> {
     if value.is_none() {
-        return Err(PySystemError::new_err(
-            "<built-in function ms_range> returned a result with an exception set",
-        ));
+        return Err(PySystemError::new_err(format!(
+            "<built-in function {method}> returned a result with an exception set"
+        )));
     }
     value
         .extract()
