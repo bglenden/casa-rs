@@ -3161,10 +3161,10 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="plotms-evidence-ms-array-horizontal-axes"></a>
 ##### ms-array-horizontal-axes
 
-**Paired raw array horizontal axes — passed.** Five TXT exports match all 120 points, coordinates, selected channels and baseline metadata. The first array angle uses the mean Cartesian antenna position and the cached buffer time. Hour angle is signed in hours and the first mount supplies the array parallactic angle. Two PNGs match 48 rendered points, units and the requested size. Both public tasks refuse Poln versus Amp on this MeasurementSet before export. Source visibility cells and positions remain unchanged. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Channel versus array azimuth, elevation, hour angle and parallactic angle on the reversed two-field metadata MS. The selection contains two baselines, one fully flagged channel and one channel clear only on the second baseline. A first equatorial antenna exercises the array mount.
+**Paired raw array horizontal axes — passed.** Six TXT exports match all 132 points, coordinates, selected channels and baseline metadata. The first array angle uses the mean Cartesian antenna position and the cached buffer time. Hour angle is signed in hours and the first mount supplies the array parallactic angle. Two PNGs match 48 rendered points, units and the requested size. Both public tasks refuse Poln versus Amp on this MeasurementSet before export. Source visibility cells and positions remain unchanged. Beam-waveguide angles above 360 degrees match. Correlation iteration and explicit flag-symbol filtering with these axes are refused before export pending their #1032 cases. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Channel versus array azimuth, elevation, hour angle and parallactic angle on the reversed two-field metadata MS. The selection contains two baselines, one fully flagged channel and one channel clear only on the second baseline. A first equatorial antenna and a beam-waveguide first mount test the array rotation.
 
 - [https://github.com/bglenden/casa-rs/pull/2292](https://github.com/bglenden/casa-rs/pull/2292)
-- Revision: `0f6649e2cb413b62e9f853ef36e54a6dac819209`; CASA: `6.7.6.14`.
+- Revision: `a3b94b8b43f5ae08a2aad3e28e8443e73ad82776`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only array-horizontal-axes --work <new-dir> --native-bin <msexplore>`.
 - Receipt: `resources/casa-compat/evidence/plotms-ms-array-horizontal-20261124.json`.
 
