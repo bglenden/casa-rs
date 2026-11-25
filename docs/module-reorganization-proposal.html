@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>casa-rs Module Reorganization Proposal v3 — Clean-Sheet Architecture &amp; ADR Alignment</title>
+<title>casa-rs Module Reorganization Proposal v4 — Clean-Sheet Architecture &amp; ADR Alignment</title>
 <style>
 :root {
   --bg: #f6f8fa;
@@ -659,7 +659,7 @@ details.evidence li + li { margin-top: 4px; }
   <div class="topbar-inner">
     <div class="brand">
       <span>casa-rs</span>
-      <span class="brand-pill">Architecture Proposal v3 (Reviewed + ADR Updates)</span>
+      <span class="brand-pill">Architecture Proposal v4 (2nd Codex Review Fixes)</span>
     </div>
     <nav class="nav-links" aria-label="Page sections">
       <a href="#current">1. Current</a>
@@ -681,8 +681,8 @@ details.evidence li + li { margin-top: 4px; }
   <section class="hero" aria-labelledby="hero-title">
     <div class="hero-meta">
       <span><strong>Workspace:</strong> casa-rs v0.27.0 (Rust 2024, MSRV 1.99)</span>
-      <span><strong>Base Commit:</strong> <code>b84c228f82</code></span>
-      <span><strong>Revision:</strong> v3 — Codex review fixes + recommended ADR amendments</span>
+      <span><strong>Base Commit:</strong> <code>c6f3216ccb</code></span>
+      <span><strong>Revision:</strong> v4 — 2nd Codex review fixes + Hydrogen-proof 12-ticket plan</span>
       <span><strong>Scope:</strong> 834,300 src LOC &bull; 206,096 test LOC &bull; 35 crates (+2 orphans) &bull; 345 test link targets</span>
     </div>
     <h1 id="hero-title">Reorganizing <code>casa-rs</code> into Deep, Publishable, UI-Decoupled, Agent-Legible Modules</h1>
@@ -692,18 +692,18 @@ details.evidence li + li { margin-top: 4px; }
       domain crates depend <em>upward</em> on ~18.5k lines of multi-process contract/CLI plumbing left over from retired GUIs, 12 of 13 <code>publish = true</code> crates fail crates.io publication,
       19 binaries sit inside library crates, two "god crates" (<code>casa-ms</code> 130kL, <code>casa-calibration</code> 118kL) mix unrelated subsystems,
       50 files breach the 1,500-line ceiling, and tests compile into <strong>345 separate link targets</strong>.
-      This v3 proposal pairs <strong>compiler-enforced library boundaries</strong> (<strong>38 crates across 5 physical roots</strong>) with targeted
-      <strong>ADR amendments</strong> (<code>ADR-0017</code> in-process Python tasks, <code>ADR-0006</code> protocol slimming, <code>ADR-0011</code> <code>uvcontsub</code> relocation)
+      This v4 proposal pairs <strong>compiler-enforced library boundaries</strong> (<strong>38 crates across 5 physical roots</strong>) with targeted
+      <strong>ADR amendments</strong> (<code>ADR-0017</code> in-process Python tasks, <code>ADR-0006</code> protocol slimming, <code>ADR-0011</code> shared numerical <code>uvcontsub</code> fitter)
       to deliver maximum architectural simplicity, zero cycles, true UI decoupling, and out-of-the-box <code>crates.io</code> / <code>docs.rs</code> readiness.
     </p>
 
     <div class="callout" role="note" aria-label="Codex review fixes and ADR amendments">
-      <strong class="callout-title">Key Foundations: Codex Review Fixes (<code>b84c228f82</code>) + Recommended ADR Amendments</strong>
+      <strong class="callout-title">Key Foundations: Codex Reviews (<code>b84c228f82</code> &amp; <code>c6f3216ccb</code>) + Recommended ADR Amendments</strong>
       <ul>
-        <li><strong>Preserved <code>ADR-0016</code> imaging firewall &amp; broke synthesis/SD/calibration cycles:</strong> Kept the 8-crate compiler-enforced DAG under <code>libs/imaging/</code> (all <code>publish = true</code>, facade renamed <code>casa-imaging</code>), keeping <code>casa-imaging-runtime</code> below both <code>casa-imaging-singledish</code> and <code>casa-imaging</code>, and placing high-level <code>casa-singledish</code> above <code>casa-calibration</code>.</li>
-        <li><strong>Fixed missing edges &amp; kept <code>casa-aipsio</code> / <code>casa-fft</code> distinct:</strong> Added <code>casa-ms &rarr; casa-measures</code>; kept <code>casa-aipsio</code> as a small <code>publish = true</code> codec crate for C++ wire oracles (with a narrow table-header probe in <code>casa-tables</code>); kept pure <code>casa-numerics</code> separate from <code>casa-fft</code> so beam-only callers avoid FFTW.</li>
-        <li><strong>Amended <code>ADR-0017</code> &amp; trimmed <code>ADR-0006</code>:</strong> Both <code>casars.tools</code> and <code>casars.tasks</code> run <strong>in-process</strong> in <code>casars._core</code> (via PyO3 over feature-gated <code>surfaces/casa-tasks</code> with GIL release + <code>SIGINT &rarr; Cancel</code>), sharing process-wide <code>MeasuresRuntime</code> and table caches; retired ~13.5kL of leftover GUI-era <code>ProviderContractEnvelope</code>, <code>build.rs</code> JSON-fingerprinting, and mandatory 23-binary child-process launcher scaffolding; kept <code>frontends/casars-cli</code> as a standalone shell/HPC CLI.</li>
-        <li><strong>Relocated <code>uvcontsub</code> (<code>ADR-0011</code>) &amp; hardened test / <code>docs.rs</code> mechanics:</strong> Moved visibility-domain <code>fit_and_subtract_continuum</code> from <code>casa-imaging-operator</code> to <code>casa-mstransform</code>; corrected test targets to <strong>345</strong> with allocator/<code>CARGO_BIN_EXE</code> exceptions; excluded opt-in <code>suites/*</code> from default <code>--workspace</code>; updated <code>casa-fft/build.rs</code> for Linux <code>docs.rs</code>.</li>
+        <li><strong>Preserved <code>ADR-0016</code> imaging firewall &amp; cut all reverse dependencies:</strong> Kept the 8-crate compiler-enforced DAG under <code>libs/imaging/</code> (all <code>publish = true</code>, facade renamed <code>casa-imaging</code>; unconditional <code>casa-imaging-runtime &rarr; casa-imaging-metal</code> dep across platforms with only <code>objc2-metal</code> macOS-gated). Kept <code>ComponentListImage</code> behavior behind <code>ImageInterface</code> (removing <code>TempImage</code> downcast) and low-level <code>regrid_complex_plane</code> in <code>casa-images</code>; kept <code>CalibraterLifecycle</code> SD solver/CalTable subtype semantics in <code>casa-calibration</code> with high-level workflows/ASAP/NRO in <code>casa-singledish</code> above it; kept plot model-selection inputs in domain crates and plot document assembly in <code>surfaces/casa-plot-data</code> adapters.</li>
+        <li><strong>Fixed missing edges &amp; kept <code>casa-aipsio</code> / <code>casa-fft</code> distinct:</strong> Added <code>casa-ms &rarr; casa-measures</code> plus <code>casa-flagging &rarr; casa-tables</code>, <code>casa-mstransform &rarr; casa-tables</code>, and <code>casa-simulation &rarr; {casa-flagging, casa-imageanalysis}</code>; kept <code>casa-aipsio</code> as a small <code>publish = true</code> codec crate for C++ wire oracles (with a narrow table-header probe in <code>casa-tables</code>); kept pure <code>casa-numerics</code> separate from <code>casa-fft</code> so beam-only callers avoid FFTW.</li>
+        <li><strong>Amended <code>ADR-0017</code> &amp; co-moved CLI + surfaces cleanly:</strong> Extracting <code>surfaces/</code> and consolidating all <strong>24</strong> CLI executables (64 surface entries, fixing the red <code>predictcomp</code> host baseline first) into feature-gated <code>frontends/casars-cli</code> happen together so no Cargo package cycle occurs; <code>casars.tasks</code> moves in-process via PyO3 over <code>surfaces/casa-tasks</code> with explicit replacements for child-process isolation (owner-aware <code>clearcal</code> lock handoff, per-invocation <code>Cancel</code> + real <code>SIGINT</code> cleanup, Python <code>Last</code> isolation, steady-state &amp; installed-wheel verification) before retiring <code>ApplicationCatalog</code>'s launcher.</li>
+        <li><strong>Shared <code>uvcontsub</code> fitter &amp; hardened test / packaging mechanics:</strong> Placed the shared numerical row fitter in <code>casa-numerics</code> while each caller keeps its own selection/output policy (<code>casa-imaging-operator</code> and <code>casa-mstransform</code>); excluded opt-in <code>suites/*</code> via explicit <code>--exclude</code> in <code>scripts/test-workspace.sh</code> or separate workspace manifests (not <code>default-members</code>); moved <code>has_casacore_cpp</code> + <code>casacore-held-table-reader</code> into <code>suites/casacore-interop</code>; isolated allocator/<code>CARGO_BIN_EXE_*</code> targets; moved scripts/checks &amp; registry <code>version</code>s alongside every crate move; updated <code>casa-fft/build.rs</code> for Linux <code>docs.rs</code>.</li>
       </ul>
     </div>
 
@@ -981,7 +981,7 @@ details.evidence li + li { margin-top: 4px; }
   <!-- SECTION 3: PROPOSED CLEAN-SHEET ARCHITECTURE -->
   <section id="proposed" class="report-section">
     <div class="section-head">
-      <h2>3. Proposed v3 Clean-Sheet Architecture (To-Be)</h2>
+      <h2>3. Proposed v4 Clean-Sheet Architecture (To-Be)</h2>
       <span class="section-tag">38 crates &bull; 6 visual tiers &bull; cycle-free compiler-enforced DAG</span>
     </div>
 
@@ -991,7 +991,7 @@ details.evidence li + li { margin-top: 4px; }
         Every dependency flows strictly downward, and every <code>publish = true</code> crate (all 28 crates in <code>libs/*</code>) depends exclusively on <code>publish = true</code> crates.
         <code>libs/imaging/</code> preserves ADR-0016's compiler-enforced firewall while renaming the facade to <code>casa-imaging</code>;
         <code>surfaces/</code> shrinks from 18.5kL to ~7.5kL of slim, optional-feature-gated contracts, in-process task dispatch (used directly by Python, CLI, and future UIs per amended <code>ADR-0017</code>), and plot DTOs;
-        and <code>suites/</code> holds opt-in interop, parity, and perf suites excluded from default <code>--workspace</code> runs.
+        and <code>suites/</code> holds opt-in interop, parity, and perf suites excluded from default workspace runs via explicit <code>--exclude</code> flags or separate manifests.
       </p>
       <div class="graph-toolbar">
         <div class="pill-group">
@@ -1007,17 +1007,17 @@ details.evidence li + li { margin-top: 4px; }
             <ul style="margin:6px 0 0; padding-left:18px; color:var(--text-muted);">
               <li>35 flat crates in <code>crates/</code> + 2 orphan dirs</li>
               <li>18.5kL contract/runtime + <code>build.rs</code> probes leaked into <code>libs/</code></li>
-              <li>Python tasks must spawn 23 child binaries via <code>ApplicationCatalog</code></li>
+              <li>Python tasks must spawn 24 child binaries via <code>ApplicationCatalog</code></li>
               <li>1 / 13 <code>publish = true</code> crates actually publishable</li>
               <li>345 separate test link targets mixing unit/interop/parity/perf</li>
             </ul>
           </div>
           <div>
-            <strong>After (v3 Reviewed + ADR Updates)</strong>
+            <strong>After (v4 Reviewed + 12-Ticket Plan)</strong>
             <ul style="margin:6px 0 0; padding-left:18px; color:var(--text-muted);">
               <li>38 crates in <code>libs/{casacore,imaging,casa}</code>, <code>surfaces/</code>, <code>frontends/</code>, <code>dev/</code>, opt-in <code>suites/</code></li>
               <li>~7.5kL slim <code>surfaces/{casa-contracts,casa-tasks}</code>; zero <code>libs/</code> upward deps or <code>build.rs</code> probes</li>
-              <li>Python &amp; future UIs run tasks <strong>in-process</strong> via <code>surfaces/casa-tasks</code>; <code>casars-cli</code> standalone</li>
+              <li>Python &amp; future UIs run tasks <strong>in-process</strong> via <code>surfaces/casa-tasks</code>; <code>casars-cli</code> standalone (24 bins)</li>
               <li>28 / 28 <code>libs/*</code> crates 100% publishable with zero cycles</li>
               <li>5-tier test taxonomy (~40 link targets; opt-in <code>suites/</code> outside default runs)</li>
             </ul>
@@ -1027,7 +1027,7 @@ details.evidence li + li { margin-top: 4px; }
       <div class="graph-shell" style="margin-top:12px;">
         <div>
           <div class="svg-wrap">
-            <svg id="propSvg" viewBox="0 0 1080 760" role="img" aria-label="Proposed v3 38-crate clean-sheet architecture graph"></svg>
+            <svg id="propSvg" viewBox="0 0 1080 760" role="img" aria-label="Proposed v4 38-crate clean-sheet architecture graph"></svg>
           </div>
           <div class="legend-row">
             <span class="legend-swatch"><span class="swatch-box" style="color:var(--teal); background:var(--teal-soft)"></span> Tier 0: libs/casacore (11, publish=true)</span>
@@ -1064,21 +1064,21 @@ details.evidence li + li { margin-top: 4px; }
             <tbody>
               <tr><td><code>casacore::casa</code> (Arrays, Quanta, Record)</td><td><code>casa-core</code></td><td>Definitional values, units, pure measures</td></tr>
               <tr><td><code>casacore::casa</code> (AipsIO codec)</td><td><code>casa-aipsio</code></td><td>Publishable framing codec + C++ wire oracle target</td></tr>
-              <tr><td><code>casacore::scimath</code> (Fitting, PBMath, FFT)</td><td><code>casa-numerics</code> + <code>casa-fft</code></td><td>Beam/fit math stays FFTW-free; FFTW isolated</td></tr>
+              <tr><td><code>casacore::scimath</code> (Fitting, PBMath, FFT)</td><td><code>casa-numerics</code> + <code>casa-fft</code></td><td>Beam/polynomial/<code>uvcontsub</code> row fitting stays FFTW-free; FFTW isolated</td></tr>
               <tr><td><code>casacore::tables</code> (+ TaQL, LogSink)</td><td><code>casa-tables</code></td><td>CTDS storage managers, TaQL, locking</td></tr>
               <tr><td><code>casacore::measures</code> (MeasTable, Frame)</td><td><code>casa-measures</code></td><td>Measures runtime data &amp; table columns</td></tr>
               <tr><td><code>casacore::lattices</code></td><td><code>casa-lattices</code></td><td>N-D paged/temp arrays &amp; regions</td></tr>
               <tr><td><code>casacore::coordinates</code></td><td><code>casa-coordinates</code></td><td>WCS / Direction / Spectral / Stokes</td></tr>
-              <tr><td><code>casacore::images</code> (FITS, ImageExpr)</td><td><code>casa-images</code></td><td>Image persistence, beam metadata &amp; lazy LEL</td></tr>
+              <tr><td><code>casacore::images</code> (FITS, ImageExpr)</td><td><code>casa-images</code></td><td>Image persistence, beam metadata, <code>regrid_complex_plane</code> &amp; lazy LEL</td></tr>
               <tr><td><code>casacore::ms</code> + <code>msvis</code></td><td><code>casa-observation</code> + <code>casa-ms</code></td><td>Observation stream contract &amp; MS I/O</td></tr>
               <tr><td><code>casacpp::atmosphere</code> (ATM)</td><td><code>casa-atmosphere</code></td><td>Atmospheric transmission &amp; refractivity</td></tr>
               <tr><td><code>casacpp::components</code></td><td><code>casa-components</code></td><td>Sky component lists &amp; spectra</td></tr>
               <tr><td><code>casacpp::imageanalysis</code></td><td><code>casa-imageanalysis</code></td><td>immath, imregrid, moments, ComponentListImage, fitting</td></tr>
               <tr><td><code>casacpp::flagging</code></td><td><code>casa-flagging</code></td><td>Auto-flagging, shadowing, flag versions</td></tr>
-              <tr><td><code>casacpp::mstransform</code></td><td><code>casa-mstransform</code></td><td>Split, regrid, concat, <code>uvcontsub</code>, MSv2&harr;MSv4</td></tr>
-              <tr><td><code>casacpp::synthesis</code></td><td><code>libs/imaging/*</code> (<code>casa-imaging</code> facade)</td><td>ADR-0016 compiler-layered imaging + SDGrid</td></tr>
-              <tr><td><code>casacpp::calibration</code> (CalTables)</td><td><code>casa-calibration</code></td><td>Jones solvers, applycal, gencal, statwt, uvsub, wvr</td></tr>
-              <tr><td><code>casacpp::singledish</code></td><td><code>casa-singledish</code></td><td>ASAP/NRO import, baseline &amp; SD workflows</td></tr>
+              <tr><td><code>casacpp::mstransform</code></td><td><code>casa-mstransform</code></td><td>Split, regrid, concat, MS-transform <code>uvcontsub</code> policy, MSv2&harr;MSv4</td></tr>
+              <tr><td><code>casacpp::synthesis</code></td><td><code>libs/imaging/*</code> (<code>casa-imaging</code> facade)</td><td>ADR-0016 compiler-layered imaging + SDGrid + imaging continuum policy</td></tr>
+              <tr><td><code>casacpp::calibration</code> (CalTables)</td><td><code>casa-calibration</code></td><td>Jones solvers, <code>CalibraterLifecycle</code> SD solver/CalTable, ft, statwt, uvsub, wvr</td></tr>
+              <tr><td><code>casacpp::singledish</code></td><td><code>casa-singledish</code></td><td>Workflow composition, preparation, ASAP/NRO import above <code>casa-calibration</code></td></tr>
               <tr><td><code>casacpp::simulator</code></td><td><code>casa-simulation</code></td><td>Predict, corrupt, simobserve/alma</td></tr>
               <tr><td><code>casacpp::nrao</code> (VLA)</td><td><code>casa-vla</code></td><td>VLA archive reader</td></tr>
             </tbody>
@@ -1088,34 +1088,35 @@ details.evidence li + li { margin-top: 4px; }
     </div>
 
     <div class="card" style="margin-top:16px;">
-      <h3>Key Architectural Decisions &amp; Tradeoffs (v3)</h3>
+      <h3>Key Architectural Decisions &amp; Tradeoffs (v4)</h3>
       <div class="anatomy-grid" style="margin-top:10px;">
         <div class="wave-card">
           <h4>In-Process <code>surfaces/</code> + Disposable <code>frontends/</code></h4>
           <p style="margin:0; font-size:13px; color:var(--text-muted);">
-            Amending <code>ADR-0017</code> &amp; slimming <code>ADR-0006</code> collapses ~18.5kL of envelope/launcher boilerplate into ~7.5kL of typed <code>casa-contracts</code> + optional-feature-gated <code>casa-tasks</code>.
-            <code>casars.tasks</code> in Python, <code>casars-cli</code>, and any experimental Web/Notebook/MCP UI all dispatch in-process with GIL release, <code>Cancel</code> tokens, and shared caches.
+            Co-moving <code>surfaces/</code> extraction with all 24 standalone CLI shells in <code>frontends/casars-cli</code> prevents any intermediate Cargo package cycle.
+            Python switches <code>casars.tasks</code> in-process over <code>surfaces/casa-tasks</code> with owner-aware <code>clearcal</code> lock handoff, per-invocation <code>Cancel</code>/<code>SIGINT</code>, and shared caches before retiring the resolver.
           </p>
         </div>
         <div class="wave-card">
-          <h4>Preserving <code>libs/imaging/</code> &amp; Breaking Cycles</h4>
+          <h4>Preserving <code>libs/imaging/</code> &amp; Cutting Reverse Seams</h4>
           <p style="margin:0; font-size:13px; color:var(--text-muted);">
-            Keeping ADR-0016's Cargo boundaries preserves compile-time isolation and fast <code>CARGO_INCREMENTAL=0</code> builds while publishing all 8 crates.
-            Keeping <code>casa-imaging-runtime</code> below <code>casa-imaging-singledish</code> and <code>casa-imaging</code>, and placing <code>casa-singledish</code> above <code>casa-calibration</code>, eliminates both cycles cleanly.
+            <code>casa-imaging-runtime &rarr; casa-imaging-metal</code> stays unconditional across platforms (<code>objc2-metal</code> macOS-gated inside <code>metal</code>);
+            <code>ImageInterface</code> removes <code>TempImage &rarr; ComponentListImage</code> downcasts while keeping <code>regrid_complex_plane</code> in <code>casa-images</code>;
+            <code>casa-calibration</code> keeps its SD solver/CalTable semantics below workflow-level <code>casa-singledish</code>.
           </p>
         </div>
         <div class="wave-card">
           <h4>Keeping <code>casa-aipsio</code> &amp; <code>casa-fft</code> Separate</h4>
           <p style="margin:0; font-size:13px; color:var(--text-muted);">
             The C++ interop harness (<code>aipsio_oracle.rs</code>, <code>table_sync.rs</code>) tests raw AipsIO encoding directly, so keeping <code>casa-aipsio</code> small and <code>publish = true</code> beats hiding it.
-            Keeping pure beams in <code>casa-numerics</code> separate from <code>casa-fft</code> ensures beam-only callers never link FFTW.
+            Keeping pure beams and fitting in <code>casa-numerics</code> separate from <code>casa-fft</code> ensures beam/fit-only callers never link FFTW.
           </p>
         </div>
         <div class="wave-card">
-          <h4>Clean Domain Seams (<code>uvcontsub</code>, Flagging, Transforms)</h4>
+          <h4>Shared Fitter &amp; Clean Domain Seams</h4>
           <p style="margin:0; font-size:13px; color:var(--text-muted);">
-            Relocating <code>fit_and_subtract_continuum</code> (<code>uvcontsub</code>) out of <code>casa-imaging-operator</code> into <code>casa-mstransform</code> matches CASA's domain model;
-            <code>casa-flagging</code> &amp; <code>casa-mstransform</code> stay free of <code>casa-calibration</code> via their existing model-input traits.
+            Shared numerical <code>uvcontsub</code> row fitting lives in <code>casa-numerics</code> while selection/output policy stays with <code>casa-imaging-operator</code> and <code>casa-mstransform</code>.
+            Plot model-selection inputs stay in domain crates while plot documents assemble in <code>surfaces/casa-plot-data</code> adapters.
           </p>
         </div>
       </div>
@@ -1206,7 +1207,7 @@ details.evidence li + li { margin-top: 4px; }
             <li><strong>Tests in the wrong tier:</strong> <code>casars-imager</code> (a 2,130L CLI wrapper) holds <strong>21,467 lines of tests</strong> (301 tests across 48 files) — most of the T1 imaging suite.</li>
             <li><strong>Zero black-box API suites:</strong> <code>casa-coordinates</code> (219 unit, 0 integ), <code>casa-lattices</code> (136 / 0), <code>casa-numerics</code> (57 / 0), and <code>casa-observation</code> (43 / 0) have no <code>tests/</code> suites verifying their public facades.</li>
             <li><strong>Interop features pollute libraries:</strong> 6 library crates carry <code>cpp-interop-tests</code> features and <code>casa-test-support</code> dev-deps that belong in external interop suites.</li>
-            <li><strong>Special binary/allocator boundaries:</strong> <code>pass_laws/main.rs</code> installs a custom <code>#[global_allocator]</code>; <code>lock_multiprocess.rs</code> uses <code>env!("CARGO_BIN_EXE_lock_helper")</code>; <code>--workspace</code> in <code>scripts/test-workspace.sh</code> runs everything unless opt-in crates are excluded.</li>
+            <li><strong>Special binary/allocator boundaries:</strong> <code>pass_laws/main.rs</code> &amp; private <code>batch_source_memory.rs</code> install custom allocators (run private allocation laws inside the owning library's isolated test process without exposing <code>pub mod *_law</code>); <code>lock_multiprocess.rs</code> uses <code>CARGO_BIN_EXE_lock_helper</code> and <code>interrupt.rs</code> uses <code>CARGO_BIN_EXE_casars-imager</code> (co-located in <code>casars-cli/tests/</code>); <code>has_casacore_cpp</code> + <code>casacore-held-table-reader</code> belong with <code>suites/casacore-interop</code>; explicit <code>--exclude</code> in <code>scripts/test-workspace.sh</code> (not <code>default-members</code>) excludes opt-in suites from <code>--workspace</code>.</li>
           </ul>
         </div>
       </div>
@@ -1229,26 +1230,26 @@ details.evidence li + li { margin-top: 4px; }
             <tr>
               <td><strong>2. Public API &amp; Memory Laws</strong></td>
               <td><code>&lt;crate&gt;/tests/api.rs</code> (+ explicit allocator/bin exceptions)</td>
-              <td>Black-box: exercises <em>only</em> the crate's curated public API, plus required admission/memory counting laws</td>
-              <td><strong>Default 1 binary per crate</strong> (nextest runs tests in parallel); separate targets kept <em>only</em> for custom <code>#[global_allocator]</code> or <code>CARGO_BIN_EXE_*</code> isolation; zero <code>*_law</code> leaks</td>
+              <td>Black-box: exercises <em>only</em> the crate's curated public API, plus isolated allocation-counting laws</td>
+              <td><strong>Default 1 binary per crate</strong> (nextest runs tests in parallel); separate targets kept <em>only</em> for custom <code>#[global_allocator]</code> or <code>CARGO_BIN_EXE_*</code> isolation; private laws stay private; zero <code>*_law</code> leaks</td>
             </tr>
             <tr>
               <td><strong>3. End-to-End Surface Tests</strong></td>
               <td><code>frontends/casars-cli/tests/</code> &amp; <code>frontends/casars-python/tests/</code></td>
-              <td>Full workflows through <code>casars.tasks</code>, <code>casars.tools</code>, and standalone <code>casars-cli</code></td>
+              <td>Full workflows through <code>casars.tasks</code>, <code>casars.tools</code>, and standalone <code>casars-cli</code> (incl. <code>CARGO_BIN_EXE_casars-imager</code> tests)</td>
               <td>Tests observable products &amp; exit codes; invariant across internal crate splits/merges</td>
             </tr>
             <tr>
               <td><strong>4. Opt-In Interop &amp; CASA Parity</strong></td>
-              <td><code>suites/casacore-interop/</code> &amp; <code>suites/casa-parity/</code> (excluded from default <code>--workspace</code>)</td>
-              <td>2&times;2 C++ <code>casacore</code> matrix (<code>RR/RC/CR/CC</code>) &amp; CASA 6.7 oracle parity (<code>tools/casa-compat</code>)</td>
-              <td>Excluded from default <code>scripts/test-workspace.sh</code>; invoked explicitly via <code>-p</code> and release scripts; removes <code>cpp-interop-tests</code> features from <code>libs/*</code></td>
+              <td><code>suites/casacore-interop/</code> &amp; <code>suites/casa-parity/</code> (excluded via <code>--exclude</code> or separate manifests)</td>
+              <td>2&times;2 C++ <code>casacore</code> matrix (<code>RR/RC/CR/CC</code>, <code>has_casacore_cpp</code>, <code>casacore-held-table-reader</code>) &amp; CASA 6.7 oracle parity</td>
+              <td>Excluded from default <code>scripts/test-workspace.sh</code> via explicit <code>--exclude</code> (or separate manifests); invoked via <code>-p</code> &amp; release scripts; removes <code>cpp-interop-tests</code> features from <code>libs/*</code></td>
             </tr>
             <tr>
               <td><strong>5. Opt-In Performance Suites</strong></td>
               <td><code>suites/perf/</code> + <code>benches/</code> + <code>tools/perf/</code></td>
               <td>Throughput benchmarks, CPU/Metal parity timing, large workload scaling</td>
-              <td>Excluded from default <code>--workspace</code> runs; always compiled optimized</td>
+              <td>Excluded from default <code>--workspace</code> runs via explicit <code>--exclude</code> or separate manifests; always compiled optimized</td>
             </tr>
           </tbody>
         </table>
@@ -1259,18 +1260,18 @@ details.evidence li + li { margin-top: 4px; }
       <h3>Should Tests Be Restructured First? — The Two-Beat Sequence</h3>
       <div class="two-col" style="margin-top:8px;">
         <div class="wave-card">
-          <h4>Beat 1 (Step 0 — Pin Existing Gates Before Moving Code)</h4>
+          <h4>Beat 1 (Ticket <code>ARCH-01</code> — Fix Red Baseline &amp; Isolate Suites)</h4>
           <ul>
-            <li>Pin the existing acceptance commands as the immutable regression net: <code>test-task-cli-hosts.py</code>, <code>cargo test -p casars-python</code>, <code>test-python-package.sh</code>, <code>test-install-suite.sh</code>, <code>test-casa-inventory.sh</code>, <code>test-release-cpp-interop.sh</code>, imaging T0/T1/T1.5 &amp; bounded-write laws.</li>
-            <li>Create opt-in <code>suites/{casacore-interop,casa-parity,perf}</code> (excluded from default <code>--workspace</code>) and move each suite together with its invoking script.</li>
-            <li>Route all test logs to <code>target/test-logs/</code> so crate roots stay clean.</li>
+            <li>Fix <code>predictcomp</code> in <code>scripts/test-task-cli-hosts.py</code> first so all <strong>24</strong> host executables match a green baseline alongside <code>cargo test -p casars-python</code>, <code>test-python-package.sh</code>, <code>test-install-suite.sh</code>, <code>test-casa-inventory.sh</code>, <code>test-release-cpp-interop.sh</code>, and imaging T0/T1/T1.5.</li>
+            <li>Create opt-in <code>suites/{casacore-interop,casa-parity,perf}</code> using explicit <code>--exclude</code> flags in <code>scripts/test-workspace.sh</code> (or separate manifests; NOT <code>default-members</code>), wire <code>has_casacore_cpp</code> + <code>casacore-held-table-reader</code> into <code>suites/casacore-interop</code>, and run one named C++ interop test.</li>
+            <li>Route all test logs to <code>target/test-logs/</code> and update repo scripts to scan new workspace roots in the same PR.</li>
           </ul>
         </div>
         <div class="wave-card">
-          <h4>Beat 2 (Waves 1–4 — Per Crate As Modules Move)</h4>
+          <h4>Beat 2 (<code>ARCH-02</code>–<code>ARCH-08</code> — Per Crate As Modules Move)</h4>
           <ul>
             <li><strong>Do not</strong> rewrite all 7,016 unit/API tests in place before moving crates — you would update imports twice.</li>
-            <li>Instead, in the same PR that lands each reorganized crate, collapse its fragmented <code>tests/*.rs</code> into <strong><code>tests/api.rs</code></strong> (keeping documented allocator/bin targets separate), retain memory counting laws as required checks, and delete its <code>pub mod *_law</code> / <code>#[cfg(test)]</code> leaks.</li>
+            <li>Instead, in the same PR that lands each moved crate, co-locate <code>CARGO_BIN_EXE_*</code> tests with their binary (<code>frontends/casars-cli/tests/</code>), collapse fragmented <code>tests/*.rs</code> into <code>tests/api.rs</code> (keeping isolated allocator targets separate), run private allocation laws inside the owning library's isolated test process, and delete <code>pub mod *_law</code> / <code>#[cfg(test)]</code> leaks.</li>
           </ul>
         </div>
       </div>
@@ -1334,7 +1335,7 @@ details.evidence li + li { margin-top: 4px; }
             <tr><td class="num">3</td><td><strong>Zero binaries in library crates</strong></td><td>All crates in <code>libs/*</code> &amp; <code>surfaces/*</code></td><td>Assert <code>[[bin]]</code>, <code>src/main.rs</code>, and <code>src/bin/</code> are empty</td></tr>
             <tr><td class="num">4</td><td><strong>100% publishable DAG</strong></td><td>All <code>publish = true</code> crates</td><td>Every normal &amp; build workspace dep must have <code>publish = true</code> + explicit <code>version</code>; checked via <code>cargo package</code></td></tr>
             <tr><td class="num">5</td><td><strong>Tier &amp; ADR-0016 imaging DAG</strong></td><td><code>libs/casacore</code>, <code>libs/imaging</code>, <code>libs/casa</code></td><td>Enforce strict downward tiers + layer rules inside <code>libs/imaging/*</code></td></tr>
-            <tr><td class="num">6</td><td><strong>Definitional &amp; device boundaries</strong></td><td><code>casa-core</code>, <code>casa-coordinates</code>, <code>imaging-metal</code></td><td>Zero file/net/env/thread I/O in definitional crates; macOS <code>objc2-metal</code> confined to <code>casa-imaging-metal</code></td></tr>
+            <tr><td class="num">6</td><td><strong>Definitional &amp; device boundaries</strong></td><td><code>casa-core</code>, <code>casa-coordinates</code>, <code>imaging-metal</code></td><td>Zero file/net/env/thread I/O in definitional crates; <code>runtime &rarr; imaging-metal</code> unconditional across platforms, <code>objc2-metal</code> macOS-gated inside <code>metal</code></td></tr>
             <tr><td class="num">7</td><td><strong>Clean test targets &amp; no interop features in libs</strong></td><td>All crates in <code>libs/*</code></td><td>Require <code>tests/api.rs</code> default (explicit allowlist only for allocator/<code>CARGO_BIN_EXE</code> targets); forbid <code>cpp-interop-tests</code> features</td></tr>
             <tr><td class="num">8</td><td><strong>Amended <code>ADR-0017</code> Python boundary</strong></td><td><code>frontends/casars-python</code></td><td><code>casars.tools</code> calls <code>libs/*</code> &amp; <code>casars.tasks</code> calls <code>surfaces/casa-tasks</code> in-process (GIL released); zero <code>casa-aipsio</code> imports</td></tr>
             <tr><td class="num">9</td><td><strong>Docs lint &amp; metadata</strong></td><td>All crates in <code>libs/*</code> &amp; <code>surfaces/*</code></td><td>Require <code>#![warn(missing_docs)]</code>, <code>README.md</code>, <code>keywords</code>, <code>categories</code>, and <code>[package.metadata.docs.rs]</code></td></tr>
@@ -1360,22 +1361,22 @@ details.evidence li + li { margin-top: 4px; }
       <div class="table-scroll">
         <table>
           <thead>
-            <tr><th>ADR</th><th>Disposition</th><th>Current Normative Rule</th><th>Why Change / Keep</th><th>Exact v3 Action</th></tr>
+            <tr><th>ADR</th><th>Disposition</th><th>Current Normative Rule</th><th>Why Change / Keep</th><th>Exact v4 Action</th></tr>
           </thead>
           <tbody>
             <tr>
               <td><code>ADR-0017</code><br><span style="font-size:11.5px; color:var(--text-muted)">Python-first surface</span></td>
               <td><span class="badge b-bad">Amend</span></td>
               <td><code>casars.tools</code> uses in-process PyO3; <code>casars.tasks</code> must spawn a cataloged child-process executable per call (<code>--json-run -</code>).</td>
-              <td>Forces 23-binary discovery/version-lock machinery, prevents <code>MeasuresRuntime</code> &amp; table-cache reuse across task calls, and blocks clean in-process UI dispatch.</td>
-              <td>Dispatch <code>casars.tasks</code> <strong>in-process</strong> via PyO3 over <code>surfaces/casa-tasks</code> (release GIL + wire <code>SIGINT</code> to <code>Cancel</code>); keep <code>casars-cli</code> standalone; delete legacy <code>casars.data.Image</code>/<code>Table</code> note (#839).</td>
+              <td>Forces 24-binary discovery/version-lock machinery, prevents <code>MeasuresRuntime</code> &amp; table-cache reuse across task calls, and blocks clean in-process UI dispatch.</td>
+              <td>Dispatch <code>casars.tasks</code> <strong>in-process</strong> via PyO3 over <code>surfaces/casa-tasks</code> with owner-aware <code>clearcal</code> lock handoff, per-invocation <code>Cancel</code>/<code>SIGINT</code> cleanup, and <code>Last</code> isolation; keep <code>casars-cli</code> standalone; delete legacy <code>casars.data</code> note (#839).</td>
             </tr>
             <tr>
               <td><code>ADR-0006</code><br><span style="font-size:11.5px; color:var(--text-muted)">Parameter model &amp; profiles</span></td>
               <td><span class="badge b-warn">Trim</span></td>
               <td>One Rust parameter model + sparse TOML profiles; implemented via <code>ProviderContractEnvelope</code>, <code>build.rs</code> JSON probes, and <code>ApplicationCatalog</code>.</td>
               <td>The envelope/fingerprinting/launcher stack (~18.5kL) is leftover scaffolding from the retired Mac GUI &amp; TUI, violating <code>ADR-0020</code>.</td>
-              <td>Keep one Rust parameter model + sparse TOML; retire <code>ProviderContractEnvelope</code>, <code>build.rs</code> probes (<code>IMAGE_PROVIDER_PROBES</code>), and binary resolver—shrinking <code>surfaces/</code> from 18.5kL to ~7.5kL.</td>
+              <td>Keep one Rust parameter model + sparse TOML; retire <code>ProviderContractEnvelope</code>, <code>build.rs</code> probes (<code>IMAGE_PROVIDER_PROBES</code>), and the 24-binary launcher after Python cutover—shrinking <code>surfaces/</code> from 18.5kL to ~7.5kL.</td>
             </tr>
             <tr>
               <td><code>ADR-0016</code><br><span style="font-size:11.5px; color:var(--text-muted)">Imaging foundation</span></td>
@@ -1395,8 +1396,8 @@ details.evidence li + li { margin-top: 4px; }
               <td><code>ADR-0011</code><br><span style="font-size:11.5px; color:var(--text-muted)">Continuum-line coupling</span></td>
               <td><span class="badge b-info">Clean Up</span></td>
               <td>Marked <code>Status: retired</code> yet carries <code>Truth class: normative</code> and pins <code>fit_and_subtract_continuum</code> inside <code>casa-imaging-operator</code>.</td>
-              <td>Visibility-domain <code>uvcontsub</code> belongs in visibility transforms, not inside the imaging gridding operator.</td>
-              <td>Drop <code>Truth class: normative</code> on the retired ADR and relocate <code>fit_and_subtract_continuum</code> to <code>casa-mstransform</code>.</td>
+              <td>Numerical row fitting can be shared cleanly in <code>casa-numerics</code> while each caller keeps its own selection and output semantics.</td>
+              <td>Drop <code>Truth class: normative</code> on the retired ADR; place the shared numerical row fit in <code>casa-numerics</code> with imaging continuum policy in <code>casa-imaging-operator</code> and MS transform policy in <code>casa-mstransform</code>.</td>
             </tr>
             <tr>
               <td><code>ADR-0008</code><br><span style="font-size:11.5px; color:var(--text-muted)">Casacore storage</span></td>
@@ -1429,7 +1430,7 @@ details.evidence li + li { margin-top: 4px; }
   <section id="crates-io" class="report-section">
     <div class="section-head">
       <h2>8. Crates.io Readiness, Documentation Balance &amp; Execution Roadmap</h2>
-      <span class="section-tag">Verified cargo package + Linux docs.rs + 5-wave plan</span>
+      <span class="section-tag">Verified cargo package + Linux docs.rs + 12-ticket plan</span>
     </div>
 
     <div class="two-col">
@@ -1438,7 +1439,7 @@ details.evidence li + li { margin-top: 4px; }
         <p style="margin:0 0 8px; font-size:13.5px; color:var(--text-muted);">
           The <code>docs.rs</code> Linux container already ships <code>libfftw3-dev</code>, but <code>crates/casa-fft/build.rs</code> probes both precisions and forces static threaded linking (<code>fftw3f_threads</code>, <code>fftw3_threads</code>).
           A top-level crate's <code>[package.metadata.docs.rs]</code> cannot reconfigure dependency build scripts—so <code>casa-fft/build.rs</code> itself must handle <code>DOCS_RS</code> cleanly,
-          <code>casa-imaging-metal</code> preserves its macOS target gate, and every normal <em>and</em> build path dependency specifies a registry <code>version</code>:
+          <code>casa-imaging-metal</code> exports a portable unavailable backend on Linux and gates only <code>objc2-metal</code> under <code>target_os = "macos"</code>, and every normal <em>and</em> build path dependency specifies a registry <code>version</code>:
         </p>
         <pre><code># Root Cargo.toml
 [workspace.package]
@@ -1454,15 +1455,14 @@ description = "Native Rust casacore &amp; CASA radio astronomy libraries"
 // When std::env::var_os("DOCS_RS").is_some(), emit cfg/dynamic link hints
 // compatible with docs.rs's Linux libfftw3-dev instead of static *_threads.
 
-# libs/imaging/casa-imaging-metal/Cargo.toml
+# libs/imaging/casa-imaging-metal/Cargo.toml (exports portable unavailable backend elsewhere)
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-metal = "0.3"
 
-# libs/imaging/casa-imaging-runtime/Cargo.toml
+# libs/imaging/casa-imaging-runtime/Cargo.toml (unconditional across platforms)
 [dependencies]
 casa-core = { path = "../../casacore/casa-core", version = "0.28.0" }
 casa-imaging-model = { path = "../casa-imaging-model", version = "0.28.0" }
-[target.'cfg(target_os = "macos")'.dependencies]
 casa-imaging-metal = { path = "../casa-imaging-metal", version = "0.28.0" }</code></pre>
       </div>
 
@@ -1497,46 +1497,44 @@ let sel = ms.select(&amp;MsSelection::new().spw("0:10~50"))?;
     </div>
 
     <div class="card" style="margin-top:16px;">
-      <h3>5-Wave Clean-Cut Execution Roadmap</h3>
+      <h3>12-Ticket Hydrogen-Proof Execution Roadmap (Post-Ticket Plan Review After Every Merge)</h3>
       <div class="wave-list" style="margin-top:10px;">
         <div class="wave-card">
-          <h4>Wave 0: ADRs, Hygiene &amp; Test Safety Net</h4>
+          <h4>ARCH-01: Baseline, ADRs &amp; Opt-In Suites</h4>
           <ul>
-            <li>Record ADR amendments (<code>0017</code>, <code>0006</code>, <code>0016</code>, <code>0009</code>, <code>0011</code>) so clean-sheet cuts match policy.</li>
-            <li>Pin existing acceptance gates and create opt-in <code>suites/{casacore-interop,casa-parity,perf}</code> (excluded from default <code>--workspace</code>).</li>
-            <li>Delete orphan dirs, <code>apps/casars-mac</code>, stale <code>site/</code>, and 26.8k <code>*.log</code> files; route logs to <code>target/test-logs/</code>.</li>
+            <li>Fix <code>predictcomp</code> in <code>test-task-cli-hosts.py</code> (green 24-host baseline); amend ADRs (<code>0017</code>, <code>0006</code>, <code>0016</code>, <code>0009</code>, <code>0011</code>).</li>
+            <li>Clean orphans &amp; route logs to <code>target/test-logs/</code>; create <code>dev/</code> + opt-in <code>suites/*</code> using explicit <code>--exclude</code> (not <code>default-members</code>), wiring <code>has_casacore_cpp</code> + <code>casacore-held-table-reader</code> and running one C++ interop test; update root-scanning scripts.</li>
           </ul>
         </div>
         <div class="wave-card">
-          <h4>Wave 1: Slim Surfaces &amp; In-Process Python</h4>
+          <h4>ARCH-02 &amp; ARCH-03: Surfaces, 24 CLI Bins &amp; In-Process Python</h4>
           <ul>
-            <li>Create feature-gated <code>surfaces/{casa-contracts,casa-tasks,casa-plot-data}</code>; delete <code>ProviderContractEnvelope</code>, <code>build.rs</code> probes, and mandatory launcher scaffolding.</li>
-            <li>Move all 23 task binaries into feature-gated <code>frontends/casars-cli</code> (proved with <code>exportfits</code>-only build); route <code>casars.tasks</code> in-process through PyO3.</li>
-            <li>Move dev probes into <code>dev/casa-dev-tools</code>; relocate <code>casa-test-support</code> to <code>dev/</code>.</li>
+            <li><strong>ARCH-02:</strong> Co-move slim feature-gated <code>surfaces/{casa-contracts,casa-tasks,casa-plot-data}</code> AND all <strong>24</strong> CLI shells into <code>frontends/casars-cli</code> together (zero package cycles), keeping model-selection inputs in domain crates &amp; resolver alive until <code>ARCH-03</code>; co-locate <code>CARGO_BIN_EXE_*</code> tests.</li>
+            <li><strong>ARCH-03:</strong> Cut <code>frontends/casars-python</code> tasks over in-process: owner-aware <code>clearcal</code> lock handoff, per-invocation <code>Cancel</code>/<code>SIGINT</code> + cleanup, Python <code>Last</code> isolation, steady-state &amp; installed-wheel checks, narrow <code>casa-tables</code> probe, retire resolver.</li>
           </ul>
         </div>
         <div class="wave-card">
-          <h4>Wave 2: Split God Crates &amp; Thin Python</h4>
+          <h4>ARCH-04 to ARCH-06: Casacore &amp; MS Splits</h4>
           <ul>
-            <li>Extract <code>casa-imageanalysis</code> (incl. <code>ComponentListImage</code> &amp; <code>casars-python/tools/image</code> logic), <code>casa-flagging</code>, and <code>casa-mstransform</code> (moving <code>uvcontsub</code> from <code>casa-imaging-operator</code>).</li>
-            <li>Assemble high-level <code>casa-singledish</code> above <code>casa-calibration</code> + <code>casa-imaging-singledish</code>.</li>
-            <li>Collapse each moved crate's <code>tests/*.rs</code> into <code>tests/api.rs</code>; remove <code>casa-aipsio</code> &amp; app deps from <code>casars-python</code>.</li>
+            <li><strong>ARCH-04:</strong> <code>libs/casacore/</code> foundations (<code>casa-core</code>, <code>casa-aipsio</code>, <code>casa-numerics</code> [+ shared <code>uvcontsub</code> row fit], <code>casa-fft</code>, <code>casa-tables</code>, <code>casa-measures</code>, <code>casa-lattices</code>, <code>casa-coordinates</code>, <code>casa-observation</code>).</li>
+            <li><strong>ARCH-05:</strong> Slim <code>casa-images</code> (keep <code>regrid_complex_plane</code>, move component behavior behind <code>ImageInterface</code>), create <code>casa-imageanalysis</code>, move <code>casa-components</code>.</li>
+            <li><strong>ARCH-06:</strong> Split <code>casa-ms</code> (+ <code>casa-measures</code>), <code>casa-flagging</code> (+ <code>casa-tables</code>), <code>casa-mstransform</code> (+ <code>casa-tables</code>), move <code>casa-vla</code> &amp; <code>casa-atmosphere</code>.</li>
           </ul>
         </div>
         <div class="wave-card">
-          <h4>Wave 3: Core &amp; Imaging Facade Polish</h4>
+          <h4>ARCH-07 to ARCH-09: Imaging, Calibration/SD &amp; Python Thinning</h4>
           <ul>
-            <li>Merge <code>values</code>+<code>types</code> &rarr; <code>casa-core</code>; merge <code>measures-data</code>+<code>tools</code>+<code>table_measures</code> &rarr; <code>casa-measures</code>; keep <code>casa-aipsio</code>, <code>casa-numerics</code> &amp; <code>casa-fft</code> clean &amp; publishable.</li>
-            <li>Add explicit <code>casa-ms &rarr; casa-measures</code> edge; drop unused <code>casa-logging</code> &amp; <code>#[cfg(test)]</code> hook.</li>
-            <li>Move 8 ADR-0016 imaging crates to <code>libs/imaging/</code> (all <code>publish = true</code>), rename <code>casa-imaging-application</code> &rarr; <code>casa-imaging</code>, delete 8 leaked <code>*_law</code> modules.</li>
+            <li><strong>ARCH-07:</strong> Move 8 ADR-0016 crates to <code>libs/imaging/</code> (<code>publish=true</code>, <code>casa-imaging</code> facade, delete leaked <code>*_law</code> mods); keep unconditional <code>runtime &rarr; metal</code> + Linux build check; keep private allocation laws isolated inside owning library.</li>
+            <li><strong>ARCH-08:</strong> Slim <code>casa-calibration</code> (retaining SD solver &amp; CalTable subtype semantics), create workflow-level <code>casa-singledish</code> above it, move <code>casa-simulation</code> (+ <code>casa-flagging</code> &amp; <code>casa-imageanalysis</code> edges).</li>
+            <li><strong>ARCH-09:</strong> Thin <code>casars-python/src/tools/image</code> (27.4kL) into <code>casa-imageanalysis</code>.</li>
           </ul>
         </div>
         <div class="wave-card">
-          <h4>Wave 4: Crates.io, Docs &amp; File Splits</h4>
+          <h4>ARCH-10 to ARCH-12: Guardrails, File Splits &amp; Comprehensive Gate</h4>
           <ul>
-            <li>Split 50 oversized files (&gt;1,500L) &amp; dual <code>x.rs</code>+<code>x/</code> pairs; empty allowlist.</li>
-            <li>Enable <code>#![warn(missing_docs)]</code> across <code>libs/*</code> &amp; <code>surfaces/*</code>; add spare <code>README.md</code>, versioned deps &amp; <code>DOCS_RS</code> fix in <code>casa-fft/build.rs</code>.</li>
-            <li>Verify <code>cargo package</code> / dry-run publish across all 28 <code>libs/*</code> + Linux <code>cargo doc</code> + workspace <code>arch-check</code>.</li>
+            <li><strong>ARCH-10:</strong> Deploy workspace-wide <code>scripts/check-workspace-arch.py</code> enforcing all invariants across the new roots.</li>
+            <li><strong>ARCH-11:</strong> Burn down the 50 files &gt;1,500L and 196 dual <code>foo.rs</code>+<code>foo/</code> splits in bounded per-crate-family PRs (emptying the allowlist).</li>
+            <li><strong>ARCH-12:</strong> Complete <code>crates.io</code> / <code>docs.rs</code> metadata, <code>#![warn(missing_docs)]</code>, spare+deep docs, <code>cargo package</code> + Linux <code>cargo doc</code>, update docs, and run <code>just verify</code> + install/interop/parity gates.</li>
           </ul>
         </div>
       </div>
@@ -1624,28 +1622,28 @@ let sel = ms.select(&amp;MsSelection::new().spw("0:10~50"))?;
     return reasons;
   }
 
-  // --- Proposed v3 38-Crate Verified DAG across 6 Visual Tiers ---
+  // --- Proposed v4 38-Crate Verified DAG across 6 Visual Tiers ---
   const PROPOSED_CRATES = [
     // Tier 0: libs/casacore/ (11 crates, ALL publish=true)
     {name:"casa-core",dir:"libs/casacore/casa-core",tier:0,publish:true,est:"19.8kL",deps:[],role:"Definitional values, arrays, records, quanta, pure measures (zero I/O)",from:"casa-values + casa-types"},
     {name:"casa-aipsio",dir:"libs/casacore/casa-aipsio",tier:0,publish:true,est:"3.5kL",deps:["casa-core"],role:"Small publishable AipsIO framing codec (supports C++ byte-level oracle)",from:"casa-aipsio (promoted publish=true)"},
-    {name:"casa-numerics",dir:"libs/casacore/casa-numerics",tier:0,publish:true,est:"5.7kL",deps:[],role:"Linear algebra fitting & pure primary beam curves (zero FFTW, dead code removed)",from:"casa-numerics (promoted publish=true)"},
+    {name:"casa-numerics",dir:"libs/casacore/casa-numerics",tier:0,publish:true,est:"6.0kL",deps:[],role:"Linear algebra, shared uvcontsub numerical row fit & pure primary beam curves (zero FFTW, dead code removed)",from:"casa-numerics (promoted publish=true) + shared uvcontsub numerical row fit"},
     {name:"casa-fft",dir:"libs/casacore/casa-fft",tier:0,publish:true,est:"0.8kL",deps:[],role:"Standalone FFTW wrapper (build.rs handles DOCS_RS on Linux cleanly)",from:"casa-fft"},
     {name:"casa-tables",dir:"libs/casacore/casa-tables",tier:0,publish:true,est:"103kL",deps:["casa-core","casa-aipsio"],role:"CTDS storage managers, TaQL, locking, log_table sink & table-header probe",from:"casa-tables + casa-logging(sink)"},
     {name:"casa-measures",dir:"libs/casacore/casa-measures",tier:0,publish:true,est:"5.0kL",deps:["casa-core","casa-tables"],role:"IERS/ephemeris runtime tables & table_measures column persistence",from:"casa-measures-data + casa-measures-tools(lib) + table_measures"},
     {name:"casa-lattices",dir:"libs/casacore/casa-lattices",tier:0,publish:true,est:"9.7kL",deps:["casa-core","casa-tables"],role:"N-D paged/temp arrays, traversal & lattice expressions",from:"casa-lattices"},
     {name:"casa-coordinates",dir:"libs/casacore/casa-coordinates",tier:0,publish:true,est:"18.9kL",deps:["casa-core"],role:"Definitional WCS, direction, spectral, Stokes & FITS coordinate headers",from:"casa-coordinates"},
-    {name:"casa-images",dir:"libs/casacore/casa-images",tier:0,publish:true,est:"36kL",deps:["casa-core","casa-numerics","casa-tables","casa-lattices","casa-coordinates"],role:"PagedImage, TempImage, FITS/MIRIAD I/O, beam metadata & lazy ImageExpr",from:"casa-images (slimmed; analysis & build.rs removed)"},
+    {name:"casa-images",dir:"libs/casacore/casa-images",tier:0,publish:true,est:"36.5kL",deps:["casa-core","casa-numerics","casa-tables","casa-lattices","casa-coordinates"],role:"PagedImage, TempImage (ImageInterface), FITS/MIRIAD I/O, beam metadata, regrid_complex_plane & lazy ImageExpr",from:"casa-images (slimmed; analysis & build.rs removed)"},
     {name:"casa-observation",dir:"libs/casacore/casa-observation",tier:0,publish:true,est:"9.2kL",deps:["casa-core"],role:"Shared MSv2/MSv4 observation catalogue, AccessRequest & VisibilityBatch",from:"casa-observation"},
     {name:"casa-ms",dir:"libs/casacore/casa-ms",tier:0,publish:true,est:"55kL",deps:["casa-core","casa-numerics","casa-tables","casa-measures","casa-coordinates","casa-observation"],role:"MSv2/v4 persistence, subtables, selection, VisibilityBuffer & write_session",from:"casa-ms (slimmed; +casa-measures edge)"},
 
     // Tier 1: libs/imaging/ (8 crates, ALL publish=true, ADR-0016 compiler-enforced DAG)
     {name:"casa-imaging-model",dir:"libs/imaging/casa-imaging-model",tier:1,publish:true,est:"13.3kL",deps:["casa-core","casa-coordinates","casa-observation"],role:"Request science, CompiledProblem & BatchGeometry (ADR-0016)",from:"casa-imaging-model"},
-    {name:"casa-imaging-operator",dir:"libs/imaging/casa-imaging-operator",tier:1,publish:true,est:"21.5kL",deps:["casa-core","casa-numerics","casa-fft","casa-coordinates","casa-images","casa-imaging-model"],role:"Measurement operator, 4 kernel sets, GridBackend & CPU gridding (uvcontsub moved)",from:"casa-imaging-operator (uvcontsub moved to casa-mstransform)"},
+    {name:"casa-imaging-operator",dir:"libs/imaging/casa-imaging-operator",tier:1,publish:true,est:"21.5kL",deps:["casa-core","casa-numerics","casa-fft","casa-coordinates","casa-images","casa-imaging-model"],role:"Measurement operator, 4 kernel sets, GridBackend, CPU gridding & imaging continuum policy (calls casa-numerics fit)",from:"casa-imaging-operator (numerical row fit shared via casa-numerics)"},
     {name:"casa-imaging-deconvolution",dir:"libs/imaging/casa-imaging-deconvolution",tier:1,publish:true,est:"16.1kL",deps:["casa-core","casa-numerics","casa-fft","casa-coordinates","casa-imaging-model"],role:"MajorCycle, model lifecycle, masks & minor-cycle solvers",from:"casa-imaging-deconvolution"},
     {name:"casa-imaging-products",dir:"libs/imaging/casa-imaging-products",tier:1,publish:true,est:"9.8kL",deps:["casa-core","casa-numerics","casa-fft","casa-coordinates","casa-images","casa-imaging-model","casa-imaging-deconvolution"],role:"Normalization, restoration, Taylor/PB products & CASA image writer",from:"casa-imaging-products"},
-    {name:"casa-imaging-metal",dir:"libs/imaging/casa-imaging-metal",tier:1,publish:true,est:"2.6kL",deps:["casa-core","casa-numerics","casa-imaging-operator"],role:"macOS target-gated Metal GridBackend (sole GPU crate)",from:"casa-imaging-metal"},
-    {name:"casa-imaging-runtime",dir:"libs/imaging/casa-imaging-runtime",tier:1,publish:true,est:"15.1kL",deps:["casa-core","casa-tables","casa-lattices","casa-ms","casa-imaging-model","casa-imaging-operator","casa-imaging-deconvolution","casa-imaging-products","casa-imaging-metal"],role:"Shared execution runtime, admission & worker team (below both gridders)",from:"casa-imaging-runtime"},
+    {name:"casa-imaging-metal",dir:"libs/imaging/casa-imaging-metal",tier:1,publish:true,est:"2.6kL",deps:["casa-core","casa-numerics","casa-imaging-operator"],role:"Cross-platform Metal backend (portable unavailable stub on Linux; objc2-metal macOS-gated)",from:"casa-imaging-metal"},
+    {name:"casa-imaging-runtime",dir:"libs/imaging/casa-imaging-runtime",tier:1,publish:true,est:"15.1kL",deps:["casa-core","casa-tables","casa-lattices","casa-ms","casa-imaging-model","casa-imaging-operator","casa-imaging-deconvolution","casa-imaging-products","casa-imaging-metal"],role:"Shared execution runtime, admission & worker team (unconditional metal dep; below both gridders)",from:"casa-imaging-runtime"},
     {name:"casa-imaging-singledish",dir:"libs/imaging/casa-imaging-singledish",tier:1,publish:true,est:"2.5kL",deps:["casa-core","casa-numerics","casa-imaging-operator","casa-imaging-runtime"],role:"SDGrid & adjoint total-power degridder (below imaging & calibration)",from:"casa-imaging-singledish"},
     {name:"casa-imaging",dir:"libs/imaging/casa-imaging",tier:1,publish:true,est:"43kL",deps:["casa-core","casa-numerics","casa-coordinates","casa-images","casa-observation","casa-ms","casa-imaging-model","casa-imaging-operator","casa-imaging-deconvolution","casa-imaging-products","casa-imaging-runtime","casa-imaging-singledish"],role:"Curated developer-facing imaging facade (8 leaked *_law modules deleted)",from:"casa-imaging-application (renamed & cleaned)"},
 
@@ -1653,26 +1651,26 @@ let sel = ms.select(&amp;MsSelection::new().spw("0:10~50"))?;
     {name:"casa-atmosphere",dir:"libs/casa/casa-atmosphere",tier:2,publish:true,est:"12.7kL",deps:[],role:"Pure ATM atmospheric transmission & refractivity leaf library",from:"casa-atmosphere"},
     {name:"casa-components",dir:"libs/casa/casa-components",tier:2,publish:true,est:"6.2kL",deps:["casa-core","casa-tables"],role:"Sky component lists, shapes & spectral models",from:"casa-components"},
     {name:"casa-imageanalysis",dir:"libs/casa/casa-imageanalysis",tier:2,publish:true,est:"46kL",deps:["casa-core","casa-numerics","casa-fft","casa-lattices","casa-coordinates","casa-images","casa-components"],role:"Image math, moments, regrid, pv, feather, ComponentListImage & fitting",from:"casa-images::{analysis,component_list_image} + casars-python/tools/image logic"},
-    {name:"casa-flagging",dir:"libs/casa/casa-flagging",tier:2,publish:true,est:"16kL",deps:["casa-core","casa-numerics","casa-ms","casa-components"],role:"Auto-flagging, clip, shadowing & flag-version management (via model traits)",from:"casa-ms::{flagging,shadowing}"},
-    {name:"casa-mstransform",dir:"libs/casa/casa-mstransform",tier:2,publish:true,est:"19kL",deps:["casa-core","casa-numerics","casa-fft","casa-coordinates","casa-observation","casa-ms"],role:"Split, regrid, concat, uvcontsub & MSv2<->MSv4 (via existing model/callib traits)",from:"casa-ms::{transform,concat} + casars-msconvert + uvcontsub"},
-    {name:"casa-calibration",dir:"libs/casa/casa-calibration",tier:2,publish:true,est:"95kL",deps:["casa-core","casa-numerics","casa-fft","casa-atmosphere","casa-components","casa-coordinates","casa-tables","casa-measures","casa-lattices","casa-images","casa-ms","casa-flagging","casa-mstransform","casa-imaging-model","casa-imaging-operator","casa-imaging-runtime","casa-imaging-singledish"],role:"Interferometric calibration, ft/predict, flagdata_model, statwt, uvsub & wvr",from:"casa-calibration (stripped of single_dish, cli/, bins, plot*)"},
-    {name:"casa-singledish",dir:"libs/casa/casa-singledish",tier:2,publish:true,est:"10.8kL",deps:["casa-core","casa-numerics","casa-atmosphere","casa-tables","casa-ms","casa-calibration","casa-imaging-singledish"],role:"High-level single-dish workflows: ASAP/NRO import, baseline, SD calibration",from:"casa-calibration::single_dish + casa-ms::single_dish_import"},
-    {name:"casa-simulation",dir:"libs/casa/casa-simulation",tier:2,publish:true,est:"45kL",deps:["casa-core","casa-numerics","casa-fft","casa-atmosphere","casa-components","casa-coordinates","casa-tables","casa-measures","casa-lattices","casa-images","casa-ms","casa-calibration","casa-imaging-model","casa-imaging-operator","casa-imaging-products","casa-imaging-runtime","casa-imaging-singledish","casa-imaging","casa-singledish"],role:"Pure visibility simulation, corruption, simobserve, simanalyze & simalma",from:"casa-simulation (slimmed)"},
+    {name:"casa-flagging",dir:"libs/casa/casa-flagging",tier:2,publish:true,est:"16kL",deps:["casa-core","casa-numerics","casa-tables","casa-ms","casa-components"],role:"Auto-flagging, clip, shadowing & flag-version management (via model traits)",from:"casa-ms::{flagging,shadowing}"},
+    {name:"casa-mstransform",dir:"libs/casa/casa-mstransform",tier:2,publish:true,est:"19kL",deps:["casa-core","casa-numerics","casa-fft","casa-tables","casa-coordinates","casa-observation","casa-ms"],role:"Split, regrid, concat, MS-transform uvcontsub policy (via casa-numerics) & MSv2<->MSv4",from:"casa-ms::{transform,concat} + casars-msconvert"},
+    {name:"casa-calibration",dir:"libs/casa/casa-calibration",tier:2,publish:true,est:"97kL",deps:["casa-core","casa-numerics","casa-fft","casa-atmosphere","casa-components","casa-coordinates","casa-tables","casa-measures","casa-lattices","casa-images","casa-ms","casa-flagging","casa-mstransform","casa-imaging-model","casa-imaging-operator","casa-imaging-runtime","casa-imaging-singledish"],role:"Jones solvers, CalibraterLifecycle SD solver/CalTable, ft, flagdata_model, statwt, uvsub & wvr",from:"casa-calibration (stripped of SD workflows/cli/bins/plot*; keeps SD solver semantics)"},
+    {name:"casa-singledish",dir:"libs/casa/casa-singledish",tier:2,publish:true,est:"9kL",deps:["casa-core","casa-numerics","casa-atmosphere","casa-tables","casa-ms","casa-calibration","casa-imaging-singledish"],role:"High-level single-dish workflows, preparation & ASAP/NRO import above casa-calibration",from:"casa-calibration::single_dish workflows + casa-ms::single_dish_import"},
+    {name:"casa-simulation",dir:"libs/casa/casa-simulation",tier:2,publish:true,est:"45kL",deps:["casa-core","casa-numerics","casa-fft","casa-atmosphere","casa-components","casa-coordinates","casa-tables","casa-measures","casa-lattices","casa-images","casa-imageanalysis","casa-ms","casa-flagging","casa-calibration","casa-imaging-model","casa-imaging-operator","casa-imaging-products","casa-imaging-runtime","casa-imaging-singledish","casa-imaging","casa-singledish"],role:"Pure visibility simulation, corruption, simobserve, simanalyze & simalma (plot docs via adapters)",from:"casa-simulation (slimmed)"},
     {name:"casa-vla",dir:"libs/casa/casa-vla",tier:2,publish:true,est:"8.5kL",deps:["casa-core","casa-tables","casa-measures","casa-ms"],role:"Pure VLA archive importer library (no CLI/task plumbing)",from:"casa-vla (slimmed)"},
 
     // Tier 3: surfaces/ (3 crates, publish=false, UI-agnostic, optional domain features)
-    {name:"casa-contracts",dir:"surfaces/casa-contracts",tier:3,publish:false,est:"2.5kL",deps:["casa-core"],role:"Slim ParameterCatalog, sparse TOML profiles & JSON Schema (retires GUI envelope/launcher)",from:"casa-provider-contracts (trimmed per ADR-0006/0020)"},
-    {name:"casa-tasks",dir:"surfaces/casa-tasks",tier:3,publish:false,est:"5.0kL",deps:["casa-core","casa-contracts","casa-tables","casa-measures","casa-images","casa-imageanalysis","casa-ms","casa-flagging","casa-mstransform","casa-imaging","casa-calibration","casa-singledish","casa-simulation","casa-vla"],role:"Feature-gated in-process task dispatcher + Cancel/progress hooks (shared by Python, CLI, UIs)",from:"casa-task-runtime (trimmed) + per-crate task_contract adapters"},
-    {name:"casa-plot-data",dir:"surfaces/casa-plot-data",tier:3,publish:false,est:"22kL",deps:["casa-core","casa-atmosphere","casa-ms","casa-calibration"],role:"Optional-feature-gated renderer-neutral plot DTOs (msexplore, plotms, bandpass)",from:"casa-ms::{msexplore,plot*} + casa-calibration::{plotms,plotbandpass}"},
+    {name:"casa-contracts",dir:"surfaces/casa-contracts",tier:3,publish:false,est:"2.5kL",deps:["casa-core"],role:"Slim ParameterCatalog, sparse TOML profiles & JSON Schema (launcher retired in ARCH-03)",from:"casa-provider-contracts (trimmed per ADR-0006/0020)"},
+    {name:"casa-tasks",dir:"surfaces/casa-tasks",tier:3,publish:false,est:"5.0kL",deps:["casa-core","casa-contracts","casa-tables","casa-measures","casa-images","casa-imageanalysis","casa-ms","casa-flagging","casa-mstransform","casa-imaging","casa-calibration","casa-singledish","casa-simulation","casa-vla"],role:"Feature-gated in-process task dispatcher + Cancel/progress/lock-handoff hooks (Python, CLI, UIs)",from:"casa-task-runtime (trimmed) + per-crate task_contract adapters"},
+    {name:"casa-plot-data",dir:"surfaces/casa-plot-data",tier:3,publish:false,est:"22kL",deps:["casa-core","casa-atmosphere","casa-ms","casa-calibration"],role:"Optional-feature-gated renderer-neutral plot DTOs & doc adapters (msexplore, plotms, bandpass)",from:"casa-ms::{msexplore,plot*} + casa-calibration::{plotms,plotbandpass}"},
 
     // Tier 4: frontends/ (2 crates + pluggable experimental UIs, publish=false)
-    {name:"casars-cli",dir:"frontends/casars-cli",tier:4,publish:false,est:"3.5kL",deps:["casa-core","casa-contracts","casa-tasks","casa-plot-data"],role:"Standalone feature-gated CLI suite (23 bins; exportfits builds without calibration)",from:"casars-{imager,imexplore,msconvert,simulation} + 16 embedded bins + casa-logging(cli)"},
-    {name:"casars-python",dir:"frontends/casars-python",tier:4,publish:false,est:"55kL",deps:["casa-core","casa-atmosphere","casa-components","casa-coordinates","casa-tables","casa-measures","casa-lattices","casa-images","casa-imageanalysis","casa-ms","casa-flagging","casa-mstransform","casa-calibration","casa-singledish","casa-simulation","casa-vla","casa-contracts","casa-tasks","casa-plot-data"],role:"Thin PyO3 casars._core: BOTH tools & tasks run in-process (amended ADR-0017)",from:"casars-python (stripped of image logic, aipsio & subprocess task launcher)"},
+    {name:"casars-cli",dir:"frontends/casars-cli",tier:4,publish:false,est:"3.5kL",deps:["casa-core","casa-contracts","casa-tasks","casa-plot-data"],role:"Standalone feature-gated CLI suite (24 bins incl. predictcomp; exportfits builds without calibration)",from:"casars-{imager,imexplore,msconvert,simulation} + 16 embedded bins + casa-logging(cli)"},
+    {name:"casars-python",dir:"frontends/casars-python",tier:4,publish:false,est:"55kL",deps:["casa-core","casa-atmosphere","casa-components","casa-coordinates","casa-tables","casa-measures","casa-lattices","casa-images","casa-imageanalysis","casa-ms","casa-flagging","casa-mstransform","casa-calibration","casa-singledish","casa-simulation","casa-vla","casa-contracts","casa-tasks","casa-plot-data"],role:"Thin PyO3 casars._core: in-process tasks with Cancel/SIGINT, lock handoff & Last isolation (amended ADR-0017)",from:"casars-python (stripped of image logic, aipsio & subprocess task launcher)"},
 
-    // Tier 5: dev/ & opt-in suites/ (5 crates, publish=false; suites/* excluded from default --workspace)
+    // Tier 5: dev/ & opt-in suites/ (5 crates, publish=false; suites/* excluded via --exclude or separate manifests)
     {name:"casa-test-support",dir:"dev/casa-test-support",tier:5,publish:false,est:"12kL",deps:["casa-core","casa-aipsio","casa-tables","casa-measures","casa-lattices","casa-coordinates","casa-images","casa-ms"],role:"Shared C++ casacore FFI oracle runtime & deterministic fixtures",from:"crates/casa-test-support (oracle runtime)"},
     {name:"casa-dev-tools",dir:"dev/casa-dev-tools",tier:5,publish:false,est:"3kL",deps:["casa-core","casa-tables","casa-measures","casa-ms","casa-simulation"],role:"Dev probes & helpers: lock_helper, ms-read-probe, package_snapshot, synthetic-ms",from:"dev bins from 4 crates"},
-    {name:"casacore-interop",dir:"suites/casacore-interop",tier:5,publish:false,est:"15kL",deps:["casa-core","casa-aipsio","casa-tables","casa-measures","casa-lattices","casa-coordinates","casa-images","casa-ms","casa-components","casa-vla","casa-imaging-products","casa-simulation","casa-test-support"],role:"Opt-in 2x2 RR/RC/CR/CC C++ casacore interop suite (moved with scripts)",from:"casa-test-support/tests/*_interop + cpp-interop-tests in 6 crates"},
+    {name:"casacore-interop",dir:"suites/casacore-interop",tier:5,publish:false,est:"15kL",deps:["casa-core","casa-aipsio","casa-tables","casa-measures","casa-lattices","casa-coordinates","casa-images","casa-ms","casa-components","casa-vla","casa-imaging-products","casa-simulation","casa-test-support"],role:"Opt-in 2x2 RR/RC/CR/CC C++ casacore interop suite (has_casacore_cpp + casacore-held-table-reader)",from:"casa-test-support/tests/*_interop + cpp-interop-tests in 6 crates"},
     {name:"casa-parity",dir:"suites/casa-parity",tier:5,publish:false,est:"18kL",deps:["casa-core","casa-atmosphere","casa-images","casa-imageanalysis","casa-ms","casa-flagging","casa-mstransform","casa-calibration","casa-imaging","casa-singledish","casa-simulation","casa-vla","casa-tasks","casars-cli","casa-test-support"],role:"Opt-in CASA 6.7 oracle parity suite + consolidated tools/casa-compat",from:"*_parity/oracle tests + tools/casa-compat"},
     {name:"casa-perf-suite",dir:"suites/perf",tier:5,publish:false,est:"8kL",deps:["casa-core","casa-tables","casa-images","casa-ms","casa-imaging","casa-calibration","casa-simulation","casa-test-support"],role:"Opt-in throughput benchmarks & tools/perf harnesses",from:"perf benchmarks + tools/perf"}
   ];
@@ -1938,7 +1936,7 @@ let sel = ms.select(&amp;MsSelection::new().spw("0:10~50"))?;
     document.getElementById("curInspector").innerHTML = '<h4>Select a crate node</h4><p style="color:var(--text-muted); margin:0;">Click any of the 35 crates in the graph or table to inspect its exact LOC, binaries, workspace dependencies, and violations.</p>';
   });
 
-  // --- Instantiate Proposed v3 Graph ---
+  // --- Instantiate Proposed v4 Graph ---
   const propCtrl = renderGraph(
     document.getElementById("propSvg"),
     PROPOSED_CRATES,
@@ -1949,7 +1947,7 @@ let sel = ms.select(&amp;MsSelection::new().spw("0:10~50"))?;
         "Tier 2 — libs/casa/ (9 crates, ALL publish=true, zero CLI/task/UI deps)",
         "Tier 3 — surfaces/ (3 crates, publish=false, slim feature-gated UI-agnostic layer)",
         "Tier 4 — frontends/ (2 crates + experimental UIs, publish=false, in-process surfaces/casa-tasks)",
-        "Tier 5 — dev/ & opt-in suites/ (5 crates, publish=false, suites excluded from default --workspace)"
+        "Tier 5 — dev/ & opt-in suites/ (5 crates, publish=false, suites excluded via --exclude/manifests)"
       ],
       getDeps: c => c.deps,
       getRdeps: c => c.rdeps,
@@ -2110,7 +2108,7 @@ let sel = ms.select(&amp;MsSelection::new().spw("0:10~50"))?;
     {src:"casa-values (1.2kL)",disp:"Merge",target:"casa-core",note:"Fold generic Value/Record types into casa-core; unblocks casa-types publication"},
     {src:"casa-types (18.6kL)",disp:"Merge",target:"casa-core",note:"Merge with casa-values; keep strictly definitional (zero I/O); enable missing_docs"},
     {src:"casa-aipsio (3.5kL)",disp:"Promote",target:"libs/casacore/casa-aipsio",note:"Keep small publish=true codec crate for byte-level C++ oracle (aipsio_oracle.rs); unblock casa-tables"},
-    {src:"casa-numerics (5.9kL)",disp:"Promote",target:"libs/casacore/casa-numerics",note:"Promote publish=true; delete dead SimulatedBandpass; stay FFTW-free for beam-only callers"},
+    {src:"casa-numerics (5.9kL)",disp:"Promote",target:"libs/casacore/casa-numerics",note:"Promote publish=true; host shared uvcontsub numerical row fit; delete dead SimulatedBandpass; stay FFTW-free for beam/fit callers"},
     {src:"casa-fft (0.8kL)",disp:"Move",target:"libs/casacore/casa-fft",note:"Keep separate from casa-numerics; update build.rs to handle DOCS_RS on Linux"},
     {src:"casa-tables (104.9kL)",disp:"Slim",target:"casa-tables, casa-measures, dev/casa-dev-tools",note:"Move table_measures to casa-measures & lock_helper to dev/ (keep bin tests isolated); add narrow table-header probe; split 14.5kL tiled_stman.rs"},
     {src:"casa-logging (1.6kL)",disp:"Split",target:"casa-tables, frontends/casars-cli",note:"Move Casacore LogTable sink into casa-tables::log_table; move CLI tracing init into casars-cli"},
@@ -2118,30 +2116,30 @@ let sel = ms.select(&amp;MsSelection::new().spw("0:10~50"))?;
     {src:"casa-measures-tools (0.4kL)",disp:"Split",target:"casa-measures, dev/casa-dev-tools",note:"Move snapshot builder into casa-measures; move package_snapshot bin into dev/casa-dev-tools"},
     {src:"casa-lattices (9.7kL)",disp:"Move",target:"libs/casacore/casa-lattices",note:"Enable missing_docs; add tests/api.rs & crates.io metadata"},
     {src:"casa-coordinates (18.9kL)",disp:"Move",target:"libs/casacore/casa-coordinates",note:"Keep definitional; trim 14 pub mods to curated facade; add tests/api.rs & missing_docs"},
-    {src:"casa-images (83.5kL)",disp:"Split",target:"casa-images, casa-imageanalysis, surfaces/casa-tasks, frontends/casars-cli",note:"Keep persistence/FITS/MIRIAD/beam/ImageExpr (~36kL) in casa-images; move analysis & ComponentListImage to casa-imageanalysis; delete build.rs JSON probe; move 9 bins to casars-cli"},
+    {src:"casa-images (83.5kL)",disp:"Split",target:"casa-images, casa-imageanalysis, surfaces/casa-tasks, frontends/casars-cli",note:"Keep persistence/FITS/MIRIAD/beam/regrid_complex_plane/ImageExpr (~36.5kL) in casa-images; remove TempImage downcast via ImageInterface; move analysis & ComponentListImage to casa-imageanalysis; delete build.rs JSON probe; move 9 bins to casars-cli"},
     {src:"casa-observation (9.2kL)",disp:"Promote",target:"libs/casacore/casa-observation",note:"Promote publish=true as clean MSv2/v4 observation boundary; add tests/api.rs"},
-    {src:"casa-ms (129.7kL)",disp:"Split",target:"casa-ms, casa-flagging, casa-mstransform, casa-singledish, surfaces/casa-plot-data, frontends/casars-cli, dev/casa-dev-tools",note:"Keep MS I/O/selection/buffer (~55kL); add explicit casa-measures edge; drop unused casa-logging & #[cfg(test)] hook; collapse 31 test binaries"},
+    {src:"casa-ms (129.7kL)",disp:"Split",target:"casa-ms, casa-flagging, casa-mstransform, casa-singledish, surfaces/casa-plot-data, frontends/casars-cli, dev/casa-dev-tools",note:"Keep MS I/O/selection/buffer (~55kL); add explicit casa-measures edge (and casa-tables edge on flagging/mstransform); drop unused casa-logging & #[cfg(test)] hook; collapse 31 test binaries"},
     {src:"casa-atmosphere (12.7kL)",disp:"Promote",target:"libs/casa/casa-atmosphere",note:"Promote pure ATM leaf crate to publish=true; move parity tests to suites/casa-parity"},
     {src:"casa-components (6.2kL)",disp:"Move",target:"libs/casa/casa-components",note:"Enable missing_docs; move cpp-interop-tests to suites/casacore-interop"},
     {src:"casa-imaging-model (13.3kL)",disp:"Promote",target:"libs/imaging/casa-imaging-model",note:"Keep compiler-enforced ADR-0016 boundary; promote publish=true"},
-    {src:"casa-imaging-operator (22.7kL)",disp:"Promote",target:"libs/imaging/casa-imaging-operator",note:"Keep ADR-0016 boundary; promote publish=true; move uvcontsub (fit_and_subtract_continuum) to casa-mstransform; collapse 17 test bins"},
+    {src:"casa-imaging-operator (22.7kL)",disp:"Promote",target:"libs/imaging/casa-imaging-operator",note:"Keep ADR-0016 boundary; promote publish=true; call shared casa-numerics row fit while retaining imaging continuum policy; collapse 17 test bins"},
     {src:"casa-imaging-deconvolution (16.1kL)",disp:"Promote",target:"libs/imaging/casa-imaging-deconvolution",note:"Keep ADR-0016 boundary; promote publish=true"},
     {src:"casa-imaging-products (9.8kL)",disp:"Promote",target:"libs/imaging/casa-imaging-products",note:"Keep ADR-0016 boundary; promote publish=true; move cpp-interop to suites/casacore-interop"},
-    {src:"casa-imaging-metal (2.6kL)",disp:"Promote",target:"libs/imaging/casa-imaging-metal",note:"Preserve macOS target-gated objc2-metal; promote publish=true"},
-    {src:"casa-imaging-runtime (15.1kL)",disp:"Move",target:"libs/imaging/casa-imaging-runtime",note:"Shared runtime below both casa-imaging-singledish and casa-imaging; keep pass_laws allocator isolation"},
+    {src:"casa-imaging-metal (2.6kL)",disp:"Promote",target:"libs/imaging/casa-imaging-metal",note:"Portable unavailable backend on Linux + macOS-gated objc2-metal; promote publish=true"},
+    {src:"casa-imaging-runtime (15.1kL)",disp:"Move",target:"libs/imaging/casa-imaging-runtime",note:"Shared runtime below both casa-imaging-singledish and casa-imaging; keep unconditional metal dep & pass_laws allocator isolation"},
     {src:"casa-imaging-singledish (2.5kL)",disp:"Move",target:"libs/imaging/casa-imaging-singledish",note:"Keep SDGrid + adjoint below casa-imaging, casa-calibration & casa-singledish (cycle-free)"},
-    {src:"casa-imaging-application (43.5kL)",disp:"Slim",target:"libs/imaging/casa-imaging",note:"Rename to casa-imaging; promote publish=true; delete 8 leaked pub mod *_law modules"},
-    {src:"casa-calibration (118.3kL)",disp:"Slim",target:"casa-calibration, casa-singledish, surfaces/casa-plot-data, frontends/casars-cli",note:"Promote publish=true; keep Jones/CalTable/ft/flagdata_model/statwt/uvsub; strip single_dish, cli/, 3 bins, plot*, stale docstring"},
-    {src:"casa-simulation (45.8kL)",disp:"Slim",target:"libs/casa/casa-simulation, dev/casa-dev-tools",note:"Strip task-runtime/CLI glue & move synthetic-ms bin to dev/casa-dev-tools; collapse 82 test binaries"},
+    {src:"casa-imaging-application (43.5kL)",disp:"Slim",target:"libs/imaging/casa-imaging",note:"Rename to casa-imaging; promote publish=true; delete 8 leaked pub mod *_law modules; keep private allocation laws isolated inside owning library"},
+    {src:"casa-calibration (118.3kL)",disp:"Slim",target:"casa-calibration, casa-singledish, surfaces/casa-plot-data, frontends/casars-cli",note:"Promote publish=true; keep Jones/CalTable/CalibraterLifecycle SD solver/ft/flagdata_model/statwt/uvsub/wvr; move SD workflows to casa-singledish, strip cli/, 3 bins, plot*, stale docstring"},
+    {src:"casa-simulation (45.8kL)",disp:"Slim",target:"libs/casa/casa-simulation, dev/casa-dev-tools",note:"Add explicit casa-flagging & casa-imageanalysis edges; keep plot document assembly in surface adapters; strip task-runtime/CLI glue & move synthetic-ms bin to dev/casa-dev-tools; collapse 82 test binaries"},
     {src:"casa-vla (9.5kL)",disp:"Slim",target:"libs/casa/casa-vla, surfaces/casa-tasks, frontends/casars-cli",note:"Strip cli/task_contract & move importvla bin to casars-cli; split 4.9kL importer.rs"},
-    {src:"casa-provider-contracts (7.7kL)",disp:"Slim",target:"surfaces/casa-contracts",note:"Retain ParameterCatalog, sparse TOML & JSON Schema; delete GUI-era ProviderContractEnvelope & ApplicationCatalog launcher"},
+    {src:"casa-provider-contracts (7.7kL)",disp:"Slim",target:"surfaces/casa-contracts",note:"Retain ParameterCatalog, sparse TOML & JSON Schema; keep ApplicationCatalog resolver alive until ARCH-03 Python cutover, then delete launcher & ProviderContractEnvelope"},
     {src:"casa-task-runtime (10.8kL)",disp:"Split",target:"surfaces/casa-tasks, frontends/casars-cli",note:"Slim to ~5kL UI-agnostic in-process task dispatch (surfaces/casa-tasks) + CLI flags/Last state (casars-cli)"},
-    {src:"casars-imager (2.1kL + 21.5kL tests)",disp:"Split",target:"surfaces/casa-tasks, frontends/casars-cli, suites/casa-parity",note:"Move task adapter to casa-tasks; move binaries to casars-cli; relocate 21.5kL T1 tests to casa-imaging & suites/casa-parity"},
+    {src:"casars-imager (2.1kL + 21.5kL tests)",disp:"Split",target:"surfaces/casa-tasks, frontends/casars-cli, suites/casa-parity",note:"Move task adapter to casa-tasks; move binaries & CARGO_BIN_EXE interrupt tests to casars-cli; relocate T1 tests to casa-imaging & suites/casa-parity"},
     {src:"casars-imexplore (0.5kL)",disp:"Merge",target:"surfaces/casa-tasks, frontends/casars-cli",note:"Move imhead/imstat/imexplore dispatch to casa-tasks & binary to casars-cli"},
     {src:"casars-msconvert (1.0kL)",disp:"Split",target:"casa-mstransform, surfaces/casa-tasks, frontends/casars-cli",note:"Move MSv2<->MSv4 logic to casa-mstransform; move msconvert binary to casars-cli"},
-    {src:"casars-simulation (1.2kL)",disp:"Merge",target:"surfaces/casa-tasks, frontends/casars-cli",note:"Move simobserve/simanalyze/simalma/predictcomp dispatch to casa-tasks & binaries to casars-cli"},
-    {src:"casars-python (84.5kL)",disp:"Slim",target:"frontends/casars-python, casa-imageanalysis, casa-tables",note:"Remove casa-aipsio & app-crate deps; push 27.4kL tools/image logic into casa-imageanalysis; run tasks in-process via casa-tasks (amended ADR-0017)"},
-    {src:"casa-test-support (17.2kL)",disp:"Split",target:"dev/casa-test-support, suites/{casacore-interop,casa-parity,perf}",note:"Keep shared C++ oracle runtime in dev/; move 50 test binaries into opt-in suites/"},
+    {src:"casars-simulation (1.2kL)",disp:"Merge",target:"surfaces/casa-tasks, frontends/casars-cli",note:"Move simobserve/simanalyze/simalma/predictcomp dispatch to casa-tasks & all binaries to casars-cli (24 total)"},
+    {src:"casars-python (84.5kL)",disp:"Slim",target:"frontends/casars-python, casa-imageanalysis, casa-tables",note:"Remove casa-aipsio & app-crate deps; push 27.4kL tools/image logic into casa-imageanalysis (ARCH-09); run tasks in-process via casa-tasks with lock handoff, Cancel/SIGINT & Last isolation"},
+    {src:"casa-test-support (17.2kL)",disp:"Split",target:"dev/casa-test-support, suites/{casacore-interop,casa-parity,perf}",note:"Keep shared C++ oracle runtime in dev/; wire has_casacore_cpp + casacore-held-table-reader & 50 test binaries into opt-in suites/"},
     {src:"crates/casa-imaging-reconstruction/",disp:"Delete",target:"(removed)",note:"Orphaned empty leftover dir from ADR-0016 consolidation"},
     {src:"crates/casars/",disp:"Delete",target:"(removed)",note:"Orphaned non-member directory with stale logs"}
   ];
