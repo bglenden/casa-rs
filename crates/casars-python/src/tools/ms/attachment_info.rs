@@ -16,7 +16,7 @@ use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
 
 #[cfg(unix)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct FileStamp {
+pub(super) struct FileStamp {
     identity: (u64, u64),
     len: u64,
     modified: (i64, i64),
@@ -25,7 +25,7 @@ struct FileStamp {
 
 #[cfg(unix)]
 impl FileStamp {
-    fn read(path: &Path) -> io::Result<Self> {
+    pub(super) fn read(path: &Path) -> io::Result<Self> {
         let meta = std::fs::metadata(path)?;
         Ok(Self {
             identity: (meta.dev(), meta.ino()),

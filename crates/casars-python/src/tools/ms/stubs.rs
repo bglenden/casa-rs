@@ -233,12 +233,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn listhistory(&self) -> PyResult<Py<PyAny>> {
-        stub("listhistory")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (items = None, ifraxis = None, ifraxisgap = None, increment = None, average = None), text_signature = "($self, items=[], ifraxis=False, ifraxisgap=0, increment=1, average=False)")]
     fn ngetdata(
         &self,

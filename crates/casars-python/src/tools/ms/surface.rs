@@ -282,7 +282,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("listhistory", &[], R::Any, No),
+    method("listhistory", &[], R::Bool, Yes),
     method(
         "metadata",
         &[param("cachesize", K::Float, Float(50.0))],
