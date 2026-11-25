@@ -105,7 +105,14 @@ pub(super) fn array_horizontal_value(
                 .map(|angle| normalize_signed_degrees(angle.to_degrees()) / 15.0),
             MsAxis::ParallacticAngle => engine
                 .array_feed_angle_at_position(time, field, position)
-                .map(|angle| f64::from(angle as f32).to_degrees().rem_euclid(360.0)),
+                .map(|angle| {
+                    let degrees = f64::from(angle as f32).to_degrees();
+                    if degrees < 0.0 {
+                        degrees + 360.0
+                    } else {
+                        degrees
+                    }
+                }),
             _ => unreachable!("only array horizontal axes use the antenna-position mean"),
         };
     value.map_err(|error| error.to_string())

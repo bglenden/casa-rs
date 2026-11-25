@@ -2,6 +2,8 @@
 //! The angle an antenna's mount turns its feed by on the sky
 //! ([`MsCalEngine::feed_parallactic_angle`]).
 
+use std::f64::consts::{PI, TAU};
+
 use super::{MPosition, MsCalEngine};
 use crate::error::MsResult;
 
@@ -116,7 +118,10 @@ impl MsCalEngine {
     ) -> MsResult<f64> {
         self.feed_mount(0)?.rotation(
             || self.parallactic_angle_at_position(time_mjd_sec, field_id, position.clone()),
-            || self.azel_at_position(time_mjd_sec, field_id, position.clone()),
+            || {
+                self.azel_at_position(time_mjd_sec, field_id, position.clone())
+                    .map(|(azimuth, elevation)| ((azimuth + PI).rem_euclid(TAU) - PI, elevation))
+            },
             || self.hadec_at_position(time_mjd_sec, field_id, position.clone()),
         )
     }

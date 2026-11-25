@@ -328,6 +328,51 @@ def compare_array_horizontal_axes(root, native):
     assert compare_text(actual, expected) == 24
     print("first-mount-parangle: 24 matching equatorial array angles", flush=True)
 
+    bwg = work / "beam-waveguide-first.ms"
+    copy_ms(vis, bwg)
+    with opened(bwg / "ANTENNA", True) as table:
+        centre = 6_370_000 / np.sqrt(2) * np.array([1.0, 0.0, -1.0])
+        offsets = table.getcol("POSITION")
+        offsets -= offsets.mean(axis=1, keepdims=True)
+        table.putcol("POSITION", centre[:, None] + 0.0001 * offsets)
+        table.putcell("MOUNT", 0, "ALT-AZ+BWG-R")
+    with opened(bwg / "FIELD", True) as table:
+        # At the first selected integration, the southern field has apparent
+        # declination -80 degrees and an hour angle close to +179 degrees.
+        j2000 = np.array([[-1.9453210515279018], [-1.3956305669400868]])
+        for column in ("DELAY_DIR", "PHASE_DIR", "REFERENCE_DIR"):
+            table.putcell(column, 0, j2000)
+    options = base | dict(vis=str(bwg), field="FLUX", yaxis="parangle")
+    expected, actual = (work / f"beam-waveguide-parangle.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**options, plotfile=str(expected)) is None
+    coordinates = [float(row[1]) for row in rows(expected)]
+    assert len(coordinates) == 12 and min(coordinates) > 360
+    np.testing.assert_allclose(coordinates[0], 393.926, rtol=1.2e-5)
+    assert native(**options, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 12
+    print("beam-waveguide-parangle: 12 matching array angles above 360 degrees", flush=True)
+
+    for name, settings, count, correlations, refusal in (
+        ("array-correlation-iteration", dict(iteraxis="corr", correlation="XX,YY", gridcols=2, exprange="all"),
+         60, {"XX", "YY"}, "correlation iteration with array horizontal axes"),
+        ("array-flagged-symbols", dict(customflaggedsymbol=True, flaggedsymbolshape="circle"),
+         36, {"XX"}, "flag-symbol filtering with array horizontal axes"),
+    ):
+        options = base | dict(yaxis="elevation") | settings
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == count and {row[12] for row in selected} == correlations
+        assert {row[2] for row in selected} == {"1", "2", "3"}
+        try:
+            native(**options, plotfile=str(actual))
+        except TaskParameterError as error:
+            assert refusal in str(error) and "#1032" in str(error)
+        else:
+            raise AssertionError(f"casa-rs accepted {name} and could export a partial result")
+        assert not list(work.glob(f"{name}.native*.txt"))
+        print(f"{name}: pinned CASA result and native refusal before export", flush=True)
+
     poln = base | dict(xaxis="poln", yaxis="amp", correlation="XX,YY")
     expected, actual = (work / f"poln-amplitude.{engine}.txt" for engine in ("casa", "native"))
     try:
