@@ -46,6 +46,8 @@ def test_ms_listhistory_reads_casa_history_and_preserves_attachment(native_datas
         writer = casa.table()
         assert writer.open(str(native_dataset / "HISTORY"), nomodify=False)
         assert writer.putcell("MESSAGE", 0, "updated without changing the row count")
+        # CASA can keep its writable table cached while the reference MS is open.
+        assert writer.flush()
         assert writer.done()
         caplog.clear()
         with caplog.at_level(logging.INFO, logger="casars.tools.ms"):
