@@ -326,7 +326,6 @@ fn column_weight_kind(
         | MsDataColumn::CorrectedDivModel
         | MsDataColumn::CorrectedDivModelScalar => OptionalMainColumn::CorrectedData,
         MsDataColumn::Model => OptionalMainColumn::ModelData,
-        _ => return WeightKind::Unit,
     };
     visibility_weight_kind(column, has_observed, has_corrected, false)
 }

@@ -7252,6 +7252,7 @@ fn build_generic_visibility_scatter_with_averaging(
         || (combined_vector_average && !collapse_baselines && iteraxis.is_none());
     let mut contributing_points = 0usize;
     let mut finalized_panels = Vec::new();
+    let x_projection_axis = visibility_columns.projection_axis(0, spec.x_axis);
     if paged_iteration {
         panel_order.sort_by_key(|key| panels[key].iteration_rank);
     }
@@ -7261,6 +7262,8 @@ fn build_generic_visibility_scatter_with_averaging(
         };
         let mut series_entries = Vec::new();
         for mut series in panel.series.into_values() {
+            let y_projection_axis =
+                visibility_columns.projection_axis(series.y_index + 1, series.y_axis);
             if let Some(plan) = &time_baseline_plan {
                 if time_antenna {
                     plan.combine_antenna_series(&mut series);
@@ -7345,8 +7348,6 @@ fn build_generic_visibility_scatter_with_averaging(
                     }
                 });
                 let project = |axis: MsAxis, x_axis| {
-                    let axis = visibility_columns
-                        .projection_axis(if x_axis { 0 } else { series.y_index + 1 }, axis);
                     if let Some(channel) = spectral_channel
                         && matches!(axis, MsAxis::Channel | MsAxis::Frequency)
                     {
@@ -7403,10 +7404,10 @@ fn build_generic_visibility_scatter_with_averaging(
                         )
                     }
                 };
-                let Some(x_value) = project(spec.x_axis, true) else {
+                let Some(x_value) = project(x_projection_axis, true) else {
                     continue;
                 };
-                let Some(y_value) = project(series.y_axis, false) else {
+                let Some(y_value) = project(y_projection_axis, false) else {
                     continue;
                 };
                 let output = if accumulator.visibility_flagged == Some(true) {

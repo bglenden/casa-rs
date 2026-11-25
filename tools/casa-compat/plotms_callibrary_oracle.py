@@ -58,7 +58,7 @@ def fixture(root):
 def snapshot(vis):
     with opened(vis) as table:
         columns = tuple(table.colnames())
-        present = (name for name in ("DATA", "CORRECTED_DATA", "FLAG", "FLAG_ROW", "WEIGHT",
+        present = (name for name in ("DATA", "CORRECTED_DATA", "FLOAT_DATA", "FLAG", "FLAG_ROW", "WEIGHT",
                                      "WEIGHT_SPECTRUM", "SIGMA", "SIGMA_SPECTRUM") if name in columns)
         return columns, {name: table.getcol(name) for name in present}
 

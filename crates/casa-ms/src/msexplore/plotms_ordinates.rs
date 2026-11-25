@@ -742,8 +742,8 @@ impl AveragedVisibility {
             TimeProjection::channel_sample(grid, [None; 2], corr, bin.start)
         };
         let weight = options.row_weight as f32;
-        // The scalar reducer packs the channel means' amplitude and phase
-        // into the two Float components before accumulating in time.
+        // The scalar reducer packs complex amplitudes and phases before
+        // accumulating in time. Explicit FLOAT_DATA retains its real samples.
         sample.weighted_sums = sample.weighted_sums.map(|value| {
             let value = if options.conjugate {
                 value.conj()

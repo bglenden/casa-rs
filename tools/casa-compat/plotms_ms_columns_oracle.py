@@ -1974,9 +1974,6 @@ def compare_effective_float_averages(root, native):
     copy_ms(two_windows, spectral)
     add_float_spectral_weights(spectral)
     snapshots = {vis: snapshot(vis) for vis in (only, mixed, two_windows, spectral)}
-    for vis, before in snapshots.items():
-        with opened(vis) as table:
-            before[1]["FLOAT_DATA"] = table.getcol("FLOAT_DATA")
     channel = dict(avgchannel="2")
     interval = dict(avgtime="20")
     both_windows = channel | dict(spw="0:0~3,1:0~3")
@@ -2018,25 +2015,27 @@ def compare_effective_float_averages(root, native):
         assert native(**options, plotfile=str(actual), expformat="txt") is None
         assert compare_text(actual, expected) == len(values)
         if compare_real:
+            real = options | dict(yaxis="real")
             real_reference = work / f"{name}-real.reference.txt"
             real_reference.write_text(expected.read_text().replace("# Channel Amp ", "# Channel Real "))
             output = work / f"{name}-real.native.txt"
-            assert native(**(options | dict(yaxis="real")), plotfile=str(output), expformat="txt") is None
+            assert native(**real, plotfile=str(output), expformat="txt") is None
             assert compare_text(output, real_reference) == len(values)
+            if name == "only-channel":
+                failed = work / f"{name}-real.casa.txt"
+                try:
+                    reference(**real, plotfile=str(failed), expformat="txt")
+                except RpcError as error:
+                    assert error.code() == StatusCode.UNAVAILABLE, error
+                else:
+                    raise AssertionError("CASA no longer terminates on explicit real FLOAT_DATA")
+                assert not failed.exists()
+                print("explicit float Real: pinned server exits before creating an export", flush=True)
         if name == "weighted-channel":
             figure = options | dict(title="Float channel averages", xlabel="Channel bin")
             compare_figure(work, native, figure, expected,
                            ("Float channel averages", "Channel bin", "Amp:float"))
         print(f"{name}: {len(points)} matching signed values, IDs and metadata", flush=True)
-    refusal = work / "only-channel-real.casa.txt"
-    options = request(only) | channel | dict(xaxis="channel", xdatacolumn="", yaxis="real", ydatacolumn="float")
-    try:
-        reference(**options, plotfile=str(refusal), expformat="txt")
-    except RpcError as error:
-        assert error.code() == StatusCode.UNAVAILABLE, error
-    else:
-        raise AssertionError("CASA no longer terminates on explicit real FLOAT_DATA")
-    assert not refusal.exists()
     for vis, before in snapshots.items():
         verify_source(vis, before)
 
