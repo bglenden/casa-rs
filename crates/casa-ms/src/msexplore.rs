@@ -2804,7 +2804,8 @@ fn build_msexplore_payload_internal(
             input.secondary_y_data_column.is_some() || !input.additional_ordinates.is_empty()
         }),
         calibration.is_some_and(|input| input.pointing.is_some()),
-        calibration.is_some_and(|input| input.rows.is_none()),
+        calibration
+            .is_some_and(|input| input.rows.is_none() || input.secondary_y_data_column.is_some()),
     )?;
     if calibration.and_then(|input| input.time_bins).is_none()
         && spec.plots.iter().any(|plot| {
@@ -2970,6 +2971,7 @@ pub(crate) fn build_calibrated_plotms_payload(
     ms: &MeasurementSet,
     spec: &MsExploreSpec,
     calibration: &PlotMsCalibration,
+    secondary_y_data_column: Option<MsDataColumn>,
 ) -> Result<MsPlotPayload, String> {
     let input = PlotMsInput {
         row_order: &calibration.row_order,
@@ -2980,7 +2982,7 @@ pub(crate) fn build_calibrated_plotms_payload(
         rows: Some(&calibration.rows),
         models: None,
         x_data_column: calibration.x_data_column,
-        secondary_y_data_column: None,
+        secondary_y_data_column,
         additional_ordinates: &[],
         weight_axis_columns: [None; 3],
         prefer_float_data: false,
@@ -4260,13 +4262,16 @@ fn build_generic_visibility_scatter(
         && spec.averaging.avgchannel.is_some_and(|width| width > 1)
         && !uses_extended_averaging(spec);
     let iterated_ordinate_list = iterates_plotms_ordinates(spec, calibration);
+    let calibrated_ordinate_list = calibration
+        .is_some_and(|input| input.rows.is_some() && input.secondary_y_data_column.is_some());
+    let order_ordinate_list = iterated_ordinate_list || calibrated_ordinate_list;
     let use_iterator_order = needs_row_axes
         || pointing.is_some()
         || raw_symbols.is_some()
         || phase_shift.is_some()
         || channel_derived
         || channel_only_visibility
-        || iterated_ordinate_list
+        || order_ordinate_list
         || calibration.is_some()
             && (ordered_feed_selection
                 || use_ordinate_masks
@@ -4471,7 +4476,8 @@ fn build_generic_visibility_scatter(
     let use_spectral_weights = calibration.is_some()
         && needs_visibility_grid
         && spec.averaging.avgchannel.is_some_and(|width| width > 1);
-    let project_plotms_columns = calibration.is_some_and(|input| input.rows.is_none());
+    let project_plotms_columns = calibration
+        .is_some_and(|input| input.rows.is_none() || input.secondary_y_data_column.is_some());
     let statistics_kinds = calibration
         .filter(|_| {
             project_plotms_columns
@@ -4506,16 +4512,24 @@ fn build_generic_visibility_scatter(
     } else {
         Some(0)
     };
+    // The transform chooses the channel kernel from the stored spectrum even
+    // when calibration supplies separate transient weights for that kernel.
+    let stored_spectrum = if calibrated_ordinate_list && use_spectral_weights {
+        first_selected_row
+            .filter(|_| WeightSpectrumColumn::new(ms.main_table()).is_ok())
+            .map(|row| ms.main_table().is_cell_defined(row, "WEIGHT_SPECTRUM"))
+            .transpose()
+            .map_err(|error| error.to_string())?
+            .unwrap_or(false)
+    } else {
+        selected_weight_spectrum
+            .as_ref()
+            .zip(spectrum_probe_slot)
+            .and_then(|(column, slot)| column.find(slot))
+            .is_some()
+    };
     let channel_weight_kinds = calibration
-        .filter(|_| {
-            project_plotms_columns
-                && use_spectral_weights
-                && selected_weight_spectrum
-                    .as_ref()
-                    .zip(spectrum_probe_slot)
-                    .and_then(|(column, slot)| column.find(slot))
-                    .is_some()
-        })
+        .filter(|_| project_plotms_columns && use_spectral_weights && stored_spectrum)
         .map(|input| {
             statistics_kinds.unwrap_or_else(|| plotms_columns::weight_kinds(ms, spec, input))
         });
@@ -5175,7 +5189,7 @@ fn build_generic_visibility_scatter(
                     || phase_shift.is_some()
                     || channel_derived
                     || channel_only_visibility
-                    || iterated_ordinate_list
+                    || order_ordinate_list
                     || ordered_feed_selection
                     || spec.y_axes.len() > 2
                 {
@@ -8157,7 +8171,7 @@ fn visibility_group(
 }
 
 fn iterates_plotms_ordinates(spec: &MsPlotSpec, input: Option<&PlotMsInput<'_>>) -> bool {
-    input.is_some_and(|input| input.rows.is_none())
+    input.is_some_and(|input| input.rows.is_none() || input.secondary_y_data_column.is_some())
         && spec.iteration.iteraxis.is_some()
         && spec.secondary_y_axis().is_some()
 }

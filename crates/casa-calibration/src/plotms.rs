@@ -49,10 +49,13 @@ pub fn load_models(
 }
 
 /// Correct the selected plot rows through the applycal engine without saving them.
+/// For channel-weighted ordinates, the calibration preview expands scalar sigma
+/// to the stored weight spectrum grid when the MS has no sigma spectrum.
 pub fn load_calibration(
     ms: &MeasurementSet,
     selection: &MsSelection,
     library: &[String],
+    channel_weighting: bool,
 ) -> Result<PlotMsCalibration, TaskFailure> {
     let specs = match library {
         [filename] if !filename.contains('=') => {
@@ -73,7 +76,7 @@ pub fn load_calibration(
     };
     let plan = plan_apply(ms, &request)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("callib"))?;
-    let rows = evaluate_plot_rows(ms, &plan)
+    let rows = evaluate_plot_rows(ms, &plan, channel_weighting)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("callib"))?;
     let row_order = plan
         .selected_rows

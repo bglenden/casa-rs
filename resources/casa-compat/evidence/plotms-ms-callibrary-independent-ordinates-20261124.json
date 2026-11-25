@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "7fda38a53763b50b15c2bac90ebc084e3abd085d",
+  "source_revision": "7fda38a53763b50b15c2bac90ebc084e3abd085d",
+  "baseline_revision": "31db2dec0d7b4e291b6b98021e5b333e4d0f6631",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_callibrary_oracle.py --only ordinates --work <new-dir> --native-bin <calibrate>",
+  "scope": "Two independent stored DATA and transient CORRECTED ordinates with a MeasurementSet callibrary, raw and channel-averaged, including separate scan pages.",
+  "result": "passed",
+  "baseline_result": "Main refuses independent ordinate columns with a MeasurementSet callibrary.",
+  "text_exports": 11,
+  "points": 808,
+  "figures": 2,
+  "rendered_coordinates": 48,
+  "figure_size_px": [
+    500,
+    420
+  ]
+}
