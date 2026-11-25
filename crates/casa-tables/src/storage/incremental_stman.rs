@@ -45,8 +45,10 @@ use crate::table::GeneratedScalarValueRun;
 mod append_records;
 mod cells;
 mod check_layout;
+mod replace_ints;
 mod write_columns;
 pub(super) use append_records::stage_scalar_append;
+pub(super) use replace_ints::stage_int32_replacement;
 pub(crate) use write_columns::write_ism_file_column_sources;
 
 pub use check_layout::IncrementalCorruption;

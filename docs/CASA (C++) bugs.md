@@ -12066,6 +12066,14 @@ and with `weightscale=4`. With WEIGHT_SPECTRUM equal to 4 and SIGMA_SPECTRUM
 equal to 2, CASA updates the weight to 16 and writes sigma 8 by scaling
 the updated weight. Casa-rs scales the original sigma and writes 1 (#1030).
 
+## Virtual concatenation can leave flags on the wrong channels
+
+Give CASA 6.7.6.14 `ms.virtconcatenate()` a donor with a reversed channel
+grid, a reversed baseline, and flags that differ between channels. CASA
+reverses both visibility axes but only reorders the correlations in FLAG.
+Casa-rs applies the same channel and correlation permutations to the flags
+and their visibilities (#1030).
+
 ## Virtual concatenation can overwrite a truncated auxiliary scan file
 
 Give `ms.virtconcatenate()` in CASA 6.7.6.14 an auxiliary file that declares

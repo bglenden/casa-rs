@@ -78,7 +78,10 @@ def change_table(path, change):
     assert table.close()
 
 
-def test_visibility_axes_consistent_when_both_baseline_and_channels_reverse(native_dataset, tmp_path):
+@pytest.mark.parametrize("mode", ["physical", "virtual", "casa-virtual"])
+def test_visibility_axes_consistent_when_both_baseline_and_channels_reverse(
+    native_dataset, tmp_path, mode,
+):
     first, donor = copy_inputs(native_dataset, tmp_path)
     output = tmp_path / "paired.ms"
 
@@ -110,14 +113,23 @@ def test_visibility_axes_consistent_when_both_baseline_and_channels_reverse(nati
     change_table(donor, seed_visibility)
     incoming = main_cells(tools, donor, 1)
 
-    m = tools.ms()
+    m = (pinned_casa() if mode == "casa-virtual" else tools).ms()
     assert m.open(str(first), nomodify=False)
-    assert m.concatenate(str(donor), "1Hz", "1mas", 2.0, 0, str(output))
+    if mode == "physical":
+        assert m.concatenate(str(donor), "1Hz", "1mas", 2.0, 0, str(output))
+    else:
+        assert m.virtconcatenate(str(donor), "", "1Hz", "1mas", 2.0)
+        output = donor
     assert m.close()
     for reader in (tools, pinned_casa()):
         actual = main_cells(reader, output, 1)
         np.testing.assert_array_equal(actual["DATA"], incoming["DATA"][::-1, ::-1].conj())
-        np.testing.assert_array_equal(actual["FLAG"], incoming["FLAG"][::-1, ::-1])
+        # CASA virtual concatenation swaps the polarization but leaves flags
+        # in their original channel order even when DATA reverses channels.
+        expected_flags = incoming["FLAG"][::-1]
+        if mode != "casa-virtual":
+            expected_flags = expected_flags[:, ::-1]
+        np.testing.assert_array_equal(actual["FLAG"], expected_flags)
         np.testing.assert_array_equal(actual["UVW"], -incoming["UVW"])
         np.testing.assert_array_equal(actual["WEIGHT"], incoming["WEIGHT"][::-1] * 2)
         np.testing.assert_allclose(actual["SIGMA"], incoming["SIGMA"][::-1] / np.sqrt(2), rtol=1e-7)

@@ -28,6 +28,17 @@ impl StagedEdit<'_> {
         let name = format!("table.f{}", manager.seq_nr);
         let old = self.table.join(&name);
         let staged = self.staged.path().join(&name);
+        if manager.type_name == "IncrementalStMan"
+            && incremental_stman::stage_int32_replacement(
+                &old,
+                &staged,
+                columns,
+                replacements,
+                rows,
+            )?
+        {
+            return Ok(true);
+        }
         let unchanged = columns
             .iter()
             .map(|column| column.col_name.as_str())
