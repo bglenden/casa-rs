@@ -102,9 +102,9 @@ pub(super) fn array_horizontal_value(
                 }),
             MsAxis::HourAngle => engine
                 .hour_angle_at_position(time, field, position)
-                .map(|angle| angle * 12.0 / std::f64::consts::PI),
+                .map(|angle| normalize_signed_degrees(angle.to_degrees()) / 15.0),
             MsAxis::ParallacticAngle => engine
-                .parallactic_angle_at_position(time, field, position)
+                .array_feed_angle_at_position(time, field, position)
                 .map(|angle| f64::from(angle as f32).to_degrees().rem_euclid(360.0)),
             _ => unreachable!("only array horizontal axes use the antenna-position mean"),
         };

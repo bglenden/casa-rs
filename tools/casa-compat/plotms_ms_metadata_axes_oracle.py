@@ -316,6 +316,18 @@ def compare_array_horizontal_axes(root, native):
         if label:
             compare_figure(work, native, options, expected, (title, "Channel", label))
 
+    equatorial = work / "equatorial-first.ms"
+    copy_ms(vis, equatorial)
+    with opened(equatorial / "ANTENNA", True) as table:
+        table.putcell("MOUNT", 0, "equatorial")
+    options = base | dict(vis=str(equatorial), yaxis="parangle")
+    expected, actual = (work / f"first-mount-parangle.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**options, plotfile=str(expected)) is None
+    assert [float(row[1]) for row in rows(expected)] == [0.0] * 24
+    assert native(**options, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 24
+    print("first-mount-parangle: 24 matching equatorial array angles", flush=True)
+
     poln = base | dict(xaxis="poln", yaxis="amp", correlation="XX,YY")
     expected, actual = (work / f"poln-amplitude.{engine}.txt" for engine in ("casa", "native"))
     try:

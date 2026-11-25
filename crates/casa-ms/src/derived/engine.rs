@@ -751,10 +751,20 @@ impl MsCalEngine {
         field_id: usize,
         position: MPosition,
     ) -> MsResult<f64> {
+        self.hadec_at_position(time_mjd_sec, field_id, position)
+            .map(|(hour_angle, _)| hour_angle)
+    }
+
+    fn hadec_at_position(
+        &self,
+        time_mjd_sec: f64,
+        field_id: usize,
+        position: MPosition,
+    ) -> MsResult<(f64, f64)> {
         let frame = self.make_frame_with_position(time_mjd_sec, position)?;
         let dir = self.direction_at(time_mjd_sec, field_id)?;
         let hadec = dir.convert_to(DirectionRef::HADEC, &frame)?;
-        Ok(hadec.longitude_rad())
+        Ok(hadec.as_angles())
     }
 
     /// Compute the array-fiducial parallactic angle (radians) using the observatory position.

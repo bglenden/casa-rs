@@ -2,7 +2,7 @@
 //! The angle an antenna's mount turns its feed by on the sky
 //! ([`MsCalEngine::feed_parallactic_angle`]).
 
-use super::MsCalEngine;
+use super::{MPosition, MsCalEngine};
 use crate::error::MsResult;
 
 /// How an antenna's mount turns its feed, from `ANTENNA::MOUNT` as casacore's
@@ -42,6 +42,32 @@ impl FeedMount {
             _ => Self::Unhandled,
         }
     }
+
+    fn rotation(
+        self,
+        sky: impl FnOnce() -> MsResult<f64>,
+        azel: impl FnOnce() -> MsResult<(f64, f64)>,
+        hadec: impl FnOnce() -> MsResult<(f64, f64)>,
+    ) -> MsResult<f64> {
+        Ok(match self {
+            Self::AltAz => sky()?,
+            Self::NasmythRight => sky()? + azel()?.1,
+            Self::NasmythLeft => sky()? - azel()?.1,
+            Self::BeamWaveguideRight => {
+                let (azimuth, elevation) = azel()?;
+                sky()? + elevation - azimuth
+            }
+            Self::BeamWaveguideLeft => {
+                let (azimuth, elevation) = azel()?;
+                sky()? - (elevation - azimuth)
+            }
+            Self::XY => {
+                let (hour_angle, declination) = hadec()?;
+                (-hour_angle.cos()).atan2(-hour_angle.sin() * declination.sin())
+            }
+            Self::Equatorial | Self::Unhandled => 0.0,
+        })
+    }
 }
 
 impl MsCalEngine {
@@ -73,35 +99,37 @@ impl MsCalEngine {
         field_id: usize,
         antenna_id: usize,
     ) -> MsResult<f64> {
-        let mount = self
-            .antenna_feed_mounts
+        self.feed_mount(antenna_id)?.rotation(
+            || self.sky_parallactic_angle(time_mjd_sec, field_id, antenna_id),
+            || self.azel(time_mjd_sec, field_id, antenna_id),
+            || self.hadec(time_mjd_sec, field_id, antenna_id),
+        )
+    }
+
+    /// CASA's array parallactic angle uses the first antenna's mount at
+    /// the array reference position.
+    pub(crate) fn array_feed_angle_at_position(
+        &self,
+        time_mjd_sec: f64,
+        field_id: usize,
+        position: MPosition,
+    ) -> MsResult<f64> {
+        self.feed_mount(0)?.rotation(
+            || self.parallactic_angle_at_position(time_mjd_sec, field_id, position.clone()),
+            || self.azel_at_position(time_mjd_sec, field_id, position.clone()),
+            || self.hadec_at_position(time_mjd_sec, field_id, position.clone()),
+        )
+    }
+
+    fn feed_mount(&self, antenna_id: usize) -> MsResult<FeedMount> {
+        self.antenna_feed_mounts
             .get(antenna_id)
             .copied()
             .ok_or_else(|| crate::error::MsError::InvalidIndex {
                 index: antenna_id,
                 max: self.antenna_feed_mounts.len(),
                 context: "antenna_id".to_string(),
-            })?;
-        let sky = |engine: &Self| engine.sky_parallactic_angle(time_mjd_sec, field_id, antenna_id);
-        let azel = |engine: &Self| engine.azel(time_mjd_sec, field_id, antenna_id);
-        Ok(match mount {
-            FeedMount::AltAz => sky(self)?,
-            FeedMount::NasmythRight => sky(self)? + azel(self)?.1,
-            FeedMount::NasmythLeft => sky(self)? - azel(self)?.1,
-            FeedMount::BeamWaveguideRight => {
-                let (azimuth, elevation) = azel(self)?;
-                sky(self)? + elevation - azimuth
-            }
-            FeedMount::BeamWaveguideLeft => {
-                let (azimuth, elevation) = azel(self)?;
-                sky(self)? - (elevation - azimuth)
-            }
-            FeedMount::XY => {
-                let (hour_angle, declination) = self.hadec(time_mjd_sec, field_id, antenna_id)?;
-                (-hour_angle.cos()).atan2(-hour_angle.sin() * declination.sin())
-            }
-            FeedMount::Equatorial | FeedMount::Unhandled => 0.0,
-        })
+            })
     }
 }
 
