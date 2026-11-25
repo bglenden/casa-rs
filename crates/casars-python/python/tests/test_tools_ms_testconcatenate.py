@@ -293,3 +293,24 @@ def test_donor_ephemeris_is_transferred_and_relocatable(ephemeris_dataset, tmp_p
         for axis in ("m0", "m1"):
             assert actual[axis]["unit"] == expected[axis]["unit"] == "rad"
             assert actual[axis]["value"] == pytest.approx(expected[axis]["value"], abs=2e-11)
+
+
+def test_missing_donor_history_preserves_attached_metadata(native_dataset, tmp_path):
+    attached, donor = copy_inputs(native_dataset, tmp_path)
+    names = ("FIELD", "SOURCE", "SPECTRAL_WINDOW", "POINTING")
+    before = counts(tools, attached, names)
+    table = tools.table()
+    assert table.open(str(donor), nomodify=False)
+    assert table.removekeyword("HISTORY")
+    assert table.done()
+    rmtree(donor / "HISTORY")
+
+    tool = tools.ms()
+    assert tool.open(str(attached), nomodify=False)
+    nrows = tool.nrow()
+    with pytest.raises(RuntimeError, match="HISTORY"):
+        tool.testconcatenate(str(donor))
+    assert tool.nrow() == nrows
+    assert tool.done()
+    for reader in (tools, pinned_casa()):
+        assert counts(reader, attached, names) == before

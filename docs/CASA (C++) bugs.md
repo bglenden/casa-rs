@@ -11968,3 +11968,12 @@ to OBSERVATION while iterating over the same live row count. A probe
 was stopped after the private subtable grew to about 15 GiB. Casa-rs
 rejects identical input directories, including symbolic aliases, before
 changing either table (#1030).
+
+## Metadata-only concatenation can change FIELD before donor HISTORY fails
+
+In CASA 6.7.6.14, call `ms.testconcatenate()` with a donor that has no
+HISTORY table, or whose MAIN descriptor lacks write permission. Use
+default direction tolerance so the donor field is added. CASA errors
+when it reaches the HISTORY step, after persisting the additional
+attached FIELD row. Casa-rs checks the donor and stages its HISTORY
+append before publishing the attached metadata changes (#1030).
