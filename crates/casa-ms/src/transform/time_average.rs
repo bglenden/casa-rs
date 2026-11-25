@@ -596,7 +596,7 @@ pub(crate) fn centered_time_and_interval(first: (f64, f64), last: (f64, f64)) ->
     (first.0 + elapsed * 0.5, interval)
 }
 
-use ndarray::{Array1, Array2, ArrayD, ArrayView2, Ix2};
+use ndarray::{Array1, Array2, ArrayD, ArrayView2, Ix2, ShapeBuilder, Zip};
 use num_complex::Complex32;
 use std::ops::{AddAssign, Div, Mul};
 
@@ -735,8 +735,8 @@ impl TimeVisibilityAverage {
                 };
                 let sum = match copy.source {
                     LagData => None,
-                    FloatData => Some(ArrayValue::Float32(Array2::zeros(shape).into_dyn())),
-                    _ => Some(ArrayValue::Complex32(Array2::zeros(shape).into_dyn())),
+                    FloatData => Some(ArrayValue::Float32(Array2::zeros(shape.f()).into_dyn())),
+                    _ => Some(ArrayValue::Complex32(Array2::zeros(shape.f()).into_dyn())),
                 };
                 TimeColumn {
                     physical: copy.source,
@@ -748,8 +748,8 @@ impl TimeVisibilityAverage {
         Self {
             shape,
             columns,
-            flags: Array2::from_elem(shape, true),
-            sum_weights: Array2::from_elem(shape, [0.; 3]),
+            flags: Array2::from_elem(shape.f(), true),
+            sum_weights: Array2::from_elem(shape.f(), [0.; 3]),
             observed,
             corrected,
             floating,
@@ -775,35 +775,42 @@ impl TimeVisibilityAverage {
         let shape = [self.shape.0, self.shape.1];
         let weight = InputStatistic::from_cells(row.weight, row.spectra.weight, shape, "WEIGHT")?;
         let sigma = InputStatistic::from_cells(row.sigma, row.spectra.sigma, shape, "SIGMA")?;
-        let legacy_totals = (self.legacy && row.spectra.weight.is_some()).then(|| {
+        let legacy_weights = self.legacy.then(|| {
             (0..shape[0])
                 .map(|corr| {
-                    (0..shape[1])
-                        .map(|chan| f64::from(weight.value(corr, chan)))
-                        .sum::<f64>()
+                    let scalar = if self.corrected {
+                        weight.scalar(corr).max(f32::EPSILON)
+                    } else if sigma.scalar(corr) >= f32::EPSILON {
+                        weight_from_sigma(sigma.scalar(corr))
+                    } else {
+                        0.0
+                    };
+                    let total = row
+                        .spectra
+                        .weight
+                        .map(|_| {
+                            (0..shape[1])
+                                .map(|chan| f64::from(weight.value(corr, chan)))
+                                .sum::<f64>()
+                        })
+                        .filter(|&total| total > 0.0);
+                    total.map_or((f64::from(scalar), false), |total| {
+                        (f64::from(scalar) / total, true)
+                    })
                 })
                 .collect::<Vec<_>>()
         });
         let mut legacy_row_weight = 0.0;
-        let changes = Array2::from_shape_fn(self.shape, |(corr, chan)| {
+        let changes = Array2::from_shape_fn(self.shape.f(), |(corr, chan)| {
             let i = [corr, chan];
-            let weights = if self.legacy {
-                let scalar = if self.corrected {
-                    weight.scalar(corr).max(f32::EPSILON)
-                } else if sigma.scalar(corr) >= f32::EPSILON {
-                    weight_from_sigma(sigma.scalar(corr))
+            let weights = if let Some(factors) = &legacy_weights {
+                let (factor, has_spectrum) = factors[corr];
+                let adjusted = if has_spectrum {
+                    factor * f64::from(weight.value(corr, chan))
                 } else {
-                    0.0
+                    factor
                 };
-                let relative = legacy_totals.as_ref().map_or(1.0, |totals| {
-                    let total = totals[corr];
-                    if total > 0.0 {
-                        f64::from(weight.value(corr, chan)) / total
-                    } else {
-                        1.0
-                    }
-                });
-                [(f64::from(scalar) * relative) as f32; 3]
+                [adjusted as f32; 3]
             } else {
                 [
                     weight_from_sigma(sigma.value(corr, chan)),
@@ -994,16 +1001,27 @@ where
             "visibility and FLAG time-averaging grids differ".to_string(),
         ));
     }
-    for ((output, &input), sample) in sum.iter_mut().zip(input).zip(sample) {
-        if sample.include {
-            let contribution = input * sample.weights[weight as usize];
-            if sample.reset {
-                *output = contribution;
-            } else {
-                *output += contribution;
+    let sum = sum
+        .view_mut()
+        .into_dimensionality::<Ix2>()
+        .expect("checked shape");
+    let input = input
+        .view()
+        .into_dimensionality::<Ix2>()
+        .expect("checked shape");
+    Zip::from(sum)
+        .and(input)
+        .and(sample)
+        .for_each(|output, &input, sample| {
+            if sample.include {
+                let contribution = input * sample.weights[weight as usize];
+                if sample.reset {
+                    *output = contribution;
+                } else {
+                    *output += contribution;
+                }
             }
-        }
-    }
+        });
     Ok(())
 }
 
@@ -1015,10 +1033,14 @@ fn finish_visibility<T>(
 ) where
     T: Copy + Div<f32, Output = T>,
 {
-    for (value, weights) in sum.iter_mut().zip(weights) {
+    let sum = sum
+        .view_mut()
+        .into_dimensionality::<Ix2>()
+        .expect("time averaging grid");
+    Zip::from(sum).and(weights).for_each(|value, weights| {
         let normalization = weights[role as usize];
         if normalization > 0.0 || divide_by_zero {
             *value = *value / normalization;
         }
-    }
+    });
 }

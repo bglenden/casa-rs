@@ -124,12 +124,13 @@ impl CorrelationSelection {
 
     pub(super) fn write_polarizations(
         &self,
+        input: &MeasurementSet,
         request: &MsTransformRequest,
     ) -> Result<(), MsTransformError> {
         let name = SubtableId::Polarization.name();
         let rows = (0..self.by_polarization.len()).collect::<Vec<_>>();
         rewrite_table_rows_with_variable_arrays(
-            &request.input_ms.join(name),
+            super::subtable_copy::input_subtable_path(input, SubtableId::Polarization)?,
             &request.output_ms.join(name),
             &rows,
             &["CORR_TYPE", "CORR_PRODUCT"],

@@ -11,6 +11,23 @@ use casa_types::Value;
 
 use super::{MeasurementSet, MsTransformError, SubtableId};
 
+pub(super) fn input_subtable_path(
+    input: &MeasurementSet,
+    id: SubtableId,
+) -> Result<&Path, MsTransformError> {
+    input
+        .subtable(id)
+        .and_then(Table::path)
+        .ok_or_else(|| MsTransformError::SpectralMetadata {
+            path: input
+                .path()
+                .unwrap_or_else(|| Path::new("<memory>"))
+                .display()
+                .to_string(),
+            reason: format!("missing persisted {} subtable", id.name()),
+        })
+}
+
 pub(super) fn copy_subtables(
     input: &MeasurementSet,
     metadata_path: &Path,

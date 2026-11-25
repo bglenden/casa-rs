@@ -77,7 +77,7 @@ IMPLEMENTED["ms"] = {
     "metadata", "msselect", "msselectedindices", "msseltoindex", "name",
     "ngetdata", "niterend", "niterinit", "niternext", "niterorigin", "nrow", "nrowold",
     "open", "partition", "putdataold", "range", "rangeold", "reset", "select", "selectinit", "selectinitold", "selectold",
-    "selectchannelold", "selectpolarizationold", "selecttaql", "sort",
+    "selectchannelold", "selectpolarizationold", "selecttaql", "sort", "split",
     "statistics", "statisticsold", "statwt", "summary", "testconcatenate", "timesort", "uvsub", "virtconcatenate",
     "writehistory", "writehistory_batch",
 }

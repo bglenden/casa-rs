@@ -5,13 +5,16 @@ use std::path::{Path, PathBuf};
 use casa_ms::{
     schema::main_table::OptionalMainColumn,
     selection::MsSelection,
-    tool_sort::check_named_sort_output,
+    tool_history::append_tool_history,
+    tool_sort::check_named_output_path,
     transform::{
-        LegacyTimeOptions, MsTransformError, MsTransformRequest, MsTransformTaskOptions,
-        MsTransformTiling, TimeAverageOptions, TransformDataColumn, mstransform_task,
+        LegacyMsTool, LegacyTimeOptions, MsTransformError, MsTransformRequest,
+        MsTransformTaskOptions, MsTransformTiling, TimeAverageOptions, TransformDataColumn,
+        mstransform_task,
     },
 };
 use casa_tables::publication::{check_write_access, lock_table_tree_for_replacement};
+use casa_tables::{Table, TableOptions};
 use pyo3::prelude::*;
 
 use crate::convert::{Variant, quantity_value, selector::listing_selector};
@@ -59,35 +62,54 @@ impl PyMsTool {
         let options = MsTransformTaskOptions {
             visibility_columns: columns,
             preserve_ids: true,
-            legacy_partition: Some(LegacyTimeOptions {
+            legacy_tool: Some(LegacyMsTool::Partition(LegacyTimeOptions {
                 combine_observations: combine.to_ascii_lowercase().contains("obs"),
-            }),
+            })),
             time_averaging: time_average(timebin.as_ref(), &combine)?,
             tiling: tile_layout(tileshape.as_ref())?,
             ..MsTransformTaskOptions::default()
         };
+        self.write_subms(py, outputms, spw, selection, options, None)
+    }
+}
+
+impl PyMsTool {
+    pub(super) fn write_subms(
+        &self,
+        py: Python<'_>,
+        outputms: String,
+        spw: String,
+        selection: MsSelection,
+        options: MsTransformTaskOptions,
+        history: Option<String>,
+    ) -> PyResult<bool> {
+        let operation = if history.is_some() {
+            "split"
+        } else {
+            "partition"
+        };
         py.detach(|| {
             let attached = self.attached.lock().map_err(runtime_error)?;
             let Some(ms) = attached.as_ref() else {
+                if operation == "split" {
+                    return Err(runtime_error("Table column DATA_DESC_ID is unknown"));
+                }
                 return Ok(false);
             };
-            if spw.contains(':') {
+            if operation == "partition" && spw.contains(':') {
                 return Ok(false);
             }
             let link = ms.working_metadata_link();
-            let source = link.snapshot(None).map_err(runtime_error)?;
-            let input = source
-                .ms
-                .path()
-                .ok_or_else(|| runtime_error("partition input has no path"))?;
+            let view = link.working_view().map_err(runtime_error)?;
+            let input = view.path();
             let output = (!outputms.is_empty())
-                .then(|| named_path(Path::new(&outputms), &ms.path))
+                .then(|| named_path(Path::new(&outputms), &ms.path, operation))
                 .transpose()?;
             let destination = output
                 .as_deref()
                 .map(|output| {
-                    check_named_sort_output(&source.ms, output).map_err(runtime_error)?;
-                    SortedDestination::inspect(output, "partition")
+                    check_named_output_path(input, output).map_err(runtime_error)?;
+                    SortedDestination::inspect(output, operation)
                 })
                 .transpose()?;
             let locks = match output.as_deref().zip(destination.as_ref()) {
@@ -102,7 +124,7 @@ impl PyMsTool {
                 .and_then(Path::parent)
                 .map_or_else(tempfile::tempdir, tempfile::tempdir_in)
                 .map_err(runtime_error)?;
-            let staged = scratch.path().join("partition.ms");
+            let staged = scratch.path().join(format!("{operation}.ms"));
             let request = MsTransformRequest {
                 input_ms: input.to_path_buf(),
                 output_ms: staged.clone(),
@@ -112,9 +134,11 @@ impl PyMsTool {
                 selection,
                 keep_flags: true,
             };
+            link.verify_directory().map_err(runtime_error)?;
             match mstransform_task(&request, &options) {
                 Err(MsTransformError::EmptySelection { .. }) => {
                     if let Some(field) = &request.selection.field {
+                        let source = link.snapshot(None).map_err(runtime_error)?;
                         source
                             .ms
                             .resolve_field_selector(field)
@@ -122,79 +146,101 @@ impl PyMsTool {
                     }
                     return Ok(false);
                 }
+                Err(MsTransformError::ChannelWidthCount) if operation == "split" => {
+                    return Ok(false);
+                }
                 result => result.map_err(runtime_error)?,
             };
+            if let Some(parameters) = history.as_ref()
+                && output.is_some()
+            {
+                let table = Table::open(TableOptions::new(&staged)).map_err(runtime_error)?;
+                let message = format!("{outputms} split from {}", ms.path.display());
+                append_tool_history(
+                    &table,
+                    true,
+                    &[message],
+                    parameters,
+                    "ms::split()",
+                    "ms",
+                    &mut Default::default(),
+                )
+                .map_err(runtime_error)?;
+            }
             link.verify_directory().map_err(runtime_error)?;
             if !locks
                 .iter()
                 .all(|lock| lock.matches_table_path(lock.path()))
             {
-                return Err(runtime_error("partition output changed during staging"));
+                return Err(runtime_error(format!(
+                    "{operation} output changed during staging"
+                )));
             }
             if let Some((destination, output)) = destination.zip(output) {
-                destination.publish(&staged, &output, "partition")?;
+                destination.publish(&staged, &output, operation)?;
             }
             Ok(true)
         })
     }
 }
 
-fn named_path(output: &Path, input: &Path) -> PyResult<PathBuf> {
+fn named_path(output: &Path, input: &Path, operation: &str) -> PyResult<PathBuf> {
     let parent = output
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."))
         .canonicalize()
         .map_err(runtime_error)?;
-    let output = parent.join(
-        output
-            .file_name()
-            .ok_or_else(|| runtime_error("partition output must name a MeasurementSet"))?,
-    );
+    let output =
+        parent.join(output.file_name().ok_or_else(|| {
+            runtime_error(format!("{operation} output must name a MeasurementSet"))
+        })?);
     if input.starts_with(&output) {
-        return Err(runtime_error("partition output would replace its input"));
+        return Err(runtime_error(format!(
+            "{operation} output would replace its input"
+        )));
     }
     Ok(output)
 }
 
-fn output_argument(value: &Bound<'_, PyAny>) -> PyResult<String> {
+pub(super) fn output_argument(value: &Bound<'_, PyAny>) -> PyResult<String> {
     selection_text(value, "outputms")
 }
 
-fn time_argument(value: &Bound<'_, PyAny>) -> PyResult<String> {
+pub(super) fn time_argument(value: &Bound<'_, PyAny>) -> PyResult<String> {
     selection_text(value, "time")
 }
 
-fn taql_argument(value: &Bound<'_, PyAny>) -> PyResult<String> {
+pub(super) fn taql_argument(value: &Bound<'_, PyAny>) -> PyResult<String> {
     selection_text(value, "taql")
 }
 
-fn whichcol_argument(value: &Bound<'_, PyAny>) -> PyResult<String> {
+pub(super) fn whichcol_argument(value: &Bound<'_, PyAny>) -> PyResult<String> {
     selection_text(value, "whichcol")
 }
 
-fn combine_argument(value: &Bound<'_, PyAny>) -> PyResult<String> {
+pub(super) fn combine_argument(value: &Bound<'_, PyAny>) -> PyResult<String> {
     selection_text(value, "combine")
 }
 
-fn intent_argument(value: &Bound<'_, PyAny>) -> PyResult<String> {
+pub(super) fn intent_argument(value: &Bound<'_, PyAny>) -> PyResult<String> {
     selection_text(value, "intent")
 }
 
-fn obs_argument(value: &Bound<'_, PyAny>) -> PyResult<String> {
+pub(super) fn obs_argument(value: &Bound<'_, PyAny>) -> PyResult<String> {
     selection_text(value, "obs")
 }
 
-fn optional_expression(value: Option<&Bound<'_, PyAny>>) -> PyResult<Option<String>> {
+pub(super) fn optional_expression(value: Option<&Bound<'_, PyAny>>) -> PyResult<Option<String>> {
     let text = listing_selector(value)?;
     Ok((!text.is_empty()).then_some(text))
 }
 
-fn all_if_minus_one(value: Option<&Bound<'_, PyAny>>) -> PyResult<Option<String>> {
+pub(super) fn all_if_minus_one(value: Option<&Bound<'_, PyAny>>) -> PyResult<Option<String>> {
     Ok(optional_expression(value)?.filter(|text| text != "-1"))
 }
 
-fn visibility_columns(whichcol: &str) -> PyResult<Option<Vec<OptionalMainColumn>>> {
+pub(super) fn visibility_columns(whichcol: &str) -> PyResult<Option<Vec<OptionalMainColumn>>> {
     use OptionalMainColumn::{CorrectedData, Data, FloatData, LagData, ModelData};
     let text = whichcol.to_ascii_uppercase();
     if text.contains("ALL") || text.contains("ANY") {
@@ -218,7 +264,10 @@ fn visibility_columns(whichcol: &str) -> PyResult<Option<Vec<OptionalMainColumn>
     }
 }
 
-fn time_average(timebin: Option<&Variant>, combine: &str) -> PyResult<Option<TimeAverageOptions>> {
+pub(super) fn time_average(
+    timebin: Option<&Variant>,
+    combine: &str,
+) -> PyResult<Option<TimeAverageOptions>> {
     let seconds = timebin
         .map(|value| quantity_value(value, "s"))
         .transpose()
@@ -237,7 +286,7 @@ fn time_average(timebin: Option<&Variant>, combine: &str) -> PyResult<Option<Tim
     }))
 }
 
-fn tile_layout(tileshape: Option<&Variant>) -> PyResult<Option<MsTransformTiling>> {
+pub(super) fn tile_layout(tileshape: Option<&Variant>) -> PyResult<Option<MsTransformTiling>> {
     let Some(Variant::Numbers(values) | Variant::Array { values, .. }) = tileshape else {
         return Ok(None);
     };

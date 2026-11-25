@@ -67,6 +67,7 @@ pub(super) fn write_channel_selection(
     compact_ids: &BTreeMap<i32, i32>,
     selections: &BTreeMap<i32, TransformChannelSelection>,
     averaged: Option<&BTreeMap<i32, Vec<ChannelWindow>>>,
+    split_widths: Option<&BTreeMap<i32, usize>>,
 ) -> Result<(), MsTransformError> {
     let path = output_ms.join(SubtableId::SpectralWindow.name());
     let error = |source: casa_tables::TableError| MsTransformError::MutateMeasurementSet {
@@ -80,32 +81,51 @@ pub(super) fn write_channel_selection(
         let selection = &selections[old_id];
         let freq = f64_vector_cell(&table, row, "CHAN_FREQ", &path)?;
         let averaged = averaged.map(|windows| windows[old_id].as_slice());
+        let split_width = split_widths.map(|widths| widths[old_id]);
         if all_channels_selected(&selection.channels, freq.len())
             && averaged.is_none_or(|bins| bins.len() == freq.len())
+            && split_width.is_none_or(|width| width == 1 || freq.len() == 1)
         {
             continue;
         }
         let widths = f64_vector_cell(&table, row, "CHAN_WIDTH", &path)?;
         let resolution = f64_vector_cell(&table, row, "RESOLUTION", &path)?;
-        let unaveraged;
-        let windows = match averaged {
-            Some(windows) => windows,
-            None => {
-                unaveraged = selection_windows(selection);
-                &unaveraged
-            }
+        let planned;
+        let windows = if let Some(width) = split_width {
+            planned = split_windows(selection, width);
+            &planned
+        } else if let Some(windows) = averaged {
+            windows
+        } else {
+            planned = selection_windows(selection);
+            &planned
         };
-        let grid = selected_windows(windows, &freq, &widths, &resolution).ok_or_else(|| {
-            MsTransformError::SpectralMetadata {
-                path: path.display().to_string(),
-                reason: format!("SPW {old_id} channel metadata does not cover the selection"),
+        let bad_axis = || MsTransformError::SpectralMetadata {
+            path: path.display().to_string(),
+            reason: format!("SPW {old_id} channel metadata does not cover the selection"),
+        };
+        let mut grid =
+            selected_windows(windows, &freq, &widths, &resolution).ok_or_else(bad_axis)?;
+        let effective_bandwidth = if let Some(width) = split_width {
+            let input = f64_vector_cell(&table, row, "EFFECTIVE_BW", &path)?;
+            let stride = selection.ranges[0].step.max(1) as usize;
+            let bandwidths =
+                split_effective_bandwidths(windows, &input, stride).ok_or_else(bad_axis)?;
+            grid.bandwidth = bandwidths.iter().sum();
+            if width == 1 && stride == 1 {
+                for (width, window) in grid.widths.iter_mut().zip(windows) {
+                    *width = widths[window.first];
+                }
             }
-        })?;
+            bandwidths
+        } else {
+            grid.resolution.clone()
+        };
         let channel_count = grid.centres.len();
         for (name, values) in [
             ("CHAN_FREQ", grid.centres),
             ("CHAN_WIDTH", grid.widths),
-            ("EFFECTIVE_BW", grid.resolution.clone()),
+            ("EFFECTIVE_BW", effective_bandwidth),
             ("RESOLUTION", grid.resolution),
         ] {
             let value = Value::Array(ArrayValue::Float64(Array1::from_vec(values).into_dyn()));
@@ -133,6 +153,29 @@ pub(super) fn write_channel_selection(
             .map_err(error)?;
     }
     Ok(())
+}
+
+fn split_windows(selection: &TransformChannelSelection, width: usize) -> Vec<ChannelWindow> {
+    let mut windows = selection.metadata_for_width(width);
+    for window in &mut windows {
+        window.dropped = false;
+    }
+    windows
+}
+
+fn split_effective_bandwidths(
+    windows: &[ChannelWindow],
+    input: &[f64],
+    stride: usize,
+) -> Option<Vec<f64>> {
+    windows
+        .iter()
+        .map(|window| {
+            (window.first..=window.last)
+                .step_by(stride)
+                .try_fold(0.0, |sum, channel| Some(sum + input.get(channel)?))
+        })
+        .collect()
 }
 
 fn selection_windows(selection: &TransformChannelSelection) -> Vec<ChannelWindow> {

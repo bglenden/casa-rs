@@ -12119,3 +12119,59 @@ its own baseline, and normalizes spectral weights within each integration.
 The time-bin calculations are checked against the shared CASA averager
 through `ms.split()` and against analytic fixtures. Casa-rs publishes the
 output after the write completes (#1030).
+
+## Split can write HISTORY to the input when output is omitted
+
+CASA 6.7.6.14 opens a scratch output for `ms.split()`, then passes the
+original empty output name to the HISTORY writer. That writer appends to
+the attached input's HISTORY. Casa-rs discards the unnamed scratch result
+without changing the input. Named outputs retain the split HISTORY row
+(#1030).
+
+When a named split uses an attached working selection, CASA 6.7.6.14
+records the generated scratch table in HISTORY. Casa-rs records the
+attached input's path so that the provenance survives scratch cleanup
+(#1030).
+
+## Split can leave a partial output after a time and channel stride error
+
+With a positive time bin and a channel selection such as `0:0~3^2`, CASA
+6.7.6.14 can create the output before raising the unsupported-combination
+error. Casa-rs raises the same error and preserves any existing output
+(#1030).
+
+## Split can report averaged channels without averaging their visibilities
+
+For four input channels, CASA 6.7.6.14 can give `ms.split(step=[3],
+timebin="120s")` two output channel coordinates for bins of three and one
+channels, while reading the first two raw channel values. Casa-rs forms
+both channel bins within each integration before averaging in time.
+The output coordinates, flags, and visibilities describe the same bins
+(#1030).
+
+## Split can write an output while returning a step error
+
+With a tuple such as `step=(2,)`, the CASA 6.7.6.14 binding runs the
+split before Python raises `SystemError` for the pending conversion
+exception. A negative width also leaves a partial output before CASA raises
+`RuntimeError`. Casa-rs raises the corresponding error and preserves the
+destination. Scalar integers, numeric lists, and NumPy arrays still work
+(#1030).
+
+## Channel split can write dangling STATE_ID references
+
+The CASA 6.7.6.14 `ms.split(field=[0], step=[5])` path maps the only
+input `STATE_ID` of `-1` to output row zero, even when the STATE subtable
+is empty. Casa-rs retains `-1`, the missing-state marker. The output
+STATE table remains empty (#1030).
+
+## Split can replace effective bandwidth with spectral resolution
+
+For a channel selection or average, CASA 6.7.6.14 computes each output
+channel's effective bandwidth for the total bandwidth, then writes the
+resolution array into the EFFECTIVE_BW column. For descending 1 MHz
+channels with 0.75 MHz effective bandwidth and 1.2 MHz resolution,
+`ms.split(step=[2])` reports 2.2 MHz effective bandwidth per output bin
+and a 3 MHz total for two bins. Casa-rs writes the summed 1.5 MHz effective
+bandwidth per bin, retains 2.2 MHz resolution, and reports the same 3 MHz
+total (#1030).

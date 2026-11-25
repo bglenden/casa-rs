@@ -10,10 +10,10 @@ use casa_types::{RecordValue, ScalarValue, Value};
 use crate::ms::subtable_path_from_main;
 use crate::{MsError, MsResult, SubtableId};
 
-pub(crate) fn check_named_output(input: &Table, output: &Path) -> MsResult<()> {
-    let root = reference_root(table_path(input)?)?;
+pub(super) fn check_named_output(input: &Path, output: &Path) -> MsResult<()> {
+    let root = reference_root(input)?;
     let mut visited = BTreeSet::new();
-    let mut pending = vec![(table_path(input)?.to_path_buf(), false)];
+    let mut pending = vec![(input.to_path_buf(), false)];
     let standard = SubtableId::ALL_REQUIRED
         .iter()
         .chain(SubtableId::ALL_OPTIONAL);
