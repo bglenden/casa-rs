@@ -3,6 +3,7 @@
 
 mod cards;
 mod column;
+pub mod listing;
 
 use std::path::Path;
 

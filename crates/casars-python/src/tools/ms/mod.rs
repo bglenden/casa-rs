@@ -12,6 +12,7 @@ mod legacy_iteration;
 mod legacy_selection;
 mod legacy_visibility;
 mod lister;
+mod listfits;
 pub(super) mod metadata_link;
 mod multims;
 mod owned_record;

@@ -33,6 +33,10 @@ pub(super) struct Header(Vec<Card>);
 
 impl Header {
     pub fn read(fits: &mut Reader) -> Result<Self> {
+        Self::visit(fits, |_, _| {})
+    }
+
+    pub fn visit(fits: &mut Reader, mut visit: impl FnMut(&str, Option<&Card>)) -> Result<Self> {
         let (mut count, mut more, mut status) = (0, 0, 0);
         // SAFETY: live selected HDU, with valid output pointers.
         unsafe { sys::ffghsp(fits.ptr, &mut count, &mut more, &mut status) };
@@ -45,7 +49,9 @@ impl Header {
             fits_status(status)?;
             // SAFETY: ffgrec NUL-terminates a successfully read card.
             let raw = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_string_lossy();
-            if let Some(card) = parse_card(&raw) {
+            let card = parse_card(&raw);
+            visit(&raw, card.as_ref());
+            if let Some(card) = card {
                 cards.push(card);
             }
         }

@@ -98,12 +98,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (fitsfile), text_signature = "($self, fitsfile)")]
-    fn listfits(&self, fitsfile: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("listfits")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (dorms = None, byantenna = None, sepacs = None, fitspw = None, fitcorr = None, combine = None, timebin = None, minsamp = None, field = None, spw = None, antenna = None, timerange = None, scan = None, intent = None, array = None, correlation = None, obs = None, datacolumn = None), text_signature = "($self, dorms=False, byantenna=True, sepacs=True, fitspw=[], fitcorr=[], combine='', timebin=[], minsamp=3, field=[], spw=[], antenna='', timerange='', scan=[], intent='', array=[], correlation='', obs='', datacolumn='corrected_data')")]
     fn oldstatwt(
         &self,
