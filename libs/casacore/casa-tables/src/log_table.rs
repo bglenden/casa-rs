@@ -783,15 +783,6 @@ impl Visit for EventVisitor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
-
-    // Tracing callsite interest is process-global.
-    fn global_state_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
 
     #[test]
     fn a_writer_sink_writes_the_stderr_lines_to_its_shared_writer() {
@@ -947,7 +938,7 @@ mod tests {
 
     #[test]
     fn a_debug_sink_enables_debug_profiles() {
-        let _guard = global_state_lock();
+        let _guard = crate::tracing_test_lock();
         use tracing_subscriber::layer::SubscriberExt;
 
         let sink = Arc::new(MemorySink::new(CasaPriority::Debug1));
@@ -962,7 +953,7 @@ mod tests {
 
     #[test]
     fn an_event_logs_its_fields_after_its_message() {
-        let _guard = global_state_lock();
+        let _guard = crate::tracing_test_lock();
         use tracing_subscriber::layer::SubscriberExt;
 
         let sink = Arc::new(MemorySink::new(CasaPriority::Info));
@@ -997,7 +988,7 @@ mod tests {
 
     #[test]
     fn an_event_can_replay_a_casa_history_timestamp() {
-        let _guard = global_state_lock();
+        let _guard = crate::tracing_test_lock();
         use tracing_subscriber::layer::SubscriberExt;
         let sink = Arc::new(MemorySink::new(CasaPriority::Info));
         let subscriber = tracing_subscriber::registry().with(CasaLogLayer::filtered(sink.clone()));
@@ -1029,7 +1020,7 @@ mod tests {
 
     #[test]
     fn a_casa_sink_filters_only_its_own_layer() {
-        let _guard = global_state_lock();
+        let _guard = crate::tracing_test_lock();
         use tracing::subscriber::with_default;
         use tracing_subscriber::layer::SubscriberExt;
 
@@ -1065,7 +1056,7 @@ mod tests {
 
     #[test]
     fn each_subscriber_applies_its_own_sink_threshold() {
-        let _guard = global_state_lock();
+        let _guard = crate::tracing_test_lock();
         use tracing_subscriber::layer::SubscriberExt;
 
         let records = |priority| {

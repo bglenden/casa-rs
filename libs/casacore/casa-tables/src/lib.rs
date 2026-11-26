@@ -332,3 +332,11 @@ pub fn table_type_tag(path: &std::path::Path) -> Result<String, StorageError> {
     let mut control = AipsIo::open(path.join(storage::TABLE_CONTROL_FILE), AipsOpenOption::Old)?;
     Ok(control.get_next_type()?)
 }
+
+// Tracing callsite interest is process-global, even for thread-local subscribers.
+#[cfg(test)]
+fn tracing_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}

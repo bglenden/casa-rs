@@ -283,6 +283,7 @@ mod tests {
 
     #[test]
     fn interruptible_write_lock_registers_request_id_and_removes_on_cancel() {
+        let _guard = crate::tracing_test_lock();
         let tmp = TempDir::new().unwrap();
         let table_dir = tmp.path().join("table");
         std::fs::create_dir_all(&table_dir).unwrap();
@@ -353,6 +354,7 @@ mod tests {
 
     #[test]
     fn interruptible_write_lock_logs_under_thread_local_subscriber_and_acquires() {
+        let _guard = crate::tracing_test_lock();
         let tmp = TempDir::new().unwrap();
         let table_dir = tmp.path().join("table");
         std::fs::create_dir_all(&table_dir).unwrap();
@@ -418,6 +420,7 @@ mod tests {
 
     #[test]
     fn wait_report_thread_receives_thread_local_dispatcher() {
+        let _guard = crate::tracing_test_lock();
         let capture = Arc::new(LogCapture::default());
         tracing::subscriber::with_default(CaptureSubscriber(Arc::clone(&capture)), || {
             let dispatch = tracing::dispatcher::get_default(Clone::clone);
