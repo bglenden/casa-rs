@@ -33,11 +33,41 @@ pub fn reframe_staged_ms(
     options: &MsRegridOptions,
 ) -> Result<bool, MsTransformError> {
     let mut ms = MeasurementSet::open(stage).map_err(ms_error)?;
-    let paths = local_tables(&ms, stage)?;
-    let Some(layout) = Layout::new(&ms, options)? else {
+    let paths = local_tables(ms.main_table(), stage)?;
+    let rows = (0..ms.row_count()).collect::<Vec<_>>();
+    let Some(layout) = Layout::new(&ms, options, &rows)? else {
         return Ok(false);
     };
-    layout.write(&mut ms, &paths)?;
+    let windows = ms
+        .subtable(SubtableId::SpectralWindow)
+        .ok_or_else(|| invalid("Missing SPECTRAL_WINDOW.".into()))?;
+    let spectral = MsSpectralWindow::new(windows);
+    let records = layout.window_records(windows, |_, origin, record| {
+        if let Some(frame) = origin.frame_at_reference(&ms, options)? {
+            update_window(
+                record,
+                &spectral,
+                origin.spw as usize,
+                origin.reference,
+                &frame,
+            )?;
+        }
+        Ok(())
+    })?;
+    layout.write_subtables(&paths, records)?;
+
+    let main = ms.main_table_mut();
+    {
+        let mut column = main.column_accessor_mut(DDID).map_err(ms_error)?;
+        for (row, value) in layout.row_descriptions.into_iter().enumerate() {
+            column
+                .set(row, Value::Scalar(ScalarValue::Int32(value)))
+                .map_err(ms_error)?;
+        }
+    }
+    main.prepare_write()
+        .save_selected_columns(&[DDID])
+        .map_err(ms_error)?;
     Ok(true)
 }
 
@@ -47,7 +77,7 @@ struct LocalTables {
     source: Option<PathBuf>,
 }
 
-fn local_tables(ms: &MeasurementSet, stage: &Path) -> Result<LocalTables, MsTransformError> {
+fn local_tables(main: &Table, stage: &Path) -> Result<LocalTables, MsTransformError> {
     let root = stage.canonicalize().map_err(ms_error)?;
     if !matches!(
         Table::immediate_part_names(&root, &root).map_err(ms_error)?,
@@ -58,8 +88,8 @@ fn local_tables(ms: &MeasurementSet, stage: &Path) -> Result<LocalTables, MsTran
         ));
     }
     let path = |id| {
-        let linked = crate::ms::linked_subtables::strict_subtable_path(ms.main_table(), &root, id)
-            .map_err(ms_error)?;
+        let linked =
+            crate::ms::linked_subtables::strict_subtable_path(main, &root, id).map_err(ms_error)?;
         linked
             .map(|path| {
                 let path = path.canonicalize().map_err(ms_error)?;
@@ -89,17 +119,41 @@ fn local_tables(ms: &MeasurementSet, stage: &Path) -> Result<LocalTables, MsTran
     })
 }
 
-struct Layout {
-    windows: Vec<RecordValue>,
+pub(super) struct WindowOrigin {
+    pub(super) spw: i32,
+    pub(super) reference: FrequencyRef,
+    field: Option<i32>,
+    first_integration: usize,
+}
+
+impl WindowOrigin {
+    pub(super) fn frame_at_reference(
+        &self,
+        ms: &MeasurementSet,
+        options: &MsRegridOptions,
+    ) -> Result<Option<Frame>, MsTransformError> {
+        let Some(field) = self.field else {
+            return Ok(None);
+        };
+        let mut options = options.clone();
+        options.phasecenter = field.to_string();
+        Frame::new(ms, &options, self.first_integration)
+    }
+}
+
+pub(super) struct Layout {
+    pub(super) windows: Vec<WindowOrigin>,
     descriptions: Vec<RecordValue>,
+    description_windows: Vec<i32>,
     sources: Vec<(i32, i32, i32)>,
     row_descriptions: Vec<i32>,
 }
 
 impl Layout {
-    fn new(
+    pub(super) fn new(
         ms: &MeasurementSet,
         options: &MsRegridOptions,
+        rows: &[usize],
     ) -> Result<Option<Self>, MsTransformError> {
         let source_frame = options.outframe.eq_ignore_ascii_case("SOURCE");
         let target = if source_frame {
@@ -110,25 +164,6 @@ impl Layout {
             return Ok(None);
         } else {
             return Err(super::invalid_choice("outframe", &options.outframe));
-        };
-        let main = ms.main_table();
-        let rows = (0..ms.row_count()).collect::<Vec<_>>();
-        let mut scalars = main
-            .required_scalar_columns_owned_for_rows(&[DDID, "FIELD_ID", "TIME"], &rows)
-            .map_err(ms_error)?;
-        let (
-            Some(RequiredScalarColumnValues::Int32(descriptions)),
-            Some(RequiredScalarColumnValues::Int32(fields)),
-            Some(RequiredScalarColumnValues::Float64(times)),
-        ) = (
-            scalars.remove(DDID),
-            scalars.remove("FIELD_ID"),
-            scalars.remove("TIME"),
-        )
-        else {
-            return Err(invalid(
-                "Invalid time, field or description column for regridding.".into(),
-            ));
         };
         let desc = ms
             .subtable(SubtableId::DataDescription)
@@ -148,22 +183,45 @@ impl Layout {
                     .ok_or_else(|| invalid(format!("Invalid MEAS_FREQ_REF {code}.")))
             })
             .collect::<Result<Vec<_>, _>>()?;
+        if !source_frame && references.iter().all(|&reference| target == reference) {
+            return Ok(None);
+        }
+        let main = ms.main_table();
+        let mut scalars = main
+            .required_scalar_columns_owned_for_rows(&[DDID, "FIELD_ID", "TIME"], rows)
+            .map_err(ms_error)?;
+        let (
+            Some(RequiredScalarColumnValues::Int32(descriptions)),
+            Some(RequiredScalarColumnValues::Int32(fields)),
+            Some(RequiredScalarColumnValues::Float64(times)),
+        ) = (
+            scalars.remove(DDID),
+            scalars.remove("FIELD_ID"),
+            scalars.remove("TIME"),
+        )
+        else {
+            return Err(invalid(
+                "Invalid time, field or description column for regridding.".into(),
+            ));
+        };
         let mut layout = Self {
             windows: Vec::new(),
             descriptions: Vec::new(),
+            description_windows: Vec::new(),
             sources: Vec::new(),
-            row_descriptions: vec![0; rows.len()],
+            row_descriptions: vec![-1; ms.row_count()],
         };
         let mut window_ids = BTreeMap::new();
         let mut description_ids = BTreeMap::new();
-        let mut sorted = rows;
+        let mut sorted = (0..rows.len()).collect::<Vec<_>>();
         sorted.sort_by(|&left, &right| times[left].total_cmp(&times[right]));
         let mut changed = false;
         let mut source_rows = BTreeSet::new();
         let field_table = ms.field().map_err(ms_error)?;
         let has_source = ms.subtable(SubtableId::Source).is_some();
-        for row in sorted {
-            let ddid = descriptions[row] as usize;
+        for slot in sorted {
+            let row = rows[slot];
+            let ddid = descriptions[slot] as usize;
             let window = *descriptions_to_windows
                 .get(ddid)
                 .ok_or_else(|| invalid(format!("Invalid MAIN DATA_DESC_ID {ddid}.")))?
@@ -173,26 +231,18 @@ impl Layout {
                 .ok_or_else(|| invalid(format!("Invalid DATA_DESCRIPTION {SPW_ID} {window}.")))?;
             let convert = reference != target || source_frame;
             changed |= convert;
-            let field = fields[row];
+            let field = fields[slot];
             let key = (window, convert.then_some(field));
             let output_spw = match window_ids.entry(key) {
                 Entry::Occupied(entry) => *entry.get(),
                 Entry::Vacant(entry) => {
-                    let mut record = windows
-                        .row_accessor()
-                        .row(window)
-                        .map_err(ms_error)?
-                        .clone();
-                    if convert {
-                        let mut options = options.clone();
-                        options.phasecenter = field.to_string();
-                        let frame = Frame::new(ms, &options, row)?.ok_or_else(|| {
-                            invalid("A target frequency frame is required.".into())
-                        })?;
-                        update_window(&mut record, &spectral, window, reference, &frame)?;
-                    }
                     let output = i32::try_from(layout.windows.len()).map_err(ms_error)?;
-                    layout.windows.push(record);
+                    layout.windows.push(WindowOrigin {
+                        spw: window as i32,
+                        reference,
+                        field: key.1,
+                        first_integration: row,
+                    });
                     *entry.insert(output)
                 }
             };
@@ -203,6 +253,7 @@ impl Layout {
                     set_i32(&mut record, SPW_ID, output_spw);
                     let output = i32::try_from(layout.descriptions.len()).map_err(ms_error)?;
                     layout.descriptions.push(record);
+                    layout.description_windows.push(output_spw);
                     *entry.insert(output)
                 }
             };
@@ -217,24 +268,62 @@ impl Layout {
         Ok(changed.then_some(layout))
     }
 
-    fn write(self, ms: &mut MeasurementSet, paths: &LocalTables) -> Result<(), MsTransformError> {
-        replace_rows(&paths.windows, self.windows)?;
-        replace_rows(&paths.descriptions, self.descriptions)?;
+    pub(super) fn description(&self, row: usize) -> Option<i32> {
+        self.row_descriptions
+            .get(row)
+            .copied()
+            .filter(|&id| id >= 0)
+    }
+
+    pub(super) fn window(&self, row: usize) -> Option<i32> {
+        self.description(row)
+            .map(|id| self.description_windows[id as usize])
+    }
+
+    fn window_records(
+        &self,
+        windows: &Table,
+        mut populate: impl FnMut(usize, &WindowOrigin, &mut RecordValue) -> Result<(), MsTransformError>,
+    ) -> Result<Vec<RecordValue>, MsTransformError> {
+        let descriptor = windows.row_accessor();
+        self.windows
+            .iter()
+            .enumerate()
+            .map(|(id, origin)| {
+                let mut record = descriptor
+                    .row(origin.spw as usize)
+                    .map_err(ms_error)?
+                    .clone();
+                populate(id, origin, &mut record)?;
+                Ok(record)
+            })
+            .collect()
+    }
+
+    pub(super) fn write_resampled(
+        &self,
+        stage: &Path,
+        mut populate: impl FnMut(usize, &WindowOrigin, &mut RecordValue) -> Result<(), MsTransformError>,
+    ) -> Result<(), MsTransformError> {
+        let main = Table::open(TableOptions::new(stage)).map_err(ms_error)?;
+        let paths = local_tables(&main, stage)?;
+        let windows = Table::open(TableOptions::new(&paths.windows)).map_err(ms_error)?;
+        let records = self.window_records(&windows, &mut populate)?;
+        drop(windows);
+        self.write_subtables(&paths, records)
+    }
+
+    fn write_subtables(
+        &self,
+        paths: &LocalTables,
+        windows: Vec<RecordValue>,
+    ) -> Result<(), MsTransformError> {
+        replace_rows(&paths.windows, windows)?;
+        replace_rows(&paths.descriptions, self.descriptions.clone())?;
         if let Some(source) = &paths.source {
             rewrite_sources(source, &self.sources)?;
         }
-        let main = ms.main_table_mut();
-        {
-            let mut column = main.column_accessor_mut(DDID).map_err(ms_error)?;
-            for (row, value) in self.row_descriptions.into_iter().enumerate() {
-                column
-                    .set(row, Value::Scalar(ScalarValue::Int32(value)))
-                    .map_err(ms_error)?;
-            }
-        }
-        main.prepare_write()
-            .save_selected_columns(&[DDID])
-            .map_err(ms_error)
+        Ok(())
     }
 }
 

@@ -18,14 +18,20 @@ def read_cells(api, path, columns):
                 for column in columns}
 
 
+@pytest.mark.parametrize("descending", [False, True], ids=["ascending", "descending"])
 @pytest.mark.parametrize("method,arguments", [
     ("cvel", {"mode": "channel", "width": 2, "phasec": [0], "hanning": False}),
     ("regridspw", {"outframe": "", "mode": "chan", "chanwidth": 2, "hanning": False}),
 ])
 def test_spectral_rewrite_retains_physical_rows_and_reopens_in_casa(
-    native_dataset, tmp_path, method, arguments
+    native_dataset, tmp_path, method, arguments, descending
 ):
     casa = pinned_casa()
+    if descending:
+        with closing(casa.table()) as table:
+            assert table.open(str(native_dataset / "SPECTRAL_WINDOW"), nomodify=False)
+            assert table.putcell("CHAN_FREQ", 0, table.getcell("CHAN_FREQ", 0)[::-1])
+            assert table.putcell("CHAN_WIDTH", 0, -table.getcell("CHAN_WIDTH", 0)[::-1])
     columns = ("TIME", "DATA_DESC_ID", "DATA", "FLAG", "SIGMA", "WEIGHT")
     with closing(casa.table()) as table:
         assert table.open(str(native_dataset), nomodify=False)
@@ -48,15 +54,26 @@ def test_spectral_rewrite_retains_physical_rows_and_reopens_in_casa(
         assert read_cells(casa, path, ("TIME",))["TIME"] == times
 
     reference = read_cells(casa, datasets[0], columns)
+    expected = dict(reference)
+    if descending:
+        # A linear visibility ramp on a descending grid averages consecutive
+        # input samples in the stored order. CASA keeps that order in CHAN_FREQ
+        # but attaches the averages to the opposite frequencies.
+        expected["DATA"] = np.stack([
+            np.arange(8).reshape(2, 2, 2).mean(axis=-1) + 10 * row
+            for row in range(len(times))
+        ])
+        np.testing.assert_array_equal(np.asarray(reference["DATA"])[..., ::-1], expected["DATA"])
     for reader in (casa, tools):
         actual = read_cells(reader, datasets[1], columns)
         for column in columns:
-            np.testing.assert_allclose(actual[column], reference[column], rtol=1e-6, atol=0)
+            np.testing.assert_allclose(actual[column], expected[column], rtol=1e-6, atol=0)
     axis_columns = ("CHAN_FREQ", "CHAN_WIDTH", "NUM_CHAN", "TOTAL_BANDWIDTH")
     native_axis = read_cells(casa, datasets[1] / "SPECTRAL_WINDOW", axis_columns)
     reference_axis = read_cells(tools, datasets[0] / "SPECTRAL_WINDOW", axis_columns)
     for column in axis_columns:
         np.testing.assert_allclose(native_axis[column], reference_axis[column], rtol=0, atol=1e-6)
+    assert np.all(np.asarray(native_axis["CHAN_WIDTH"]) > 0)
 
 
 def test_spectral_noops_and_failed_arguments_preserve_attachment(native_dataset):
@@ -80,7 +97,8 @@ def test_spectral_noops_and_failed_arguments_preserve_attachment(native_dataset)
     assert read_cells(tools, history, ("MESSAGE",)) == sequence
 
 
-def test_frame_only_regrid_keeps_data_and_builds_one_window_per_field(native_dataset, tmp_path):
+@pytest.mark.parametrize("resample", [False, True], ids=["frame-only", "resample"])
+def test_barycentric_regrid_builds_one_window_per_field(native_dataset, tmp_path, resample):
     casa = pinned_casa()
     with closing(casa.table()) as table:
         assert table.open(str(native_dataset / "FIELD"), nomodify=False)
@@ -104,16 +122,25 @@ def test_frame_only_regrid_keeps_data_and_builds_one_window_per_field(native_dat
     main_columns = ("TIME", "DATA", "FLAG", "WEIGHT", "SIGMA")
     original = read_cells(casa, native_dataset, main_columns)
     records = []
+    main_records = []
     for api, backend in ((casa, "reference"), (tools, "native")):
         path = tmp_path / f"{backend}.ms"
         copytree(native_dataset, path)
         with closing(api.ms()) as ms:
             assert ms.open(str(path), nomodify=False)
-            assert ms.regridspw(mode="", outframe="BARY") is True
+            arguments = (dict(mode="chan", center=2, bandwidth=4, chanwidth=2, hanning=False)
+                         if resample else dict(mode=""))
+            assert ms.regridspw(outframe="BARY", **arguments) is True
             assert ms.nrow() == count
         actual = read_cells(casa, path, main_columns)
-        for column in main_columns:
-            np.testing.assert_array_equal(actual[column], original[column], strict=True)
+        np.testing.assert_array_equal(actual["TIME"], original["TIME"], strict=True)
+        if resample:
+            assert all(row.shape == (2, 2) for row in actual["DATA"])
+            assert any(np.any(data != old[:, :2]) for data, old in zip(actual["DATA"], original["DATA"]))
+        else:
+            for column in main_columns:
+                np.testing.assert_array_equal(actual[column], original[column], strict=True)
+        main_records.append(actual)
         ddids = read_cells(casa, path, ("DATA_DESC_ID",))["DATA_DESC_ID"]
         assert ddids == [row % 2 for row in range(count)]
         axis = read_cells(casa, path / "SPECTRAL_WINDOW",
@@ -124,3 +151,41 @@ def test_frame_only_regrid_keeps_data_and_builds_one_window_per_field(native_dat
         records.append(axis)
     for column in records[0]:
         np.testing.assert_allclose(records[1][column], records[0][column], atol=0.05, rtol=0)
+    for column in main_columns:
+        expected, actual = (result[column] for result in main_records)
+        if column in ("DATA", "WEIGHT", "SIGMA"):
+            np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-6)
+        else:
+            np.testing.assert_array_equal(actual, expected, strict=True)
+
+
+def test_spectral_writers_preserve_read_only_and_selected_attachments(native_dataset):
+    columns = ("DATA", "FLAG", "DATA_DESC_ID", "TIME")
+    before = read_cells(tools, native_dataset, columns)
+    spw_columns = ("CHAN_FREQ", "CHAN_WIDTH", "NUM_CHAN")
+    window = native_dataset / "SPECTRAL_WINDOW"
+    grid = read_cells(tools, window, spw_columns)
+    history = native_dataset / "HISTORY"
+    history_before = read_cells(tools, history, ("MESSAGE",))
+
+    with closing(tools.ms()) as ms:
+        assert ms.open(str(native_dataset), nomodify=True)
+        assert ms.cvel(width=2) is False
+        assert ms.regridspw(outframe="", chanwidth=2) is False
+        assert ms.name() == str(native_dataset)
+        assert ms.nrow() == len(before["DATA"])
+
+    with closing(tools.ms()) as ms:
+        assert ms.open(str(native_dataset), nomodify=False)
+        assert ms.msselect({"taql": "ROWID() < 2"})
+        assert ms.nrow(selected=True) == 2
+        assert ms.regridspw(outframe="", chanwidth=2) is False
+        with pytest.raises(RuntimeError, match="complete attached MeasurementSet"):
+            ms.cvel(width=2, hanning=False)
+        assert ms.nrow(selected=True) == 2
+
+    for column, value in read_cells(tools, native_dataset, columns).items():
+        np.testing.assert_array_equal(value, before[column], strict=True)
+    for column, value in read_cells(tools, window, spw_columns).items():
+        np.testing.assert_array_equal(value, grid[column], strict=True)
+    assert read_cells(tools, history, ("MESSAGE",)) == history_before

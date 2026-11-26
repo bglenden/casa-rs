@@ -12217,3 +12217,34 @@ original shape.
 casa-rs honors the attachment's write mode and requires the complete attached MS
 for a spectral rewrite. It prepares and checks a private output before
 publication so a failed operation keeps the original MS usable (#1030).
+
+## A converted regridspw channel midpoint can address a channel past the input band
+
+In CASA 6.7.6.14, `ms.regridspw(outframe="BARY", chanwidth=2,
+hanning=False)` on `ngc5921_ut.ms` selects original channel 32 as the
+midpoint of the first field's 63-channel band after frame conversion.
+`SubMS::regridChanBounds` accepts a 63-channel span centered there and
+calculates an inclusive range of 1 through 63, although the last input
+index is 62. The reference run logged an upper bound of 0 Hz and a
+negative span of about 1.41 GHz.
+
+casa-rs clips the requested range to the available input grid. When the
+midpoint would select the same out-of-range endpoint, that field has
+31 valid two-channel bins. Explicitly setting `center=31` covers all
+63 input channels and yields 32 output channels, including the partial
+edge, with valid bounds (#1030).
+
+## In-place spectral resampling can reverse values on a descending grid
+
+A four-channel MeasurementSet with descending frequencies 1403, 1402,
+1401, and 1400 MHz and input visibility samples 0, 1, 2, and 3 exercises
+this in CASA 6.7.6.14. A width-two linear regrid through either
+`ms.cvel(hanning=False)` or `ms.regridspw(outframe="", hanning=False)`
+writes descending output frequencies 1402.5 and 1400.5 MHz, with
+visibility samples 2.5 and 0.5 in those slots. In
+`SubMS::regridChanBounds`, reversing the casacore Vector used to calculate
+bounds also reverses the shared input coordinate array used for
+interpolation, while the input visibility array retains its original order.
+
+casa-rs retains the association between frequencies and input samples.
+On this input it writes 0.5 at 1402.5 MHz and 2.5 at 1400.5 MHz (#1030).

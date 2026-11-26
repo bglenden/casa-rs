@@ -347,6 +347,16 @@ mod tests {
     }
 
     #[test]
+    fn a_shifted_midpoint_never_selects_an_out_of_bounds_channel() {
+        let centres = [0., 1., 2., 2.875, 4., 5., 6.];
+        // The first centre at or above 3 Hz is index 4. A full seven-channel
+        // span centered there reaches one past the input's high edge.
+        let grid = centered_channel_bounds(&centres, &[1.; 7], -3e30, -1., 2.).unwrap();
+        assert_eq!(grid.centres_hz, [1.5, 3.4375, 5.5]);
+        assert_eq!(grid.steps_hz, [2., 2.125, 2.]);
+    }
+
+    #[test]
     fn the_vendored_regridspw_band_has_sixteen_two_channel_bins() {
         let channels = std::array::from_fn::<_, 63, _>(|slot| slot as f64);
         let axis = centered_channel_bounds(&channels, &[1.; 63], 24., 32., 2.).unwrap();

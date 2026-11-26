@@ -965,7 +965,19 @@ fn mstransform_staged(
                 combined_grid.as_mut(),
                 &channel_selection,
                 &mut channel_bins,
-                first_selected_row,
+                (
+                    first_selected_row,
+                    (legacy_direct_band
+                        && matches!(
+                            legacy_grid,
+                            Some(
+                                LegacySpectralGrid::CenteredChannels { .. }
+                                    | LegacySpectralGrid::CenteredNumeric { .. }
+                            )
+                        )
+                        && options.nspw == 1)
+                        .then_some(selected_rows.as_slice()),
+                ),
                 budget.available_bytes / budget.maximum_live_blocks,
             )
         })
@@ -2383,11 +2395,14 @@ fn mstransform_staged(
     for name in spectra.output {
         output_column_overrides.insert_deferred(name);
     }
-    for ddid in &output_input_ddids[..selected_output_rows] {
-        let compact = compact_metadata
-            .ddid_map
-            .get(ddid)
-            .copied()
+    for (&input_row, ddid) in output_input_rows[..selected_output_rows]
+        .iter()
+        .zip(&output_input_ddids[..selected_output_rows])
+    {
+        let compact = regrid
+            .as_ref()
+            .and_then(|plan| plan.output_description(input_row))
+            .or_else(|| compact_metadata.ddid_map.get(ddid).copied())
             .ok_or_else(|| MsTransformError::SpectralMetadata {
                 path: request.output_ms.display().to_string(),
                 reason: format!(
@@ -2763,9 +2778,13 @@ fn transform_array_write_plan(
     }
     let mut shape_counts = BTreeMap::<Vec<usize>, usize>::new();
     let mut weight_shape_counts = BTreeMap::<Vec<usize>, usize>::new();
-    for &ddid in selected_ddids {
+    for (&row, &ddid) in selected_rows.iter().zip(selected_ddids) {
         let shape = &dimensions[&ddid];
-        for &channels in &shape.output_parts {
+        let field_channels = regrid.and_then(|plan| plan.field_channel_count(row));
+        let parts = field_channels
+            .as_ref()
+            .map_or(&shape.output_parts[..], std::slice::from_ref);
+        for &channels in parts {
             *shape_counts
                 .entry(vec![shape.output_correlations, channels])
                 .or_default() += 1;
@@ -2807,7 +2826,7 @@ fn transform_array_write_plan(
         &dimensions,
         correlations.is_some() || polarization.is_some(),
         (groups, metadata_budget),
-        combined,
+        (combined, regrid),
     )?;
     let io_error = |error: MsSelectionError| MsTransformError::WriteMeasurementSet {
         path: input_path.display().to_string(),
@@ -3180,7 +3199,7 @@ fn plan_flag_category_shapes(
     dimensions: &BTreeMap<i32, TransformArrayDimensions>,
     correlation_subset: bool,
     (groups, budget): (Option<&[time_average::TimeGroup]>, MsSelectionIoBudget),
-    combined: Option<CombinedArrayRows<'_>>,
+    (combined, regrid): (Option<CombinedArrayRows<'_>>, Option<&regrid::Plan>),
 ) -> Result<(Vec<MeasurementSetArrayShapePlan>, usize), MsTransformError> {
     let main = input.main_table();
     let default_categories = match main
@@ -3219,7 +3238,7 @@ fn plan_flag_category_shapes(
     } else {
         optional_array_shapes(input, selected_rows, groups, "FLAG_CATEGORY", budget)?
     };
-    for (original, ddid) in shapes.into_iter().zip(selected_ddids) {
+    for ((original, ddid), &row) in shapes.into_iter().zip(selected_ddids).zip(selected_rows) {
         let shape = &dimensions[ddid];
         let cell = match original.as_deref() {
             Some(&[corr, chan, categories]) if corr > 0 && chan > 0 && categories > 0 => {
@@ -3241,7 +3260,11 @@ fn plan_flag_category_shapes(
             }
             _ => [shape.output_correlations, 1, default_categories],
         };
-        for &channels in &shape.output_parts {
+        let field_channels = regrid.and_then(|plan| plan.field_channel_count(row));
+        let parts = field_channels
+            .as_ref()
+            .map_or(&shape.output_parts[..], std::slice::from_ref);
+        for &channels in parts {
             let cell = [cell[0], if cell[1] == 1 { 1 } else { channels }, cell[2]];
             *counts.entry(cell).or_default() += 1;
         }
