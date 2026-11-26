@@ -14,11 +14,17 @@ impl Column {
         number: i32,
     ) -> Result<Self> {
         let column = Self::describe_for(fits, header, number, true)?;
-        let mut status = 0;
-        // SAFETY: This private listing cursor owns the handle with the table
-        // extension selected. CASA shows the stored fields before scaling.
-        unsafe { sys::fftscl(fits.ptr, number, 1.0, 0.0, &mut status) };
-        fits_status(status)?;
+        let scale = header.number(&format!("TSCAL{number}")).unwrap_or(1.0);
+        let zero = header.number(&format!("TZERO{number}")).unwrap_or(0.0);
+        if scale != 1.0 || zero != 0.0 {
+            let mut status = 0;
+            // SAFETY: The table cursor has exclusive use of the open handle.
+            // CASA shows the stored fields before scaling. Leave unscaled
+            // columns alone because CFITSIO presents tiled images as images
+            // for scaling even though the on-disk columns remain readable.
+            unsafe { sys::fftscl(fits.ptr, number, 1.0, 0.0, &mut status) };
+            fits_status(status)?;
+        }
         Ok(column)
     }
 

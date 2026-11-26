@@ -1,5 +1,6 @@
 """FITS HDU diagnostics through the MeasurementSet tool."""
 
+import gzip
 import logging
 from struct import pack
 
@@ -96,6 +97,33 @@ def random_groups(channels):
     ], pack(f">{2 * (channels + 2)}f", *range(-1, 2 * channels + 3)))
 
 
+def tiled_image():
+    primary = fits_hdu([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    0",
+        "EXTEND  =                    T",
+    ])
+    # Each Rice tile has two 16-bit pixels and occupies three bytes in the
+    # heap. These bytes were generated independently by CFITSIO's writer.
+    offsets = b"".join(pack(">ii", 3, 3 * row) for row in range(12))
+    tiles = b"".join(pack(">hB", 2 * row, 25) for row in range(12))
+    return primary + fits_hdu([
+        "XTENSION= 'BINTABLE'", "BITPIX  =                    8",
+        "NAXIS   =                    2", "NAXIS1  =                    8",
+        "NAXIS2  =                   12", "PCOUNT  =                   36",
+        "GCOUNT  =                    1", "TFIELDS =                    1",
+        "TTYPE1  = 'COMPRESSED_DATA'", "TFORM1  = '1PB(3)  '",
+        "ZIMAGE  =                    T", "ZBITPIX =                   16",
+        "ZNAXIS  =                    3", "ZNAXIS1 =                    2",
+        "ZNAXIS2 =                    3", "ZNAXIS3 =                    4",
+        "ZTILE1  =                    2", "ZTILE2  =                    1",
+        "ZTILE3  =                    1", "ZCMPTYPE= 'RICE_1  '",
+        "ZNAME1  = 'BLOCKSIZE'", "ZVAL1   =                   32",
+        "ZNAME2  = 'BYTEPIX '", "ZVAL2   =                    2",
+    ], offsets + tiles)
+
+
 def listing(tool, name, caplog):
     caplog.clear()
     with caplog.at_level(logging.INFO, logger=LOGGER):
@@ -104,10 +132,12 @@ def listing(tool, name, caplog):
             and record.levelno == logging.INFO for line in record.getMessage().splitlines()]
 
 
-@pytest.mark.parametrize("content", [image_and_tables(), random_groups(20)],
-                         ids=["image-and-tables", "random-groups"])
-def test_ms_listfits_reports_casa_headers_and_preview(tmp_path, capfd, caplog, content):
-    path = tmp_path / "sample.fits"
+@pytest.mark.parametrize("content, suffix", [
+    (image_and_tables(), ".fits"), (random_groups(20), ".fits"),
+    (tiled_image(), ".fits"), (gzip.compress(random_groups(20)), ".fits.gz"),
+], ids=["image-and-tables", "random-groups", "tiled-image", "gzip"])
+def test_ms_listfits_reports_casa_headers_and_preview(tmp_path, capfd, caplog, content, suffix):
+    path = tmp_path / ("sample" + suffix)
     path.write_bytes(content)
     reference = pinned_casa().ms()
     assert reference.listfits(str(path)) is True
@@ -117,7 +147,7 @@ def test_ms_listfits_reports_casa_headers_and_preview(tmp_path, capfd, caplog, c
                 if "\tINFO\tFITSReader::" in line]
     assert expected and expected[-1] == "finish processing of Header-Data Units."
     assert any("SIMPLE" in line for line in expected)
-    assert any(line.startswith(("(0,0)", "Group 0 data:")) for line in expected)
+    assert any(line.startswith(("(0,0)", "Group 0 data:", "0: |")) for line in expected)
     assert listing(tools.ms(), str(path), caplog) == expected
     assert listing(tools.ms(), bytes(path) + b"\0ignored", caplog) == expected
     assert path.read_bytes() == content
