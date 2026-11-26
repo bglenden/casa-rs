@@ -32,8 +32,9 @@ def make_multi_ms(casa, path, members):
     return str(path)
 
 
+@pytest.mark.parametrize("permanent", [False, True], ids=["automatic", "permanent"])
 def test_ms_visibility_and_writes_in_a_saved_multi_ms_view(
-    baseline_fixture, native_dataset, tmp_path,
+    baseline_fixture, native_dataset, tmp_path, permanent,
 ):
     casa, _, raw = baseline_fixture
     first = native_dataset
@@ -62,7 +63,7 @@ def test_ms_visibility_and_writes_in_a_saved_multi_ms_view(
     results = []
     for api in (casa, tools):
         reader = api.ms()
-        assert reader.open(view)
+        assert reader.open(view, lock=permanent, check=True)
         assert reader.ismultims()
         assert reader.getreferencedtables() == [multi]
         assert reader.nrow() == reader.nrow(True) == len(rows)
@@ -78,7 +79,7 @@ def test_ms_visibility_and_writes_in_a_saved_multi_ms_view(
     same_visibility(*results[::-1])
 
     writer = tools.ms()
-    assert writer.open(view, nomodify=False)
+    assert writer.open(view, nomodify=False, lock=permanent, check=True)
     updates = wanted + np.arange(len(rows)) * (3.5 - 2j)
     assert writer.putdata({"DATA": updates})
     assert writer.done()
