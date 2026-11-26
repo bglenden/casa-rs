@@ -81,7 +81,9 @@ impl MeasurementSet {
         Self::from_schemas(schemas, None)
     }
 
-    pub(crate) fn create_staged(path: &Path, builder: MeasurementSetBuilder) -> MsResult<Self> {
+    /// Prepare an in-memory MeasurementSet that writes into a caller-owned private stage.
+    #[doc(hidden)]
+    pub fn create_staged(path: &Path, builder: MeasurementSetBuilder) -> MsResult<Self> {
         Self::from_schemas(builder.build_schemas()?, Some(path.to_owned()))
     }
 
@@ -1113,7 +1115,8 @@ impl MeasurementSet {
     }
 }
 
-pub(crate) fn apply_column_metadata(table: &mut Table, defs: &[ColumnDef]) {
+#[doc(hidden)]
+pub fn apply_column_metadata(table: &mut Table, defs: &[ColumnDef]) {
     for def in defs {
         let has_column = table
             .schema()

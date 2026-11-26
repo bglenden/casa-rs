@@ -6,23 +6,16 @@ use std::path::Path;
 
 use casa_core::{ScalarValue, Value};
 use casa_tables::publication::rename_without_replacing;
-use casa_tables::streamed_tiled::{
-    StreamedTiledPrimitiveType, StreamedTiledShapeValueType, install_undefined_tiled_shape_column,
-};
-use casa_tables::{ColumnOverrides, GeneratedScalarColumn, TableInfo, TableOptions};
+use casa_tables::{TableInfo, TableOptions};
 use fitsio::FitsFile;
 
-use super::groups::{GroupMetadata, GroupVisibility, VisibilityGroups, open_file};
+use super::groups::{GroupMetadata, VisibilityGroups, open_file};
+use super::import_columns::{ImportColumns, MainRow, MainSamples, Spectra};
 use super::invalid;
 use super::metadata::{Extensions, Header};
 use super::uvfits_ms::write_metadata;
 use crate::schema::main_table::OptionalMainColumn;
 use crate::subtable_rows::string_array;
-use crate::write_session::{
-    MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
-    MeasurementSetWritePlan, MeasurementSetWriteResources, MeasurementSetWriteSession,
-    standard_main_scalar_column_plans,
-};
 use crate::{MeasurementSet, MeasurementSetBuilder, MsResult, SubtableId};
 
 /// Options that change a UVFITS import's persisted MeasurementSet layout.
@@ -83,7 +76,22 @@ pub fn import_uvfits(input: &Path, output: &Path, options: UvFitsImportOptions) 
         string_array(&["FLAG_CMD", "ORIGINAL", "USER"], vec![3]),
     );
     table.set_column_keywords("FLAG_CATEGORY", flag_keywords);
-    let mut columns = ImportColumns::start(&staging, &header, &groups, options)?;
+    let layout = groups.layout();
+    let rows = groups
+        .count()
+        .checked_mul(layout.windows)
+        .ok_or_else(|| invalid("UVFITS row count overflow"))?;
+    let visibility = [layout.corr.len(), layout.frequency.length];
+    let tile = import_tiles(&header, &groups, options);
+    let categories = defines_flag_category(rows, visibility, groups.binary_hdu().is_some());
+    let mut columns = ImportColumns::start(
+        &staging,
+        rows,
+        visibility,
+        tile,
+        categories,
+        Spectra::Weight,
+    )?;
     let usage = write_groups(&mut columns, &mut fits, &mut groups, &extensions)?;
     write_metadata(
         &mut ms,
@@ -107,129 +115,6 @@ pub fn import_uvfits(input: &Path, output: &Path, options: UvFitsImportOptions) 
     rename_without_replacing(&staging, output).map_err(invalid)
 }
 
-struct ImportColumns {
-    writer: MeasurementSetWriteSession,
-    rows: usize,
-    category_tile: [usize; 4],
-    flag_category: Option<Vec<bool>>,
-}
-
-impl ImportColumns {
-    fn start(
-        path: &Path,
-        header: &Header,
-        groups: &VisibilityGroups,
-        options: UvFitsImportOptions,
-    ) -> MsResult<Self> {
-        use MeasurementSetColumnStorage::{TiledColumn, TiledShape};
-        use StreamedTiledShapeValueType::{Bool, Complex32, Float32, Float64};
-
-        let layout = groups.layout();
-        let rows = groups
-            .count()
-            .checked_mul(layout.windows)
-            .ok_or_else(|| invalid("UVFITS row count overflow"))?;
-        let tile = import_tiles(header, groups, options);
-        let category_tile = [tile[0], tile[1], 1, tile[2]];
-        let visibility = [layout.corr.len(), layout.frequency.length];
-        let weight = [layout.corr.len()];
-        let shape = |name: &str, value_type, cell: &[usize], tile_shape, storage_manager| {
-            MeasurementSetArrayColumnPlan {
-                name: name.into(),
-                value_type,
-                shapes: vec![MeasurementSetArrayShapePlan {
-                    cell_shape: cell.to_vec(),
-                    row_count: rows,
-                    tile_shape,
-                }],
-                storage_manager,
-            }
-        };
-        let weight_tile = crate::ms::casa_weight_tile_shape(&tile);
-        let mut arrays = vec![
-            shape("DATA", Complex32, &visibility, tile.clone(), TiledShape),
-            shape("FLAG", Bool, &visibility, tile.clone(), TiledShape),
-            shape(
-                "WEIGHT_SPECTRUM",
-                Float32,
-                &visibility,
-                tile.clone(),
-                TiledShape,
-            ),
-            shape("WEIGHT", Float32, &weight, weight_tile.clone(), TiledShape),
-            shape("SIGMA", Float32, &weight, weight_tile, TiledShape),
-            shape(
-                "UVW",
-                Float64,
-                &[3],
-                crate::ms::casa_uvw_tile_shape(&tile),
-                TiledColumn,
-            ),
-        ];
-        let flag_category =
-            defines_flag_category(rows, visibility, groups.binary_hdu().is_some()).then(Vec::new);
-        if flag_category.is_some() {
-            arrays.push(shape(
-                "FLAG_CATEGORY",
-                Bool,
-                &[visibility[0], visibility[1], 3],
-                category_tile.to_vec(),
-                TiledShape,
-            ));
-        }
-        let mut scalars = standard_main_scalar_column_plans();
-        scalars.retain(|column| {
-            !CONSTANT_COLUMNS
-                .iter()
-                .any(|(name, _)| *name == column.name)
-        });
-        let resources = MeasurementSetWriteResources::from_system_memory(2).map_err(invalid)?;
-        let plan =
-            MeasurementSetWritePlan::variable_array_creation(rows, arrays, scalars, resources)
-                .map_err(invalid)?;
-        let writer = MeasurementSetWriteSession::start(path, plan).map_err(invalid)?;
-        Ok(Self {
-            writer,
-            rows,
-            category_tile,
-            flag_category,
-        })
-    }
-
-    fn finish(self, ms: &mut MeasurementSet, path: &Path) -> MsResult<()> {
-        let mut overrides = ColumnOverrides::for_row_count(self.rows);
-        for name in ["DATA", "FLAG", "WEIGHT", "SIGMA", "WEIGHT_SPECTRUM", "UVW"] {
-            overrides.insert_deferred(name);
-        }
-        overrides.insert_deferred("FLAG_CATEGORY");
-        for (name, value) in CONSTANT_COLUMNS {
-            overrides.insert_generated_scalar(
-                name,
-                GeneratedScalarColumn::constant(self.rows, Some(ScalarValue::Int32(value))),
-            );
-        }
-        self.writer
-            .save_and_finish(ms, &overrides)
-            .map_err(invalid)?;
-        if self.flag_category.is_some() {
-            return Ok(());
-        }
-        let seq =
-            crate::ms::measurement_set_main_data_manager_sequence(ms.main_table(), "FLAG_CATEGORY")
-                .ok_or_else(|| invalid("Missing FLAG_CATEGORY storage manager"))?;
-        install_undefined_tiled_shape_column(
-            path,
-            seq,
-            "FLAG_CATEGORY",
-            self.rows,
-            StreamedTiledPrimitiveType::Bool,
-            3,
-            &self.category_tile,
-        )
-        .map_err(invalid)
-    }
-}
-
 fn defines_flag_category(rows: usize, visibility: [usize; 2], binary: bool) -> bool {
     // Casacore populates FLAG_CATEGORY in the binary and row-wise readers.
     // The random-groups reader switches to row-wise on large MAIN payloads.
@@ -241,14 +126,6 @@ fn defines_flag_category(rows: usize, visibility: [usize; 2], binary: bool) -> b
         crate::selection::system_physical_memory_bytes().map_or(usize::MAX, |n| n / 1024);
     binary || estimate_kib >= host_kib.min(1_000_000)
 }
-
-const CONSTANT_COLUMNS: [(&str, i32); 5] = [
-    ("FEED1", 0),
-    ("FEED2", 0),
-    ("OBSERVATION_ID", 0),
-    ("PROCESSOR_ID", -1),
-    ("STATE_ID", -1),
-];
 
 fn import_tiles(
     header: &Header,
@@ -303,7 +180,6 @@ fn write_groups(
     let mut previous_time = 0.0;
     let mut inferred = f64::MAX;
     let mut inferred_rows = 0;
-    let writer = &mut columns.writer;
     for index in 0..groups.count() {
         let (group, layout, samples) = groups.read(fits, index)?;
         if group
@@ -351,110 +227,42 @@ fn write_groups(
             if seen.insert((field, band)) {
                 used.occurrences.push((field, band, group.time));
             }
-            write_main_row(
-                writer,
-                &group,
-                field,
-                band,
-                scan.number,
-                layout.visibility(samples, window),
-                columns.flag_category.as_mut(),
+            let values = layout.visibility(samples, window);
+            columns.append(
+                MainRow {
+                    antennas: group.antennas,
+                    uvw: group.uvw,
+                    time: group.time,
+                    centroid: group.time,
+                    interval: group.interval,
+                    array: group.array,
+                    field,
+                    window: band,
+                    scan: scan.number,
+                },
+                MainSamples {
+                    data: &values.data,
+                    flags: &values.flag,
+                    weight: &values.weight,
+                    sigma: &values.sigma,
+                    weight_spectrum: Some(&values.weight_spectrum),
+                    sigma_spectrum: None,
+                },
             )?;
-            match group.interval {
-                Some(interval) => {
-                    writer
-                        .push_scalar_row("INTERVAL", Some(ScalarValue::Float64(interval)))
-                        .map_err(invalid)?;
-                    writer
-                        .push_scalar_row("EXPOSURE", Some(ScalarValue::Float64(interval)))
-                        .map_err(invalid)?;
-                }
-                None => inferred_rows += 1,
+            if group.interval.is_none() {
+                inferred_rows += 1;
             }
         }
     }
     if inferred_rows > 0 {
         let interval = (100.0 * inferred + 0.5).floor() / 100.0;
         for name in ["INTERVAL", "EXPOSURE"] {
-            let id = writer.scalar_column(name).map_err(invalid)?;
-            writer
+            let id = columns.writer.scalar_column(name).map_err(invalid)?;
+            columns
+                .writer
                 .push_repeated_scalar(id, Some(ScalarValue::Float64(interval)), inferred_rows)
                 .map_err(invalid)?;
         }
     }
     Ok(used)
-}
-
-fn write_main_row(
-    writer: &mut MeasurementSetWriteSession,
-    group: &GroupMetadata,
-    field: i32,
-    window: i32,
-    scan: i32,
-    visibility: GroupVisibility,
-    category: Option<&mut Vec<bool>>,
-) -> MsResult<()> {
-    let row_flag = visibility.flag.iter().all(|&value| value);
-    use ScalarValue::{Bool, Float64, Int32};
-    for (name, value) in [
-        ("ANTENNA1", Int32(group.antennas[0])),
-        ("ANTENNA2", Int32(group.antennas[1])),
-        ("ARRAY_ID", Int32(group.array)),
-        ("DATA_DESC_ID", Int32(window)),
-        ("FIELD_ID", Int32(field)),
-        ("FLAG_ROW", Bool(row_flag)),
-        ("SCAN_NUMBER", Int32(scan)),
-        ("TIME", Float64(group.time)),
-        ("TIME_CENTROID", Float64(group.time)),
-    ] {
-        writer.push_scalar_row(name, Some(value)).map_err(invalid)?;
-    }
-    let data = &visibility.data;
-    writer
-        .push_complex32_row(
-            "DATA",
-            data.shape(),
-            data.as_slice_memory_order()
-                .expect("contiguous FITS visibilities"),
-        )
-        .map_err(invalid)?;
-    let flag = &visibility.flag;
-    let flags = flag.as_slice_memory_order().expect("contiguous FITS flags");
-    writer
-        .push_bool_row("FLAG", flag.shape(), flags)
-        .map_err(invalid)?;
-    if let Some(category) = category {
-        category.clear();
-        category.extend_from_slice(flags);
-        category.resize(3 * flags.len(), false);
-        writer
-            .push_bool_row(
-                "FLAG_CATEGORY",
-                &[flag.shape()[0], flag.shape()[1], 3],
-                category,
-            )
-            .map_err(invalid)?;
-    }
-    let weight = &visibility.weight_spectrum;
-    writer
-        .push_f32_row(
-            "WEIGHT_SPECTRUM",
-            weight.shape(),
-            weight
-                .as_slice_memory_order()
-                .expect("contiguous FITS weights"),
-        )
-        .map_err(invalid)?;
-    for (name, values) in [("WEIGHT", visibility.weight), ("SIGMA", visibility.sigma)] {
-        writer
-            .push_f32_row(
-                name,
-                values.shape(),
-                values.as_slice().expect("contiguous correlation vector"),
-            )
-            .map_err(invalid)?;
-    }
-    writer
-        .push_f64_row("UVW", &[3], &group.uvw)
-        .map_err(invalid)
 }

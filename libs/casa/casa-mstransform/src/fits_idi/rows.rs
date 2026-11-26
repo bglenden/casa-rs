@@ -3,20 +3,18 @@
 
 use std::ops::Range;
 
-use casa_core::{ArrayValue, Complex32, Correlation, Value};
-use casa_tables::Table;
+use casa_core::{Complex32, Correlation};
 use fitsio::FitsFile;
 use fitsio::hdu::{FitsHdu, HduInfo};
 use fitsio::tables::ReadsCol;
-use ndarray::{Array1, Array2, Array3, ShapeBuilder};
+use ndarray::{Array1, Array2, ShapeBuilder};
 
-use super::super::groups::{fits_correlation, optional_key};
-use super::super::invalid;
 use super::digital::DigitalCorrection;
 use super::metadata::Geometry;
-use crate::MsResult;
-use crate::schema::main_table::REQUIRED_COLUMNS;
-use crate::subtable_rows::{b, f, f64_array, i, row_from_defs};
+use casa_ms::MsResult;
+use casa_ms::fits_visibility::reader_support::{
+    ImportColumns, MainRow, MainSamples, fits_correlation, invalid, optional_key,
+};
 
 const DAY: f64 = 86_400.0;
 const SPEED_OF_LIGHT: f64 = 299_792_458.0;
@@ -26,9 +24,9 @@ pub(super) struct DataLayout {
     pub(super) channels: usize,
     pub(super) correlations: Vec<Correlation>,
     pub(super) components: usize,
-    input: Vec<Correlation>,
     normal: Vec<usize>,
     reversed: Vec<usize>,
+    floats: usize,
 }
 
 impl DataLayout {
@@ -106,19 +104,33 @@ impl DataLayout {
                 .unwrap_or_else(|| position(value).unwrap())
             })
             .collect();
+        let bands = band.unwrap_or(1);
+        let channels = frequency.ok_or_else(|| invalid("FITS-IDI has no FREQ axis"))?;
+        let floats = channels
+            .checked_mul(input.len())
+            .and_then(|cells| cells.checked_mul(bands))
+            .and_then(|cells| cells.checked_mul(components))
+            .ok_or_else(|| invalid("FITS-IDI visibility row size overflow"))?;
         Ok(Self {
-            bands: band.unwrap_or(1),
-            channels: frequency.ok_or_else(|| invalid("FITS-IDI has no FREQ axis"))?,
+            bands,
+            channels,
             correlations,
             components,
-            input,
             normal,
             reversed,
+            floats,
         })
     }
 
     fn floats(&self) -> usize {
-        self.channels * self.input.len() * self.bands * self.components
+        self.floats
+    }
+
+    pub(super) fn same_output_shape(&self, other: &Self) -> bool {
+        self.channels == other.channels
+            && self.bands == other.bands
+            && self.correlations == other.correlations
+            && self.components == other.components
     }
 }
 
@@ -138,12 +150,12 @@ pub(super) struct TimeRange {
 pub(super) fn append_hdu(
     fits: &mut FitsFile,
     hdu: &FitsHdu,
-    table: &mut Table,
+    columns: &mut ImportColumns,
     geometry: &Geometry,
     spectral: &SpectralInput<'_>,
     scan: i32,
     times: &mut TimeRange,
-) -> MsResult<DataLayout> {
+) -> MsResult<()> {
     let layout = DataLayout::read(fits, hdu)?;
     let HduInfo::TableInfo { num_rows, .. } = hdu.info else {
         return Err(invalid("UV_DATA is not a FITS binary table"));
@@ -159,6 +171,7 @@ pub(super) fn append_hdu(
     } else {
         Some(infer_interval(fits, hdu, &rows, num_rows)?)
     };
+    let mut buffers = DecodeBuffers::new(&layout, spectral.resolutions);
     let mut digital = DigitalCorrection::for_correlator(spectral.correlator, spectral.van_vleck);
     let rows_per_block = (262_144 / layout.floats()).clamp(1, 1024);
     for start in (0..num_rows).step_by(rows_per_block) {
@@ -187,18 +200,10 @@ pub(super) fn append_hdu(
                 }),
                 scan,
             };
-            append_row(
-                table,
-                &layout,
-                spectral.resolutions,
-                &values,
-                index,
-                visibility,
-                decoded,
-            )?;
+            buffers.append_row(columns, &values, index, visibility, decoded)?;
         }
     }
-    Ok(layout)
+    Ok(())
 }
 
 struct InputColumns {
@@ -408,37 +413,98 @@ struct DecodeScale<'a> {
     scan: i32,
 }
 
-fn append_row(
-    table: &mut Table,
-    layout: &DataLayout,
-    bandwidths: &[f64],
-    input: &RowBlock,
-    row: usize,
-    header: VisibilityHeader,
-    mut scale: DecodeScale<'_>,
-) -> MsResult<()> {
-    let interval = f64::from(header.interval);
-    let hands = layout.correlations.len();
-    let dimensions = (hands, layout.channels).f();
-    for band in 0..layout.bands {
-        let window = header.frequency as usize * layout.bands + band;
-        let bandwidth = *bandwidths
-            .get(window)
-            .ok_or_else(|| invalid("Missing FITS-IDI frequency band"))?;
-        let mut data = Array2::zeros(dimensions);
-        let mut flags = Array2::from_elem(dimensions, false);
-        let mut weights = Array2::zeros(dimensions);
-        let mut sigmas = Array2::zeros(dimensions);
+struct DecodeBuffers<'a> {
+    layout: &'a DataLayout,
+    bandwidths: &'a [f64],
+    data: Array2<Complex32>,
+    flags: Array2<bool>,
+    weights: Array2<f32>,
+    sigmas: Option<Array2<f32>>,
+    row_weights: Array1<f32>,
+    row_sigmas: Array1<f32>,
+    scratch: Vec<f32>,
+}
+
+impl<'a> DecodeBuffers<'a> {
+    fn new(layout: &'a DataLayout, bandwidths: &'a [f64]) -> Self {
+        let hands = layout.correlations.len();
+        let shape = (hands, layout.channels).f();
+        Self {
+            layout,
+            bandwidths,
+            data: Array2::zeros(shape),
+            flags: Array2::from_elem(shape, false),
+            weights: Array2::zeros(shape),
+            sigmas: (layout.components == 3).then(|| Array2::zeros(shape)),
+            row_weights: Array1::zeros(hands),
+            row_sigmas: Array1::zeros(hands),
+            scratch: Vec::with_capacity(layout.channels),
+        }
+    }
+
+    fn append_row(
+        &mut self,
+        columns: &mut ImportColumns,
+        input: &RowBlock,
+        row: usize,
+        header: VisibilityHeader,
+        mut scale: DecodeScale<'_>,
+    ) -> MsResult<()> {
+        let interval = f64::from(header.interval);
+        let autocorrelation = header.antennas[0] == header.antennas[1];
+        for band in 0..self.layout.bands {
+            let window = header.frequency as usize * self.layout.bands + band;
+            let bandwidth = *self
+                .bandwidths
+                .get(window)
+                .ok_or_else(|| invalid("Missing FITS-IDI frequency band"))?;
+            self.load_band(input, row, band, header.reverse);
+            if let Some(digital) = &mut scale.digital {
+                digital.apply(
+                    autocorrelation,
+                    scale.levels,
+                    &self.layout.correlations,
+                    &mut self.data,
+                    &self.weights,
+                )?;
+            }
+            if let Some(divisor) = scale.visibility_divisor {
+                self.data
+                    .zip_mut_with(&self.weights, |sample, &weight| *sample /= divisor * weight);
+            }
+            let weight_scale =
+                scale.visibility * interval * bandwidth * if autocorrelation { 1.0 } else { 2.0 };
+            self.finish_weights(weight_scale);
+            columns.append(
+                MainRow {
+                    antennas: header.antennas,
+                    uvw: header.uvw,
+                    time: header.time,
+                    centroid: header.time + 0.5 * interval,
+                    interval: Some(interval),
+                    array: header.array,
+                    field: header.field,
+                    window: window as i32,
+                    scan: scale.scan,
+                },
+                MainSamples {
+                    data: &self.data,
+                    flags: &self.flags,
+                    weight: &self.row_weights,
+                    sigma: &self.row_sigmas,
+                    weight_spectrum: self.sigmas.as_ref().map(|_| &self.weights),
+                    sigma_spectrum: self.sigmas.as_ref(),
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    fn load_band(&mut self, input: &RowBlock, row: usize, band: usize, reverse: bool) {
+        let layout = self.layout;
+        let hands = layout.correlations.len();
         let offset = row * layout.floats() + band * hands * layout.channels * layout.components;
-        let weighted = scale.visibility
-            * interval
-            * bandwidth
-            * if header.antennas[0] == header.antennas[1] {
-                1.0
-            } else {
-                2.0
-            };
-        let order = if header.reverse {
+        let order = if reverse {
             &layout.reversed
         } else {
             &layout.normal
@@ -446,107 +512,68 @@ fn append_row(
         for channel in 0..layout.channels {
             for (hand, &destination) in order.iter().enumerate() {
                 let pos = offset + (channel * hands + hand) * layout.components;
-                let signed = match layout.components {
-                    3 => input.flux[pos + 2],
-                    _ => input
+                let signed = if layout.components == 3 {
+                    input.flux[pos + 2]
+                } else {
+                    input
                         .weights
                         .get((row * layout.bands + band) * hands + hand)
                         .copied()
-                        .unwrap_or(1.0),
+                        .unwrap_or(1.0)
                 };
-                let vis = Complex32::new(
-                    input.flux[pos],
-                    if header.reverse {
-                        input.flux[pos + 1]
-                    } else {
-                        -input.flux[pos + 1]
-                    },
-                );
-                data[[destination, channel]] = vis;
-                flags[[destination, channel]] = signed <= 0.0;
-                weights[[destination, channel]] = signed.abs();
+                let imaginary = if reverse {
+                    input.flux[pos + 1]
+                } else {
+                    -input.flux[pos + 1]
+                };
+                self.data[[destination, channel]] = Complex32::new(input.flux[pos], imaginary);
+                self.flags[[destination, channel]] = signed <= 0.0;
+                self.weights[[destination, channel]] = signed.abs();
             }
         }
-        if let Some(digital) = &mut scale.digital {
-            digital.apply(
-                header.antennas[0] == header.antennas[1],
-                scale.levels,
-                &layout.correlations,
-                &mut data,
-                &weights,
-            )?;
-        }
-        if let Some(divisor) = scale.visibility_divisor {
-            data.zip_mut_with(&weights, |sample, &weight| *sample /= divisor * weight);
-        }
-        weights.mapv_inplace(|weight| (f64::from(weight) * weighted) as f32);
-        sigmas.zip_mut_with(&weights, |sigma, &weight| {
-            *sigma = if weight > 0.0 {
-                weight.sqrt().recip()
-            } else {
-                1.0
-            };
-        });
-        let mut row = row_from_defs(
-            REQUIRED_COLUMNS,
-            &[
-                ("TIME", f(header.time)),
-                ("TIME_CENTROID", f(header.time + 0.5 * interval)),
-                ("EXPOSURE", f(interval)),
-                ("INTERVAL", f(interval)),
-                ("SCAN_NUMBER", i(scale.scan)),
-                ("ANTENNA1", i(header.antennas[0])),
-                ("ANTENNA2", i(header.antennas[1])),
-                ("ARRAY_ID", i(header.array)),
-                ("FIELD_ID", i(header.field)),
-                ("DATA_DESC_ID", i(window as i32)),
-                ("PROCESSOR_ID", i(-1)),
-                ("STATE_ID", i(-1)),
-                ("UVW", f64_array(&header.uvw, vec![3])),
-                ("FLAG_ROW", b(flags.iter().all(|&flag| flag))),
-            ],
-        );
-        let categories = Array3::from_shape_fn(
-            (hands, layout.channels, 3).f(),
-            |(hand, channel, category)| category == 0 && flags[[hand, channel]],
-        );
-        let row_weights = median_spectrum(&weights);
-        let row_sigmas = median_spectrum(&sigmas);
-        for (name, array) in [
-            ("DATA", ArrayValue::Complex32(data.into_dyn())),
-            ("FLAG", ArrayValue::Bool(flags.into_dyn())),
-            ("FLAG_CATEGORY", ArrayValue::Bool(categories.into_dyn())),
-            ("WEIGHT", ArrayValue::Float32(row_weights.into_dyn())),
-            ("SIGMA", ArrayValue::Float32(row_sigmas.into_dyn())),
-        ] {
-            row.upsert(name, Value::Array(array));
-        }
-        if layout.components == 3 {
-            row.upsert(
-                "WEIGHT_SPECTRUM",
-                Value::Array(ArrayValue::Float32(weights.into_dyn())),
-            );
-            row.upsert(
-                "SIGMA_SPECTRUM",
-                Value::Array(ArrayValue::Float32(sigmas.into_dyn())),
-            );
-        }
-        table.add_row(row)?;
     }
-    Ok(())
+
+    fn finish_weights(&mut self, scale: f64) {
+        if let Some(sigmas) = &mut self.sigmas {
+            self.weights
+                .mapv_inplace(|weight| (f64::from(weight) * scale) as f32);
+            sigmas.zip_mut_with(&self.weights, |sigma, &weight| {
+                *sigma = sigma_for_weight(weight)
+            });
+            median_spectrum(&self.weights, &mut self.row_weights, &mut self.scratch);
+            median_spectrum(sigmas, &mut self.row_sigmas, &mut self.scratch);
+        } else {
+            for ((weight, sigma), &input) in self
+                .row_weights
+                .iter_mut()
+                .zip(&mut self.row_sigmas)
+                .zip(self.weights.column(0))
+            {
+                *weight = (f64::from(input) * scale) as f32;
+                *sigma = sigma_for_weight(*weight);
+            }
+        }
+    }
 }
 
-fn median_spectrum(spectrum: &Array2<f32>) -> Array1<f32> {
-    let mut entries = Vec::with_capacity(spectrum.ncols());
-    Array1::from_iter(spectrum.rows().into_iter().map(|row| {
+fn sigma_for_weight(weight: f32) -> f32 {
+    if weight > 0.0 {
+        weight.sqrt().recip()
+    } else {
+        1.0
+    }
+}
+
+fn median_spectrum(spectrum: &Array2<f32>, output: &mut Array1<f32>, entries: &mut Vec<f32>) {
+    for (result, row) in output.iter_mut().zip(spectrum.rows()) {
         entries.clear();
         entries.extend(row.iter().copied());
         let middle = entries.len() / 2;
         let (lower, median, _) = entries.select_nth_unstable_by(middle, f32::total_cmp);
-        if spectrum.ncols().is_multiple_of(2) {
+        *result = if spectrum.ncols().is_multiple_of(2) {
             (lower.iter().max_by(|a, b| a.total_cmp(b)).unwrap() + *median) * 0.5
         } else {
             *median
-        }
-    }))
+        };
+    }
 }

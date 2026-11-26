@@ -7,12 +7,12 @@ use casa_tables::{ColumnSchema, Table, TableSchema};
 use fitsio::FitsFile;
 use fitsio::hdu::FitsHdu;
 
-use super::super::invalid;
-use super::super::uvfits_ms::column_keyword;
 use super::metadata::{Geometry, IdiTable};
 use super::rows::TimeRange;
-use crate::MsResult;
-use crate::subtable_rows::{complex_array, f, f32_array, f64_array, i, s, string_array};
+use casa_ms::MsResult;
+use casa_ms::fits_visibility::reader_support::{
+    column_keyword, complex_array, f, f32_array, f64_array, i, invalid, s, string_array,
+};
 
 const DAY: f64 = 86_400.0;
 

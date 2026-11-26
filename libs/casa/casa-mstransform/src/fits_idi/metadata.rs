@@ -9,15 +9,13 @@ use fitsio::FitsFile;
 use fitsio::hdu::{FitsHdu, HduInfo};
 use fitsio::tables::ReadsCol;
 
-use super::super::groups::optional_key;
-use super::super::invalid;
-use super::super::uvfits_ms::{column_keyword, fits_date, insert};
 use super::rows::TimeRange;
-use crate::schema::{self, SubtableId};
-use crate::subtable_rows::{
-    b, complex_array, f, f64_array, i, row_from_defs, s, string_array, subtable_mut,
+use casa_ms::fits_visibility::reader_support::{
+    b, column_keyword, complex_array, f, f64_array, fits_date, i, insert, invalid, optional_key,
+    row_from_defs, s, string_array, subtable_mut,
 };
-use crate::{MeasurementSet, MsResult};
+use casa_ms::schema::{self, SubtableId};
+use casa_ms::{MeasurementSet, MsResult};
 
 pub(super) struct Geometry {
     pub(super) antennas: BTreeMap<i32, i32>,

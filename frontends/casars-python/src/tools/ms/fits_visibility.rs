@@ -4,10 +4,10 @@
 use std::path::{Path, PathBuf};
 
 use casa_ms::MsSelection;
-use casa_ms::fits_visibility::{FitsIdiOptions, import_fits_idi};
 use casa_ms::fits_visibility::{
     UvFitsExportOptions, UvFitsImportOptions, export_uvfits, import_uvfits,
 };
+use casa_mstransform::fits_idi::{FitsIdiOptions, import_fits_idi};
 use pyo3::prelude::*;
 
 use super::partition::{all_if_minus_one, optional_expression};

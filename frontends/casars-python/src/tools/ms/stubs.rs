@@ -19,6 +19,4 @@ impl PyMsTool {
     fn asdmref(&self, abspath: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("asdmref")
     }
-
-
 }

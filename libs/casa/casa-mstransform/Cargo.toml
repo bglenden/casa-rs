@@ -34,6 +34,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 regex = "1"
+fitsio = { version = "0.21", features = ["fitsio-src", "src-cmake"] }
 
 [[test]]
 name = "api"

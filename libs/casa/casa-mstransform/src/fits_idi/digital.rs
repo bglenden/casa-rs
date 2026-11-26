@@ -5,8 +5,8 @@ use casa_core::{Complex32, Correlation};
 use casa_fft::Fft2;
 use ndarray::Array2;
 
-use super::super::invalid;
-use crate::MsResult;
+use casa_ms::MsResult;
+use casa_ms::fits_visibility::reader_support::invalid;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Correlator {

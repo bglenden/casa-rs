@@ -5,14 +5,13 @@ use casa_core::{ScalarValue, Value};
 use fitsio::FitsFile;
 use fitsio::hdu::FitsHdu;
 
-use super::super::invalid;
-use super::super::uvfits_ms::insert;
 use super::metadata::{Geometry, IdiTable};
-use crate::column_def::{ColumnKind, column_schema};
-use crate::ms::apply_column_metadata;
-use crate::schema::{self, SubtableId};
-use crate::subtable_rows::{f, f32_array, i, row_from_defs, s, subtable_mut};
-use crate::{MeasurementSet, MsResult};
+use casa_ms::fits_visibility::reader_support::{
+    apply_column_metadata, column_schema, f, f32_array, i, insert, invalid, row_from_defs, s,
+    subtable_mut,
+};
+use casa_ms::schema::{self, SubtableId};
+use casa_ms::{ColumnKind, MeasurementSet, MsResult};
 
 const SECONDS_PER_DAY: f64 = 86_400.0;
 
