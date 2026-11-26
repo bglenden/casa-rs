@@ -23,7 +23,7 @@ casa-fft.workspace = true
 casa-measures.workspace = true
 casa-numerics.workspace = true
 casa-observation.workspace = true
-casa-components = { path = "../casa-components" }
+casa-components.workspace = true
 casa-tables.workspace = true
 casa-core.workspace = true
 libc = "0.2"

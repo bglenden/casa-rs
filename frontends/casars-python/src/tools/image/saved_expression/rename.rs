@@ -7,7 +7,7 @@ use std::io::ErrorKind;
 use std::path::Path;
 
 use casa_core::RecordValue;
-use casa_images::image_expr::ImageExprValue;
+use casa_images::ImageExprValue;
 use casa_tables::publication::check_write_access;
 use pyo3::prelude::*;
 

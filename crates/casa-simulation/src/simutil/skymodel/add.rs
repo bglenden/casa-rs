@@ -45,7 +45,7 @@ use casa_coordinates::{
 use casa_core::measures::direction::MDirection;
 use casa_core::measures::frame::MeasFrame;
 use casa_core::measures::frequency::FrequencyRef;
-use casa_images::analysis::{SubimagePlan, SubimageRegion};
+use casa_imageanalysis::analysis::{SubimagePlan, SubimageRegion};
 use casa_images::{ImageError, ImageInfo, MutableImageInterface, PagedImage, SubImageMut};
 use casa_lattices::{Lattice, LatticeMut, ScratchSpace, TempLattice, TempStoragePolicy};
 use ndarray::{Array3, ArrayD, IxDyn, Slice};

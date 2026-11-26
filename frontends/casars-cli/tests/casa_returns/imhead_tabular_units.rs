@@ -47,7 +47,7 @@ fn check_image(path: &Path, case: &Value, index: usize) {
     drop(image);
     for (field, velocity) in [("fits", false), ("velocity_fits", true)] {
         let fits = workspace.join(format!("tabular-{index}-{field}.fits"));
-        casa_images::export_fits(path, &fits, velocity, false).unwrap();
+        casa_imageanalysis::export_fits(path, &fits, velocity, false).unwrap();
         let bytes = std::fs::read(&fits).unwrap();
         let cards = bytes
             .as_chunks::<80>()
@@ -243,7 +243,7 @@ fn generic_tabular_coordinate_edits_match_casa() {
             let fits = workspace
                 .path()
                 .join(format!("generic-{cases}-{index}.fits"));
-            casa_images::export_fits(&path, &fits, false, false).unwrap();
+            casa_imageanalysis::export_fits(&path, &fits, false, false).unwrap();
             let bytes = std::fs::read(fits).unwrap();
             let cards = bytes
                 .as_chunks::<80>()

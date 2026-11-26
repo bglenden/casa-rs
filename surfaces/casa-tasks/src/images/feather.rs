@@ -3,7 +3,7 @@
 //! images, on the shared task front end.
 
 use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
-use casa_images::{FeatherRequest, feather};
+use casa_imageanalysis::{FeatherRequest, feather};
 
 use super::front_end::{image_task_front_end, image_task_success};
 use super::task_contract::ImageAnalysisTaskResult;

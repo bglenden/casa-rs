@@ -109,7 +109,7 @@ as the existing graphics oracle and compares 13 products from an actual
 CASA run, including the documented full-precision fidelity control:
 
 ```sh
-cargo test -p casa-images --test legacy_simulation_fits
+cargo test -p casa-parity --test api legacy_simulation_fits
 cargo test -p casa-simulation --test simanalyze_task_casa
 python frontends/casars-python/python/tests/test_ppdisk_tutorial.py
 ```

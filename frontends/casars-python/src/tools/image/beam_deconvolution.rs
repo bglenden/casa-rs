@@ -122,7 +122,7 @@ fn fit_size(total: GaussianBeam, applied: GaussianBeam) -> Option<(GaussianBeam,
 
 fn fit_record(beam: GaussianBeam) -> PyResult<Vec<(&'static str, CasaValue)>> {
     let angle = Quantity::new(beam.position_angle, "rad").map_err(raised)?;
-    let angle = casa_images::beam::wrap_position_angle(&angle).map_err(raised)?;
+    let angle = casa_images::wrap_position_angle(&angle).map_err(raised)?;
     let unit = Unit::new("deg").expect("built-in unit");
     Ok(vec![
         (

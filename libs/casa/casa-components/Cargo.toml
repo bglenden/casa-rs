@@ -1,0 +1,30 @@
+[package]
+name = "casa-components"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "CASA component lists (sky components, shapes, spectra) and their casacore tables"
+repository.workspace = true
+publish = true
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-measures.workspace = true
+casa-tables.workspace = true
+casa-core.workspace = true
+# Maintained AMOS 644 implementation, MIT/Apache-2.0: real-order J for
+# limb disks, without a native GSL dependency or per-evaluation allocation.
+complex-bessel = { version = "0.4", default-features = false }
+libm = "0.2"
+ndarray.workspace = true
+num-complex.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# The tests compare stored doubles exactly with CASA's JSON dumps, which needs
+# correctly rounded float parsing.
+serde_json = { version = "1", features = ["float_roundtrip"] }
+tempfile = "3"

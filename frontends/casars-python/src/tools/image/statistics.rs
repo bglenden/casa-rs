@@ -5,7 +5,7 @@ use casa_core::Value;
 use casa_core::measures::MeasFrame;
 use casa_core::measures::doppler::{DopplerRef, MDoppler};
 use casa_core::quanta::Unit;
-use casa_images::analysis::evaluate_image_tool_mask_section;
+use casa_imageanalysis::analysis::evaluate_image_tool_mask_section;
 use casa_images::{ImageInterface, ImagePixel};
 use casa_lattices::{
     ExecutionResources, FitHalfCenter, Lattice, LatticeStatistics, ScratchSpace, Statistic,

@@ -342,15 +342,15 @@ CASA's measures.
 (`tests/data/casa-6.7.6`, made by `tools/simulation/componentlist_oracle.py
 fixture`), writes them back in CASA's layout, and round-trips casa-rs's own
 lists. casacore C++ reads what casa-rs writes in `cargo test -p
-casa-components --features cpp-interop-tests --test casacore_cpp_interop`, a
+casacore-interop --features cpp-interop-tests --test component_list`, a
 step of `just release-cpp-interop`. The CASA oracle is opt-in, because it
-starts CASA's Python several times: `cargo test -p casa-components --test
-casa_oracle -- --ignored --nocapture` (CASA from `CASA_RS_CASA_PYTHON` or
+starts CASA's Python several times: `cargo test -p casa-parity --test
+api component_oracle -- --ignored --nocapture` (CASA from `CASA_RS_CASA_PYTHON` or
 `/Applications/CASA.app`).
 
-**Image analysis.** `casa-images`' `regrid`, `convolve2d`, robust statistics,
+**Image analysis.** `casa-imageanalysis`'s `regrid`, `convolve2d`, robust statistics,
 `impbcor`, `immath` and `feather` are compared with CASA 6.7.6 in `cargo test
--p casa-images --test image_analysis_casa`, against the CASA results recorded
+-p casa-parity --test api image_analysis_casa`, against the CASA results recorded
 in `tests/data/image_analysis_casa.json` for the cases in
 `tests/data/image_analysis_cases.json`. Regenerate the results with
 `tools/images/image_analysis_oracle.py`, run with CASA's Python, whenever the

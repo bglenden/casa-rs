@@ -7,7 +7,8 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use casa_images::{ImmomentsRequest, PagedImage, immoments};
+use casa_imageanalysis::{ImmomentsRequest, immoments};
+use casa_images::PagedImage;
 use fitsio::{
     FitsFile,
     images::{ImageDescription, ImageType},
@@ -113,10 +114,10 @@ fn append_fits_history(fits: &mut FitsFile, message: &CStr) {
 
 #[test]
 fn moments_match_pinned_casa_images() {
-    let oracle =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/casa-images/tests/data/immoments");
+    let oracle = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../libs/casacore/casa-images/tests/data/immoments");
     let expected: Value = serde_json::from_str(include_str!(
-        "../../../crates/casa-images/tests/data/immoments/expected.json"
+        "../../../libs/casacore/casa-images/tests/data/immoments/expected.json"
     ))
     .unwrap();
     assert_eq!(expected["casa_version"], "6.7.6.14");
@@ -172,10 +173,10 @@ fn moments_match_pinned_casa_images() {
 fn publication_keeps_source_tables_and_existing_entries_safe() {
     use std::os::unix::fs::symlink;
 
-    use casa_images::{ImmomentsRequest, immoments};
+    use casa_imageanalysis::{ImmomentsRequest, immoments};
 
     let oracle = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../crates/casa-images/tests/data/immoments/cube.im");
+        .join("../../libs/casacore/casa-images/tests/data/immoments/cube.im");
     let workspace = tempfile::tempdir().unwrap();
     let source = workspace.path().join("source.im");
     copy_inputs(&oracle, &source);

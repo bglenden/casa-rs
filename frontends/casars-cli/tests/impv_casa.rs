@@ -28,10 +28,10 @@ fn copy_inputs(source: &Path, workspace: &Path) {
 
 #[test]
 fn position_velocity_products_match_casa() {
-    let fixtures =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/casa-images/tests/data/impv");
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../libs/casacore/casa-images/tests/data/impv");
     let recording: Json = serde_json::from_str(include_str!(
-        "../../../crates/casa-images/tests/data/impv/expected.json"
+        "../../../libs/casacore/casa-images/tests/data/impv/expected.json"
     ))
     .unwrap();
     assert_eq!(recording["casa_version"], "6.7.6.14");

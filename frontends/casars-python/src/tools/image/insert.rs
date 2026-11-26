@@ -3,7 +3,7 @@
 use std::cmp::Ordering;
 use std::path::Path;
 
-use casa_images::analysis::{ImageInsertion, SubimageRegion};
+use casa_imageanalysis::analysis::{ImageInsertion, SubimageRegion};
 use casa_images::{ImageError, ImageInterface, ImagePixel};
 use casa_tables::LockType;
 use pyo3::prelude::*;

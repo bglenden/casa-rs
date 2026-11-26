@@ -3,11 +3,11 @@
 use std::path::Path;
 
 use casa_core::measures::doppler::DopplerRef;
-use casa_images::analysis::{
+use casa_imageanalysis::analysis::{
     ImageMomentOptions, SubimageRegion, ensure_artifacts_do_not_overlap,
     ensure_outfile_does_not_alias_input, make_image_moments, moment_output_names,
 };
-use casa_images::image::image_history_rows;
+use casa_images::image_history_rows;
 use pyo3::prelude::*;
 
 use crate::convert::{DoubleList, IntList, StringList, Variant};

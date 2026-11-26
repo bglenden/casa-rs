@@ -14,7 +14,7 @@ from casars import tasks
 
 
 ROOT = Path(__file__).resolve().parents[4]
-DATA = ROOT / "crates/casa-images/tests/data/imregrid"
+DATA = ROOT / "libs/casacore/casa-images/tests/data/imregrid"
 ORACLE = ROOT / "tools/casa-compat"
 CASA_PYTHON = Path(os.environ.get("CASA_RS_CASA_PYTHON", "/Applications/CASA.app/Contents/MacOS/python3"))
 EVIDENCE = json.loads((DATA / "expected.json").read_text())

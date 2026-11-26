@@ -4,14 +4,11 @@ use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
 use casa_core::RecordValue;
-use casa_images::{
-    ImageInterface,
-    analysis::{
-        CollapseFunction, CollapsePixel, ImageCollapse, ImageCollapseOptions, SubimageRegion,
-        ensure_outfile_does_not_alias_input,
-    },
-    image::{ImageHistoryRow, image_history_rows},
+use casa_imageanalysis::analysis::{
+    CollapseFunction, CollapsePixel, ImageCollapse, ImageCollapseOptions, SubimageRegion,
+    ensure_outfile_does_not_alias_input,
 };
+use casa_images::{ImageHistoryRow, ImageInterface, image_history_rows};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyList, PyString, PyTuple};
 

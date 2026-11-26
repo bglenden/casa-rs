@@ -3,12 +3,12 @@
 use std::path::{Path, PathBuf};
 
 use casa_core::RecordValue;
-use casa_images::ImageInterface;
-use casa_images::analysis::{
+use casa_imageanalysis::analysis::{
     DecimationMethod, DecimationPixel, ImageDecimation, ImageDecimationOptions,
     ensure_outfile_does_not_alias_input,
 };
-use casa_images::image::image_history_rows;
+use casa_images::ImageInterface;
+use casa_images::image_history_rows;
 use pyo3::prelude::*;
 
 use super::PyImageTool;

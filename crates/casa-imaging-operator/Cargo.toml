@@ -13,7 +13,7 @@ workspace = true
 [dependencies]
 casa-coordinates.workspace = true
 casa-fft.workspace = true
-casa-images = { path = "../casa-images" }
+casa-images.workspace = true
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-numerics.workspace = true
 casa-core.workspace = true

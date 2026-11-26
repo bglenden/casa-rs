@@ -183,7 +183,7 @@ impl AttachedImage {
         if path != probe && (!probe.is_dir() || !path.is_dir()) {
             return Err(unrecognized());
         }
-        if casa_images::concat_file::is_image_concat(probe) {
+        if casa_images::is_image_concat(probe) {
             return super::concatenate::virtual_image::open(path);
         }
         if casa_images::expr_file::is_image_expr(probe) {
@@ -194,7 +194,7 @@ impl AttachedImage {
         let paged = has_table_control
             && fs::read_to_string(key.join("table.info"))
                 .is_ok_and(|info| TableInfo::parse(&info).table_type == "Image");
-        if !paged && !casa_images::ComponentListImage::recognizes_native(&key) {
+        if !paged && !casa_imageanalysis::ComponentListImage::recognizes_native(&key) {
             if ImageHandle::recognizes_miriad(probe, &key) {
                 return Self::open_miriad(path);
             }

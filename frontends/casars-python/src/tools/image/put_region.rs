@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_images::analysis::{put_image_region, validate_put_region_shapes};
+use casa_imageanalysis::analysis::{put_image_region, validate_put_region_shapes};
 use casa_tables::LockType;
 use ndarray::{Array1, ArrayD};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};

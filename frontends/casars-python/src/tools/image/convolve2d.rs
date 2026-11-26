@@ -4,13 +4,11 @@ use std::path::Path;
 
 use casa_core::RecordValue;
 use casa_core::quanta::{Quantity, casacore::stream_double};
-use casa_images::{
-    BeamComponent, GaussianBeam, ImageInfo, ImageInterface, StoredGaussianBeam,
-    analysis::{
-        ConvolutionOptions, ConvolutionPixel, GaussianConvolutionOptions, ImageGaussianConvolution,
-        ensure_outfile_does_not_alias_input,
-    },
+use casa_imageanalysis::analysis::{
+    ConvolutionOptions, ConvolutionPixel, GaussianConvolutionOptions, ImageGaussianConvolution,
+    ensure_outfile_does_not_alias_input,
 };
+use casa_images::{BeamComponent, GaussianBeam, ImageInfo, ImageInterface, StoredGaussianBeam};
 use pyo3::prelude::*;
 
 use crate::convert::{IntList, Variant, quantity};

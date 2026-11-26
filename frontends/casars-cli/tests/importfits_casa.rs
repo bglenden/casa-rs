@@ -10,9 +10,9 @@ use std::process::{Command, Stdio};
 #[test]
 fn importfits_matches_casa_snapshots() {
     let data = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../crates/casa-images/tests/data/importfits");
+        .join("../../libs/casacore/casa-images/tests/data/importfits");
     let snapshots: Value = serde_json::from_str(include_str!(
-        "../../../crates/casa-images/tests/data/importfits/expected.json"
+        "../../../libs/casacore/casa-images/tests/data/importfits/expected.json"
     ))
     .unwrap();
     assert_eq!(snapshots["casa_version"], "6.7.6.14");

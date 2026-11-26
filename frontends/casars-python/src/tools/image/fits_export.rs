@@ -2,10 +2,10 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_images::analysis::{
+use casa_imageanalysis::analysis::{
     ExportFitsRequest, ImageFitsExportOptions, export_attached_fits, validate_attached_fits_target,
 };
-use casa_images::image::image_history_entries;
+use casa_images::image_history_entries;
 use pyo3::prelude::*;
 
 use super::PyImageTool;

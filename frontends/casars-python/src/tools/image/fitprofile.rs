@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use casa_core::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
-use casa_images::analysis::{
+use casa_imageanalysis::analysis::{
     ImageProfileFit, ImageProfileFitResult, ProfileDivisor, ProfileEstimates, ProfileFitOptions,
     ProfileLineReport, ProfileOutputNames, ProfilePeaks, ProfileRegion, ProfileSigma,
     SubimageRegion, ensure_artifacts_do_not_overlap,

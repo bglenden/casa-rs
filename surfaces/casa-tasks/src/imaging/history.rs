@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::TaskInvocation;
 use casa_contracts::{DefaultSpec, ParameterValue, python_repr};
-use casa_images::image::add_image_history;
+use casa_images::add_image_history;
 
 use super::imager_task_schema_bundle;
 

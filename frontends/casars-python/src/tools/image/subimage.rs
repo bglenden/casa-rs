@@ -3,10 +3,10 @@
 use std::path::Path;
 
 use casa_core::{RecordValue, ScalarValue, Value};
-use casa_images::analysis::{
+use casa_imageanalysis::analysis::{
     SubimageOptions, SubimagePlan, SubimageRegion, ensure_outfile_does_not_alias_input,
 };
-use casa_images::image::image_history_rows;
+use casa_images::image_history_rows;
 use casa_images::{ImageInterface, ImagePixel};
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;

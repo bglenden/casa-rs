@@ -15,13 +15,14 @@ cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
 workspace = true
 
 [dependencies]
+casa-imageanalysis.workspace = true
 casa-measures.workspace = true
 casa-atmosphere = { path = "../casa-atmosphere" }
 casa-calibration = { path = "../casa-calibration" }
-casa-components = { path = "../casa-components" }
+casa-components.workspace = true
 casa-coordinates.workspace = true
 casa-fft.workspace = true
-casa-images = { path = "../casa-images" }
+casa-images.workspace = true
 casa-imaging-application = { path = "../casa-imaging-application" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-operator = { path = "../casa-imaging-operator" }

@@ -5,9 +5,9 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use casa_images::concat_file::is_image_concat;
+use casa_images::MiriadImage;
 use casa_images::expr_file::is_image_expr;
-use casa_images::miriad_read::MiriadImage;
+use casa_images::is_image_concat;
 use casa_tables::publication::{
     copy_locked_external_tree, copy_locked_table_tree, rename_without_replacing,
 };

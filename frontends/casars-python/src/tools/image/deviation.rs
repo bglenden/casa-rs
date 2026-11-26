@@ -3,13 +3,10 @@
 use std::path::Path;
 
 use casa_core::quanta::Quantity;
-use casa_images::{
-    ImageInterface,
-    analysis::{
-        DeviationOptions, ImageDeviation, SubimageRegion, ensure_outfile_does_not_alias_input,
-    },
-    regrid::RegridMethod,
+use casa_imageanalysis::analysis::{
+    DeviationOptions, ImageDeviation, SubimageRegion, ensure_outfile_does_not_alias_input,
 };
+use casa_images::{ImageInterface, resample::RegridMethod};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyString};
 

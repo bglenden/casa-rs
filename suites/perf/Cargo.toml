@@ -18,7 +18,7 @@ workspace = true
 
 [dependencies]
 casa-coordinates.workspace = true
-casa-images = { path = "../../crates/casa-images" }
+casa-images.workspace = true
 casa-lattices.workspace = true
 casa-measures.workspace = true
 casa-tables.workspace = true

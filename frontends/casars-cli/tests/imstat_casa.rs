@@ -760,11 +760,11 @@ fn imstat_upstream_suite_matches_casa() {
 fn imsubimage_multi_box_cuts_the_bounding_box_with_a_union_mask() {
     let scratch = tempfile::tempdir().expect("scratch");
     let outfile = scratch.path().join("cut.image");
-    casa_images::imsubimage(&casa_images::ImsubimageRequest {
+    casa_imageanalysis::imsubimage(&casa_imageanalysis::ImsubimageRequest {
         imagename: fixture("multi.im"),
         outfile: outfile.clone(),
         box_pixels: Some("0,0,2,2,4,4,6,6".into()),
-        ..casa_images::ImsubimageRequest::default()
+        ..casa_imageanalysis::ImsubimageRequest::default()
     })
     .expect("cut the multi-box region");
     let cut = casa_images::PagedImage::<f32>::open(&outfile).expect("open the cut");

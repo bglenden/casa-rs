@@ -23,7 +23,8 @@ pub(super) fn region_in_workspace(
 }
 use casa_contracts::{CasaValue, ParameterValue, parameter_value_to_casacore};
 use casa_core::{RecordValue, Value};
-use casa_images::{ImageError, PbcorRegion};
+use casa_imageanalysis::PbcorRegion;
+use casa_images::ImageError;
 
 use super::task_contract::{ImageAnalysisTaskResult, image_analysis_task_schema_bundle};
 

@@ -3,7 +3,8 @@
 //! The mosaic's separately centred PSF family (CASA task_tclean.py).
 
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem};
-use casa_images::{PagedImage, RegridTemplate};
+use casa_imageanalysis::RegridTemplate;
+use casa_images::PagedImage;
 use casa_imaging_model::{
     CentreLaws, CompiledProblem, DirectionCoordinateSpec, DirectionFrame, GeometryInput,
     ModelLifecycleRequirements, ObservationSelection, ObservationSnapshot,

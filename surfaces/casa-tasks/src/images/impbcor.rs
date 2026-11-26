@@ -5,7 +5,7 @@
 use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::{ParameterValue, parameter_array_to_casa};
 use casa_core::ArrayValue;
-use casa_images::{ImpbcorRequest, PbcorBeam, impbcor};
+use casa_imageanalysis::{ImpbcorRequest, PbcorBeam, impbcor};
 
 use super::front_end::{image_task_front_end, image_task_success, parse_region_parameter};
 use super::task_contract::ImageAnalysisTaskResult;

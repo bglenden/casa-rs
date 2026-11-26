@@ -25,6 +25,7 @@ imaging = [
     "dep:ndarray",
 ]
 images = [
+    "dep:casa-imageanalysis",
     "dep:casa-images",
     "dep:casa-lattices",
 ]
@@ -56,9 +57,10 @@ workspace = true
 [dependencies]
 casa-atmosphere = { path = "../../crates/casa-atmosphere", optional = true }
 casa-calibration = { path = "../../crates/casa-calibration", optional = true }
-casa-components = { path = "../../crates/casa-components", optional = true }
+casa-components = { workspace = true, optional = true }
 casa-contracts = { path = "../casa-contracts" }
-casa-images = { path = "../../crates/casa-images", optional = true }
+casa-imageanalysis = { workspace = true, optional = true }
+casa-images = { workspace = true, optional = true }
 casa-imaging-application = { path = "../../crates/casa-imaging-application", optional = true }
 casa-lattices = { workspace = true, optional = true }
 casa-measures = { workspace = true, optional = true }

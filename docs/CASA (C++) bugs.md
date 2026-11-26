@@ -7831,7 +7831,7 @@ duplicated axis. An out-of-range or negative axis is refused with the catchable
 uncontrolled path, not a policy.
 
 casa-rs refuses a duplicated axis with `Invalid cursor axes: [0, 0]: an axis
-is named twice; CASA 6.7.6.14 aborts on it` (crates/casa-images/src/analysis.rs,
+is named twice; CASA 6.7.6.14 aborts on it` (libs/casa/casa-imageanalysis/src/analysis.rs,
 `parse_axes`), keeping every other axes form CASA accepts, including the
 minimum-forms `-1` for all axes (#977).
 
@@ -7895,7 +7895,7 @@ wraps both unit conversion and `mypo.linpolint(..., outfile=lpol)`, yet the
 later `if (polithresh):` block unconditionally evaluates `lpol` and raises
 `UnboundLocalError: cannot access local variable 'lpol'`.
 
-casa-rs parses `polithresh` as an optional-unit quantity (`crates/casa-images/src/analysis/immath/pol.rs`),
+casa-rs parses `polithresh` as an optional-unit quantity (`libs/casa/casa-imageanalysis/src/analysis/immath/pol.rs`),
 treats a unitless `polithresh` as already expressed in the input image's
 brightness unit, and thresholds linear polarized intensity normally (#977).
 
@@ -7913,7 +7913,7 @@ In CASA 6.7.6.14, `_immath_new_poli` converts a positive `sigma` via
 silently over-thresholds and masks the entire output plane.
 
 casa-rs validates unit conformance via `get_conformant_value` when `sigma > 0`
-(`crates/casa-images/src/analysis/immath/pol.rs`) and refuses non-conforming or
+(`libs/casa/casa-imageanalysis/src/analysis/immath/pol.rs`) and refuses non-conforming or
 unitless `sigma` against non-empty image `bunit` with a clear error (#977).
 
 ## Median fringe smoothing wraps delay values as phase
@@ -8122,14 +8122,14 @@ In CASA 6.7.6.14, `exportfits(..., history=True)` wraps logtable lines across
 80-byte FITS `HISTORY` cards by placing 72 characters on the first card and
 `>` followed by 71 characters on continuation cards, but skips character index
 143 on card 3 and subsequent continuation cards when the wrapped line spans
-more than 143 characters. On `cube_i.im` (`crates/casa-images/tests/data/exportfits/cube_i.im`),
+more than 143 characters. On `cube_i.im` (`libs/casacore/casa-images/tests/data/exportfits/cube_i.im`),
 CASA drops `'y'` from `csys={...}` in the 202-character `ia.fromshape(...)`
 message and drops the closing `')'` of the 144-character
 `ia.setrestoringbeam(...)` message (emitting 47 `HISTORY` cards instead of 48);
 on a synthetic 160-digit `"0123..."` history entry, CASA drops `'3'` at index
 143 between `>...012` and `>456...`.
 
-casa-rs (`crates/casa-images/src/analysis/exportfits.rs`, `wrap_fits_history_text`)
+casa-rs (`libs/casa/casa-imageanalysis/src/analysis/exportfits.rs`, `wrap_fits_history_text`)
 splits at 72 characters on the first card and `>` plus 71 characters on each
 continuation card without skipping characters, emitting all 48 cards on
 `cube_i.im` so both casa-rs and CASA 6.7.6.14 `ia.history(list=False)` read back
@@ -9029,7 +9029,7 @@ output. The upstream suite checks each implementation's error (#977).
 In CASA 6.7.6.14, `imregrid` with a one-channel input, an explicitly selected
 spectral axis and a multi-channel output replicates the data and mask. During
 that copy it loses the brightness unit and restoring beam. The `singleton`
-case in `crates/casa-images/tests/data/imregrid/expected.json` records a
+case in `libs/casacore/casa-images/tests/data/imregrid/expected.json` records a
 `Jy/beam` image with a 4 by 3 arcsec beam becoming a unitless image without a
 beam. casa-rs matches the samples, mask and template frequency grid and retains
 the original units and beam. Copying channels does not change the calibration
@@ -9050,7 +9050,7 @@ the shifted fixture with an all-masked result and published no output.
 CASA 6.7.6.14 can copy pixels and masks unchanged when regridding a leading
 axis of a three-axis linear coordinate at the same shape. The
 `same_shape_linear_shift` case in
-`crates/casa-images/tests/data/imregrid/expected.json` changes the first
+`libs/casacore/casa-images/tests/data/imregrid/expected.json` changes the first
 axis's reference value by 0.25 m on a 7 × 6 × 5 image. CASA reports the new
 reference value but retains the source samples. In casacore's
 `LinearCoordinate::near`, the exclusion loop marks consecutive entries

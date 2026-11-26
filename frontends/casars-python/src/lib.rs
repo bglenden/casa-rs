@@ -28,8 +28,10 @@ fn linearmosaic(
     output: PathBuf,
     output_weight: PathBuf,
 ) -> PyResult<()> {
-    py.detach(move || casa_images::linearmosaic(&pointings, &template, &output, &output_weight))
-        .map_err(image_err)
+    py.detach(move || {
+        casa_imageanalysis::linearmosaic(&pointings, &template, &output, &output_weight)
+    })
+    .map_err(image_err)
 }
 
 #[pyfunction]

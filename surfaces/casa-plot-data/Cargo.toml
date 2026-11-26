@@ -42,8 +42,8 @@ workspace = true
 [dependencies]
 casa-atmosphere = { path = "../../crates/casa-atmosphere", optional = true }
 casa-calibration = { path = "../../crates/casa-calibration", optional = true }
-casa-components = { path = "../../crates/casa-components", optional = true }
-casa-images = { path = "../../crates/casa-images", optional = true }
+casa-components = { workspace = true, optional = true }
+casa-images = { workspace = true, optional = true }
 casa-imaging-products = { path = "../../crates/casa-imaging-products", optional = true }
 casa-imaging-runtime = { path = "../../crates/casa-imaging-runtime", optional = true }
 casa-measures = { workspace = true, optional = true }
@@ -62,7 +62,7 @@ tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
 casa-coordinates.workspace = true
-casa-images = { path = "../../crates/casa-images" }
+casa-images.workspace = true
 casa-imaging-runtime = { path = "../../crates/casa-imaging-runtime" }
 casa-tables.workspace = true
 casa-test-support = { path = "../../dev/casa-test-support" }

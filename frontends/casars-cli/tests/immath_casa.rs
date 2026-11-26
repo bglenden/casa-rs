@@ -9,10 +9,11 @@ use casa_coordinates::{
 };
 use casa_core::measures::direction::DirectionRef;
 use casa_core::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
+use casa_imageanalysis::{ImmathRequest, export_fits, immath};
 use casa_images::expr_parser::{HashMapResolver, parse_image_expr};
 use casa_images::{
     AnyPagedImage, GaussianBeam, ImageBeamSet, ImageInfo, ImageInterface, ImagePixelType,
-    ImmathRequest, PagedImage, export_fits, immath,
+    PagedImage,
 };
 use casa_lattices::ExecutionPolicy;
 use ndarray::IxDyn;
@@ -34,7 +35,7 @@ const INPUT_NAMES: &[&str] = &[
 ];
 
 fn fixture_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/casa-images/tests/data/immath")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../libs/casacore/casa-images/tests/data/immath")
 }
 
 fn load_oracle() -> JsonValue {
@@ -115,7 +116,7 @@ fn external_mask_is_protected_and_the_invocation_retains_selection_parameters() 
 fn a_strided_saved_region_drives_pixel_sampling_and_world_coordinates() {
     let workspace = tempfile::tempdir().unwrap();
     let data = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../crates/casa-images/tests/data/imsubimage");
+        .join("../../libs/casacore/casa-images/tests/data/imsubimage");
     let image = workspace.path().join("cube.im");
     copy_dir_recursive(&data.join("cube.im"), &image);
     let outfile = workspace.path().join("result.im");

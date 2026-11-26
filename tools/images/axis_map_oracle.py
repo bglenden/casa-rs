@@ -8,7 +8,7 @@ transpose keeps the coordinates in place and permutes the maps. Run with
 CASA's Python (for example `/Applications/CASA.app/Contents/MacOS/python3 -I`):
 
     python3 -I tools/images/axis_map_oracle.py fixture \\
-        --out crates/casa-images/tests/data/casa-6.7.6/axis_maps
+        --out libs/casacore/casa-images/tests/data/casa-6.7.6/axis_maps
 
 writes these images from one coordinate system, `newcoordsys` with a
 direction, Stokes I and Q, and a spectral axis (`direction0`, `stokes1`,
@@ -47,7 +47,7 @@ units, the axis maps of its `coords` keyword, and at a few pixels the world
 coordinates (`cs.toworld`) and the pixel value (`ia.getchunk`).
 
     python3 -I tools/images/axis_map_oracle.py readback IMAGE \\
-        --reference crates/casa-images/tests/data/casa-6.7.6/axis_maps/axis_maps.json \\
+        --reference libs/casacore/casa-images/tests/data/casa-6.7.6/axis_maps/axis_maps.json \\
         --name transposed.image
 
 opens an image another program rewrote from one of the fixtures and checks

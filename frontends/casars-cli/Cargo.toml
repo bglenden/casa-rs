@@ -33,11 +33,12 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+casa-imageanalysis.workspace = true
 casa-measures.workspace = true
 base64 = "0.22"
 casa-calibration = { path = "../../crates/casa-calibration" }
 casa-coordinates.workspace = true
-casa-images = { path = "../../crates/casa-images" }
+casa-images.workspace = true
 casa-imaging-deconvolution = { path = "../../crates/casa-imaging-deconvolution" }
 casa-lattices.workspace = true
 casa-ms = { path = "../../crates/casa-ms", features = ["msv4"] }

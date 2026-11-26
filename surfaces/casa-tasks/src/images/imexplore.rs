@@ -9,11 +9,12 @@ use std::path::Path;
 
 use crate::{CasaValue, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::ParameterValue;
-use casa_images::{
-    ImageError, ImageHeaderSummary, ImageStatisticsSummary, ImheadValue, ImstatOutcome,
-    ImstatPlanesSummary, ImstatRequest, StatisticsAlgorithmKind, imhead, imhead_add_delete,
-    imhead_extrema, imhead_put, imstat, parse_imstat_algorithm,
+use casa_imageanalysis::{
+    ImageHeaderSummary, ImageStatisticsSummary, ImheadValue, ImstatOutcome, ImstatPlanesSummary,
+    ImstatRequest, imhead, imhead_add_delete, imhead_extrema, imhead_put, imstat,
+    parse_imstat_algorithm,
 };
+use casa_images::{ImageError, StatisticsAlgorithmKind};
 
 use super::casa_return::{
     ImheadGetError, imhead_get_value, imhead_list_record, imhead_summary_record,
@@ -55,9 +56,9 @@ fn run_imhead(
     let mode = task.required_text("mode")?.to_ascii_lowercase();
     if mode == "history" {
         // Open the image first, just as CASA does, even if there is no logtable.
-        casa_images::analysis::validate_imhead_image(&path)
+        casa_imageanalysis::analysis::validate_imhead_image(&path)
             .map_err(|error| image_error("imhead", &path, error))?;
-        let entries = casa_images::image::image_history_entries(&path)
+        let entries = casa_images::image_history_entries(&path)
             .map_err(|error| image_error("imhead", &path, error))?;
         let mut result = TaskSuccess::new(CasaValue::None, &())?;
         for entry in entries {
@@ -130,7 +131,7 @@ fn imhead_mutate(
     operation_value: Option<&ParameterValue>,
 ) -> Result<ImageHeaderSummary, TaskFailure> {
     if path.is_file() {
-        casa_images::analysis::validate_imhead_writable(path)
+        casa_imageanalysis::analysis::validate_imhead_writable(path)
             .map_err(|error| TaskFailure::execution(error.to_string()))?;
     }
     let hdkey = task
@@ -162,7 +163,7 @@ fn imhead_mutate(
         && !remove_masks
         && !beam_key
         && !axis_quantity
-        && !casa_images::analysis::imhead_is_custom_key(&hdkey)
+        && !casa_imageanalysis::analysis::imhead_is_custom_key(&hdkey)
     {
         return Err(TaskFailure::validation(format!(
             "imhead {mode} of hdkey {hdkey:?} is not implemented by casa-rs yet (#977)"
@@ -176,7 +177,7 @@ fn imhead_mutate(
         .cloned()
         .unwrap_or_else(|| ParameterValue::String(String::new()));
     let value = operation_value.unwrap_or(&hdvalue);
-    let is_custom = casa_images::analysis::imhead_is_custom_key(&hdkey);
+    let is_custom = casa_imageanalysis::analysis::imhead_is_custom_key(&hdkey);
     let domain_value = if mode == "del" {
         ImheadValue::Unsupported
     } else {
@@ -184,36 +185,36 @@ fn imhead_mutate(
     };
     let mut write_task_history = true;
     let summary = if beam_key {
-        casa_images::analysis::imhead_change_beam(path, mode, &hdkey, &domain_value).map(
+        casa_imageanalysis::analysis::imhead_change_beam(path, mode, &hdkey, &domain_value).map(
             |(summary, write_history)| {
                 write_task_history = write_history;
                 summary
             },
         )
     } else if reference_pixel {
-        casa_images::analysis::imhead_put_reference_pixel(path, &hdkey, &domain_value)
+        casa_imageanalysis::analysis::imhead_put_reference_pixel(path, &hdkey, &domain_value)
     } else if axis_name {
-        casa_images::analysis::imhead_put_axis_name(path, &hdkey, &domain_value)
+        casa_imageanalysis::analysis::imhead_put_axis_name(path, &hdkey, &domain_value)
     } else if axis_unit {
-        casa_images::analysis::imhead_put_axis_unit(path, &hdkey, &domain_value)
+        casa_imageanalysis::analysis::imhead_put_axis_unit(path, &hdkey, &domain_value)
     } else if rest_frequency {
         if mode == "add" {
-            casa_images::analysis::imhead_add_rest_frequency(path, &domain_value)
+            casa_imageanalysis::analysis::imhead_add_rest_frequency(path, &domain_value)
         } else {
-            casa_images::analysis::imhead_put_rest_frequency(path, &domain_value)
+            casa_imageanalysis::analysis::imhead_put_rest_frequency(path, &domain_value)
         }
     } else if observation_date {
-        casa_images::analysis::imhead_put_observation_date(path, &hdkey, &domain_value)
+        casa_imageanalysis::analysis::imhead_put_observation_date(path, &hdkey, &domain_value)
     } else if spectral_reference {
-        casa_images::analysis::imhead_put_spectral_reference(path, &hdkey, &domain_value)
+        casa_imageanalysis::analysis::imhead_put_spectral_reference(path, &hdkey, &domain_value)
     } else if direction_reference {
-        casa_images::analysis::imhead_put_direction_reference(path, &hdkey, &domain_value)
+        casa_imageanalysis::analysis::imhead_put_direction_reference(path, &hdkey, &domain_value)
     } else if projection {
-        casa_images::analysis::imhead_put_projection(path, &hdkey, &domain_value)
+        casa_imageanalysis::analysis::imhead_put_projection(path, &hdkey, &domain_value)
     } else if axis_quantity {
-        casa_images::analysis::imhead_put_axis_quantity(path, &hdkey, &domain_value)
+        casa_imageanalysis::analysis::imhead_put_axis_quantity(path, &hdkey, &domain_value)
     } else if is_custom {
-        casa_images::analysis::imhead_custom_value_change(path, mode, &hdkey, &domain_value)
+        casa_imageanalysis::analysis::imhead_custom_value_change(path, mode, &hdkey, &domain_value)
     } else if mode == "del" {
         let name = match (remove_masks, value) {
             (true, ParameterValue::String(name)) => name.clone(),
@@ -257,7 +258,7 @@ fn imhead_mutate(
         ),
     ];
     if write_task_history
-        && let Err(error) = casa_images::image::add_image_history(path, "imhead", &history)
+        && let Err(error) = casa_images::add_image_history(path, "imhead", &history)
     {
         tracing::warn!("imhead could not write task history: {error}");
     }
@@ -280,13 +281,17 @@ fn emit_header_log(
         let (location, messages) = if mode == "list" {
             (
                 "ImageMetaDataBase::_toLog",
-                casa_images::analysis::imhead_list_log(summary),
+                casa_imageanalysis::analysis::imhead_list_log(summary),
             )
         } else {
             (
                 "ImageMetaData::summary",
-                casa_images::analysis::imhead_summary_log(path, summary, task.flag("verbose")?)
-                    .map_err(|error| image_error("imhead", path, error))?,
+                casa_imageanalysis::analysis::imhead_summary_log(
+                    path,
+                    summary,
+                    task.flag("verbose")?,
+                )
+                .map_err(|error| image_error("imhead", path, error))?,
             )
         };
         for message in messages {

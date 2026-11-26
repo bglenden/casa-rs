@@ -15,10 +15,8 @@ use casa_core::{
     Array2, ArrayD,
     measures::{direction::DirectionRef, frequency::FrequencyRef},
 };
-use casa_images::{
-    AnyPagedImage, ExportFitsRequest, ImageBeamSet, ImageError, PagedImage, exportfits, imhead,
-    import_fits,
-};
+use casa_imageanalysis::{ExportFitsRequest, exportfits, imhead, import_fits};
+use casa_images::{AnyPagedImage, ImageBeamSet, ImageError, PagedImage};
 use fitsio::{FitsFile, hdu::HduInfo};
 use ndarray::{IxDyn, ShapeBuilder};
 use serde::Deserialize;
@@ -88,7 +86,8 @@ struct OracleErrorCase {
 }
 
 fn data_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../crates/casa-images/tests/data/exportfits")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../libs/casacore/casa-images/tests/data/exportfits")
 }
 
 fn load_oracle() -> OracleFile {
@@ -405,7 +404,7 @@ fn exportfits_matches_casa_676_oracle_cases() {
                 "{}: roundtrip history empty",
                 case.name
             );
-            let fits_entries = casa_images::image::image_history_entries(&out_fits).unwrap();
+            let fits_entries = casa_images::image_history_entries(&out_fits).unwrap();
             assert_eq!(
                 fits_entries.len(),
                 case.ia_history_count,
@@ -1072,7 +1071,7 @@ fn exportfits_history_multiline_fits_roundtrip_and_bang_symlink_safety() {
     img.save().unwrap();
     drop(img);
     let accented = format!("cafe_{}_tail", "é".repeat(40)); // 50 chars, 90 UTF-8 bytes
-    casa_images::image::add_image_history(
+    casa_images::add_image_history(
         &hist_im,
         "multi",
         &["first_line\nsecond_line".to_string(), accented.clone()],
@@ -1089,7 +1088,7 @@ fn exportfits_history_multiline_fits_roundtrip_and_bang_symlink_safety() {
     .unwrap();
     let (_, h1_cards, _) = parse_fits_cards_and_raw_i16(&f1);
     assert!(h1_cards.iter().all(|c| c.len() <= 80));
-    let e1 = casa_images::image::image_history_entries(&f1).unwrap();
+    let e1 = casa_images::image_history_entries(&f1).unwrap();
     assert_eq!(e1.len(), 3);
     assert_eq!(e1[0].message, "first_line");
     assert_eq!(e1[1].message, "second_line");
@@ -1105,7 +1104,7 @@ fn exportfits_history_multiline_fits_roundtrip_and_bang_symlink_safety() {
         ..ExportFitsRequest::default()
     })
     .unwrap();
-    let e2 = casa_images::image::image_history_entries(&f2).unwrap();
+    let e2 = casa_images::image_history_entries(&f2).unwrap();
     assert_eq!(e2, e1);
 
     // 2. Leading '!' in fitsimage does NOT trigger CFITSIO clobber on existing.fits or input_2d.fits.

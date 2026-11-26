@@ -6,10 +6,10 @@ use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::{Component, Path, PathBuf};
 
-use casa_images::analysis::ImageToolExpressionInputs;
-use casa_images::concat_file::{ConcatManifest, is_image_concat};
+use casa_imageanalysis::analysis::ImageToolExpressionInputs;
+use casa_images::MiriadImage;
 use casa_images::expr_file::{is_image_expr, read_tool_manifest};
-use casa_images::miriad_read::MiriadImage;
+use casa_images::{ConcatManifest, is_image_concat};
 use pyo3::prelude::*;
 
 use crate::tools::image::handle::{ImageHandle, raised, same_file_identity};

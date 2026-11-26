@@ -7,7 +7,7 @@ use casa_coordinates::{
 };
 use casa_core::quanta::{Quantity, Unit};
 use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
-use casa_images::analysis::{
+use casa_imageanalysis::analysis::{
     ImageRegionSection, reduce_subimage_coordinate_record, section_quality_labels,
 };
 use ndarray::{ArrayD, Axis};

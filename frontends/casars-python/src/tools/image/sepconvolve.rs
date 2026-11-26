@@ -4,14 +4,11 @@ use std::path::Path;
 
 use casa_coordinates::CoordinateType;
 use casa_core::{RecordValue, quanta::Quantity};
-use casa_images::{
-    ImageInterface,
-    analysis::{
-        ImageSepConvolution, SepConvolutionOptions, SubimageRegion,
-        ensure_artifacts_do_not_overlap, ensure_outfile_does_not_alias_input,
-    },
-    image::image_history_rows,
+use casa_imageanalysis::analysis::{
+    ImageSepConvolution, SepConvolutionOptions, SubimageRegion, ensure_artifacts_do_not_overlap,
+    ensure_outfile_does_not_alias_input,
 };
+use casa_images::{ImageInterface, image_history_rows};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyString, PyTuple};

@@ -113,7 +113,7 @@ fn source_beam(axes: &[Quantity; 3], rad: &Unit) -> PyResult<GaussianBeam> {
         angle_rad
     };
     let angle = in_record_units(angle_rad, pa.unit())?;
-    let angle = casa_images::beam::wrap_position_angle(&angle).map_err(raised)?;
+    let angle = casa_images::wrap_position_angle(&angle).map_err(raised)?;
     Ok(GaussianBeam::new(
         radians(&in_record_units(major_rad, major.unit())?)?,
         radians(&in_record_units(minor_rad, minor.unit())?)?,

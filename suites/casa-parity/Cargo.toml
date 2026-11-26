@@ -10,3 +10,17 @@ publish = false
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+casa-test-support = { path = "../../dev/casa-test-support" }
+casa-components.workspace = true
+casa-coordinates.workspace = true
+casa-core.workspace = true
+casa-images.workspace = true
+casa-imageanalysis.workspace = true
+casa-lattices.workspace = true
+casa-tables.workspace = true
+ndarray.workspace = true
+num-complex.workspace = true
+serde_json = { version = "1", features = ["float_roundtrip"] }
+tempfile = "3"
