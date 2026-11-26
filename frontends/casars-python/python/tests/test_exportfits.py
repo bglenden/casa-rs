@@ -13,21 +13,12 @@ import numpy as np
 import pytest
 
 from casars import tasks
-from casars.tasks import _runner
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 EXPORTFITS_DATA_DIR = REPO_ROOT / "crates" / "casa-images" / "tests" / "data" / "exportfits"
 CASA_PYTHON = Path("/Applications/CASA.app/Contents/MacOS/python3")
 
 
-@pytest.fixture
-def exportfits_bin() -> str:
-    try:
-        return _runner._task_executable("exportfits")
-    except tasks.TaskBinaryNotFoundError as missing:
-        if os.environ.get("CASARS_REQUIRE_TASK_BINARIES"):
-            raise
-        pytest.skip(f"no exportfits executable: {missing}")
 
 
 def _stage_fixtures(dst: Path) -> Path:
@@ -105,9 +96,8 @@ def _parse_fits_primary(path: Path) -> tuple[dict[str, object], list[str], np.nd
 
 
 def test_exportfits_python_all_parameters_and_task_surfaces(
-    tmp_path: Path, exportfits_bin: str
+    tmp_path: Path
 ) -> None:
-    _ = exportfits_bin
     ws = _stage_fixtures(tmp_path)
 
     # 1. Velocity + optical + history + run("exportfits", ...)
@@ -203,9 +193,8 @@ def test_exportfits_python_all_parameters_and_task_surfaces(
 
 
 def test_exportfits_casa_readback_interoperability(
-    tmp_path: Path, exportfits_bin: str
+    tmp_path: Path
 ) -> None:
-    _ = exportfits_bin
     if not CASA_PYTHON.exists():
         pytest.skip(f"CASA Python binary not available at {CASA_PYTHON}")
 

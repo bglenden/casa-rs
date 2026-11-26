@@ -29,6 +29,7 @@ pub fn fixture(resources: SessionResources) -> (tempfile::TempDir, SimalmaReques
     );
     p.insert("hourangle".into(), json!("35s"));
     let request = SimalmaRequest {
+        workspace: root.to_path_buf(),
         parameters: p,
         data_roots: vec![root.join("inputs")],
         options: SimulatorOptions {

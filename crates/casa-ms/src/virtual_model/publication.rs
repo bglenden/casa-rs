@@ -285,11 +285,11 @@ pub(super) fn with_model_locks(
     let mut own_main = if main.is_some() {
         ModelTableLock::Unneeded
     } else {
-        ModelTableLock::acquire(ms.main_table_mut(), 0)?
+        ModelTableLock::acquire(ms.main_table_mut(), 0, None)?
     };
     let result = (|| {
         let mut source = match ms.subtable_mut(SubtableId::Source) {
-            Some(table) => ModelTableLock::acquire(table, 1)?,
+            Some(table) => ModelTableLock::acquire(table, 1, main.as_deref())?,
             None => ModelTableLock::Unneeded,
         };
         let edited = edit(ms, main.or_else(|| own_main.guard()), source.guard());
@@ -311,7 +311,7 @@ enum ModelTableLock {
 }
 
 impl ModelTableLock {
-    fn acquire(table: &mut Table, attempts: u32) -> MsResult<Self> {
+    fn acquire(table: &mut Table, attempts: u32, main: Option<&TableWriteLock>) -> MsResult<Self> {
         let Some(path) = table.path().map(Path::to_path_buf) else {
             return Ok(Self::Unneeded);
         };
@@ -336,7 +336,10 @@ impl ModelTableLock {
                 }
             };
         }
-        let lock = TableWriteLock::acquire_to_reread(&path, attempts)?;
+        let lock = match main {
+            Some(main) => main.acquire_related_to_reread(&path, attempts)?,
+            None => TableWriteLock::acquire_to_reread(&path, attempts)?,
+        };
         table.resync()?;
         Ok(Self::Separate(lock))
     }

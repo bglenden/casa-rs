@@ -126,6 +126,16 @@ pub fn load_apply_specs_from_callib(
     parse_apply_specs(&path.display().to_string(), &contents)
 }
 
+/// Load a callibrary, resolving relative table names against the caller's
+/// workspace, as CASA does when it runs in that directory.
+pub fn load_apply_specs_from_callib_at(
+    path: &Path,
+    workspace: &Path,
+) -> Result<Vec<ApplyCalibrationTableSpec>, CallibError> {
+    let contents = read_contents(path)?;
+    parse_apply_specs_at(&path.display().to_string(), &contents, Some(workspace))
+}
+
 fn read_contents(path: &Path) -> Result<String, CallibError> {
     fs::read_to_string(path).map_err(|source| CallibError::ReadFile {
         path: path.display().to_string(),
@@ -165,7 +175,17 @@ pub fn parse_apply_specs(
     source_name: &str,
     contents: &str,
 ) -> Result<Vec<ApplyCalibrationTableSpec>, CallibError> {
-    let specs = collect_apply_specs(source_name, contents, false)?;
+    parse_apply_specs_at(source_name, contents, None)
+}
+
+/// Parse inline callibrary entries against an explicit workspace, defaulting
+/// to the process working directory when the caller supplies none.
+pub fn parse_apply_specs_at(
+    source_name: &str,
+    contents: &str,
+    workspace: Option<&Path>,
+) -> Result<Vec<ApplyCalibrationTableSpec>, CallibError> {
+    let specs = collect_apply_specs(source_name, contents, false, workspace)?;
     if specs.is_empty() {
         return Err(CallibError::ParseLine {
             path: source_name.to_owned(),
@@ -179,21 +199,32 @@ pub fn parse_apply_specs(
 
 pub(crate) fn load_transform_apply_specs(
     path: &Path,
+    workspace: &Path,
 ) -> Result<Vec<ApplyCalibrationTableSpec>, CallibError> {
     let contents = read_contents(path)?;
     // mstransform accepts empty mapping arrays and leaves calibration inactive
     // for an empty callibrary.
-    collect_apply_specs(&path.display().to_string(), &contents, true)
+    collect_apply_specs(
+        &path.display().to_string(),
+        &contents,
+        true,
+        Some(workspace),
+    )
 }
 
 fn collect_apply_specs(
     source_name: &str,
     contents: &str,
     allow_empty_maps: bool,
+    workspace: Option<&Path>,
 ) -> Result<Vec<ApplyCalibrationTableSpec>, CallibError> {
     // CASA resolves relative table names against the process working
     // directory for both text and file callibraries.
-    let base_dir = std::env::current_dir().map_err(|source| CallibError::ReadFile {
+    let base_dir = match workspace {
+        Some(workspace) => std::path::absolute(workspace),
+        None => std::env::current_dir(),
+    }
+    .map_err(|source| CallibError::ReadFile {
         path: source_name.to_owned(),
         source,
     })?;

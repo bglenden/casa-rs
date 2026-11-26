@@ -8,6 +8,19 @@
 use std::collections::BTreeMap;
 
 use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
+
+pub(super) fn region_in_workspace(
+    task: &TaskInvocation<'_>,
+) -> Result<Option<String>, TaskFailure> {
+    Ok(task.text("region")?.map(|region| {
+        let path = task.io_path(&region);
+        if task.native_options().is_some() && path.is_file() {
+            path.to_string_lossy().into_owned()
+        } else {
+            region
+        }
+    }))
+}
 use casa_contracts::{CasaValue, ParameterValue, parameter_value_to_casacore};
 use casa_images::{ImageError, PbcorRegion};
 use casa_types::{RecordValue, Value};

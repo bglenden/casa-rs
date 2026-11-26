@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use crate::TaskFailure;
-use casa_calibration::callib::{load_apply_specs_from_callib, parse_apply_specs};
+use casa_calibration::callib::{load_apply_specs_from_callib_at, parse_apply_specs_at};
 use casa_calibration::execute::evaluate_plot_rows;
 use casa_calibration::{ApplyMode, ApplyPlanRequest, plan_apply};
 use casa_ms::{MeasurementSet, MsSelection};
@@ -21,16 +21,17 @@ pub fn load_calibration(
     selection: &MsSelection,
     library: &[String],
     channel_weighting: bool,
+    workspace: &Path,
 ) -> Result<PlotMsCalibration, TaskFailure> {
     let specs = match library {
         [filename] if !filename.contains('=') => {
-            let path = Path::new(filename);
+            let path = workspace.join(filename);
             if !path.exists() {
                 return Err(TaskFailure::validation("callib file does not exist").at("callib"));
             }
-            load_apply_specs_from_callib(path)
+            load_apply_specs_from_callib_at(&path, workspace)
         }
-        entries => parse_apply_specs("PlotMS callib", &entries.join(",")),
+        entries => parse_apply_specs_at("PlotMS callib", &entries.join(","), Some(workspace)),
     }
     .map_err(|error| TaskFailure::validation(error.to_string()).at("callib"))?;
     let request = ApplyPlanRequest {

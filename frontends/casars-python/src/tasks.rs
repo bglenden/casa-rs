@@ -273,9 +273,11 @@ pub(crate) fn prepare_task_table_write(py: Python<'_>, path: PathBuf) -> PyResul
     {
         let reservations = py.detach(|| {
             let targets = clearcal_lock_targets(&path)?;
-            Ok::<_, PyErr>(crate::tools::table::prepare_provider_write(&targets)?)
+            Ok::<_, PyErr>(crate::tools::table::prepare_provider_write(&targets)?.into())
         })?;
-        Ok(TaskTableWrite { reservations })
+        Ok(TaskTableWrite {
+            reservations: Some(reservations),
+        })
     }
     #[cfg(not(unix))]
     {
@@ -287,7 +289,7 @@ pub(crate) fn prepare_task_table_write(py: Python<'_>, path: PathBuf) -> PyResul
 #[pyclass]
 pub(crate) struct TaskTableWrite {
     #[cfg(unix)]
-    reservations: Vec<casa_tables::DelegatedTableWrite>,
+    pub(crate) reservations: Option<std::sync::Arc<[casa_tables::DelegatedTableWrite]>>,
 }
 
 #[pymethods]
@@ -397,6 +399,14 @@ fn plot_documents(
     if surface != surface_id {
         return Ok(Vec::new());
     }
+    decode_plot_documents(surface_id, result, payload_bytes)
+}
+
+pub(crate) fn decode_plot_documents(
+    surface_id: &str,
+    result: serde_json::Value,
+    payload_bytes: u64,
+) -> Result<Vec<casa_plot_data::plot_document::PlotFigure>, String> {
     #[derive(serde::Deserialize)]
     struct PlotReply {
         #[serde(default)]

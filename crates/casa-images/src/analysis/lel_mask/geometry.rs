@@ -72,7 +72,7 @@ struct MaskGeometry {
 
 impl MaskGeometry {
     fn open(name: &str) -> Result<Self, ImageError> {
-        let base = std::env::current_dir().map_err(|error| ImageError::Io(error.to_string()))?;
+        let base = crate::analysis::expression_workspace::directory()?;
         let operand = resolve_named_operand(&base, name.to_owned())?;
         let path = operand.path.as_path();
         let mask = operand.mask.as_deref();

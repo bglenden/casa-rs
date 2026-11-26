@@ -15,21 +15,12 @@ import pytest
 
 from casars import tasks
 from casars._native_image import NativeImageView
-from casars.tasks import _runner
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 IMMATH_DATA_DIR = REPO_ROOT / "crates" / "casa-images" / "tests" / "data" / "immath"
 CASA_PYTHON = Path("/Applications/CASA.app/Contents/MacOS/python3")
 
 
-@pytest.fixture
-def immath_bin() -> str:
-    try:
-        return _runner._task_executable("immath")
-    except tasks.TaskBinaryNotFoundError as missing:
-        if os.environ.get("CASARS_REQUIRE_TASK_BINARIES"):
-            raise
-        pytest.skip(f"no immath executable: {missing}")
 
 
 def _stage_immath_fixtures(dst: Path) -> Path:
@@ -91,9 +82,8 @@ def _write_minimal_fits(path: Path, data_zyx: np.ndarray) -> None:
 
 
 def test_immath_self_contained_fits_and_default_outfile(
-    immath_bin: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _ = immath_bin
     monkeypatch.chdir(tmp_path)
     arr = np.arange(1.0, 19.0, dtype=np.float32).reshape((2, 3, 3))
     arr[1, 0, 2] = np.nan
@@ -155,9 +145,8 @@ def _assert_matches_oracle(image_path: Path, oracle_case: dict[str, object], *, 
 
 
 def test_immath_python_all_modes_and_parameters(
-    immath_bin: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _ = immath_bin
     ws = _stage_immath_fixtures(tmp_path)
     monkeypatch.chdir(ws)
     oracle_cases = json.loads((IMMATH_DATA_DIR / "expected.json").read_text())["cases"]
@@ -314,11 +303,10 @@ def test_immath_python_all_modes_and_parameters(
 
 
 def test_immath_casa_readback_interoperability(
-    immath_bin: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     if not CASA_PYTHON.exists():
         pytest.skip(f"CASA 6.7.6.14 python3 not present at {CASA_PYTHON}")
-    _ = immath_bin
     ws = _stage_immath_fixtures(tmp_path)
     monkeypatch.chdir(ws)
 

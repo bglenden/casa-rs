@@ -30,7 +30,10 @@ pub fn imexplore_front_end(
     })
 }
 
-fn run(task: &TaskInvocation<'_>, default_logging: bool) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run(
+    task: &TaskInvocation<'_>,
+    default_logging: bool,
+) -> Result<TaskSuccess, TaskFailure> {
     match task.surface() {
         "imstat" => run_imstat(task),
         _ => run_imhead(task, default_logging),
@@ -359,7 +362,7 @@ fn run_imstat(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let request = ImstatRequest {
         imagename: path.clone(),
         box_pixels: task.text("box")?,
-        region: task.text("region")?,
+        region: super::front_end::region_in_workspace(task)?,
         chans: task.text("chans")?,
         algorithm: task.required_text("algorithm")?,
         fence: task.number("fence")?,
@@ -373,7 +376,7 @@ fn run_imstat(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         stokes: task.text("stokes")?,
         mask: task.text("mask")?,
         stretch: task.flag("stretch")?,
-        logfile: task.text("logfile")?,
+        logfile: task.file_text("logfile")?,
         append: task.flag("append")?,
         listit: task.flag("listit")?,
         verbose: task.flag("verbose")?,

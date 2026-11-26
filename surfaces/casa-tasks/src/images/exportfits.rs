@@ -13,7 +13,7 @@ pub fn exportfits_front_end()
     image_task_front_end("exportfits", &["exportfits"], run)
 }
 
-fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let bitpix = task.integer("bitpix")?;
     if bitpix != -32 && bitpix != 16 {
         return Err(TaskFailure::validation(format!(

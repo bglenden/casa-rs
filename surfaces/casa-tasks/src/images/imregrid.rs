@@ -18,10 +18,13 @@ pub fn imregrid_front_end()
     image_task_front_end("imregrid", &["imregrid"], run)
 }
 
-fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let template = match task.value("template") {
-        Some(ParameterValue::String(template)) if !template.is_empty() => {
+        Some(ParameterValue::String(template)) if template.eq_ignore_ascii_case("get") => {
             ImregridTemplate::Image(template.into())
+        }
+        Some(ParameterValue::String(template)) if !template.is_empty() => {
+            ImregridTemplate::Image(task.io_path(template))
         }
         Some(ParameterValue::Table(fields)) => {
             let Some(csys_value) = fields.get("csys") else {
@@ -61,7 +64,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let request = ImregridRequest {
         imagename: task.input_path("imagename")?,
         template,
-        output: task.text("output")?.unwrap_or_default().into(),
+        output: task.file_text("output")?.unwrap_or_default().into(),
         interpolation: task.required_text("interpolation")?,
         asvelocity: task.flag("asvelocity")?,
         axes: task.integers("axes")?,

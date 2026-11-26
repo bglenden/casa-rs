@@ -151,9 +151,9 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         .flat_map(|label| label.split(',').map(str::trim))
         .filter(|label| !label.is_empty())
         .collect::<Vec<_>>();
-    let vis = task.text("vis")?.filter(|name| !name.is_empty());
-    let caltable2 = task.text("caltable2")?.filter(|name| !name.is_empty());
-    let caltable3 = task.text("caltable3")?.filter(|name| !name.is_empty());
+    let vis = task.file_text("vis")?.filter(|name| !name.is_empty());
+    let caltable2 = task.file_text("caltable2")?.filter(|name| !name.is_empty());
+    let caltable3 = task.file_text("caltable3")?.filter(|name| !name.is_empty());
     for path in [&caltable2, &caltable3].into_iter().flatten() {
         if !Path::new(path).exists() {
             return plain(
@@ -248,9 +248,14 @@ fn run_request(
             "Specify a figfile when building a PDF or running without display or derivative statistics.",
         );
     }
-    let completed_pages = std::env::var("CASARS_BANDPASS_COMPLETED_PAGES")
-        .ok()
-        .and_then(|text| text.parse::<usize>().ok());
+    let completed_pages = task.native_options().map_or_else(
+        || {
+            std::env::var("CASARS_BANDPASS_COMPLETED_PAGES")
+                .ok()
+                .and_then(|text| text.parse::<usize>().ok())
+        },
+        |options| options.bandpass_completed_pages,
+    );
     let panel_limit = completed_pages
         .map(|count| count.saturating_mul(display.layout[0] as usize * display.layout[1] as usize));
     let plan = prepare_bandpass(request, panel_limit).map_err(TaskFailure::execution)?;

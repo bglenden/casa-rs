@@ -36,6 +36,9 @@ use uv_taper::uv_taper;
 /// One imaging run's parameters, as the catalog resolved them.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct ImagingRequest {
+    /// Workspace for relative paths read from an outlier parameter file.
+    #[serde(skip)]
+    pub(crate) task_workspace: Option<PathBuf>,
     /// Task-only continuation, established by output preflight, never a catalog value.
     #[serde(skip)]
     pub(crate) tclean_restart: bool,
@@ -642,6 +645,12 @@ pub struct InvalidRequest {
 }
 
 impl ImagingRequest {
+    /// Resolve paths inside a tclean outlier file against the task workspace.
+    #[must_use]
+    pub fn with_task_workspace(mut self, workspace: &std::path::Path) -> Self {
+        self.task_workspace = Some(workspace.to_owned());
+        self
+    }
     /// The cube's output depth; MVC derives this independently of its input
     /// channel selection (`PyMtmfsViaCubeSynthesisImager`).
     pub(crate) const fn cube_output_channel_count(&self) -> Option<usize> {
@@ -694,7 +703,10 @@ impl ImagingRequest {
         }
         let mut prefixes = vec![self.imagename.clone()];
         if let Some(path) = &self.outlierfile {
-            prefixes.extend(crate::compile::outlier_output_prefixes(path)?);
+            prefixes.extend(crate::compile::outlier_output_prefixes(
+                path,
+                self.task_workspace.as_deref(),
+            )?);
         }
         let mut outputs = crate::restart::next_prefixes(&prefixes)?.into_iter();
         let mut unique = std::collections::BTreeSet::new();
@@ -995,7 +1007,8 @@ impl ImagingRequest {
         let outliers = match &self.numbered_outlier_outputs {
             Some(outputs) => outputs.iter().map(|(_, output)| output.clone()).collect(),
             None => self.outlierfile.as_deref().map_or_else(Vec::new, |path| {
-                crate::compile::outlier_output_prefixes(path).unwrap_or_default()
+                crate::compile::outlier_output_prefixes(path, self.task_workspace.as_deref())
+                    .unwrap_or_default()
             }),
         };
         std::iter::once(self.imagename.clone())

@@ -8,8 +8,7 @@ use crate::{CasaValue, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::{
     ProviderProtocolDescriptor, ProviderSurfaceKind, TaskProviderContract, builtin_surface_bundle,
 };
-use casa_plot_data::simulation::simalma_with_plots;
-use casa_simulation::simalma::{SimalmaRequest, simalma};
+use casa_simulation::simalma::{SimalmaRequest, simalma_with_controls};
 use casa_simulation::{ExecutionControls, SessionResources, SimulatorOptions};
 use std::time::Instant;
 
@@ -41,22 +40,26 @@ pub fn simalma_front_end()
     )
     .expect("simalma contract")
 }
-fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let started = Instant::now();
     let parameters = task.plain_values();
     let resources = SessionResources::from_controls(&ExecutionControls::default())
         .map_err(|error| TaskFailure::execution(error.to_string()))?;
+    let mut execution_parameters = parameters.clone();
+    task.resolve_file_values(&mut execution_parameters, &["skymodel", "complist"]);
     let request = SimalmaRequest {
-        parameters: parameters.clone(),
+        workspace: task.workspace().to_path_buf(),
+        parameters: execution_parameters,
         options: SimulatorOptions::from_system(resources)
             .map_err(|error| TaskFailure::execution(error.to_string()))?,
         data_roots: super::data_roots().map_err(TaskFailure::execution)?,
     };
-    let (outcome, plots) = match std::env::var_os("CASARS_PLOT_PAYLOAD") {
-        Some(path) => simalma_with_plots(&request, std::path::Path::new(&path)),
-        None => simalma(&request).map(|outcome| (outcome, Vec::new())),
-    }
-    .map_err(|error| TaskFailure::execution(error.to_string()))?;
+    let payload = super::plot_payload(task);
+    let cancel = super::cancellation(task);
+    let (outcome, plots) = super::with_figures(payload.as_deref(), |sink| {
+        simalma_with_controls(&request, sink, &cancel)
+    })
+    .map_err(|error| super::simulation_failure(&cancel, error))?;
     let mut artifacts: Vec<_> = outcome
         .products
         .iter()

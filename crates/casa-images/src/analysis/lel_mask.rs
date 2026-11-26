@@ -106,8 +106,7 @@ impl<'a> ImageToolExpressionInputs<'a> {
     /// # Errors
     /// Returns an error for a missing operand or invalid expression.
     pub fn resolve(expression: &'a str) -> Result<Self, ImageError> {
-        let directory =
-            std::env::current_dir().map_err(|error| ImageError::Io(error.to_string()))?;
+        let directory = super::expression_workspace::directory()?;
         Self::resolve_in_directory(expression, &directory)
     }
 
@@ -429,7 +428,7 @@ fn resolve_operands(expression: &str) -> Result<Vec<ResolvedOperand>, ImageError
 }
 
 fn resolve_named_operands(names: Vec<String>) -> Result<Vec<ResolvedOperand>, ImageError> {
-    let base = std::env::current_dir().map_err(|error| ImageError::Io(error.to_string()))?;
+    let base = super::expression_workspace::directory()?;
     names
         .into_iter()
         .map(|name| resolve_named_operand(&base, name))
@@ -569,18 +568,18 @@ fn evaluate_mask_section(
 }
 
 fn mask_expression(raw: &str) -> String {
-    if Path::new(raw).exists() {
+    if super::expression_workspace::operand_path(raw).exists() {
         // Quote bare file names that include spaces or punctuation.
         format!("\"{raw}\"")
     } else if let Some((left, _)) = raw.split_once(':')
         && !raw.contains([' ', '>', '<', '=', '!', '&', '|', '(', ')'])
-        && Path::new(left).exists()
+        && super::expression_workspace::operand_path(left).exists()
     {
         // Unquoted path:maskname expression in top-level `mask=` parameter.
         format!("mask(\"{raw}\")")
     } else if let Some(operator) = raw.find(['<', '>', '=', '!'])
         && let (name, suffix) = raw.split_at(operator)
-        && Path::new(name.trim()).exists()
+        && super::expression_workspace::operand_path(name.trim()).exists()
     {
         // These tasks accept an unquoted image path before a comparison,
         // including an absolute path that would otherwise lex as division.

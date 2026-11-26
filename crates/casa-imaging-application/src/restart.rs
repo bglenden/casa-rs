@@ -120,7 +120,9 @@ pub(crate) fn check(request: &ImagingRequest) -> Result<(bool, bool), PrepareErr
     let outliers = request
         .outlierfile
         .as_deref()
-        .map(crate::compile::outlier_output_prefixes)
+        .map(|path| {
+            crate::compile::outlier_output_prefixes(path, request.task_workspace.as_deref())
+        })
         .transpose()?
         .unwrap_or_default();
     let mut all = vec![(request.imagename.as_path(), existing)];

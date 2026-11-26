@@ -2,7 +2,7 @@
 //! Protect composition inputs before any earlier application publishes.
 use super::{
     Parameters, failure,
-    plan::{Plan, expand_project, locate, suffixed},
+    plan::{Plan, suffixed},
 };
 use crate::simobserve::SimobserveError;
 use std::path::{Path, PathBuf};
@@ -64,11 +64,11 @@ pub(super) fn check(p: &Parameters<'_>, plan: &Plan) -> Result<(), SimobserveErr
     inputs.push(plan.model.clone());
     refuse_collisions(&inputs, &outputs)?;
     for name in ["modelimage", "featherimage"] {
-        let supplied = expand_project(&plan.directory, p.text(name));
+        let supplied = p.text(name);
         if supplied.is_empty() {
             continue;
         }
-        let input = locate(&plan.directory, &supplied);
+        let input = p.locate(&plan.directory, supplied);
         refuse_collisions(std::slice::from_ref(&input), &synthesis)?;
         // The final TP image is deliberately available as this invocation's
         // seed or feather input. Its intermediates are never caller inputs.

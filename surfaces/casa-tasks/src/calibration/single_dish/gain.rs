@@ -17,7 +17,7 @@ use casa_ms::{MeasurementSet, MsSelection};
 use super::{gain_options, selector};
 
 pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    let outfile = task.text("outfile")?.unwrap_or_default();
+    let outfile = task.file_text("outfile")?.unwrap_or_default();
     let overwrite = task.flag("overwrite")?;
     if outfile.is_empty() {
         return Err(TaskFailure::validation("outfile is empty.").at("outfile"));

@@ -15,7 +15,7 @@ pub fn immath_front_end()
     image_task_front_end("immath", &["immath"], run)
 }
 
-fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let imagename: Vec<PathBuf> = task
         .paths("imagename")?
         .into_iter()
@@ -40,7 +40,8 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         .text("polithresh")?
         .filter(|text| !text.trim().is_empty());
     let mask = task.text("mask")?.filter(|text| !text.trim().is_empty());
-    let region = task.text("region")?.filter(|text| !text.trim().is_empty());
+    let region =
+        super::front_end::region_in_workspace(task)?.filter(|text| !text.trim().is_empty());
     let box_pixels = task.text("box")?.filter(|text| !text.trim().is_empty());
     let chans = task.text("chans")?.filter(|text| !text.trim().is_empty());
     let stokes = task.text("stokes")?.filter(|text| !text.trim().is_empty());
@@ -49,10 +50,10 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let prec = task.text("prec")?.unwrap_or_else(|| "float".to_string());
     let overwrite = task.flag("overwrite")?;
 
-    let request = ImmathRequest {
+    let mut request = ImmathRequest {
         imagename,
         mode,
-        outfile,
+        outfile: task.io_path(outfile),
         expr,
         varnames,
         sigma,
@@ -69,6 +70,11 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     };
 
     validate_input_paths(task, &request)?;
+    if let Some(path) = &mut request.imagemd
+        && task.io_path(&*path).exists()
+    {
+        *path = task.io_path(&*path).to_string_lossy().into_owned();
+    }
 
     // CASA's immath returns True.
     let mut result = immath(&request);

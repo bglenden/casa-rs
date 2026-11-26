@@ -23,8 +23,8 @@ use casa_calibration::single_dish::preparation::data_column;
 use super::selector;
 
 pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    let infile = task.required_text("infile")?;
-    let outfile = task.required_text("outfile")?;
+    let infile = task.required_file_text("infile")?;
+    let outfile = task.required_file_text("outfile")?;
     let overwrite = task.flag("overwrite")?;
     let (input, output) = check_paths(&infile, &outfile, overwrite)?;
     let atmosphere = task.integer("atmtype")?;
@@ -74,8 +74,7 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     session
         .set_selection(selection.clone(), false)
         .map_err(execution)?;
-    let default_logs = task.default_stderr_logs();
-    diagnostics.start(default_logs);
+    diagnostics.start(task);
     let result = session.atmcor_prepared(
         &ms,
         rows,
@@ -91,7 +90,7 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
             |_| selected_windows_after_failure(&ms, selection),
             |report| report.spectral_window_ids.iter().copied().collect(),
         );
-        diagnostics.report_uncorrected(&written, default_logs);
+        diagnostics.report_uncorrected(&written, task);
     }
     TaskSuccess::new(CasaValue::None, &result.map_err(execution)?)
 }
@@ -104,18 +103,18 @@ struct Diagnostics {
 }
 
 impl Diagnostics {
-    fn start(&self, default_logs: bool) {
+    fn start(&self, task: &TaskInvocation<'_>) {
         log_message(
             tracing::Level::INFO,
             "SDAtmosphereCorrectionTVI::SDAtmosphereCorrectionTVI",
             &format!("Setting numThreads_ to {}", self.threads),
-            default_logs,
+            task,
         );
         log_message(
             tracing::Level::INFO,
             "SDAtmosphereCorrectionTVI::initializeAtmosphereCorrection",
             &format!("processspw (input) = {:?}", self.requested),
-            default_logs,
+            task,
         );
     }
 
@@ -123,7 +122,7 @@ impl Diagnostics {
         !self.output.is_subset(&self.corrected)
     }
 
-    fn report_uncorrected(&self, written: &BTreeSet<i32>, default_logs: bool) {
+    fn report_uncorrected(&self, written: &BTreeSet<i32>, task: &TaskInvocation<'_>) {
         let windows = written
             .difference(&self.corrected)
             .copied()
@@ -140,13 +139,13 @@ impl Diagnostics {
             tracing::Level::WARN,
             "SDAtmosphereCorrectionTVI::initializeAtmosphereCorrection",
             &message,
-            default_logs,
+            task,
         );
     }
 }
 
-fn log_message(level: tracing::Level, location: &str, message: &str, default_logs: bool) {
-    if default_logs {
+fn log_message(level: tracing::Level, location: &str, message: &str, task: &TaskInvocation<'_>) {
+    if task.default_stderr_logs() {
         let unix_seconds = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0.0, |elapsed| elapsed.as_secs_f64());
@@ -155,7 +154,7 @@ fn log_message(level: tracing::Level, location: &str, message: &str, default_log
             format::FITS | format::USE_SPACE,
             6,
         );
-        eprintln!("{timestamp}\t{level}\t{location}\t{message}");
+        task.write_default_log_line(&format!("{timestamp}\t{level}\t{location}\t{message}"));
     } else if level == tracing::Level::WARN {
         tracing::warn!(casa.location = location, "{message}");
     } else {

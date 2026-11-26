@@ -402,13 +402,7 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
         so the task tells a value the caller chose from one it fills in.
         """
 
-        explicit = self._explicit_values()
-        originals = {name: value for name, value in self._overrides.items()
-                     if name in explicit and (isinstance(value, str) or name == "spwmap"
-                                              or (self.surface in ("clearcal", "delmod", "ft")
-                                                  and name in ("addmodel", "otf", "scr", "incremental"))
-                                              or (self.surface == "flagdata"
-                                                  and name in ("chanbin", "timedev", "freqdev")))}
+        explicit, originals = self._task_values()
         projected = _native().parameter_provider_invocation(self.surface, explicit, originals)
         stdin = projected["stdin"]
         supplied = self._overrides.get("fluxdict")
@@ -423,6 +417,23 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
             args=tuple(projected["args"]),
             stdin=stdin,
         )
+
+    def _task_values(self) -> tuple[dict[str, ParameterData], dict[str, ParameterData]]:
+        explicit = self._explicit_values()
+        originals = {name: value for name, value in self._overrides.items()
+                     if name in explicit and (isinstance(value, str) or name == "spwmap"
+                                              or (self.surface in ("clearcal", "delmod", "ft")
+                                                  and name in ("addmodel", "otf", "scr", "incremental"))
+                                              or (self.surface == "flagdata"
+                                                  and name in ("chanbin", "timedev", "freqdev")))}
+        return explicit, originals
+
+    def _task_argument_text(self) -> dict[str, str]:
+        supplied = self._overrides.get("fluxdict")
+        if self.surface == "setjy" and isinstance(supplied, Mapping):
+            # Keep the caller's field order when recording the flux dictionary.
+            return {"fluxdict": dumps(list(supplied))}
+        return {}
 
     def _resolved_values(self) -> dict[str, ParameterData]:
         return {
