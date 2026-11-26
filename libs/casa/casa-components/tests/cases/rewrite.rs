@@ -127,7 +127,12 @@ fn a_rewrite_waits_for_a_write_lock_another_process_holds() {
     let before = identity(&path);
 
     let mut holder = Command::new(std::env::current_exe().expect("test binary"))
-        .args(["hold_the_write_lock", "--exact", "--ignored", "--nocapture"])
+        .args([
+            "rewrite::hold_the_write_lock",
+            "--exact",
+            "--ignored",
+            "--nocapture",
+        ])
         .env(HELD_TABLE, &path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
