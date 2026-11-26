@@ -160,8 +160,8 @@ pub(super) fn phase_calibration(
             let start = row * width + band * tones;
             let mut frequencies = Vec::with_capacity(tones * hands.len());
             let mut phases = Vec::with_capacity(tones * hands.len());
-            for tone in start..start + tones {
-                for hand in &hands {
+            for hand in &hands {
+                for tone in start..start + tones {
                     frequencies.push(hand.frequency[tone]);
                     phases.push(Complex32::new(hand.real[tone], hand.imaginary[tone]));
                 }
@@ -272,8 +272,9 @@ pub(super) fn gain_curve(
                 .filter(|&count| count <= tabs)
                 .ok_or_else(|| invalid("Invalid FITS-IDI gain polynomial size"))?;
             let offset = row * width + band * tabs;
-            let coefficients = (offset..offset + count)
-                .flat_map(|term| hands.iter().map(move |hand| hand.gain[term]))
+            let coefficients = hands
+                .iter()
+                .flat_map(|hand| hand.gain[offset..offset + count].iter().copied())
                 .collect::<Vec<_>>();
             let sensitivity = hands
                 .iter()

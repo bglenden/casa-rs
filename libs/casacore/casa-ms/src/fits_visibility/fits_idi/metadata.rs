@@ -319,8 +319,8 @@ pub(super) fn write_fields(
                 codes[row].trim_end(),
                 &[
                     direction[0],
-                    direction[1],
                     motion[0].to_radians() / 86_400.0,
+                    direction[1],
                     motion[1].to_radians() / 86_400.0,
                 ],
                 1,
