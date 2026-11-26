@@ -11,7 +11,7 @@ mod windows;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use casa_atmosphere::AtmosphereSession;
-use casa_provider_contracts::CasaValue;
+use casa_contracts::CasaValue;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};

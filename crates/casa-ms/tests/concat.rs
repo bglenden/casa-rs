@@ -31,7 +31,7 @@ fn parameter_order_and_defaults_match_casa_67614() {
         "../../../resources/casa-compat/casa-6.7.6.14/tasks/concat.json"
     ))
     .unwrap();
-    let bundle = casa_provider_contracts::builtin_surface_bundle("concat").unwrap();
+    let bundle = casa_contracts::builtin_surface_bundle("concat").unwrap();
     let bindings = bundle.surface.bindings();
     let parameters = reference["parameters"].as_array().unwrap();
     assert_eq!(bindings.len(), parameters.len());

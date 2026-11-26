@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use casa_provider_contracts::{EmptyArrayType, NumpyScalarType, ParameterValue};
+use casa_contracts::{EmptyArrayType, NumpyScalarType, ParameterValue};
 use pyo3::exceptions::{PyOverflowError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
@@ -77,8 +77,8 @@ pub(crate) fn parameter_value(value: &Bound<'_, PyAny>) -> PyResult<ParameterVal
     }
     if let Ok(value) = value.cast::<PyComplex>() {
         return Ok(ParameterValue::Complex([
-            casa_provider_contracts::CasaFloat(value.real()),
-            casa_provider_contracts::CasaFloat(value.imag()),
+            casa_contracts::CasaFloat(value.real()),
+            casa_contracts::CasaFloat(value.imag()),
         ]));
     }
     if value.is_instance(PATH_LIKE.import(py, "os", "PathLike")?)? {

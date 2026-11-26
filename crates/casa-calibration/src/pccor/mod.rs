@@ -10,8 +10,8 @@ use std::collections::BTreeSet;
 use std::f64::consts::{PI, TAU};
 use std::path::PathBuf;
 
+use casa_contracts::{CasaFloat, CasaValue, FloatDtype};
 use casa_ms::MeasurementSet;
-use casa_provider_contracts::{CasaFloat, CasaValue, FloatDtype};
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use serde::Serialize;
 use thiserror::Error;

@@ -25,12 +25,12 @@ casa-images = { path = "../casa-images" }
 casa-lattices = { path = "../casa-lattices" }
 casa-measures-data = { path = "../casa-measures-data" }
 casa-ms = { path = "../casa-ms" }
-casa-provider-contracts = { path = "../casa-provider-contracts" }
+casa-contracts = { path = "../../surfaces/casa-contracts" }
 casa-simulation = { path = "../casa-simulation" }
 casa-tables = { path = "../casa-tables" }
 casa-task-runtime = { path = "../casa-task-runtime" }
+casa-tasks = { path = "../../surfaces/casa-tasks", features = ["imaging", "vla"] }
 casa-types = { path = "../casa-types" }
-casars-imager = { path = "../casars-imager" }
 casars-simulation = { path = "../casars-simulation" }
 ndarray.workspace = true
 num-complex.workspace = true
@@ -46,7 +46,6 @@ serde_json = "1"
 tempfile = "3"
 
 [dev-dependencies]
-casa-vla = { path = "../casa-vla" }
 casars-msconvert = { path = "../casars-msconvert" }
 
 [lints]

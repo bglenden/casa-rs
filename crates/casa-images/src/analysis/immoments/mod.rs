@@ -11,7 +11,7 @@ mod window;
 pub use tool::{ImageMomentOptions, ImageMomentProducts, make_image_moments, moment_output_names};
 
 use crate::image::{ImageHistoryEntry, image_history_entries};
-use casa_provider_contracts::{ParameterValue, python_repr};
+use casa_contracts::{ParameterValue, python_repr};
 use casa_types::{RecordValue, Value};
 
 use super::axes::{subimage_coordinate_record, subimage_coordinates_with_stokes};

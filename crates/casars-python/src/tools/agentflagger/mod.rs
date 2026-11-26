@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use casa_contracts::{CasaFloat, CasaValue, FloatDtype, ParameterValue};
 use casa_ms::flagging::{
     flagdata_calibration_agent_rows, flagdata_calibration_agents,
     validate_calibration_flag_averaging,
@@ -17,7 +18,6 @@ use casa_ms::flagging::{
 use casa_ms::{
     FlagDataReport, FlagDataRequest, MeasurementSet, MsSelection, flagdata_named_summary_record,
 };
-use casa_provider_contracts::{CasaFloat, CasaValue, FloatDtype, ParameterValue};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;

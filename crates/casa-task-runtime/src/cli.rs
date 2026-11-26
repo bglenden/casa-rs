@@ -7,7 +7,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
 
-use casa_provider_contracts::{
+use casa_contracts::{
     ContextRole, DefaultSpec, NormalizationRule, ParameterRole, ParameterType, ParameterValue,
     SurfaceContractBundle, SurfaceParameterBinding,
 };
@@ -391,7 +391,7 @@ fn is_open_list_domain(domain: &ParameterType) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use casa_provider_contracts::ParameterValue;
+    use casa_contracts::ParameterValue;
 
     #[test]
     fn a_request_is_read_from_a_file_or_reports_the_path() {
@@ -408,7 +408,7 @@ mod tests {
 
     #[test]
     fn catalog_cli_parser_accepts_only_declared_flags_and_normalizes_values() {
-        let bundle = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
+        let bundle = casa_contracts::builtin_surface_bundle("tclean").unwrap();
         let patch = parse_parameter_cli_overrides(
             &bundle,
             &[
@@ -458,7 +458,7 @@ mod tests {
 
     #[test]
     fn exact_empty_cli_defaults_are_values_but_missing_or_blank_arguments_are_not() {
-        let bundle = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
+        let bundle = casa_contracts::builtin_surface_bundle("tclean").unwrap();
         let empty = ParameterValue::String(String::new());
         for (name, expected) in [
             ("scan", ParameterValue::Array(vec![empty.clone()])),
@@ -493,7 +493,7 @@ mod tests {
     /// written as one.
     #[test]
     fn a_selector_text_is_one_selector_and_a_list_is_written_as_one() {
-        let bundle = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
+        let bundle = casa_contracts::builtin_surface_bundle("tclean").unwrap();
         let texts = |values: &[&str]| {
             ParameterValue::Array(
                 values
@@ -527,9 +527,9 @@ mod tests {
 
     #[test]
     fn every_parameter_is_reachable_by_its_own_name() {
-        let catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
+        let catalog = casa_contracts::builtin_surface_catalog().unwrap();
         for surface in &catalog.surfaces {
-            let bundle = casa_provider_contracts::builtin_surface_bundle(surface.id()).unwrap();
+            let bundle = casa_contracts::builtin_surface_bundle(surface.id()).unwrap();
             for binding in bundle.surface.bindings() {
                 let flag = format!("--{}", binding.name);
                 let (found, _) = cli_flag_binding(&bundle, &flag)
@@ -538,7 +538,7 @@ mod tests {
             }
         }
 
-        let bundle = casa_provider_contracts::builtin_surface_bundle("applycal").unwrap();
+        let bundle = casa_contracts::builtin_surface_bundle("applycal").unwrap();
         let patch = parse_parameter_cli_overrides(
             &bundle,
             &["--vis".into(), "target.ms".into(), "--no-flagbackup".into()],
@@ -557,10 +557,10 @@ mod tests {
     #[test]
     fn every_declared_spelling_reaches_its_parameter_short_ones_included() {
         // msexplore's `-o` was read as a positional before.
-        let catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
+        let catalog = casa_contracts::builtin_surface_catalog().unwrap();
         let mut short = 0;
         for surface in &catalog.surfaces {
-            let bundle = casa_provider_contracts::builtin_surface_bundle(surface.id()).unwrap();
+            let bundle = casa_contracts::builtin_surface_bundle(surface.id()).unwrap();
             for binding in bundle.surface.bindings() {
                 let Some(cli) = binding.projections.cli.as_ref() else {
                     continue;
@@ -578,7 +578,7 @@ mod tests {
         }
         assert!(short > 0, "the catalog declares no short spelling to test");
 
-        let bundle = casa_provider_contracts::builtin_surface_bundle("msexplore").unwrap();
+        let bundle = casa_contracts::builtin_surface_bundle("msexplore").unwrap();
         let patch = parse_parameter_cli_overrides(
             &bundle,
             &["-o".into(), "summary.txt".into(), "in.ms".into()],
@@ -596,7 +596,7 @@ mod tests {
 
     #[test]
     fn catalog_cli_parser_applies_unsets_in_argument_order() {
-        let bundle = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
+        let bundle = casa_contracts::builtin_surface_bundle("tclean").unwrap();
         let patch = parse_parameter_cli_overrides(
             &bundle,
             &[
@@ -614,7 +614,7 @@ mod tests {
 
     #[test]
     fn cli_values_are_normalized_through_the_binding_concept() {
-        let bundle = casa_provider_contracts::builtin_surface_bundle("msexplore").unwrap();
+        let bundle = casa_contracts::builtin_surface_bundle("msexplore").unwrap();
         let field = ensure_parameter_binding(&bundle, "field").unwrap();
         for (supplied, expected) in [
             (" 0, 2 ", "0,2"),
@@ -637,14 +637,14 @@ mod tests {
         );
         assert!(ensure_parameter_binding(&bundle, "not_a_parameter").is_err());
         // A value the concept refuses names its parameter.
-        let imager = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
+        let imager = casa_contracts::builtin_surface_bundle("tclean").unwrap();
         let imsize = ensure_parameter_binding(&imager, "imsize").unwrap();
         let refused = validated_cli_value(&imager, imsize, "abc").unwrap_err();
         assert!(refused.starts_with("parameter \"imsize\": "), "{refused}");
         let refused = checked_value(&imager, imsize, &ParameterValue::Bool(true)).unwrap_err();
         assert!(refused.starts_with("parameter \"imsize\": "), "{refused}");
 
-        let immath = casa_provider_contracts::builtin_surface_bundle("immath").unwrap();
+        let immath = casa_contracts::builtin_surface_bundle("immath").unwrap();
         let outfile = ensure_parameter_binding(&immath, "outfile").unwrap();
         assert_eq!(
             validated_cli_value(&immath, outfile, "").unwrap(),

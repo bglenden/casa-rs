@@ -2,7 +2,7 @@
 //! Shared typed parameters, sparse TOML profiles, and managed Last state.
 //!
 //! This crate owns parameter *lifecycle* rather than provider semantics.  The
-//! latter live in [`casa_provider_contracts`], allowing each task's command
+//! latter live in [`casa_contracts`], allowing each task's command
 //! line, Python, and providers to resolve the same self-contained surface
 //! bundle.
 
@@ -21,11 +21,11 @@ mod session;
 mod storage;
 mod unimplemented;
 
+/// The value a task's execution callback returns in its [`TaskSuccess`].
+pub use casa_contracts::CasaValue;
 /// The logging configuration a task binary's `main` reads and hands
 /// [`TaskFrontEnd::main`].
 pub use casa_logging::{CasaLoggingConfig, CasaLoggingError};
-/// The value a task's execution callback returns in its [`TaskSuccess`].
-pub use casa_provider_contracts::CasaValue;
 pub use cli::{TaskCliError, parse_parameter_cli_overrides, read_task_request};
 pub use completion::{
     RunProductReference, TaskCompletion, TaskCompletionError, TaskOutputValue,

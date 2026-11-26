@@ -7,7 +7,7 @@
 //! entries casa-rs computes. The keys CASA returns that casa-rs does not
 //! compute yet are listed with each function and tracked in #977.
 
-use casa_provider_contracts::{CasaEntry, CasaFloat, CasaKey, CasaValue, FloatDtype};
+use casa_contracts::{CasaEntry, CasaFloat, CasaKey, CasaValue, FloatDtype};
 
 use crate::analysis::{
     ImageHeaderSummary, ImageStatisticsSummary, ImstatPlanesSummary, RestoringBeamSummary,

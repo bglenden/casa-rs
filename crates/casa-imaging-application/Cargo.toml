@@ -40,7 +40,7 @@ base64 = "0.22"
 flate2 = "1"
 tar = "0.4"
 casa-imaging-metal = { path = "../casa-imaging-metal" }
-casa-provider-contracts = { path = "../casa-provider-contracts" }
+casa-contracts = { path = "../../surfaces/casa-contracts" }
 casa-tables = { path = "../casa-tables" }
 casa-task-runtime = { path = "../casa-task-runtime" }
 casa-test-support = { path = "../../dev/casa-test-support" }

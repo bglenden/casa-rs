@@ -12,7 +12,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use casa_provider_contracts::{CasaKey, CasaValue, TaskReply};
+use casa_contracts::{CasaKey, CasaValue, TaskReply};
 use common::create_msexplore_fixture_ms_with_flags;
 use serde_json::{Value, json};
 

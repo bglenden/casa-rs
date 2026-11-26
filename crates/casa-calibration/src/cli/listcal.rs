@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
+use casa_contracts::CasaValue;
 use casa_ms::MeasurementSet;
-use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 use crate::listing::{CalibrationListingReport, list_calibration, publish_listing};

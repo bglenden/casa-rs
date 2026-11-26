@@ -48,7 +48,7 @@
   ]
  },
  "package_layers": {
-  "casa-provider-contracts": "science",
+  "casa-contracts": "science",
   "casa-observation": "science",
   "casa-ms": "observation",
   "casa-imaging-application": "application",
@@ -61,7 +61,8 @@
   "casa-imaging-metal": "backend",
   "casa-simulation": "application",
   "casa-atmosphere": "science",
-  "casars-imager": "frontend",
+  "casa-tasks": "frontend",
+  "casars-cli": "frontend",
   "casars-imexplore": "frontend",
   "casars-python": "frontend"
  },
@@ -141,7 +142,7 @@
    "casa-logging",
    "casa-ms",
    "casa-numerics",
-   "casa-provider-contracts",
+   "casa-contracts",
    "casa-tables",
    "casa-task-runtime"
   ]
@@ -176,8 +177,9 @@
     "crates/casa-imaging-singledish/src",
     "crates/casa-imaging-application/src",
     "crates/casa-simulation/src",
-    "crates/casa-provider-contracts/src",
-    "crates/casars-imager/src",
+    "surfaces/casa-contracts/src",
+    "surfaces/casa-tasks/src",
+    "frontends/casars-cli/src",
     "crates/casars-imexplore/src",
     "crates/casars-python/src"
    ],
@@ -194,8 +196,9 @@
     "crates/casa-imaging-model/src",
     "crates/casa-imaging-operator/src",
     "crates/casa-imaging-deconvolution/src",
-    "crates/casa-provider-contracts/src",
-    "crates/casars-imager/src",
+    "surfaces/casa-contracts/src",
+    "surfaces/casa-tasks/src",
+    "frontends/casars-cli/src",
     "crates/casars-imexplore/src",
     "crates/casars-python/src"
    ],

@@ -817,7 +817,7 @@ fn imhead_refuses_unimplemented_variants_without_mutating_metadata() {
     assert!(matches!(
         reply,
         Some(TaskReply::Failed {
-            kind: casa_provider_contracts::TaskFailureKind::Execution,
+            kind: casa_contracts::TaskFailureKind::Execution,
             ..
         })
     ));
@@ -963,7 +963,7 @@ fn imhead_custom_string_keys_follow_casa_casing_and_history() {
                     matches!(
                         reply,
                         Some(TaskReply::Failed {
-                            kind: casa_provider_contracts::TaskFailureKind::Execution,
+                            kind: casa_contracts::TaskFailureKind::Execution,
                             ..
                         })
                     ),

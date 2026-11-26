@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use casa_provider_contracts::ParameterValue;
+use casa_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 use casa_types::measures::direction::MDirection;
 

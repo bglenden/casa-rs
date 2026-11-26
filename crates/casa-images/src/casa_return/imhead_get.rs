@@ -2,7 +2,7 @@
 //! CASA image-header value selection, shared by image task providers.
 
 use crate::{ImageError, ImageHeaderSummary};
-use casa_provider_contracts::CasaValue;
+use casa_contracts::CasaValue;
 use std::path::Path;
 
 /// A failure selecting a CASA image-header value.

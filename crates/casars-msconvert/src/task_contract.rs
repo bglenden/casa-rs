@@ -4,11 +4,10 @@
 
 use std::path::PathBuf;
 
-use casa_provider_contracts::{
-    NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
-    ProviderProjectionMetadata, ProviderProtocolDescriptor, ProviderSurfaceKind,
-    TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas, TaskSemanticContract,
-    builtin_surface_bundle, merged_components,
+use casa_contracts::{
+    ProviderCliMachineActions, ProviderCliProjection, ProviderProjectionMetadata,
+    ProviderProtocolDescriptor, ProviderSurfaceKind, TaskOperationDescriptor, TaskProviderContract,
+    TaskProviderSchemas, TaskSemanticContract, builtin_surface_bundle, merged_components,
 };
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
@@ -64,7 +63,6 @@ pub fn msconvert_task_schema_bundle() -> TaskProviderContract {
         domain_schemas: TaskProviderSchemas {
             request_schema,
             result_schema,
-            additional: NoAdditionalProviderSchemas {},
         },
     }
 }

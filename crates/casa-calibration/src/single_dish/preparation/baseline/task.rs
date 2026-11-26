@@ -4,9 +4,9 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use casa_contracts::{CasaValue, ParameterValue};
 use casa_ms::transform::TransformTaskHistory;
 use casa_ms::{MeasurementSet, MsSelection};
-use casa_provider_contracts::{CasaValue, ParameterValue};
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 use super::sinusoid::{FftThreshold, INVALID_WAVE, WaveSelection};

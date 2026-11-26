@@ -17,7 +17,7 @@ path = "src/main.rs"
 
 [dependencies]
 casa-images = { path = "../casa-images" }
-casa-provider-contracts = { path = "../casa-provider-contracts" }
+casa-contracts = { path = "../../surfaces/casa-contracts" }
 casa-task-runtime = { path = "../casa-task-runtime" }
 tracing.workspace = true
 

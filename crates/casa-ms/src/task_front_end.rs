@@ -8,7 +8,7 @@
 //!
 //! [`TaskFrontEnd`]: casa_task_runtime::TaskFrontEnd
 
-use casa_provider_contracts::CasaValue;
+use casa_contracts::CasaValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use serde::Serialize;
 

@@ -12,7 +12,7 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CONTRACT_ROOT = REPO_ROOT / "crates" / "casa-provider-contracts" / "resources"
+CONTRACT_ROOT = REPO_ROOT / "surfaces" / "casa-contracts" / "resources"
 CATALOG_PATH = CONTRACT_ROOT / "parameter-catalog.json"
 SURFACES_PATH = CONTRACT_ROOT / "parameter-surfaces.json"
 OUTPUT_PATH = REPO_ROOT / "docs" / "reference" / "task-parameters.md"

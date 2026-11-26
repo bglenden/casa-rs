@@ -4,11 +4,11 @@ use std::cell::RefCell;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use casa_provider_contracts::{
-    NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
-    ProviderProjectionMetadata, ProviderProtocolDescriptor, ProviderSurfaceKind,
-    TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas, TaskReply,
-    TaskSemanticContract, builtin_surface_bundle, merged_components,
+use casa_contracts::{
+    ProviderCliMachineActions, ProviderCliProjection, ProviderProjectionMetadata,
+    ProviderProtocolDescriptor, ProviderSurfaceKind, TaskOperationDescriptor, TaskProviderContract,
+    TaskProviderSchemas, TaskReply, TaskSemanticContract, builtin_surface_bundle,
+    merged_components,
 };
 use serde_json::json;
 
@@ -166,7 +166,6 @@ fn contract_hosting(surfaces: &[&str]) -> TaskProviderContract {
         domain_schemas: TaskProviderSchemas {
             request_schema,
             result_schema,
-            additional: NoAdditionalProviderSchemas {},
         },
     }
 }
@@ -746,18 +745,18 @@ fn typed_reads_follow_the_surface_and_name_the_parameter_at_fault() {
     for (name, value) in [
         (
             "imagename",
-            casa_provider_contracts::ParameterValue::Array(vec![
-                casa_provider_contracts::ParameterValue::String("a.image".into()),
-                casa_provider_contracts::ParameterValue::String("b.image".into()),
+            casa_contracts::ParameterValue::Array(vec![
+                casa_contracts::ParameterValue::String("a.image".into()),
+                casa_contracts::ParameterValue::String("b.image".into()),
             ]),
         ),
         (
             "expr",
-            casa_provider_contracts::ParameterValue::String("IM0+IM1".into()),
+            casa_contracts::ParameterValue::String("IM0+IM1".into()),
         ),
         (
             "outfile",
-            casa_provider_contracts::ParameterValue::String("sum.image".into()),
+            casa_contracts::ParameterValue::String("sum.image".into()),
         ),
     ] {
         session.set(name, value).unwrap();
@@ -789,15 +788,12 @@ fn typed_reads_follow_the_surface_and_name_the_parameter_at_fault() {
         assert_eq!(task.optional_number("timedev").unwrap(), None);
     }
     flagdata
-        .set(
-            "timedev",
-            casa_provider_contracts::ParameterValue::Float(1.5),
-        )
+        .set("timedev", casa_contracts::ParameterValue::Float(1.5))
         .unwrap();
     flagdata
         .set(
             "freqdev",
-            casa_provider_contracts::ParameterValue::String("none".into()),
+            casa_contracts::ParameterValue::String("none".into()),
         )
         .unwrap();
     let task = TaskInvocation::new(&flagdata, Path::new("."));
@@ -1130,7 +1126,7 @@ fn every_front_end_spelling_does_its_action_through_full_dispatch_on_every_surfa
     // Only imregrid declares one of the front end's spellings; a surface that
     // starts to must make the same visible choice here.
     let collisions = [("imregrid", "--template")];
-    let catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
+    let catalog = casa_contracts::builtin_surface_catalog().unwrap();
     let workspace = tempfile::tempdir().unwrap();
     let directory = workspace.path().to_str().unwrap();
     let missing = workspace.path().join("missing.toml");

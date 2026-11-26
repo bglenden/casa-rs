@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use casa_provider_contracts::{CasaValue, ParameterValue};
+use casa_contracts::{CasaValue, ParameterValue};
 use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_types::{ArrayValue, ScalarValue, Value};
 use serde::Deserialize;

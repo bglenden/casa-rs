@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use casa_provider_contracts::{ParameterValue, SurfaceContractBundle};
+use casa_contracts::{ParameterValue, SurfaceContractBundle};
 use serde_json::{Map, Value};
 use thiserror::Error;
 

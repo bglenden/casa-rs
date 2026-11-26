@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::{Component, Path};
 
-use casa_provider_contracts::{
+use casa_contracts::{
     Constraint, NarrowingConstraint, NormalizationRule, PROJECT_TOKEN, ParameterConcept,
     ParameterType, ParameterValue, SelectorGrammar, SurfaceParameterBinding,
     validate_parameter_value, validate_selector_capabilities,
@@ -904,7 +904,7 @@ impl NormalizationError {
 mod tests {
     #[test]
     fn zero_dimensional_optional_states_keep_their_original_meaning() {
-        use casa_provider_contracts::{ParameterType, ParameterValue};
+        use casa_contracts::{ParameterType, ParameterValue};
         let domain = ParameterType::Optional {
             value: Box::new(ParameterType::Float),
             states: vec!["auto".into()],
@@ -929,12 +929,12 @@ mod tests {
         ))));
         assert!(super::normalize_domain(&nested, &ParameterType::Integer).is_err());
         let invalid_numpy = ParameterValue::NumpyScalar {
-            dtype: casa_provider_contracts::NumpyScalarType::Int8,
+            dtype: casa_contracts::NumpyScalarType::Int8,
             value: Box::new(ParameterValue::Integer(1000)),
         };
         assert!(super::normalize_domain(&invalid_numpy, &ParameterType::Integer).is_err());
         let invalid_float = ParameterValue::NumpyScalar {
-            dtype: casa_provider_contracts::NumpyScalarType::Float32,
+            dtype: casa_contracts::NumpyScalarType::Float32,
             value: Box::new(ParameterValue::Float(1e300)),
         };
         assert!(super::normalize_domain(&invalid_float, &ParameterType::Float).is_err());
@@ -942,7 +942,7 @@ mod tests {
 
     #[test]
     fn complex_semantic_equality_handles_nested_and_nonfinite_components() {
-        use casa_provider_contracts::{CasaFloat, ParameterValue};
+        use casa_contracts::{CasaFloat, ParameterValue};
         let complex = |real, imag| ParameterValue::Complex([CasaFloat(real), CasaFloat(imag)]);
         assert!(super::values_semantically_equal(
             &complex(1.0, -0.0),
@@ -977,7 +977,7 @@ mod tests {
         let decoded: ParameterValue = serde_json::from_str(&encoded).unwrap();
         assert!(matches!(decoded, ParameterValue::Float(value) if value.is_nan()));
     }
-    use casa_provider_contracts::{
+    use casa_contracts::{
         CELL_CONCEPT_ID, IMSIZE_CONCEPT_ID, ParameterConceptId, ParameterDocs, ParameterRole,
         PersistenceClass, SelectorGrammar, SemanticRevision, UnitDimension,
         builtin_surface_catalog,
@@ -1388,7 +1388,7 @@ mod tests {
 
     #[test]
     fn legacy_empty_shared_selectors_normalize_to_canonical_none() {
-        let catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
+        let catalog = casa_contracts::builtin_surface_catalog().unwrap();
         for concept in catalog.catalog.concepts.iter().filter(|concept| {
             concept.semantic_revision.0 == 1
                 && (concept.id.as_str().starts_with("ms.selection.")
@@ -1413,7 +1413,7 @@ mod tests {
 
     #[test]
     fn numeric_selector_revision_two_preserves_validity_distinctions() {
-        let catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
+        let catalog = casa_contracts::builtin_surface_catalog().unwrap();
         for concept in catalog.catalog.concepts.iter().filter(|concept| {
             concept.semantic_revision.0 == 2
                 && matches!(

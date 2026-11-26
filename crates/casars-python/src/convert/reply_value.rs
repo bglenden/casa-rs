@@ -4,7 +4,7 @@
 //! holds NumPy arrays of CASA's dtypes and shapes and `flagdata`'s summary
 //! keeps its integer keys.
 
-use casa_provider_contracts::{CasaKey, CasaValue, ComplexDtype, FloatDtype, IntDtype};
+use casa_contracts::{CasaKey, CasaValue, ComplexDtype, FloatDtype, IntDtype};
 use num_complex::{Complex32, Complex64};
 use numpy::{Element, IntoPyArray};
 use pyo3::exceptions::PyValueError;

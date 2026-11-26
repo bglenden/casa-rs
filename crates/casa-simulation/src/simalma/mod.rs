@@ -11,8 +11,8 @@ use crate::{
     SimulatorOptions,
     simobserve::{SimobserveError, SimobserveOutcome, simobserve},
 };
+use casa_contracts::builtin_surface_bundle;
 use casa_imaging_runtime::{Demand, admit, charge_process_caches};
-use casa_provider_contracts::builtin_surface_bundle;
 use casa_task_runtime::resolve_plain_values;
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};

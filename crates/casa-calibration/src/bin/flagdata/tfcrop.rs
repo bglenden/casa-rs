@@ -2,8 +2,8 @@
 
 use std::num::IntErrorKind;
 
+use casa_contracts::ParameterValue;
 use casa_ms::flagging::{TfcropFit, TfcropOptions, TfcropPasses, TfcropWindowStats};
-use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
 pub(super) fn validate_types(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {

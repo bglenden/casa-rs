@@ -7,8 +7,8 @@ mod service;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use casa_contracts::{ParameterValue, python_repr};
 use casa_ms::ms::MeasurementSet;
-use casa_provider_contracts::{ParameterValue, python_repr};
 use csv_core::ReadRecordResult;
 use thiserror::Error;
 

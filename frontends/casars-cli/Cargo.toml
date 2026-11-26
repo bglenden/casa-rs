@@ -1,0 +1,94 @@
+[package]
+name = "casars-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Unified CLI frontend binaries for casa-rs tasks"
+repository.workspace = true
+publish = false
+autotests = false
+
+[features]
+default = ["imaging", "vla"]
+imaging = ["casa-tasks/imaging", "dep:casa-imaging-application", "dep:libc"]
+vla = ["casa-tasks/vla"]
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-imaging-application = { path = "../../crates/casa-imaging-application", optional = true }
+casa-task-runtime = { path = "../../crates/casa-task-runtime" }
+casa-tasks = { path = "../../surfaces/casa-tasks" }
+libc = { version = "0.2", optional = true }
+
+[dev-dependencies]
+base64 = "0.22"
+casa-contracts = { path = "../../surfaces/casa-contracts" }
+casa-coordinates = { path = "../../crates/casa-coordinates" }
+casa-images = { path = "../../crates/casa-images" }
+casa-imaging-deconvolution = { path = "../../crates/casa-imaging-deconvolution" }
+casa-logging = { path = "../../crates/casa-logging" }
+casa-ms = { path = "../../crates/casa-ms", features = ["msv4"] }
+casa-numerics = { path = "../../crates/casa-numerics" }
+casa-simulation = { path = "../../crates/casa-simulation" }
+casa-tables = { path = "../../crates/casa-tables" }
+casa-test-support = { path = "../../dev/casa-test-support" }
+casa-types = { path = "../../crates/casa-types" }
+flate2 = "1"
+ndarray.workspace = true
+serde_json = "1"
+tempfile = "3"
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[[bin]]
+name = "casars-imager"
+path = "src/bin/casars-imager.rs"
+required-features = ["imaging"]
+
+[[bin]]
+name = "tsdimaging"
+path = "src/bin/tsdimaging.rs"
+required-features = ["imaging"]
+
+[[bin]]
+name = "importvla"
+path = "src/bin/importvla.rs"
+required-features = ["vla"]
+
+[[test]]
+name = "hogbom_default"
+path = "tests/hogbom_default.rs"
+required-features = ["imaging"]
+
+[[test]]
+name = "numeric_selector_provenance"
+path = "tests/numeric_selector_provenance.rs"
+required-features = ["imaging"]
+
+[[test]]
+name = "pb_default"
+path = "tests/pb_default.rs"
+required-features = ["imaging"]
+
+[[test]]
+name = "t1"
+path = "tests/t1.rs"
+required-features = ["imaging"]
+
+[[test]]
+name = "t61_vlass_catalog"
+path = "tests/t61_vlass_catalog.rs"
+required-features = ["imaging"]
+
+[[test]]
+name = "t65_sparse_profiles"
+path = "tests/t65_sparse_profiles.rs"
+required-features = ["imaging"]
+
+[[test]]
+name = "tsdimaging"
+path = "tests/tsdimaging.rs"
+required-features = ["imaging"]

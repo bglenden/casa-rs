@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use casa_components::ComponentList;
+use casa_contracts::{CasaFloat, CasaValue, FloatDtype};
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::virtual_model::selected_model_combinations;
@@ -12,7 +13,6 @@ use casa_ms::{
     MeasurementSet, MsSelection, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
     parse_numeric_row_id_ranges,
 };
-use casa_provider_contracts::{CasaFloat, CasaValue, FloatDtype};
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 use casa_types::ScalarValue;
 use casa_types::measures::direction::MDirection;

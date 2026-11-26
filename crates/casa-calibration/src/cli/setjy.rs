@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use casa_components::{ComponentList, SkyComponent};
+use casa_contracts::{CasaEntry, CasaFloat, CasaKey, CasaValue, FloatDtype, ParameterValue};
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::virtual_model::{
@@ -13,9 +14,6 @@ use casa_ms::virtual_model::{
 use casa_ms::{
     MeasurementSet, MsSelection, MsSpectralWindow, ResolvedMsSelection, VirtualModelEntry,
     VirtualModelKind,
-};
-use casa_provider_contracts::{
-    CasaEntry, CasaFloat, CasaKey, CasaValue, FloatDtype, ParameterValue,
 };
 use casa_tables::TableWriteLock;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};

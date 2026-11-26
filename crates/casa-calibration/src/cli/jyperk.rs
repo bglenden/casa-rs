@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use casa_provider_contracts::CasaValue;
+use casa_contracts::CasaValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 use crate::gencal::jyperk::{self, Endpoint, JyperkError, ServiceOptions};

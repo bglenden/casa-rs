@@ -12,8 +12,8 @@ pub(crate) mod tool;
 
 use std::path::{Path, PathBuf};
 
+use casa_contracts::{CasaValue, ParameterValue};
 use casa_ms::{MeasurementSet, MsError, MsSelection, MsSelectionError, ResolvedMsSelection};
-use casa_provider_contracts::{CasaValue, ParameterValue};
 use casa_tables::{TableError, TableWriteLock, publication::lock_table_tree_for_replacement};
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
@@ -223,8 +223,7 @@ fn check_fraction(task: &TaskInvocation<'_>) -> Result<f64, TaskFailure> {
                 (text.as_str(), 1.)
             };
             value.trim().parse::<f64>().map_err(|_| {
-                let text =
-                    casa_provider_contracts::python_repr(&ParameterValue::String(value.into()));
+                let text = casa_contracts::python_repr(&ParameterValue::String(value.into()));
                 invalid_fraction(&format!("could not convert string to float: {text}"))
             })? * scale
         }

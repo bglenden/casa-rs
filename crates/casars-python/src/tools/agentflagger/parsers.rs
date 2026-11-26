@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA’s typed calibration agent convenience methods.
 
-use casa_provider_contracts::ParameterValue;
+use casa_contracts::ParameterValue;
 use pyo3::exceptions::PySystemError;
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;

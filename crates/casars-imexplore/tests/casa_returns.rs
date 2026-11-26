@@ -12,9 +12,9 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
+use casa_contracts::{CasaKey, CasaValue, FloatDtype, IntDtype, TaskReply};
 use casa_coordinates::{CoordinateSystem, LinearCoordinate};
 use casa_images::{GaussianBeam, Image, ImageBeamSet, ImageInfo, ImageType};
-use casa_provider_contracts::{CasaKey, CasaValue, FloatDtype, IntDtype, TaskReply};
 use ndarray::{ArrayD, IxDyn};
 use serde_json::{Value, json};
 

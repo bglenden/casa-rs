@@ -5,7 +5,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use casa_provider_contracts::SurfaceContractBundle;
+use casa_contracts::SurfaceContractBundle;
 
 use crate::{BaseSource, OpenSessionRequest, ResolutionPatch, parse_parameter_cli_overrides};
 
@@ -129,7 +129,7 @@ CONTROLS: --workspace DIR (where relative paths resolve and Last and Last Succes
 
 #[cfg(test)]
 mod tests {
-    use casa_provider_contracts::{ParameterValue, builtin_surface_bundle};
+    use casa_contracts::{ParameterValue, builtin_surface_bundle};
 
     use super::*;
     use crate::ParameterRuntime;

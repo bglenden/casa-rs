@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Configure and run the retained polarization solvers.
 
+use casa_contracts::{CasaEntry, CasaKey, CasaValue};
 use casa_ms::MeasurementSet;
-use casa_provider_contracts::{CasaEntry, CasaKey, CasaValue};
 
 use super::{CalibraterLifecycle, CalibraterLifecycleError, CalibraterModel, ConfiguredSolve};
 use crate::solve::grouping::leakage::{

@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use casa_provider_contracts::{ParameterValue, SurfaceContractBundle};
+use casa_contracts::{ParameterValue, SurfaceContractBundle};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode};
 use crate::normalize::{NormalizationError, normalize_value, validate_value};
@@ -69,7 +69,7 @@ pub(crate) fn normalize_overrides(
 
 #[cfg(test)]
 mod tests {
-    use casa_provider_contracts::builtin_surface_bundle;
+    use casa_contracts::builtin_surface_bundle;
 
     use super::*;
 

@@ -231,7 +231,7 @@ pub(crate) fn tool_library_specs(
                         let ids = values
                             .iter()
                             .copied()
-                            .map(casa_provider_contracts::casa_variant_integer)
+                            .map(casa_contracts::casa_variant_integer)
                             .map(|id| id.to_string())
                             .collect::<Vec<_>>();
                         format!("[{}]", ids.join(","))

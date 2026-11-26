@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use casa_provider_contracts::{ParameterValue, SurfaceContractBundle};
+use casa_contracts::{ParameterValue, SurfaceContractBundle};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -312,7 +312,7 @@ pub enum ParameterSessionError {
 
 #[cfg(test)]
 mod tests {
-    use casa_provider_contracts::{
+    use casa_contracts::{
         DefaultSpec, ParameterCatalog, ParameterConcept, ParameterConceptId, ParameterDocs,
         ParameterPresentation, ParameterProjections, ParameterRole, ParameterType,
         PersistenceClass, Predicate, SemanticRevision, SurfaceDefinition,
@@ -328,7 +328,7 @@ mod tests {
             semantic_revision: SemanticRevision(1),
             casa_name: "niter".into(),
             value_domain: ParameterType::Integer,
-            normalization: casa_provider_contracts::NormalizationRule::Identity,
+            normalization: casa_contracts::NormalizationRule::Identity,
             base_constraints: Vec::new(),
             unit_dimension: None,
             semantic_role: ParameterRole::Algorithm,

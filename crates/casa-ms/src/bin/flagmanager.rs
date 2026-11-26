@@ -4,6 +4,7 @@
 
 use std::process::ExitCode;
 
+use casa_contracts::CasaValue;
 use casa_ms::flagging::save_disk_flag_version;
 use casa_ms::{
     FlagManagerMutationResult, FlagManagerTaskRequest, FlagManagerTaskResult, FlaggingError,
@@ -11,7 +12,6 @@ use casa_ms::{
     flagmanager_task_schema_bundle, initialize_flag_versions, list_flag_versions, ms_task_success,
     rename_flag_version, rename_flag_version_for_task, restore_flag_version, task_flag_merge,
 };
-use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };

@@ -13,7 +13,7 @@ fn cli_args(args: &[&str]) -> Vec<OsString> {
 
 /// A command line as the front end resolves it, read into [`CliOptions`].
 fn parse_args(args: Vec<OsString>) -> Result<CliOptions, String> {
-    let bundle = casa_provider_contracts::builtin_surface_bundle("msexplore").unwrap();
+    let bundle = casa_contracts::builtin_surface_bundle("msexplore").unwrap();
     let line = TaskCommandLine::parse(&bundle, &args)?;
     let session = ParameterRuntime::default()
         .open_session(line.open_session_request(bundle))
@@ -402,7 +402,7 @@ fn a_page_spec_from_a_profile_also_refuses_single_plot_controls() {
     // A control counts as set whether a flag or the base profile sets it.
     let temp = tempdir().expect("tempdir");
     let profile = temp.path().join("plot.toml");
-    let bundle = casa_provider_contracts::builtin_surface_bundle("msexplore").unwrap();
+    let bundle = casa_contracts::builtin_surface_bundle("msexplore").unwrap();
     fs::write(
         &profile,
         format!(

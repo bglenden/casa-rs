@@ -159,7 +159,7 @@ fn casa_created_record_returns_typed_values() {
             data: vec![1, 4, 2, 5, 3, 6]
         }
     );
-    use casa_provider_contracts::{CasaFloat, ComplexDtype};
+    use casa_contracts::{CasaFloat, ComplexDtype};
     assert_eq!(
         entry(&value, "complex"),
         &CasaValue::ComplexArray {
@@ -181,7 +181,7 @@ fn casa_created_record_returns_typed_values() {
 
 #[test]
 fn casa_created_record_returns_complex_scalars() {
-    use casa_provider_contracts::CasaFloat;
+    use casa_contracts::CasaFloat;
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
     let oracle: Value = serde_json::from_slice(
         &std::fs::read(fixture.join("custom_complex_expected.json")).unwrap(),

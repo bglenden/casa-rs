@@ -4,11 +4,11 @@
 
 use std::process::ExitCode;
 
+use casa_contracts::ParameterValue;
 use casa_images::{
     ImageAnalysisTaskResult, ImpbcorRequest, PbcorBeam, PbcorRegion, image_task_front_end,
     image_task_success, impbcor,
 };
-use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 fn main() -> ExitCode {

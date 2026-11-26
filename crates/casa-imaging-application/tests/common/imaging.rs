@@ -37,7 +37,7 @@ pub fn request(values: serde_json::Value) -> ImagingRequest {
         _ => {}
     }
     let resolved = casa_task_runtime::resolve_plain_values(
-        casa_provider_contracts::builtin_surface_bundle("tclean").expect("tclean surface"),
+        casa_contracts::builtin_surface_bundle("tclean").expect("tclean surface"),
         std::path::PathBuf::from("."),
         &values,
     )

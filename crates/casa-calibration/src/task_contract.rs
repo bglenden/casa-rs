@@ -3,13 +3,12 @@
 
 use std::path::PathBuf;
 
-use casa_ms::MsSelection;
-use casa_provider_contracts::{
-    NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
-    ProviderProjectionMetadata, ProviderProtocolDescriptor, ProviderSurfaceKind,
-    TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas, TaskSemanticContract,
-    builtin_surface_bundle, merged_components,
+use casa_contracts::{
+    ProviderCliMachineActions, ProviderCliProjection, ProviderProjectionMetadata,
+    ProviderProtocolDescriptor, ProviderSurfaceKind, TaskOperationDescriptor, TaskProviderContract,
+    TaskProviderSchemas, TaskSemanticContract, builtin_surface_bundle, merged_components,
 };
+use casa_ms::MsSelection;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 
@@ -116,7 +115,6 @@ pub fn calibration_task_schema_bundle() -> TaskProviderContract {
         domain_schemas: TaskProviderSchemas {
             request_schema,
             result_schema,
-            additional: NoAdditionalProviderSchemas {},
         },
     }
 }
@@ -677,7 +675,7 @@ fn default_polynomial_degree() -> usize {
 mod tests {
     use std::path::PathBuf;
 
-    use casa_provider_contracts::ProviderSurfaceKind;
+    use casa_contracts::ProviderSurfaceKind;
 
     use super::{
         CALIBRATION_TASK_PROTOCOL_NAME, CALIBRATION_TASK_PROTOCOL_VERSION, CalibrationTaskRequest,

@@ -18,10 +18,8 @@ use crate::{
     AnyPagedImage, ImageBeamSet, ImageError, ImageInfo, ImagePixel, ImageRegridSummary,
     ImregridOutcome, ImregridRequest, ImregridTemplate, PagedImage,
 };
+use casa_contracts::{ParameterValue, casacore_value_to_casa, parameter_value_to_casacore};
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
-use casa_provider_contracts::{
-    ParameterValue, casacore_value_to_casa, parameter_value_to_casacore,
-};
 use casa_tables::publication::{
     exchange_directories, lock_table_tree_for_replacement, rename_without_replacing,
 };

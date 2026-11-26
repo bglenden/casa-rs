@@ -11,7 +11,13 @@ import re
 import subprocess
 
 
-PYTHON_INTERFACE = {"casa-provider-contracts", "casa-task-runtime", "casars-python"}
+PYTHON_INTERFACE = {
+    "casa-contracts",
+    "casa-tasks",
+    "casars-cli",
+    "casa-task-runtime",
+    "casars-python",
+}
 ROOT_DOCS = {
     "AGENTS.md", "ARCHITECTURE.md", "CLAUDE.md", "GLOSSARY.md", "README.md",
     "TESTING.md",

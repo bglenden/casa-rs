@@ -15,7 +15,7 @@ workspace = true
 # The MSv4 adapter and the converter are behind casa-ms's msv4 feature.
 casa-ms = { path = "../casa-ms", features = ["msv4"] }
 casa-observation = { path = "../casa-observation" }
-casa-provider-contracts = { path = "../casa-provider-contracts" }
+casa-contracts = { path = "../../surfaces/casa-contracts" }
 casa-task-runtime = { path = "../casa-task-runtime" }
 casa-types = { path = "../casa-types" }
 schemars = "0.8"

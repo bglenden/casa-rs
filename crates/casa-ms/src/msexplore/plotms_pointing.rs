@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use casa_provider_contracts::ParameterValue;
+use casa_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};

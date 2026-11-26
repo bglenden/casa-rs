@@ -15,7 +15,7 @@ use std::io::Write as _;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use casa_provider_contracts::{ParameterValue, RunProductKind, TaskReply, builtin_surface_bundle};
+use casa_contracts::{ParameterValue, RunProductKind, TaskReply, builtin_surface_bundle};
 use casa_task_runtime::{
     ParameterSession, TaskCompletion, TaskOutputValue, decode_task_completion,
     project_provider_invocation,
@@ -212,7 +212,7 @@ fn casa_plotms_names_export_existing_measurement_set_plots() {
     let TaskReply::Succeeded { value, result, .. } = reply else {
         panic!("{reply:?}");
     };
-    assert_eq!(value, casa_provider_contracts::CasaValue::None);
+    assert_eq!(value, casa_contracts::CasaValue::None);
     let path = workspace.path().join("plot.txt");
     let reported = result["text_file"].as_str().expect("PlotMS text file");
     assert_eq!(workspace.path().join(reported), path);

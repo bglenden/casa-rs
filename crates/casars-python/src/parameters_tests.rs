@@ -2,7 +2,7 @@
 
 use std::fs;
 
-use casa_provider_contracts::builtin_surface_bundle;
+use casa_contracts::builtin_surface_bundle;
 
 use super::*;
 
@@ -159,7 +159,7 @@ fn tclean_invocation_carries_the_tclean_parameters() {
     );
     assert_eq!(
         invocation.protocol_version,
-        Some(casars_imager::IMAGER_TASK_PROTOCOL_VERSION)
+        Some(casa_tasks::imaging::IMAGER_TASK_PROTOCOL_VERSION)
     );
     let request: serde_json::Value =
         serde_json::from_str(invocation.stdin.as_deref().expect("stdin JSON")).unwrap();

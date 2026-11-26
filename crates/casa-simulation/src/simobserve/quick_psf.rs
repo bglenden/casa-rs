@@ -7,6 +7,7 @@
 use std::f64::consts::PI;
 use std::path::Path;
 
+use casa_contracts::builtin_surface_bundle;
 use casa_images::{ImageBeamSet, PagedImage};
 use casa_imaging_application::{
     BackendRequest as ImagingBackend, Cancel, ImagingRequest, RunContext, execute,
@@ -14,7 +15,6 @@ use casa_imaging_application::{
 use casa_imaging_runtime::charge_process_caches;
 use casa_ms::MeasurementSet;
 use casa_ms::columns::uvw_column::UvwColumn;
-use casa_provider_contracts::builtin_surface_bundle;
 use casa_task_runtime::resolve_plain_values;
 use serde_json::json;
 

@@ -52,7 +52,7 @@ contract = {current}
 
 def test_catalog_and_definition_are_projected_from_rust() -> None:
     catalog = parameters.catalog()
-    application_catalog = REPO_ROOT / "crates/casa-provider-contracts/resources/application-catalog.json"
+    application_catalog = REPO_ROOT / "surfaces/casa-contracts/resources/application-catalog.json"
     expected = json.loads(application_catalog.read_text(encoding="utf-8"))["applications"]
     assert {surface["id"] for surface in catalog["surfaces"]} == {item["id"] for item in expected}
     assert {surface["kind"] for surface in catalog["surfaces"]} == {"task"}

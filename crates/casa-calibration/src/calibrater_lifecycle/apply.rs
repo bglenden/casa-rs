@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
+use casa_contracts::CasaValue;
 use casa_ms::{MeasurementSet, MsSelection};
-use casa_provider_contracts::CasaValue;
 use casa_types::RecordValue;
 
 use super::traditional_apply::{

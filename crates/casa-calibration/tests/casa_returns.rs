@@ -18,7 +18,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
-use casa_provider_contracts::{CasaKey, CasaValue, FloatDtype, IntDtype, TaskReply};
+use casa_contracts::{CasaKey, CasaValue, FloatDtype, IntDtype, TaskReply};
 use casa_types::Complex32;
 use serde_json::{Value, json};
 use tempfile::TempDir;

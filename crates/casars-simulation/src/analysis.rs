@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Host projection for the native simanalyze application.
 use crate::{SimobserveRunReport, SimobserveRunTaskResult, SimobserveTaskParameters, artifact};
-use casa_provider_contracts::{
+use casa_contracts::{
     ProviderProtocolDescriptor, ProviderSurfaceKind, TaskProviderContract, builtin_surface_bundle,
 };
 use casa_simulation::simanalyze::{SimanalyzeRequest, simanalyze, simanalyze_with_plots};

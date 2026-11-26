@@ -58,10 +58,10 @@ imaging-t36-spectral-law:
 # Focused #527 moving-source, ephemeris and provider-contract gate.
 imaging-t41-moving-source:
     just arch-check
-    CARGO_INCREMENTAL=0 cargo test -p casa-provider-contracts
+    CARGO_INCREMENTAL=0 cargo test -p casa-contracts
     CARGO_INCREMENTAL=0 cargo test -p casa-tables add_variable_shape_tiled_column_in_place_persists_defined_rows_only
     CARGO_INCREMENTAL=0 cargo test -p casa-ms t41_
-    CARGO_INCREMENTAL=0 cargo test -p casars-imager task_contract
+    CARGO_INCREMENTAL=0 cargo test -p casa-tasks --features imaging task_contract
 
 # Representative #527 frozen-CASA gate on the slow-parity ALMA ephemeris
 # MeasurementSet: the TRACKFIELD phase centre at three row times, and the

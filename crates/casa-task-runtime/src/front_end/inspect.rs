@@ -2,7 +2,7 @@
 //! The non-executing views of a task command line: the resolved state with
 //! origins, a parameter or surface description, and profile validation.
 
-use casa_provider_contracts::{
+use casa_contracts::{
     ParameterConcept, ParameterValue, SurfaceCatalogBundle, SurfaceContractBundle,
     builtin_surface_catalog,
 };
@@ -167,7 +167,7 @@ pub fn validate_profile_text(
             ));
         }
         None => {
-            named = casa_provider_contracts::builtin_surface_bundle(&profile.header.surface)?;
+            named = casa_contracts::builtin_surface_bundle(&profile.header.surface)?;
             &named
         }
     };
@@ -215,7 +215,7 @@ pub fn format_session_error(error: ParameterSessionError) -> String {
 
 #[cfg(test)]
 mod tests {
-    use casa_provider_contracts::builtin_surface_bundle;
+    use casa_contracts::builtin_surface_bundle;
 
     use super::*;
 

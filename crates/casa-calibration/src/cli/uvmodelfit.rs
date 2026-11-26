@@ -2,8 +2,8 @@
 //! Adapt uvmodelfit's installed CASA task surface to the shared fitter.
 
 use casa_components::ComponentList;
+use casa_contracts::CasaValue;
 use casa_ms::MsSelection;
-use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 use crate::{VisibilityFitRequest, VisibilityFitShape, fit_visibility_component};

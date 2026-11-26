@@ -5,8 +5,8 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+use casa_contracts::{ParameterValue, python_repr};
 use casa_coordinates::CoordinateSystem;
-use casa_provider_contracts::{ParameterValue, python_repr};
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{Table, TableOptions};
 use casa_types::quanta::{Quantity, Unit, casacore::convert};

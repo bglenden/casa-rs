@@ -3,7 +3,7 @@
 
 use std::fmt::Write as _;
 
-use casa_provider_contracts::{SurfaceContractBundle, SurfaceParameterBinding};
+use casa_contracts::{SurfaceContractBundle, SurfaceParameterBinding};
 
 use super::inspect::display_value;
 use super::options::task_command_line_help;
