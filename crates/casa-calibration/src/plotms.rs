@@ -3,8 +3,8 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use casa_core::ArrayValue;
 use casa_ms::{MeasurementSet, PlotMsModelReferences, ResolvedMsSelectionRow, TransformInputView};
-use casa_types::ArrayValue;
 
 use crate::transform_models::plotms_model_input;
 

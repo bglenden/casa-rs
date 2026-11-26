@@ -3,13 +3,13 @@
 
 use std::path::Path;
 
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use casa_ms::{
     MeasurementSet, MsError,
     column_def::build_table_schema,
     schema::{SubtableId, history},
 };
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
 use super::paths::gain;

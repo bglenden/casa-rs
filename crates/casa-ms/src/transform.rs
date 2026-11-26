@@ -15,11 +15,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use casa_core::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
+use casa_tables::streamed_tiled::StreamedTiledShapeValueType;
 use casa_tables::{
-    ColumnOverrides, ColumnType, DataManagerKind, StreamedScalarType, StreamedTiledShapeValueType,
-    Table, TableError, TableInfo, TableOptions,
+    ColumnOverrides, ColumnType, DataManagerKind, StreamedScalarType, Table, TableError, TableInfo,
+    TableOptions,
 };
-use casa_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, IxDyn, ShapeBuilder, Slice};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -5010,7 +5011,7 @@ fn prepare_output_root(path: &Path) -> Result<(), MsTransformError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use casa_types::Complex32;
+    use casa_core::Complex32;
 
     #[test]
     fn select_channels_covers_contiguous_noncontiguous_and_full_width_paths() {

@@ -3,9 +3,9 @@
 //! Ordinary tclean writes its PB; casa-rs's explicit opt-out remains available.
 
 use casa_contracts::TaskReply;
+use casa_core::{ScalarValue, Value};
 use casa_images::PagedImage;
 use casa_ms::MeasurementSet;
-use casa_types::{ScalarValue, Value};
 use serde_json::json;
 
 use super::{
@@ -386,7 +386,7 @@ fn topo_cube_partial_spw_starts_at_the_selected_band() {
 /// edge. The exact offsets put one inside and the other outside (#1198).
 #[test]
 fn topo_cube_uses_the_signed_terminal_coverage() {
-    use casa_types::ArrayValue;
+    use casa_core::ArrayValue;
 
     let cases: [(&str, f64, f64, bool); 2] = [
         (
@@ -443,7 +443,7 @@ fn topo_cube_uses_the_signed_terminal_coverage() {
 
 /// The paired irregular-channel TOPO fixture, including its physical row order.
 fn irregular_topo_observation() -> Observation {
-    use casa_types::ArrayValue;
+    use casa_core::ArrayValue;
     let observation = topo_boundary_observation(1_000_000_118.0);
     swap_first_and_last_rows(&observation);
     let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
@@ -494,7 +494,7 @@ fn topo_cube_preserves_irregular_source_grid_endpoints() {
 /// also checks every row and channel.
 #[test]
 fn topo_irregular_cube_predicts_casa_model_visibilities() {
-    use casa_types::Complex32;
+    use casa_core::Complex32;
     let observation = irregular_topo_observation();
     let _ = observation.image(
         "topo-irregular-model",

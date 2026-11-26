@@ -5,10 +5,10 @@
 //! sidereal day count.
 #![cfg(all(feature = "cpp-interop-tests", has_casacore_cpp))]
 
-use casa_measures_data::MeasuresRuntime;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{EpochRef, IauModel, MEpoch, MPosition, MeasFrame, MeasuresProvider};
+use casa_measures::MeasuresRuntime;
 use casa_test_support::measures_interop::MeasuresOracle;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, IauModel, MEpoch, MPosition, MeasFrame, MeasuresProvider};
 use std::sync::{Arc, OnceLock};
 
 const SECONDS_PER_DAY: f64 = 86_400.0;

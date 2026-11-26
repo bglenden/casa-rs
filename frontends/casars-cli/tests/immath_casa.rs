@@ -7,14 +7,14 @@ use std::process::Command;
 use casa_coordinates::{
     CoordinateModel, CoordinateSystem, DirectionCoordinate, Projection, ProjectionType,
 };
+use casa_core::measures::direction::DirectionRef;
+use casa_core::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use casa_images::expr_parser::{HashMapResolver, parse_image_expr};
 use casa_images::{
     AnyPagedImage, GaussianBeam, ImageBeamSet, ImageInfo, ImageInterface, ImagePixelType,
     ImmathRequest, PagedImage, export_fits, immath,
 };
 use casa_lattices::ExecutionPolicy;
-use casa_types::measures::direction::DirectionRef;
-use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::IxDyn;
 use serde_json::Value as JsonValue;
 use tempfile::TempDir;

@@ -3,8 +3,8 @@
 
 use std::collections::BTreeSet;
 
+use casa_core::{ArrayValue, RecordValue, Value};
 use casa_tables::{PlainReferenceRead, RequiredScalarColumnValues, Table};
-use casa_types::{ArrayValue, RecordValue, Value};
 use ndarray::{Axis, Ix2};
 
 use super::{VisibilityRead, VisibilityReadOptions, input};

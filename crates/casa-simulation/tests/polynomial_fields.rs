@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Existing polynomial FIELD directions use CASA's iterator epoch.
 mod existing_ms_calculations;
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{
     BackendRequest, CasaOutcome, PredictSpec, SessionResources, Simulator, SimulatorOptions,
 };
-use casa_types::measures::{EpochRef, MEpoch};
 use existing_ms_calculations::predict_support;
 use flate2::read::GzDecoder;
 use serde_json::Value;

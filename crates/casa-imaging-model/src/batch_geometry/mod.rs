@@ -59,15 +59,15 @@ use std::fmt;
 use std::mem::size_of;
 use std::sync::Arc;
 
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::epoch::MEpoch;
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::radial_velocity::MRadialVelocity;
+use casa_core::measures::{
+    EpochRef, MeasureError, MeasuresProvider, MjdHighPrec, PreparedFrequencyConversion,
+};
 use casa_observation::{
     AntennaId, Catalogue, FieldEphemeris, FieldId, PointingSeries, VisibilityBatch,
-};
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::epoch::MEpoch;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::radial_velocity::MRadialVelocity;
-use casa_types::measures::{
-    EpochRef, MeasureError, MeasuresProvider, MjdHighPrec, PreparedFrequencyConversion,
 };
 
 use self::frames::Frames;

@@ -15,11 +15,11 @@ mod weights;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use casa_core::{ArrayValue, Complex32};
 use casa_ms::ChannelSelection;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_ms::{MsError, ResolvedMsSelectionRow};
-use casa_types::{ArrayValue, Complex32};
 use ndarray::{ArrayD, ArrayView2};
 
 use super::{
@@ -188,17 +188,21 @@ pub(crate) fn build_solve_groups(
         Ok::<_, GainSolveError>(())
     };
     if pipelined {
+        let dispatch = tracing::dispatcher::get_default(Clone::clone);
         std::thread::scope(|scope| {
             let (sender, receiver) = std::sync::mpsc::sync_channel(1);
             let producer_rows = &ordered;
+            let dispatch = &dispatch;
             scope.spawn(move || {
-                for batch in producer_rows.chunks(256) {
-                    let input = read(batch);
-                    let failed = input.is_err();
-                    if sender.send(input).is_err() || failed {
-                        break;
+                tracing::dispatcher::with_default(dispatch, || {
+                    for batch in producer_rows.chunks(256) {
+                        let input = read(batch);
+                        let failed = input.is_err();
+                        if sender.send(input).is_err() || failed {
+                            break;
+                        }
                     }
-                }
+                });
             });
             // Drop the receiver before scope joins the reader on an error,
             // unblocking a producer that is waiting to send its next batch.

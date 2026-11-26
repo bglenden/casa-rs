@@ -8,9 +8,9 @@ use std::path::PathBuf;
 use casa_components::{
     ComponentList, ComponentShape, Flux, SkyComponent, SpectralKind, SpectralModel,
 };
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::epoch::{EpochRef, MEpoch};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::epoch::{EpochRef, MEpoch};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
 
 use super::pointings::Pointings;
 use super::{Run, SimobserveError, python, remove};

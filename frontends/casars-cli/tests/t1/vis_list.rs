@@ -11,9 +11,9 @@
 
 use std::path::Path;
 
+use casa_core::{ArrayValue, Complex32};
 use casa_ms::{MeasurementSet, VisibilityDataColumn};
 use casa_simulation::synthetic::SpectralSetup;
-use casa_types::{ArrayValue, Complex32};
 use ndarray::Array2;
 use serde_json::{Value, json};
 
@@ -560,7 +560,7 @@ fn a_selections_gap_over_the_axis_is_read_by_every_pass() {
 /// where an hour's Doppler shift is several channels; over two fields half
 /// a degree apart when `fields`, whose LSRK shifts differ.
 fn drifting(first_hz: f64, channels: usize, fields: bool) -> Observation {
-    use casa_types::measures::frequency::FrequencyRef;
+    use casa_core::measures::frequency::FrequencyRef;
     let mut setup = Setup::vla_q_band(channels);
     setup.noise_jy = 0.0;
     if fields {

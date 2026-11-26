@@ -11,8 +11,8 @@ use casa_coordinates::display::{
     format_stream_value_with_precision,
 };
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, StokesType};
+use casa_core::quanta::Unit;
 use casa_lattices::{StatisticsAlgorithm, StatisticsAlgorithmKind};
-use casa_types::quanta::Unit;
 
 use super::{Chunk, SpectralVelocity};
 

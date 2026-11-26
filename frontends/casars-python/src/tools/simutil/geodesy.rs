@@ -19,11 +19,11 @@
 //! CASA's `utm2long` with `verbose` also logs the position it found; casa-rs
 //! does not.
 
+use casa_core::measures::{MPosition, PositionRef};
 use casa_simulation::readantenna::geodesy::{
     self, Datum, geodetic_to_xyz, grid_to_geodetic, local_to_itrf, utm_to_geodetic, utm_to_xyz,
     xyz_to_geodetic, xyz_to_geodetic_old, zone_constants,
 };
-use casa_types::measures::{MPosition, PositionRef};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 

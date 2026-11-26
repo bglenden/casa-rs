@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Visibility and noise projection used by the legacy SubMS channel averager.
 
+use casa_core::ArrayValue;
 use casa_tables::TableError;
-use casa_types::ArrayValue;
 use ndarray::{Array2, ArrayD, ArrayView2, Ix2};
 use std::ops::{AddAssign, Div, Mul};
 

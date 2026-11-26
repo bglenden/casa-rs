@@ -6,12 +6,12 @@ mod predict_support;
 use casa_calibration::{
     SimulatedJones, SimulatedSolution, SolutionValues, write_simulated_jones_table,
 };
+use casa_core::measures::{EpochRef, MEpoch, frequency::FrequencyRef};
+use casa_core::{ArrayValue, Complex32, ScalarValue};
 use casa_ms::MeasurementSet;
 use casa_simulation::{
     ApplySpec, NoiseSpec, PredictSpec, Simulator, SimulatorOptions, SpectralWindowSpec,
 };
-use casa_types::measures::{EpochRef, MEpoch, frequency::FrequencyRef};
-use casa_types::{ArrayValue, Complex32, ScalarValue};
 use flate2::read::GzDecoder;
 use predict_support::{
     ANTENNAS, CENTRE_RAD, CHANNEL_HZ, FREQUENCY_HZ, REFERENCE_MJD, read_main, resources, scan,

@@ -11,10 +11,10 @@
 //! `addrows` of a negative count removes rows there (the count wraps); here
 //! it is refused.
 
+use casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{
     ArrayShapeContract, ColumnAddition, ColumnSchema, ColumnType, Table, TableOptions,
 };
-use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
 use super::keyword_value::Incoming;

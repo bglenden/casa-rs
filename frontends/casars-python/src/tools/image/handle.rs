@@ -5,13 +5,13 @@ use std::fs::Metadata;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::CoordinateSystem;
+use casa_core::{RecordValue, Value};
 use casa_images::{
     AnyPagedImage, ImageError, ImagePixel, ImagePixelType, PagedImage, ScratchSpace, TempImage,
     TempStoragePolicy,
     fits_read::{FitsSectionReader, FitsToolImport, fits_section_image},
     miriad_read::MiriadImage,
 };
-use casa_types::{RecordValue, Value};
 use ndarray::ArrayD;
 use num_complex::{Complex32, Complex64};
 use pyo3::exceptions::PyRuntimeError;

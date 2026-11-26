@@ -4,13 +4,13 @@
 
 use std::io::Read;
 
+use casa_core::quanta::Unit;
 use casa_imaging_model::{
     EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequestInput, NativeAwTerms,
     PolarizationCoordinate,
 };
 use casa_ms::observation_io::Msv2Observation;
 use casa_observation::{AntennaId, Catalogue, Receptors, WindowId};
-use casa_types::quanta::Unit;
 
 use super::spectral::PreparedSpectralAxis;
 use super::survey::{FirstCrossSample, Survey};
@@ -372,10 +372,10 @@ pub(super) fn receptor_zero_angle(
 mod tests {
     use std::path::{Path, PathBuf};
 
+    use casa_core::{ArrayValue, ScalarValue, Value};
     use casa_ms::observation_io::Msv4Observation;
     use casa_ms::observation_io::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
     use casa_ms::{MeasurementSet, SubtableId};
-    use casa_types::{ArrayValue, ScalarValue, Value};
 
     use super::*;
 

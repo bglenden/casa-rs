@@ -7,13 +7,13 @@ use std::path::Path;
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, FitsHeader, StokesType,
 };
+use casa_core::{ArrayD, RecordValue, ScalarValue, Value};
 use casa_lattices::{
     LatticeStatistics, RobustStats, SamplePoint, Statistic, StatisticsAlgorithm,
     StatisticsAlgorithmKind, StatsElement, TiledShape, compute_robust_stats, parse_algorithm,
     parse_center, parse_clmethod,
 };
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayD, RecordValue, ScalarValue, Value};
 use fitsio::images::ImageType as FitsImageType;
 use ndarray::{Dimension, IxDyn, ShapeBuilder, Zip};
 
@@ -635,7 +635,7 @@ fn imhead_put_stokes_values(
             let rendered = format!("[{}]", names.join(", "));
             (names, rendered)
         }
-        ImheadValue::Array(casa_types::ArrayValue::String(values)) if !values.is_empty() => {
+        ImheadValue::Array(casa_core::ArrayValue::String(values)) if !values.is_empty() => {
             let names: Vec<String> = values.iter().cloned().collect();
             let rendered = format!("[{}]", names.join(", "));
             (names, rendered)
@@ -643,19 +643,19 @@ fn imhead_put_stokes_values(
         ImheadValue::Array(array)
             if !matches!(
                 array,
-                casa_types::ArrayValue::Bool(values) if values.is_empty()
+                casa_core::ArrayValue::Bool(values) if values.is_empty()
             ) && !matches!(
                 array,
-                casa_types::ArrayValue::Int32(values) if values.is_empty()
+                casa_core::ArrayValue::Int32(values) if values.is_empty()
             ) && !matches!(
                 array,
-                casa_types::ArrayValue::Float64(values) if values.is_empty()
+                casa_core::ArrayValue::Float64(values) if values.is_empty()
             ) && !matches!(
                 array,
-                casa_types::ArrayValue::Complex64(values) if values.is_empty()
+                casa_core::ArrayValue::Complex64(values) if values.is_empty()
             ) && !matches!(
                 array,
-                casa_types::ArrayValue::String(values) if values.is_empty()
+                casa_core::ArrayValue::String(values) if values.is_empty()
             ) =>
         {
             return Err(ImageError::InvalidMetadata(
@@ -722,7 +722,7 @@ pub fn imhead_put_rest_frequency(
     // CASA interprets an unqualified rest frequency as Hz, unlike axis
     // increments and reference values, which default to their axis units.
     let quantity = if quantity.unit().name().is_empty() {
-        casa_types::quanta::Quantity::new(quantity.value(), "Hz")
+        casa_core::quanta::Quantity::new(quantity.value(), "Hz")
             .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?
     } else {
         quantity
@@ -781,8 +781,8 @@ pub fn imhead_put_observation_date(
     hdkey: &str,
     hdvalue: &ImheadValue,
 ) -> Result<ImageHeaderSummary, ImageError> {
-    use casa_types::measures::{EpochRef, MEpoch};
-    use casa_types::quanta::{Unit, casacore::get_conformant_value, format};
+    use casa_core::measures::{EpochRef, MEpoch};
+    use casa_core::quanta::{Unit, casacore::get_conformant_value, format};
 
     let path = path.as_ref();
     validate_imhead_image(path)?;
@@ -1094,7 +1094,7 @@ fn edit_beam<T: ImagePixel>(
     }
     let (quantity, rendered) = quantity_input::parse(hdvalue)?;
     let old = image.stored_restoring_beam()?;
-    let quantity_text = |quantity: &casa_types::quanta::Quantity| {
+    let quantity_text = |quantity: &casa_core::quanta::Quantity| {
         format!(
             "{} {}",
             projection_header::cpp_number_precision(quantity.value(), 6),
@@ -1122,7 +1122,7 @@ fn edit_beam<T: ImagePixel>(
         let beam = crate::StoredGaussianBeam::new(
             quantity.clone(),
             quantity,
-            casa_types::quanta::Quantity::new(0.0, "deg").expect("built-in degrees"),
+            casa_core::quanta::Quantity::new(0.0, "deg").expect("built-in degrees"),
         )?;
         let message = format!(
             "Added beam major: {}, minor: {}, pa: {}",
@@ -1308,17 +1308,17 @@ pub fn imhead_custom_value(path: impl AsRef<Path>, key: &str) -> Result<Value, I
             Value::Array(array)
                 if matches!(
                     array,
-                    casa_types::ArrayValue::Bool(_)
-                        | casa_types::ArrayValue::Int32(_)
-                        | casa_types::ArrayValue::Float64(_)
-                        | casa_types::ArrayValue::String(_)
+                    casa_core::ArrayValue::Bool(_)
+                        | casa_core::ArrayValue::Int32(_)
+                        | casa_core::ArrayValue::Float64(_)
+                        | casa_core::ArrayValue::String(_)
                 ) =>
             {
                 let kind = match array {
-                    casa_types::ArrayValue::Bool(_) => "Bool",
-                    casa_types::ArrayValue::Int32(_) => "Int",
-                    casa_types::ArrayValue::Float64(_) => "double",
-                    casa_types::ArrayValue::String(_) => "String",
+                    casa_core::ArrayValue::Bool(_) => "Bool",
+                    casa_core::ArrayValue::Int32(_) => "Int",
+                    casa_core::ArrayValue::Float64(_) => "double",
+                    casa_core::ArrayValue::String(_) => "String",
                     _ => unreachable!(),
                 };
                 Err(ImageError::InvalidMetadata(format!(
@@ -1395,7 +1395,7 @@ pub fn imhead_custom_value_change(
                 if *value { "1" } else { "0" }.to_string(),
             ),
             ImheadValue::Array(array) => {
-                if matches!(array, casa_types::ArrayValue::Complex64(_)) {
+                if matches!(array, casa_core::ArrayValue::Complex64(_)) {
                     return Err(ImageError::InvalidMetadata(format!(
                         "Unhandled value type Array<DComplex> for {key}"
                     )));
@@ -1513,8 +1513,8 @@ fn imhead_change_string(
         )));
     }
     let value = if key == "bunit" {
-        let unit = casa_types::quanta::unit::normalize_casa_unit_name(hdvalue);
-        casa_types::quanta::Unit::new(&unit)
+        let unit = casa_core::quanta::unit::normalize_casa_unit_name(hdvalue);
+        casa_core::quanta::Unit::new(&unit)
             .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
         unit
     } else if key == "imtype" {
@@ -1649,14 +1649,14 @@ where
         object_name: info.object_name.clone(),
         observer: image.coordinates().obs_info().observer.clone(),
         telescope: image.coordinates().obs_info().telescope.clone(),
-        observation_date: casa_types::quanta::format::format_time(
+        observation_date: casa_core::quanta::format::format_time(
             image
                 .coordinates()
                 .obs_info()
                 .date
                 .as_ref()
                 .map_or(0.0, |epoch| epoch.value().as_mjd()),
-            casa_types::quanta::format::YMD,
+            casa_core::quanta::format::YMD,
             12,
         ),
         direction_reference: (0..image.coordinates().n_coordinates()).find_map(|index| match image
@@ -1752,7 +1752,7 @@ fn summarize_beam_set(
     }
     let mut beams = Vec::with_capacity(channels * stokes);
     let mut areas = Vec::with_capacity(channels * stokes);
-    let area_unit = casa_types::quanta::Unit::new("arcsec2")
+    let area_unit = casa_core::quanta::Unit::new("arcsec2")
         .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
     for polarization in 0..stokes {
         for channel in 0..channels {
@@ -1769,9 +1769,9 @@ fn summarize_beam_set(
             })?;
             // CASA multiplies the stored quantities before converting their
             // product to arcsec². That order affects ties in the median.
-            let major_unit = casa_types::quanta::Unit::new(&formatted.major.unit)
+            let major_unit = casa_core::quanta::Unit::new(&formatted.major.unit)
                 .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
-            let minor_unit = casa_types::quanta::Unit::new(&formatted.minor.unit)
+            let minor_unit = casa_core::quanta::Unit::new(&formatted.minor.unit)
                 .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
             let ratio =
                 area_unit.val().factor / (major_unit.val().factor * minor_unit.val().factor);
@@ -1840,7 +1840,7 @@ fn format_beam(beam: GaussianBeam, record: Option<&RecordValue>) -> Option<Resto
         .and_then(|r| beam_quantity(r, "positionangle"))
         .unwrap_or_else(|| fallback(position_angle_deg, "deg"));
     let quantity =
-        casa_types::quanta::Quantity::new(position_angle.value, &position_angle.unit).ok()?;
+        casa_core::quanta::Quantity::new(position_angle.value, &position_angle.unit).ok()?;
     let wrapped = crate::beam::wrap_position_angle(&quantity).ok()?;
     let wrapped_position_angle = BeamQuantity {
         value: wrapped.value(),
@@ -1864,7 +1864,7 @@ fn beam_quantity(record: &RecordValue, key: &str) -> Option<BeamQuantity> {
     let quantity = crate::beam::quantity_from_record(quantity).ok()?;
     Some(BeamQuantity {
         value: quantity.value(),
-        unit: casa_types::quanta::unit::normalize_casa_unit_name(quantity.unit().name()),
+        unit: casa_core::quanta::unit::normalize_casa_unit_name(quantity.unit().name()),
     })
 }
 
@@ -3600,7 +3600,7 @@ fn combined_selection_mask<T: ImagePixel>(
 
 pub(super) fn patch_saved_coords_keyword(
     path: &Path,
-    coords: casa_types::RecordValue,
+    coords: casa_core::RecordValue,
 ) -> Result<(), ImageError> {
     let mut table = Table::open(TableOptions::new(path))?;
     table.keywords_mut().upsert("coords", Value::Record(coords));
@@ -3767,9 +3767,9 @@ mod tests {
         DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate, StokesCoordinate,
         StokesType,
     };
-    use casa_types::Complex32;
-    use casa_types::measures::direction::DirectionRef;
-    use casa_types::measures::frequency::FrequencyRef;
+    use casa_core::Complex32;
+    use casa_core::measures::direction::DirectionRef;
+    use casa_core::measures::frequency::FrequencyRef;
     use fitsio::FitsFile;
 
     /// An imstat request for a classic run with one selection.
@@ -4297,9 +4297,9 @@ mod tests {
 
         // Observed at 2020-05-31 12:00 TAI: the date keeps its time scale
         // (#1017).
-        coordinates.obs_info_mut().date = Some(casa_types::measures::epoch::MEpoch::from_mjd(
+        coordinates.obs_info_mut().date = Some(casa_core::measures::epoch::MEpoch::from_mjd(
             59_000.5,
-            casa_types::measures::EpochRef::TAI,
+            casa_core::measures::EpochRef::TAI,
         ));
 
         let shape = vec![3, 2, 2, 5];
@@ -4351,7 +4351,7 @@ mod tests {
         assert!((beam.minor_in("deg").unwrap() - 1.2e-4).abs() < 1.0e-12);
         assert!((beam.position_angle_in("deg").unwrap() + 34.5).abs() < 1.0e-12);
         let date = imported.coordinates().obs_info().date.as_ref().unwrap();
-        assert_eq!(date.refer(), casa_types::measures::EpochRef::TAI);
+        assert_eq!(date.refer(), casa_core::measures::EpochRef::TAI);
         assert_eq!(date.value().as_mjd(), 59_000.5);
         // As CASA 6.7.6's exportfits writes the date: ISO, in its own scale.
         assert_eq!(
@@ -4416,7 +4416,7 @@ mod tests {
         // as CASA 6.7.6 imports such headers; it once stopped the import
         // (#1020 review). A TIMESYS with no value is UTC, and a DATE-OBS with
         // none gives no date.
-        use casa_types::measures::EpochRef;
+        use casa_core::measures::EpochRef;
         let temp = tempfile::tempdir().unwrap();
         let date = "DATE-OBS= '2000-01-01T02:57:46.666569'";
         let no_mjd = "MJD-OBS =                      / date unavailable";

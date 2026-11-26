@@ -19,6 +19,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_ms::observation_io::creation::{
     CreationInput, CreationOptions, CreationPlan, Destination, HistoryRow, LossKind, MemoryCharges,
     PaddingRows,
@@ -28,7 +29,6 @@ use casa_observation::{MergeTolerance, ObservationError};
 use casa_simulation::synthetic::{
     Field, ObservationRequest, generate_unflagged, tutorial_vla_a_antennas,
 };
-use casa_types::{ArrayValue, ScalarValue, Value};
 
 #[global_allocator]
 static HEAP: CountingHeap = CountingHeap;
@@ -247,8 +247,8 @@ fn stored_metadata(root: &Path) -> PathBuf {
         .set_cell(
             0,
             "SOURCE_MODEL",
-            Value::Record(casa_types::RecordValue::new(vec![
-                casa_types::RecordField::new(
+            Value::Record(casa_core::RecordValue::new(vec![
+                casa_core::RecordField::new(
                     "message",
                     Value::Scalar(ScalarValue::String(text(2 << 20))),
                 ),

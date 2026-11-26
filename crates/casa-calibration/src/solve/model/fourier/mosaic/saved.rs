@@ -3,8 +3,8 @@
 
 use std::borrow::Cow;
 
+use casa_core::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
 use casa_imaging_operator::{MosaicRules, MosaicWindow, SavedMosaicPlanes};
-use casa_types::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
 
 use super::super::{GainSolveError, model_error, record_text};
 

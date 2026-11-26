@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA JonesDiag/JonesScal invert followed by setMatByOk.
 
-use casa_types::Complex32;
+use casa_core::Complex32;
 
 /// An invalid antenna contributes identity and a flag. Its baseline partner
 /// and other calibration terms still correct data and scale the weights.

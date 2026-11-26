@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Direction offsets on the sphere, north through east.
 
-use casa_types::quanta::{Quantity, UnitVal};
+use casa_core::quanta::{Quantity, UnitVal};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 

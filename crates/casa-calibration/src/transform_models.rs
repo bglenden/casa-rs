@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use casa_core::{ArrayValue, Complex32};
 use casa_ms::PlotMsModelReferences;
 use casa_ms::selection::ChannelRange;
 use casa_ms::{
@@ -11,7 +12,6 @@ use casa_ms::{
     TransformInputColumns, TransformInputView, initial_model_visibility, scratch_columns,
 };
 use casa_tables::{Table, TableError};
-use casa_types::{ArrayValue, Complex32};
 use ndarray::{Array2, ArrayD, ShapeBuilder};
 
 use crate::solve::grouping::VisibilityModels;

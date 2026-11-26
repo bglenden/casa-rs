@@ -46,9 +46,9 @@
 
 use std::time::{Duration, Instant};
 
+use casa_core::Complex32;
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_ms::VisibilityColumns;
-use casa_types::Complex32;
 
 use super::MainWriter;
 use super::data::{DataBatch, DataStage, PendingNoise};

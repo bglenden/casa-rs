@@ -23,6 +23,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 
+use casa_core::measures::{MeasuresProvider, MjdHighPrec};
 use casa_imaging_model::{
     BatchGeometry, CompiledProblem, GeometryPlan, GeometryTraversal, PointingCentreLaw,
     SelectedAntennaResponses, SelectedPointingDirections, SkyDirection,
@@ -33,7 +34,6 @@ use casa_observation::{
     CorrelationRequest, FieldEphemeris, FieldSelection, Grouping, Observation, PartitionId,
     PointingRequest, ReadEvent, Roles, TimeSelection, VisibilityBatch, WeightRequest,
 };
-use casa_types::measures::{MeasuresProvider, MjdHighPrec};
 
 use casa_imaging_runtime::Admitted;
 

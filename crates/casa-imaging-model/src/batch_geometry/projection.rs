@@ -2,8 +2,8 @@
 //! Each chart's reprojection of a time's rows: from the field's
 //! observation direction to the chart's phase centre.
 
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{MeasFrame, MeasureError};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{MeasFrame, MeasureError};
 
 use super::BatchGeometryError;
 use crate::compiled_problem::CompiledProblem;

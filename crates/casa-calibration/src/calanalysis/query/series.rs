@@ -3,7 +3,7 @@
 
 use std::f64::consts::{PI, TAU};
 
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use num_complex::Complex64;
 
 use super::fit::FitOptions;

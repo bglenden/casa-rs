@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! MeasurementSet metadata shared by single-dish imports.
 
-use casa_tables::{
-    Table,
-    table_measures::{MeasureType, TableMeasDesc},
-    table_quantum::TableQuantumDesc,
-};
-use casa_types::{RecordValue, ScalarValue, Value};
+use casa_core::{RecordValue, ScalarValue, Value};
+use casa_measures::table_measures::{MeasureType, TableMeasDesc};
+use casa_tables::{Table, table_quantum::TableQuantumDesc};
 
 use super::{Direction, Field, ImportHeader, Source};
 use crate::column_def::{ColumnKind, column_schema};

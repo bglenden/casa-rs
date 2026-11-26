@@ -9,7 +9,7 @@
 //! What it will not convert (text for a number, a number for text, a
 //! non-record for a record) is refused with casatools' wording.
 
-use casa_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
+use casa_core::{ArrayValue, PrimitiveType, ScalarValue, Value};
 use num_complex::{Complex32, Complex64};
 
 use super::keyword_value::{Data, Incoming, Wide, build};

@@ -17,8 +17,8 @@ mod native_cache;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
+use casa_core::Correlation;
 use casa_imaging_model::NativeAwRequestInput;
-use casa_types::Correlation;
 use num_complex::Complex32;
 use thiserror::Error;
 

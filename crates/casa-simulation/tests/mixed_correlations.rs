@@ -3,8 +3,8 @@
 mod existing_ms_calculations;
 #[path = "mixed_correlations/review.rs"]
 mod review;
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{BackendRequest, PredictSpec, SessionResources, Simulator, SimulatorOptions};
-use casa_types::measures::{EpochRef, MEpoch};
 use existing_ms_calculations::{copy, predict_support as support};
 use flate2::read::GzDecoder;
 use serde_json::Value;
@@ -53,8 +53,8 @@ fn run(bytes: &[u8]) {
                 &path,
             );
             if case["spec"]["aliases"] == true {
+                use casa_core::{ScalarValue, Value};
                 use casa_tables::{Table, TableOptions};
-                use casa_types::{ScalarValue, Value};
                 let target = path.join("DATA_DESCRIPTION");
                 let mut table = Table::open(TableOptions::new(&target)).unwrap();
                 table
@@ -115,8 +115,8 @@ fn run(bytes: &[u8]) {
 }
 
 fn assert_unselected_window(path: &Path, case: &Value) {
+    use casa_core::ArrayValue;
     use casa_tables::{Table, TableOptions};
-    use casa_types::ArrayValue;
     let table = Table::open(TableOptions::new(path)).unwrap();
     for (row, before) in case["before"]["rows"]
         .as_array()

@@ -2,6 +2,7 @@
 
 mod common;
 
+use casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_ms::{
     MeasurementSet, MeasurementSetColumnStorage, MeasurementSetColumnWriteMode,
     MeasurementSetMutationBatch, MeasurementSetMutationColumnBatch,
@@ -11,7 +12,6 @@ use casa_ms::{
     selection::MsSelection,
 };
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
-use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 fn attach_test_subtable(input: &std::path::Path, as_reference: bool) -> std::path::PathBuf {
@@ -169,7 +169,7 @@ fn mstransform_selects_channels_updates_metadata_and_weight_spectrum() {
                 common::NUM_CORR * common::NUM_CHAN + source_chan * common::NUM_CORR + corr;
             assert_eq!(
                 row[[corr, out_chan]],
-                casa_types::Complex32::new(expected_index as f32, -(expected_index as f32) * 0.5)
+                casa_core::Complex32::new(expected_index as f32, -(expected_index as f32) * 0.5)
             );
         }
     }
@@ -226,7 +226,7 @@ fn rust_transform_preserves_subset_export_uv_and_array_semantics() {
             .main_table_mut()
             .column_accessor_mut("ARRAY_ID")
             .unwrap()
-            .set(row, casa_types::Value::Scalar(ScalarValue::Int32(5)))
+            .set(row, casa_core::Value::Scalar(ScalarValue::Int32(5)))
             .unwrap();
     }
     input.save_main_table_only().unwrap();
@@ -403,7 +403,7 @@ fn mstransform_width_averages_selected_channels_and_metadata() {
         let expected = ((source_index_2 + source_index_3) as f32) / 2.0;
         assert_eq!(
             row[[corr, 0]],
-            casa_types::Complex32::new(expected, -expected * 0.5)
+            casa_core::Complex32::new(expected, -expected * 0.5)
         );
     }
 
@@ -1010,7 +1010,7 @@ fn write_flag_row_0_in_place(ms_path: &std::path::Path) {
         casa_tables::Table::open(casa_tables::TableOptions::new(ms_path)).expect("open MAIN");
     main.cell_accessor_mut(0, "FLAG_ROW")
         .expect("FLAG_ROW cell")
-        .set(casa_types::Value::Scalar(ScalarValue::Bool(true)))
+        .set(casa_core::Value::Scalar(ScalarValue::Bool(true)))
         .expect("set FLAG_ROW");
     lock.record_write();
     main.prepare_write()
@@ -1339,9 +1339,7 @@ fn saving_into_an_existing_flag_version_waits_for_its_write_lock() {
         .main_table_mut()
         .cell_accessor_mut(0, "FLAG_ROW")
         .expect("FLAG_ROW cell")
-        .set(casa_types::Value::Scalar(ScalarValue::Bool(
-            !saved_flag_row,
-        )))
+        .set(casa_core::Value::Scalar(ScalarValue::Bool(!saved_flag_row)))
         .expect("change FLAG_ROW");
 
     let signal = dir.path().join("holder-locked.signal");

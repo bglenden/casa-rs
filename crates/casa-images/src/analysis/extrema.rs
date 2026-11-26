@@ -241,8 +241,8 @@ mod tests {
     use std::path::Path;
 
     use casa_coordinates::CoordinateSystem;
+    use casa_core::{ArrayValue, Value};
     use casa_tables::{Table, TableOptions};
-    use casa_types::{ArrayValue, Value};
 
     use super::{PagedImage, bounded_cursor_shape, extrema};
 

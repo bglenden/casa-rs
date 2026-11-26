@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_types::{ArrayD, Complex32};
+use casa_core::{ArrayD, Complex32};
 use ndarray::{IxDyn, Zip};
 
 use crate::analysis::lel_mask::{evaluate_mask, evaluate_replacement_pixels};

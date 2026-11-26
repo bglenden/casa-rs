@@ -8,8 +8,8 @@
 //! `getcol` of a column of `int64` raises "Unknown casa DataType!"; casa-rs
 //! returns the `int64` array.
 
+use casa_core::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use casa_tables::{ColumnSchema, ColumnType, Table, TableOptions};
-use casa_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 
 use super::state::{Fail, Open, State, no_table_specified};
 use super::values;
@@ -863,7 +863,7 @@ impl State {
                         .iter()
                         .map(|field| {
                             if field.name == "IndexLength" {
-                                casa_types::RecordField::new(
+                                casa_core::RecordField::new(
                                     "IndexLength",
                                     Value::Scalar(ScalarValue::Int32(0)),
                                 )

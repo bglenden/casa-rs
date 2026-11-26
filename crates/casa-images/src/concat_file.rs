@@ -5,8 +5,8 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+use casa_core::RecordValue;
 use casa_tables::{add_directory, strip_directory};
-use casa_types::RecordValue;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 

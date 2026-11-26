@@ -9,12 +9,12 @@ mod predict_support;
 
 use std::path::{Path, PathBuf};
 
+use casa_core::measures::{EpochRef, MEpoch};
+use casa_core::{ArrayValue, Complex32, ScalarValue, Value};
 use casa_simulation::{
     GainSpec, LeakageSpec, PredictSpec, Simulator, SimulatorOptions, SimulatorResult,
 };
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::{EpochRef, MEpoch};
-use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use predict_support::{
     ANTENNAS, CENTRE_RAD, CHANNEL_HZ, CHANNELS, FREQUENCY_HZ, REFERENCE_MJD, bits, data, read_main,
     resources, scan, session, write_point_list,

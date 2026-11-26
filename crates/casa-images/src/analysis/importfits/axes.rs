@@ -5,14 +5,14 @@ use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate, Projection,
     ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
 };
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::quanta::{
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::quanta::{
     Quantity, Unit,
     casacore::{get_conformant_value, get_value},
     format::{ANGLE, format_angle},
 };
-use casa_types::{ArrayValue, RecordValue, Value};
+use casa_core::{ArrayValue, RecordValue, Value};
 
 use super::{ImportFitsRequest, invalid_type, reject};
 use crate::ImageError;

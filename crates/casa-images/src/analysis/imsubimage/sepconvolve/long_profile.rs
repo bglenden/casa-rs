@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_core::ArrayD;
 use casa_lattices::{TraversalCursorIter, TraversalSpec};
-use casa_types::ArrayD;
 use ndarray::{Array1, IxDyn};
 
 use crate::{ImageError, ImageInterface, MutableImageInterface};

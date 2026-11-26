@@ -3,11 +3,11 @@
 
 use std::collections::BTreeMap;
 
+use casa_core::PrimitiveType::{Bool, Float32, Float64, Int32, String as Text};
+use casa_core::measures::{direction::DirectionRef, frequency::FrequencyRef};
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use casa_ms::{MeasurementSet, MsResult};
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
-use casa_types::PrimitiveType::{Bool, Float32, Float64, Int32, String as Text};
-use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use crate::bandpass::bpoly::write_legacy_history;

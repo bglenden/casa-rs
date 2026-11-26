@@ -19,7 +19,7 @@
 //! - a flux unit that is not a flux density (`Jy.km/s`, `K.rad2`), which
 //!   CASA's `convertUnit(Unit("Jy"))` cannot convert either.
 
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::quanta::{Quantity, Unit};
 use num_complex::Complex64;
 
 use crate::component_type::Polarisation;
@@ -201,7 +201,7 @@ impl SpectralModel {
 /// [`SpectralModel::sample_stokes`]).
 fn tabular_stokes(
     table: &TabularSpectrum,
-    reference_frame: casa_types::measures::frequency::FrequencyRef,
+    reference_frame: casa_core::measures::frequency::FrequencyRef,
     frequency_hz: f64,
 ) -> Result<[f64; 4], ComponentError> {
     let refused = |reason: String| ComponentError::Spectrum {

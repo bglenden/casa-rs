@@ -12,12 +12,12 @@ use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, FitsHeader, FitsValue, Projection,
     ProjectionType, StokesCoordinate, StokesType, fits::from_fits_header,
 };
-use casa_lattices::{Lattice, LatticeError};
-use casa_types::{
+use casa_core::{
     RecordValue,
     measures::{EpochRef, MEpoch},
     quanta::{Quantity, Unit},
 };
+use casa_lattices::{Lattice, LatticeError};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use crate::{

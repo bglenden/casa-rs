@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::CoordinateSystem;
-use casa_types::RecordValue;
+use casa_core::RecordValue;
 
 use crate::expr_parser::{HashMapResolver, parse_image_expr, referenced_images};
 use crate::{
@@ -96,7 +96,7 @@ fn run_evalexpr_typed<T: RealMathPixel>(
         .as_deref()
         .is_some_and(|m| !m.trim().is_empty());
 
-    let mask_overrides: Vec<Option<casa_types::ArrayD<bool>>> = if has_mask {
+    let mask_overrides: Vec<Option<casa_core::ArrayD<bool>>> = if has_mask {
         let mut raw_aliases: Vec<(String, &dyn ImageInterface<T>)> = Vec::new();
         for &(idx, ref raw) in &raws {
             if idx < imagename_paths.len()

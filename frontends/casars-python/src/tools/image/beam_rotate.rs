@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_core::quanta::{Quantity, Unit, casacore};
+use casa_core::{RecordValue, Value};
 use casa_images::{BeamComponent, ImageBeamSet, StoredGaussianBeam, beam::wrap_position_angle};
 use casa_tables::LockType;
-use casa_types::quanta::{Quantity, Unit, casacore};
-use casa_types::{RecordValue, Value};
 use pyo3::prelude::*;
 
 use crate::convert::{Variant, quantity};

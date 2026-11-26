@@ -4,8 +4,8 @@
 //! either side), read once as the production selected-observation source
 //! reads them (`selected_pointing.rs`), as the boundary's series.
 
+use casa_core::measures::direction::DirectionRef;
 use casa_observation::{ObservationError, PointingDirection, PointingRequest, PointingSeries};
-use casa_types::measures::direction::DirectionRef;
 
 use super::{Msv2Observation, storage};
 use crate::selected_pointing::SCALAR_SCAN_BYTES_PER_ROW;
@@ -138,8 +138,8 @@ impl Msv2Observation {
 
 #[cfg(test)]
 mod tests {
+    use casa_core::ArrayValue;
     use casa_observation::{AntennaId, PartitionId, PointingDirection, PointingRequest};
-    use casa_types::ArrayValue;
 
     use crate::MeasurementSet;
     use crate::observation_io::{OpenOptions, open};

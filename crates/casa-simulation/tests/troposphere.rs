@@ -23,6 +23,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use casa_atmosphere::{AbsorptionProfile, AtmosphereProfile, ProfileParameters, SpectralGrid};
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::{EpochRef, MEpoch};
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_ms::MeasurementSet;
 use casa_ms::columns::time_columns::TimeColumn;
 use casa_simulation::{
@@ -30,9 +33,6 @@ use casa_simulation::{
     TroposphereSpec,
 };
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::{EpochRef, MEpoch};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use num_complex::Complex32;
 use pass_summary::capture;
 use predict_support::{

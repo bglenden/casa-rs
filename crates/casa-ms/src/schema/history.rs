@@ -3,8 +3,8 @@
 //!
 //! Cf. C++ `MSHistoryEnums.h`.
 
-use casa_tables::table_measures::MeasureType;
-use casa_types::PrimitiveType;
+use casa_core::PrimitiveType;
+use casa_measures::table_measures::MeasureType;
 
 use crate::column_def::{ColumnDef, ColumnKind};
 

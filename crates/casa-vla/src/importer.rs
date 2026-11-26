@@ -10,6 +10,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::doppler::{DopplerRef, MDoppler};
+use casa_core::measures::epoch::{EpochRef, MEpoch};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::measures::{MPosition, MeasFrame, MeasuresProvider};
+use casa_core::{
+    ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
+};
 use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
@@ -18,15 +26,8 @@ use casa_ms::{
     MeasurementSetWritePlan, MeasurementSetWriteResources, MeasurementSetWriteSession,
     OptionalMainColumn, SubTable, standard_main_scalar_column_plans,
 };
-use casa_tables::{ColumnSchema, StreamedTiledShapeValueType, Table};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::doppler::{DopplerRef, MDoppler};
-use casa_types::measures::epoch::{EpochRef, MEpoch};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::measures::{MPosition, MeasFrame, MeasuresProvider};
-use casa_types::{
-    ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
-};
+use casa_tables::streamed_tiled::StreamedTiledShapeValueType;
+use casa_tables::{ColumnSchema, Table};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -1541,7 +1542,7 @@ struct ArchiveObservation {
 struct VlaImportState {
     options: ImportVlaOptions,
     ms: MeasurementSet,
-    measures: Arc<casa_measures_data::MeasuresRuntime>,
+    measures: Arc<casa_measures::MeasuresRuntime>,
     logical_records_seen: usize,
     logical_records_imported: usize,
     logical_records_skipped: usize,
@@ -1599,7 +1600,7 @@ impl VlaImportState {
         ms: MeasurementSet,
         main_write_session: MeasurementSetWriteSession,
     ) -> Result<Self, VlaError> {
-        let measures = casa_measures_data::MeasuresRuntime::open_discovered(Default::default())
+        let measures = casa_measures::MeasuresRuntime::open_discovered(Default::default())
             .map(Arc::new)
             .map_err(|error| VlaError::import(error.to_string()))?;
         let mut writer = Self {
@@ -3208,8 +3209,8 @@ fn make_row_from_names(
 }
 
 fn default_value_for_column(column: &casa_ms::column_def::ColumnDef) -> Result<Value, VlaError> {
+    use casa_core::PrimitiveType;
     use casa_ms::column_def::ColumnKind;
-    use casa_types::PrimitiveType;
 
     Ok(match column.column_kind {
         ColumnKind::Scalar => Value::Scalar(match column.data_type {
@@ -3334,7 +3335,7 @@ mod tests {
 
     fn test_measures() -> Arc<dyn MeasuresProvider> {
         Arc::new(
-            casa_measures_data::MeasuresRuntime::open_discovered(Default::default())
+            casa_measures::MeasuresRuntime::open_discovered(Default::default())
                 .expect("test measures runtime"),
         )
     }

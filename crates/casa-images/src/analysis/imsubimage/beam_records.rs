@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use casa_coordinates::CoordinateSystem;
-use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+use casa_core::{RecordField, RecordValue, ScalarValue, Value};
 
 use crate::{ImageBeamSet, ImageError, ImageInfo};
 

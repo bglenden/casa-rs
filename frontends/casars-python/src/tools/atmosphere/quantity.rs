@@ -2,7 +2,7 @@
 //! The atmosphere wrapper's typed scalar and vector quantities.
 
 use casa_contracts::CasaValue;
-use casa_types::quanta::{Quantity, casacore};
+use casa_core::quanta::{Quantity, casacore};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 

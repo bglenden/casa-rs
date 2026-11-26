@@ -4,12 +4,12 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use casa_coordinates::CoordinateType;
+use casa_core::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use casa_images::ImageInterface;
 use casa_images::analysis::{
     CollapseFunction, CollapsePixel, ImageReadProfile, ProfileFrequencyFrame, ReadProfileOptions,
     SubimageRegion, ensure_artifacts_do_not_overlap, read_image_profile,
 };
-use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::IxDyn;
 use num_complex::{Complex32, Complex64};
 use pyo3::prelude::*;
@@ -33,7 +33,7 @@ struct ReadRequest<'a> {
     unit: &'a str,
     stretch: bool,
     spectral_type: &'a str,
-    rest_frequency: Option<casa_types::quanta::Quantity>,
+    rest_frequency: Option<casa_core::quanta::Quantity>,
     frame: &'a str,
     logfile: &'a str,
 }

@@ -598,7 +598,7 @@ impl PyImager {
         pfx: &str,
     ) -> PyResult<String> {
         use casa_calibration::predict_calibrator_component;
-        use casa_types::measures::{EpochRef, MEpoch};
+        use casa_core::measures::{EpochRef, MEpoch};
 
         let epoch = match epoch {
             Variant::Numbers(values) | Variant::Array { values, .. } => Some(MEpoch::from_mjd(

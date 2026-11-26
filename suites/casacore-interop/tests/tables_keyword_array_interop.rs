@@ -10,9 +10,9 @@
 
 #![cfg(feature = "cpp-interop-tests")]
 
+use casa_core::{ArrayValue, PrimitiveType, Value};
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casa_test_support::{TableOracle, casacore_oracle_available};
-use casa_types::{ArrayValue, PrimitiveType, Value};
 use ndarray::{ArrayD, Dimension, IxDyn, ShapeBuilder, s};
 
 /// The logical element at `index`, `i + 10 j + 100 k`: each distinct.

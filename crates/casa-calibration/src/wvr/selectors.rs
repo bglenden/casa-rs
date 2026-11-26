@@ -3,8 +3,8 @@
 
 use std::collections::BTreeMap;
 
+use casa_core::ScalarValue;
 use casa_ms::{MeasurementSet, MsError, schema::SubtableId};
-use casa_types::ScalarValue;
 
 use super::{WvrError, WvrRequest};
 

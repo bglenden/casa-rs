@@ -2,16 +2,16 @@
 //! 2x2 interop tests for measures: Rust vs C++ casacore.
 #![cfg(all(feature = "cpp-interop-tests", has_casacore_cpp))]
 
-use casa_measures_data::MeasuresRuntime;
-use casa_test_support::measures_interop::MeasuresOracle;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::doppler::{DopplerRef, MDoppler};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::measures::radial_velocity::{MRadialVelocity, RadialVelocityRef};
-use casa_types::measures::{
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::doppler::{DopplerRef, MDoppler};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::measures::radial_velocity::{MRadialVelocity, RadialVelocityRef};
+use casa_core::measures::{
     EpochRef, IauModel, MEpoch, MPosition, MeasFrame, MeasuresProvider, PositionRef,
     epoch_to_record, position_to_record,
 };
+use casa_measures::MeasuresRuntime;
+use casa_test_support::measures_interop::MeasuresOracle;
 use std::sync::{Arc, OnceLock};
 
 const J2000_MJD: f64 = 51544.5;
@@ -262,7 +262,7 @@ fn rc_epoch_record_format() {
     let (cpp_value, cpp_unit, cpp_refer) =
         MeasuresOracle::epoch_to_record(J2000_MJD, "UTC").unwrap();
 
-    if let Some(casa_types::Value::Scalar(casa_types::ScalarValue::String(r))) = rec.get("refer") {
+    if let Some(casa_core::Value::Scalar(casa_core::ScalarValue::String(r))) = rec.get("refer") {
         assert_eq!(r, &cpp_refer, "refer mismatch: Rust={r}, C++={cpp_refer}");
     }
     assert_eq!(cpp_unit, "d", "C++ unit should be 'd'");
@@ -586,7 +586,7 @@ fn cr_epoch_record_format() {
     let epoch = MEpoch::from_mjd(J2000_MJD, EpochRef::UTC);
     let rec = epoch_to_record(&epoch);
 
-    if let Some(casa_types::Value::Scalar(casa_types::ScalarValue::String(r))) = rec.get("refer") {
+    if let Some(casa_core::Value::Scalar(casa_core::ScalarValue::String(r))) = rec.get("refer") {
         assert_eq!(r, &cpp_refer, "refer mismatch: Rust={r}, C++={cpp_refer}");
     }
     assert_eq!(cpp_unit, "d", "C++ unit should be 'd'");
@@ -2082,10 +2082,10 @@ fn eop_epoch_conversion_with_runtime_data() {
 // ==========================================================================
 
 /// Extract a quantity value from a sub-record field in a RecordValue.
-fn extract_quantity(rec: &casa_types::RecordValue, field: &str) -> f64 {
+fn extract_quantity(rec: &casa_core::RecordValue, field: &str) -> f64 {
     match rec.get(field) {
-        Some(casa_types::Value::Record(sub)) => match sub.get("value") {
-            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Float64(v))) => *v,
+        Some(casa_core::Value::Record(sub)) => match sub.get("value") {
+            Some(casa_core::Value::Scalar(casa_core::ScalarValue::Float64(v))) => *v,
             other => panic!("expected Float64 in {field}/value, got {other:?}"),
         },
         other => panic!("expected Record for {field}, got {other:?}"),
@@ -2735,7 +2735,7 @@ fn diag_aberration_rotation_invariance() {
     // Get TT epoch for BPN
     let epoch = frame.epoch().unwrap();
     let tt = epoch
-        .convert_to(casa_types::measures::EpochRef::TT, &frame)
+        .convert_to(casa_core::measures::EpochRef::TT, &frame)
         .unwrap();
     let (tt1, tt2) = tt.value().as_jd_pair();
     let bpn = sofars::pnp::pnm00a(tt1, tt2);

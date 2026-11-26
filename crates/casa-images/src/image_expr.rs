@@ -63,8 +63,8 @@ use std::sync::Arc;
 use std::thread;
 
 use casa_coordinates::CoordinateSystem;
+use casa_core::{ArrayD, RecordValue, Value};
 use casa_lattices::LatticeError;
-use casa_types::{ArrayD, RecordValue, Value};
 use ndarray::Zip;
 
 use crate::error::ImageError;
@@ -88,8 +88,8 @@ type BinaryExprFn<T> = Arc<dyn Fn(T, T) -> T + Send + Sync>;
 ///
 /// Extends [`ImagePixel`] with mathematical functions dispatched by
 /// [`ImageExprUnaryOp`] and [`ImageExprBinaryOp`].  Implemented for
-/// [`f32`], [`f64`], [`Complex32`](casa_types::Complex32), and
-/// [`Complex64`](casa_types::Complex64).
+/// [`f32`], [`f64`], [`Complex32`](casa_core::Complex32), and
+/// [`Complex64`](casa_core::Complex64).
 pub trait ImageExprValue:
     ImagePixel
     + std::ops::Add<Output = Self>
@@ -350,7 +350,7 @@ impl ImageExprValue for f64 {
     }
 }
 
-impl ImageExprValue for casa_types::Complex32 {
+impl ImageExprValue for casa_core::Complex32 {
     fn expr_exp(self) -> Self {
         self.exp()
     }
@@ -461,7 +461,7 @@ impl ImageExprValue for casa_types::Complex32 {
     }
 }
 
-impl ImageExprValue for casa_types::Complex64 {
+impl ImageExprValue for casa_core::Complex64 {
     fn expr_exp(self) -> Self {
         self.exp()
     }
@@ -707,7 +707,7 @@ pub(crate) struct ImageExprMeta {
     shape: Vec<usize>,
     coords: CoordinateSystem,
     units: String,
-    misc_info: casa_types::RecordValue,
+    misc_info: casa_core::RecordValue,
     image_info: ImageInfo,
     name: Option<PathBuf>,
     legacy_coords: Option<RecordValue>,
@@ -1353,7 +1353,7 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
                 shape: vec![],
                 coords: CoordinateSystem::new(),
                 units: String::new(),
-                misc_info: casa_types::RecordValue::default(),
+                misc_info: casa_core::RecordValue::default(),
                 image_info: ImageInfo::default(),
                 name: None,
                 legacy_coords: None,
@@ -2195,7 +2195,7 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
                 shape: vec![],
                 coords: CoordinateSystem::new(),
                 units: String::new(),
-                misc_info: casa_types::RecordValue::default(),
+                misc_info: casa_core::RecordValue::default(),
                 image_info: ImageInfo::default(),
                 name: None,
                 legacy_coords: None,
@@ -2392,7 +2392,7 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
 
 // -- Wave 14d: Type-changing methods (typed API only) --
 
-impl<'a> ImageExprBuilder<'a, casa_types::Complex32> {
+impl<'a> ImageExprBuilder<'a, casa_core::Complex32> {
     /// Extracts the real part of a Complex32 expression, producing an f32 expression.
     ///
     /// Corresponds to C++ LEL `real(expr)`.
@@ -2487,7 +2487,7 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex32> {
     }
 }
 
-impl<'a> ImageExprBuilder<'a, casa_types::Complex64> {
+impl<'a> ImageExprBuilder<'a, casa_core::Complex64> {
     /// Extracts the real part of a Complex64 expression, producing an f64 expression.
     pub fn real_part(self) -> ImageExprBuilder<'a, f64> {
         let compiled = self.compile().map_err(|error| error.to_string());
@@ -2583,7 +2583,7 @@ impl<'a> ImageExprBuilder<'a, f32> {
     pub fn to_complex(
         self,
         imag: Self,
-    ) -> Result<ImageExprBuilder<'a, casa_types::Complex32>, ImageError> {
+    ) -> Result<ImageExprBuilder<'a, casa_core::Complex32>, ImageError> {
         validate_same_shape(self.shape(), imag.shape())?;
         let real_compiled = self.compile().map_err(|error| error.to_string());
         let imag_compiled = imag.compile().map_err(|error| error.to_string());
@@ -2603,7 +2603,7 @@ impl<'a> ImageExprBuilder<'a, f32> {
                         .map_err(|error| LatticeError::Table(error.to_string()))?;
                     Ok(Zip::from(&re)
                         .and(&im)
-                        .map_collect(|&re, &im| casa_types::Complex32::new(re, im)))
+                        .map_collect(|&re, &im| casa_core::Complex32::new(re, im)))
                 }),
             },
             meta: ImageExprMeta {
@@ -2626,7 +2626,7 @@ impl<'a> ImageExprBuilder<'a, f64> {
     pub fn to_complex(
         self,
         imag: Self,
-    ) -> Result<ImageExprBuilder<'a, casa_types::Complex64>, ImageError> {
+    ) -> Result<ImageExprBuilder<'a, casa_core::Complex64>, ImageError> {
         validate_same_shape(self.shape(), imag.shape())?;
         let real_compiled = self.compile().map_err(|error| error.to_string());
         let imag_compiled = imag.compile().map_err(|error| error.to_string());
@@ -2646,7 +2646,7 @@ impl<'a> ImageExprBuilder<'a, f64> {
                         .map_err(|error| LatticeError::Table(error.to_string()))?;
                     Ok(Zip::from(&re)
                         .and(&im)
-                        .map_collect(|&re, &im| casa_types::Complex64::new(re, im)))
+                        .map_collect(|&re, &im| casa_core::Complex64::new(re, im)))
                 }),
             },
             meta: ImageExprMeta {
@@ -2819,8 +2819,8 @@ mod tests {
 
     use super::*;
     use casa_coordinates::CoordinateSystem;
+    use casa_core::{Complex32, Complex64, RecordValue};
     use casa_lattices::Lattice;
-    use casa_types::{Complex32, Complex64, RecordValue};
     use ndarray::{Dimension, IxDyn};
 
     trait CanonicalNumericEval<T: ImageExprValue> {
@@ -2943,7 +2943,7 @@ mod tests {
             ""
         }
 
-        fn misc_info(&self) -> casa_types::RecordValue {
+        fn misc_info(&self) -> casa_core::RecordValue {
             RecordValue::default()
         }
 

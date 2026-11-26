@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::quanta::{Quantity, Unit};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -1750,7 +1750,7 @@ fn validate_quantity_domain(
     Ok(canonical)
 }
 
-fn parse_unit(name: &str) -> Result<Unit, casa_types::quanta::UnitError> {
+fn parse_unit(name: &str) -> Result<Unit, casa_core::quanta::UnitError> {
     if name.is_empty() {
         Ok(Unit::dimensionless())
     } else {

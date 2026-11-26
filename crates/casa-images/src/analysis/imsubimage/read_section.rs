@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
-use casa_types::ArrayD;
+use casa_core::ArrayD;
 
 use crate::image_expr::validate_slice_request;
 use crate::{ImageError, ImageInterface, ImagePixel};

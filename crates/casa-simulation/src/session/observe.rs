@@ -19,8 +19,8 @@
 
 use std::sync::Arc;
 
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{MEpoch, MPosition, MeasFrame, MeasuresProvider};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{MEpoch, MPosition, MeasFrame, MeasuresProvider};
 
 use super::error::{SimulatorError, SimulatorResult};
 

@@ -4,8 +4,8 @@
 use std::fmt::Write;
 use std::path::Path;
 
-use casa_types::ArrayValue;
-use casa_types::quanta::format::{YMD, format_time};
+use casa_core::ArrayValue;
+use casa_core::quanta::format::{YMD, format_time};
 
 use super::{CalibrationListing, ListingPart, Solutions};
 

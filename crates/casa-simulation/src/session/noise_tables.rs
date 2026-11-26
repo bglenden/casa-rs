@@ -5,10 +5,10 @@ use std::path::PathBuf;
 
 use crate::corrupt::tsys_snapshot::{Chunk, TsysSnapshot};
 use casa_calibration::{SimulatedJones, write_simulated_jones_table};
+use casa_core::ScalarValue;
 use casa_imaging_runtime::{Demand, admit};
 use casa_ms::MeasurementSet;
 use casa_tables::{Table, TableOptions};
-use casa_types::ScalarValue;
 
 use super::Simulator;
 use super::corruption::calibration_table_root;

@@ -5,8 +5,8 @@ use super::{
     ReservationWindow, Simulator, SimulatorOptions, alone, charge_process_caches, configured,
     excess_now, reserved_memory, resources,
 };
+use casa_core::{ArrayValue, Value};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, Value};
 
 #[test]
 fn stored_channel_axes_are_admitted_before_read_and_while_retained() {

@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
+use casa_core::ArrayD;
 use casa_images::expr_parser::{HashMapResolver, parse_image_expr, parse_mask_expr};
 use casa_images::image::ImageInterface;
 use casa_images::image_expr::ImageExprValue;
@@ -17,7 +18,6 @@ use casa_test_support::{
     CppImageExprBinaryOp, CppImageExprCompareOp, CppImageExprUnaryOp, CppMaskLogicalOp,
     ImageOracle, casacore_oracle_available,
 };
-use casa_types::ArrayD;
 use ndarray::{IxDyn, ShapeBuilder};
 
 trait CanonicalNumericEval<T: ImageExprValue> {
@@ -916,8 +916,8 @@ fn open_imgexpr_with_missing_source_errors() {
     casa_images::expr_file::save(
         &expr_path,
         "'nonexistent.image' + 1.0",
-        casa_types::PrimitiveType::Float32,
-        &casa_types::RecordValue::default(),
+        casa_core::PrimitiveType::Float32,
+        &casa_core::RecordValue::default(),
     )
     .unwrap();
 

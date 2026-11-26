@@ -31,8 +31,8 @@
 //!   coordinate metadata.
 //!
 //! Supported image pixel types: [`f32`], [`f64`],
-//! [`Complex32`](casa_types::Complex32), and
-//! [`Complex64`](casa_types::Complex64). The convenience alias [`Image`]
+//! [`Complex32`](casa_core::Complex32), and
+//! [`Complex64`](casa_core::Complex64). The convenience alias [`Image`]
 //! remains available for `PagedImage<f32>`.
 //!
 //! # Example
@@ -41,7 +41,7 @@
 //! use casa_coordinates::CoordinateSystem;
 //! use casa_images::{ImageExprBuilder, ImageExprBinaryOp, ImageExprUnaryOp, ImageType, TempImage};
 //! use casa_lattices::{Lattice, LatticeIterExt, LatticeMut, TraversalSpec};
-//! use casa_types::Complex32;
+//! use casa_core::Complex32;
 //!
 //! let mut image = TempImage::<f32>::new(vec![8, 8], CoordinateSystem::new(), casa_lattices::TempStoragePolicy::Memory).unwrap();
 //! image.set(1.0).unwrap();

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use super::continuum_rest_frequency_hz;
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use casa_ms::{MeasurementSet, MeasurementSetBuilder, SubtableId};
 use casa_tables::Table;
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
 
 fn integer(name: &str, value: i32) -> RecordField {

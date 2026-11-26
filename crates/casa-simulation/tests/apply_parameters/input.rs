@@ -3,6 +3,7 @@
 
 use std::path::Path;
 
+use casa_core::{ArrayValue, Complex32, PrimitiveType, ScalarValue};
 use casa_ms::{
     MeasurementSet, MeasurementSetColumnStorage, MeasurementSetColumnWriteMode,
     MeasurementSetMutationBatch, MeasurementSetMutationColumnBatch,
@@ -10,7 +11,6 @@ use casa_ms::{
     MeasurementSetWriteResources, MeasurementSetWriteSession,
 };
 use casa_tables::ColumnSchema;
-use casa_types::{ArrayValue, Complex32, PrimitiveType, ScalarValue};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 fn plan(rows: usize, columns: &[&str], create: bool) -> MeasurementSetWritePlan {

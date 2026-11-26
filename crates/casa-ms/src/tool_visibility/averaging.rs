@@ -3,7 +3,7 @@
 
 use std::ops::{AddAssign, Div, Mul};
 
-use casa_types::ArrayValue;
+use casa_core::ArrayValue;
 use ndarray::ArrayD;
 use num_complex::{Complex32, Complex64};
 

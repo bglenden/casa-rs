@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType, SpectralCoordinate};
-use casa_types::measures::MeasFrame;
-use casa_types::measures::doppler::{DopplerRef, MDoppler};
-use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim, casacore};
-use casa_types::{RecordValue, ScalarValue, Value};
+use casa_core::measures::MeasFrame;
+use casa_core::measures::doppler::{DopplerRef, MDoppler};
+use casa_core::quanta::{Dimension, Quantity, Unit, UnitDim, casacore};
+use casa_core::{RecordValue, ScalarValue, Value};
 use numpy::{PyArrayDescrMethods, PyReadonlyArrayDyn, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyRuntimeError, PySystemError};
 use pyo3::prelude::*;

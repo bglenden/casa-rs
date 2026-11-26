@@ -16,6 +16,8 @@
 
 use std::{fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
 
+use casa_core::measures::{doppler::DopplerRef, frequency::FrequencyRef};
+use casa_core::quanta::{Quantity, Unit};
 use casa_imaging_model::{
     HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization, Projection,
     RestoringBeamPolicy, UvTaper,
@@ -23,8 +25,6 @@ use casa_imaging_model::{
 use casa_imaging_operator::GridPrecision;
 use casa_imaging_runtime::{Diagnostics, ResourcePolicy};
 use casa_ms::CubeInterpolation;
-use casa_types::measures::{doppler::DopplerRef, frequency::FrequencyRef};
-use casa_types::quanta::{Quantity, Unit};
 use serde::{Deserialize, Deserializer, de::Error as _};
 use serde_json::Value;
 

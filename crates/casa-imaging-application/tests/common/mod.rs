@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_core::Correlation;
 use casa_imaging_model::{
     CorrelationProduct, FlagPolicy, IdSelection, IntentSelection, ModelBounds,
     ModelLifecycleRequirements, NumericPrecision, ObservationSelection, ObservationSnapshot,
@@ -7,7 +8,6 @@ use casa_imaging_model::{
     PartitionSelection, RowSelection, SelectedColumns, SpectralWindowSelection, UvSelection,
     VisibilityColumn, WeightColumn, compile_observation,
 };
-use casa_types::Correlation;
 
 pub fn model_lifecycle() -> ModelLifecycleRequirements {
     ModelLifecycleRequirements::new(

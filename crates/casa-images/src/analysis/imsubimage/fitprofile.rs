@@ -16,7 +16,7 @@ mod solver;
 
 use std::{collections::BTreeMap, path::Path};
 
-use casa_types::{
+use casa_core::{
     RecordValue,
     quanta::{Quantity, Unit},
 };
@@ -465,7 +465,7 @@ impl<'a> ImageProfileFit<'a> {
             }
             products.write_spectrum(&position, self.selection.axis, &data, outcome.as_ref())?;
         }
-        let count = |flags: &casa_types::ArrayD<bool>| flags.iter().filter(|&&flag| flag).count();
+        let count = |flags: &casa_core::ArrayD<bool>| flags.iter().filter(|&&flag| flag).count();
         let succeeded = count(&results.succeeded);
         let converged = count(&results.converged);
         let valid = count(&results.valid);

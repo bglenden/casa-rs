@@ -3,8 +3,8 @@
 
 use std::collections::HashMap;
 
+use casa_core::ArrayValue;
 use casa_tables::{PlainReferenceRead, RequiredScalarColumnValues};
-use casa_types::ArrayValue;
 use num_complex::Complex32;
 
 use super::{VisibilityPolarization, divide_visibility, input};

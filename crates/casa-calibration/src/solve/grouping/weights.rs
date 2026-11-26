@@ -3,9 +3,9 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+use casa_core::ArrayValue;
 use casa_ms::MeasurementSet;
 use casa_tables::{TableColumn, TableError};
-use casa_types::ArrayValue;
 use ndarray::{ArrayD, Axis};
 
 use super::{

@@ -3,7 +3,7 @@
 use super::State;
 use crate::convert::value::CasaValue;
 use casa_components::{ComponentList, SkyComponent};
-use casa_types::{RecordField, RecordValue, Value};
+use casa_core::{RecordField, RecordValue, Value};
 use std::borrow::Cow;
 
 #[derive(Default, Clone)]
@@ -69,13 +69,13 @@ impl Offsets {
     pub(crate) fn resolve_direction(
         &self,
         component: &SkyComponent,
-    ) -> Result<casa_types::measures::direction::MDirection, String> {
+    ) -> Result<casa_core::measures::direction::MDirection, String> {
         let mut record =
-            casa_types::measures::direction_to_record(component.shape().reference_direction());
+            casa_core::measures::direction_to_record(component.shape().reference_direction());
         if let Some(offset) = &self.direction {
             record.push(RecordField::new("offset", Value::Record(offset.clone())));
         }
-        casa_types::measures::direction_from_record(&record).map_err(|e| e.to_string())
+        casa_core::measures::direction_from_record(&record).map_err(|e| e.to_string())
     }
 
     pub(super) fn resolve(&self, component: &mut SkyComponent) -> Result<(), String> {
@@ -84,12 +84,12 @@ impl Offsets {
             component.shape_mut().set_reference_direction(direction);
         }
         if let Some(offset) = &self.frequency {
-            let mut record = casa_types::measures::frequency_to_record(
+            let mut record = casa_core::measures::frequency_to_record(
                 component.spectrum().reference_frequency(),
             );
             record.push(RecordField::new("offset", Value::Record(offset.clone())));
             let frequency =
-                casa_types::measures::frequency_from_record(&record).map_err(|e| e.to_string())?;
+                casa_core::measures::frequency_from_record(&record).map_err(|e| e.to_string())?;
             component.spectrum_mut().set_reference_frequency(frequency);
         }
         Ok(())

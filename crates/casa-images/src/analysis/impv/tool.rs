@@ -2,8 +2,8 @@
 
 use std::ops::Range;
 
+use casa_core::{ArrayD, RecordValue, Value};
 use casa_lattices::{ScratchSpace, TempStoragePolicy, TraversalCursorIter, TraversalSpec};
-use casa_types::{ArrayD, RecordValue, Value};
 use ndarray::{IxDyn, ShapeBuilder};
 
 use crate::analysis::axes::StridedSection;

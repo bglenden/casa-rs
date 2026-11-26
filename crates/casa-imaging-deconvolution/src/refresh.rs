@@ -258,15 +258,35 @@ mod tests {
         }
     }
 
+    fn pool_with_tracing(threads: usize) -> rayon::ThreadPool {
+        let dispatch = tracing::dispatcher::get_default(Clone::clone);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .spawn_handler(move |worker| {
+                let dispatch = dispatch.clone();
+                let mut thread = std::thread::Builder::new();
+                if let Some(name) = worker.name() {
+                    thread = thread.name(name.to_owned());
+                }
+                if let Some(stack) = worker.stack_size() {
+                    thread = thread.stack_size(stack);
+                }
+                thread
+                    .spawn(move || {
+                        tracing::dispatcher::with_default(&dispatch, || worker.run());
+                    })
+                    .map(|_| ())
+            })
+            .build()
+            .unwrap()
+    }
+
     /// Sparse and FFT refreshes both equal the linear convolution, for every
     /// PSF origin of odd and non-square planes, with components at the edges,
     /// inside a pool as on the calling thread.
     #[test]
     fn both_paths_are_the_linear_convolution_for_every_origin() {
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(3)
-            .build()
-            .unwrap();
+        let pool = pool_with_tracing(3);
         for shape in [
             PlaneShape::new(3, 4),
             PlaneShape::new(5, 7),
@@ -339,10 +359,7 @@ mod tests {
         let components = [(3, 0.5_f32), (100, -0.25), (152, 0.125)];
         let mut one = vec![0.0; shape.len()];
         sparse_refresh(&psf, shape, [8, 4], &components, 1, &mut one);
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(4)
-            .build()
-            .unwrap();
+        let pool = pool_with_tracing(4);
         let mut four = vec![0.0; shape.len()];
         pool.install(|| sparse_refresh(&psf, shape, [8, 4], &components, 4, &mut four));
         assert_eq!(one, four);

@@ -12,9 +12,9 @@
 
 use std::path::{Path, PathBuf};
 
+use casa_core::{ArrayValue, Complex32, Value};
 use casa_tables::{DataManagerKind, EndianFormat, Table, TableOptions};
 use casa_test_support::{CppTableFixture, TableOracle, casacore_oracle_available};
-use casa_types::{ArrayValue, Complex32, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 const PATCHED_ROWS: [usize; 2] = [1, 3];

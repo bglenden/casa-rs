@@ -6,11 +6,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use casa_core::{ArrayValue, Complex32, Complex64, RecordValue, ScalarValue, Value};
 use casa_ms::SubTable;
 use casa_ms::ms::MeasurementSet;
 use casa_tables::Table;
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier, discover_casa_python};
-use casa_types::{ArrayValue, Complex32, Complex64, RecordValue, ScalarValue, Value};
 use casa_vla::{ImportVlaOptions, import_archive_files_to_measurement_set_from_options};
 use tempfile::TempDir;
 
@@ -51,21 +51,21 @@ fn ag189_path() -> Option<PathBuf> {
         .filter(|path| path.exists())
 }
 
-fn get_f64_scalar(row: &casa_types::RecordValue, column: &str) -> f64 {
+fn get_f64_scalar(row: &casa_core::RecordValue, column: &str) -> f64 {
     match row.get(column).expect("missing scalar column") {
         Value::Scalar(ScalarValue::Float64(value)) => *value,
         other => panic!("{column} had unexpected value {other:?}"),
     }
 }
 
-fn get_i32_scalar(row: &casa_types::RecordValue, column: &str) -> i32 {
+fn get_i32_scalar(row: &casa_core::RecordValue, column: &str) -> i32 {
     match row.get(column).expect("missing scalar column") {
         Value::Scalar(ScalarValue::Int32(value)) => *value,
         other => panic!("{column} had unexpected value {other:?}"),
     }
 }
 
-fn get_i32_scalar_or(row: &casa_types::RecordValue, column: &str, default: i32) -> i32 {
+fn get_i32_scalar_or(row: &casa_core::RecordValue, column: &str, default: i32) -> i32 {
     match row.get(column) {
         Some(Value::Scalar(ScalarValue::Int32(value))) => *value,
         None => default,
@@ -73,14 +73,14 @@ fn get_i32_scalar_or(row: &casa_types::RecordValue, column: &str, default: i32) 
     }
 }
 
-fn get_string_scalar(row: &casa_types::RecordValue, column: &str) -> String {
+fn get_string_scalar(row: &casa_core::RecordValue, column: &str) -> String {
     match row.get(column).expect("missing scalar column") {
         Value::Scalar(ScalarValue::String(value)) => value.clone(),
         other => panic!("{column} had unexpected value {other:?}"),
     }
 }
 
-fn get_f64_array(row: &casa_types::RecordValue, column: &str) -> Vec<f64> {
+fn get_f64_array(row: &casa_core::RecordValue, column: &str) -> Vec<f64> {
     match row.get(column).expect("missing array column") {
         Value::Array(ArrayValue::Float64(values)) => values.iter().copied().collect(),
         other => panic!("{column} had unexpected value {other:?}"),

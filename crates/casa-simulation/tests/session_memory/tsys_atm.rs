@@ -27,9 +27,9 @@
 //! Each law runs alone in its process, as the binary's other laws do
 //! ([`super::alone`]).
 
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{AtmosphereSpec, NoiseSpec, ObserveSpec, SpectralWindowSpec, TsysParameters};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::{EpochRef, MEpoch};
 use num_complex::Complex32;
 
 use super::{

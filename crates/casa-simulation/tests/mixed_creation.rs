@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Fresh simulations with several correlation/channel cell shapes.
 mod existing_ms_calculations;
+use casa_core::measures::frequency::FrequencyRef;
 use casa_simulation::{
     BackendRequest, PredictSpec, SessionResources, Simulator, SpectralWindowSpec,
 };
-use casa_types::measures::frequency::FrequencyRef;
 use existing_ms_calculations::{copy, predict_support as support};
 use flate2::read::GzDecoder;
 use serde_json::Value;
@@ -174,8 +174,8 @@ fn alternating_shapes_prepare_each_scan_a_bounded_number_of_times() {
 
 #[test]
 fn empty_mixed_observations_close_and_reopen() {
+    use casa_core::measures::{EpochRef, MEpoch};
     use casa_simulation::{ArrayConfig, CoordinateSystem, SimulatorOptions};
-    use casa_types::measures::{EpochRef, MEpoch};
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("empty.ms");
     let resources = support::resources(1, 512 << 20);
@@ -213,10 +213,10 @@ fn empty_mixed_observations_close_and_reopen() {
     }
     sm.set_field(
         "target",
-        &casa_types::measures::direction::MDirection::from_angles(
+        &casa_core::measures::direction::MDirection::from_angles(
             support::CENTRE_RAD[0],
             support::CENTRE_RAD[1],
-            casa_types::measures::direction::DirectionRef::J2000,
+            casa_core::measures::direction::DirectionRef::J2000,
         ),
         "",
         0.,

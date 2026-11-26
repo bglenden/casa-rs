@@ -753,12 +753,12 @@ impl Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casa_core::Correlation;
     use casa_imaging_model::PolarizationCoordinate;
     use casa_imaging_operator::{
         Basis, GridGeometry, GridPadding, GridPrecision, ImageExtent, PaddingFactor,
         PolarizationRouting, Spheroidal,
     };
-    use casa_types::Correlation;
 
     fn spheroidal_operator() -> MeasurementOperator {
         let geometry = GridGeometry::new(

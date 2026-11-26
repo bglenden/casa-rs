@@ -4,10 +4,10 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use casa_core::Value;
 use casa_tables::{
     Table, TableOptions, TablePartNames, add_directory, lexical_absolute, strip_directory,
 };
-use casa_types::Value;
 
 use super::{MeasurementSet, MsTransformError, SubtableId};
 

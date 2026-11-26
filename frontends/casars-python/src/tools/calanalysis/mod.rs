@@ -7,7 +7,7 @@ use std::sync::{Mutex, PoisonError};
 
 use casa_calibration::{CalAnalysis, CalAnalysisFit, CalAnalysisIds::*, CalAnalysisQuery};
 use casa_contracts::casacore_value_to_casa;
-use casa_types::Value;
+use casa_core::Value;
 use numpy::PyArray1;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;

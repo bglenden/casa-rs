@@ -4,8 +4,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use casa_core::Value;
 use casa_tables::{DataManagerKind, Table, TableError, TableInfo, TableOptions, TableSchema};
-use casa_types::Value;
 use pyo3::prelude::*;
 
 use super::copy::{

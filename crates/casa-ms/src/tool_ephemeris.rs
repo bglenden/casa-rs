@@ -5,9 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use casa_measures_data::CometTable;
+use casa_core::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
+use casa_measures::CometTable;
 use casa_tables::{ColumnAddition, ColumnSchema, Table, TableOptions, TableWriteLock, publication};
-use casa_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 
 use crate::tool_history::append_tool_history;
 use crate::{MeasurementSet, MsError, MsResult, SubtableId};

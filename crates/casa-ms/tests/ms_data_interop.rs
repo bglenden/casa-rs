@@ -17,7 +17,7 @@ use casa_test_support::ms_interop::MeasurementSetOracle;
 use common::{NUM_CHAN, NUM_CORR, populate_main_rows, populate_subtables, verify_vis_data};
 use ndarray::{ArrayD, ShapeBuilder};
 
-use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
+use casa_core::{ArrayValue, Complex32, ScalarValue, Value};
 
 /// Rust write → Rust read: MS DATA column round-trip.
 #[test]

@@ -40,6 +40,8 @@
 
 use std::time::{Duration, Instant};
 
+use casa_core::measures::MPosition;
+use casa_core::{ArrayValue, Complex32};
 use casa_imaging_runtime::pass::{BackendChoice, WorkerTeam};
 use casa_imaging_runtime::{
     CoreAllocation, Demand, Reservation, ReservationWindow, admit, charge_process_caches,
@@ -51,13 +53,11 @@ use casa_ms::{
     MeasurementSetMutationColumnValues, MeasurementSetWriteColumnPlan, MeasurementSetWritePlan,
     MeasurementSetWriteResources, MeasurementSetWriteSession, TARGET_BATCH_BYTES,
 };
+use casa_tables::streamed_tiled::STREAMING_TILED_COLUMN_BUFFER_BYTES;
 use casa_tables::{
-    RequiredScalarColumnDestination, RequiredScalarColumnValuesMut,
-    STREAMING_TILED_COLUMN_BUFFER_BYTES, SelectedArray1DCellsMut, SelectedArray2DCellsMut,
-    TableWriteLock,
+    RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, SelectedArray1DCellsMut,
+    SelectedArray2DCellsMut, TableWriteLock,
 };
-use casa_types::measures::MPosition;
-use casa_types::{ArrayValue, Complex32};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::components;
@@ -269,7 +269,7 @@ fn patch_range(
                 .any(|(prediction, _)| {
                     prediction.focus.is_some()
                         || prediction.tangent.refer()
-                            != casa_types::measures::direction::DirectionRef::J2000
+                            != casa_core::measures::direction::DirectionRef::J2000
                 })
             || plan
                 .phases()

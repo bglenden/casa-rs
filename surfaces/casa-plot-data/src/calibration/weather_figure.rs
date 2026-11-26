@@ -6,10 +6,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use casa_calibration::weather::{WeatherPlotData, weather_date};
-use casa_measures_data::{MeasuresRuntime, PlanetaryTable, RuntimePolicy};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
-use casa_types::quanta::Quantity;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
+use casa_core::quanta::Quantity;
+use casa_measures::{MeasuresRuntime, PlanetaryTable, RuntimePolicy};
 use serde::Serialize;
 
 use crate::plot_document::{

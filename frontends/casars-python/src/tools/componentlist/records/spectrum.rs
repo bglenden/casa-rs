@@ -2,7 +2,7 @@
 //! Required spectral fields: table loading tolerates failures, cl imports do not.
 use super::{numbers, scalar};
 use casa_components::SpectralType;
-use casa_types::{ArrayValue, RecordValue, Value};
+use casa_core::{ArrayValue, RecordValue, Value};
 
 pub(super) fn validate(record: &RecordValue, kind: SpectralType) -> Result<(), String> {
     match kind {

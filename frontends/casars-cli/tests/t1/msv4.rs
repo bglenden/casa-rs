@@ -173,8 +173,8 @@ fn standard_mfs_images_the_msv4_conversion_as_the_measurement_set() {
 /// another native channel remains acquired and images on either store.
 #[test]
 fn a_flagged_first_channel_does_not_hide_a_later_acquired_channel() {
+    use casa_core::{ArrayValue, Value};
     use casa_ms::{MeasurementSet, OptionalMainColumn};
-    use casa_types::{ArrayValue, Value};
     let observation = Observation::synthesise_band(2, &[("point", POINT)]);
     let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
     if !ms
@@ -234,8 +234,8 @@ fn a_flagged_first_channel_does_not_hide_a_later_acquired_channel() {
 /// in either store, rather than losing the window or treating rows as padding.
 #[test]
 fn acquired_nonfinite_uvw_is_refused_in_both_stores() {
+    use casa_core::{ArrayValue, Value};
     use casa_ms::MeasurementSet;
-    use casa_types::{ArrayValue, Value};
     let observation = Observation::synthesise_band(2, &[("point", POINT)]);
     let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
     for row in 0..ms.row_count() {

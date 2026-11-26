@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
+use casa_core::{RecordValue, ScalarValue, Value};
 use casa_tables::TableError;
-use casa_types::{RecordValue, ScalarValue, Value};
 
 use super::FlaggingError;
 use crate::{SubtableId, transform::open_staged_subtable_for_write};

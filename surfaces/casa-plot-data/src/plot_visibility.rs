@@ -3,8 +3,8 @@
 
 use std::collections::BTreeMap;
 
+use casa_core::{ArrayValue, Complex64};
 use casa_tables::Table;
-use casa_types::{ArrayValue, Complex64};
 use ndarray::Ix2;
 
 use crate::plot::{

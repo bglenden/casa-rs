@@ -19,11 +19,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use casa_core::measures::MjdHighPrec;
 use casa_observation::{
     Catalogue, DataGroupEntry, MergeTolerance, ObservationError, OrderedBaseline, PartitionEntry,
     PartitionId, ScanEntry, ScanId, UvwFrame, VisibilityUnits, merge,
 };
-use casa_types::measures::MjdHighPrec;
 
 use super::Loss;
 use super::inputs::Input;
@@ -180,7 +180,7 @@ fn scan_offsets(
 #[derive(Clone, Debug, PartialEq)]
 struct Key {
     window: u32,
-    correlations: Vec<casa_types::Correlation>,
+    correlations: Vec<casa_core::Correlation>,
     mode: String,
     observation: u32,
     feeds: Option<[u32; 2]>,
@@ -204,7 +204,7 @@ struct Building<'a> {
         (
             Vec<f64>,
             Vec<f64>,
-            casa_types::measures::frequency::FrequencyRef,
+            casa_core::measures::frequency::FrequencyRef,
         ),
     >,
     units: Vec<Option<VisibilityUnits>>,

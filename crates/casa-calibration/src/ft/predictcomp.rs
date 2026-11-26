@@ -4,16 +4,16 @@
 use std::path::Path;
 
 use casa_components::{ComponentList, ComponentListError, ComponentShape, SkyComponent};
+use casa_core::measures::epoch::MEpoch;
+use casa_core::measures::frame::MeasFrame;
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::quanta::casacore::stream_double;
 use casa_ms::{MsResult, open_measures_runtime};
 use casa_tables::publication::{
     check_write_access, exchange_directories, lock_table_tree_for_replacement,
     rename_without_replacing,
 };
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::epoch::MEpoch;
-use casa_types::measures::frame::MeasFrame;
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::quanta::casacore::stream_double;
 
 use super::invalid;
 use super::setjy::sampled_shape;
@@ -196,7 +196,7 @@ pub fn predict_solar_component_2012(
     frequency_hz: &[f64],
     prefix: &str,
 ) -> MsResult<PredictedComponent> {
-    use casa_types::measures::position::MPosition;
+    use casa_core::measures::position::MPosition;
 
     use super::setjy::solar2012::Solar2012;
 

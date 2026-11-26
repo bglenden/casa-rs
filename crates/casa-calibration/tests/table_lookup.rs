@@ -5,7 +5,7 @@
 mod common;
 
 use casa_calibration::{ApplyInterpolationMode, CalibrationTableLookup};
-use casa_types::Complex32;
+use casa_core::Complex32;
 use common::{SyntheticDelaySolutionRow, SyntheticGainSolutionRow};
 use tempfile::TempDir;
 

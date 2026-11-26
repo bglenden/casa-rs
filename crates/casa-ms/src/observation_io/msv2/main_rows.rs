@@ -7,9 +7,9 @@
 
 use std::ops::ControlFlow;
 
+use casa_core::ArrayValue;
 use casa_observation::ObservationError;
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
-use casa_types::ArrayValue;
 
 use super::{Msv2Observation, table_error};
 

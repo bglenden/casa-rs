@@ -20,7 +20,7 @@
 
 use std::path::Path;
 
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 use num_complex::Complex64;
 use numpy::PyReadonlyArrayDyn;

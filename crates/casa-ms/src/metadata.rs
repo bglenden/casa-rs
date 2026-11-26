@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Shared column-keyword metadata helpers for MeasurementSet compatibility.
 
-use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+use casa_core::{RecordField, RecordValue, ScalarValue, Value};
 
 use crate::column_def::ColumnDef;
 
@@ -24,10 +24,10 @@ pub(crate) fn quantum_units_for(def: &ColumnDef) -> Option<Vec<String>> {
         return None;
     }
     match def.measure_type {
-        Some(casa_tables::table_measures::MeasureType::Direction) => {
+        Some(casa_measures::table_measures::MeasureType::Direction) => {
             Some(vec![def.unit.to_string(), def.unit.to_string()])
         }
-        Some(casa_tables::table_measures::MeasureType::Position) => Some(vec![
+        Some(casa_measures::table_measures::MeasureType::Position) => Some(vec![
             def.unit.to_string(),
             def.unit.to_string(),
             def.unit.to_string(),

@@ -15,8 +15,9 @@ cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
 workspace = true
 
 [dependencies]
-casa-tables = { path = "../casa-tables" }
-casa-types = { path = "../casa-types" }
+casa-measures.workspace = true
+casa-tables.workspace = true
+casa-core.workspace = true
 # Maintained AMOS 644 implementation, MIT/Apache-2.0: real-order J for
 # limb disks, without a native GSL dependency or per-evaluation allocation.
 complex-bessel = { version = "0.4", default-features = false }

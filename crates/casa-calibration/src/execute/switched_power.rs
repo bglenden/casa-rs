@@ -3,8 +3,8 @@
 
 use super::{ApplyExecutionError, GainGrid, GainSample, MeasurementSet};
 use crate::gencal::EVLA_CORRELATOR_EFFICIENCY;
+use casa_core::{Complex32, Value};
 use casa_tables::{Table, TableOptions, add_directory};
-use casa_types::{Complex32, Value};
 use std::path::Path;
 
 #[derive(Clone)]

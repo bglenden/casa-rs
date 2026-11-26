@@ -33,8 +33,8 @@
 
 use std::f64::consts::{FRAC_PI_4, PI};
 
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frame::MeasFrame;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frame::MeasFrame;
 use ndarray::Array3;
 
 use crate::SkyComponent;

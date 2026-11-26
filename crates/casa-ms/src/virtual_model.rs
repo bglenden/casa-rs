@@ -52,8 +52,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use casa_tables::{ColumnSchema, Table, TableWriteLock};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
 use crate::schema::SubtableId;

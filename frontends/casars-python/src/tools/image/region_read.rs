@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_core::{ArrayD, RecordValue};
 use casa_images::analysis::{ImageRegionSection, SubimageRegion, evaluate_image_tool_mask_section};
-use casa_types::{ArrayD, RecordValue};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyList, PyString, PyTuple};

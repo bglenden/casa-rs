@@ -4,8 +4,8 @@
 use super::{combine::Combined, inputs::Input, msv2_tables::Layout};
 use crate::observation_io::update::{request_error, storage};
 use crate::{MeasurementSet, SubtableId};
+use casa_core::{RecordValue, ScalarValue, Value};
 use casa_observation::ObservationError;
-use casa_types::{RecordValue, ScalarValue, Value};
 
 fn integer(row: &RecordValue, name: &str) -> Result<i32, ObservationError> {
     match row.get(name) {

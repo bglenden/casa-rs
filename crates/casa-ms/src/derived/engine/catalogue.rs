@@ -5,12 +5,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+use casa_core::measures::MeasuresProvider;
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::epoch::EpochRef;
+use casa_core::measures::frame::MeasFrame;
+use casa_core::measures::position::MPosition;
 use casa_observation::Catalogue;
-use casa_types::measures::MeasuresProvider;
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::epoch::EpochRef;
-use casa_types::measures::frame::MeasFrame;
-use casa_types::measures::position::MPosition;
 
 use super::{AttachedFieldEphemeris, FeedMount, FieldMotion, MsCalEngine};
 use crate::error::MsResult;

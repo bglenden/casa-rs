@@ -2,10 +2,10 @@
 
 use std::path::Path;
 
+use casa_core::{RecordValue, Value};
 use casa_images::analysis::{SubimageOptions, SubimagePlan, ensure_outfile_does_not_alias_input};
 use casa_images::image::image_history_rows;
 use casa_images::{ImageInterface, ImagePixel};
-use casa_types::{RecordValue, Value};
 use num_complex::Complex;
 use pyo3::prelude::*;
 

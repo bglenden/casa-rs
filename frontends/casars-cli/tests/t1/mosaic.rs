@@ -389,8 +389,8 @@ fn a_mosaic_without_pointing_samples_points_at_its_fields() {
 /// field 2 must change neither the normal images nor the model prediction.
 #[test]
 fn a_mosaic_excludes_pointings_outside_the_image_from_gridding_and_prediction() {
+    use casa_core::{ArrayValue, ScalarValue};
     use casa_ms::{MeasurementSet, VisibilityDataColumn};
-    use casa_types::{ArrayValue, ScalarValue};
 
     let (observation, mut controls) = mosaic_run(false);
     controls["imsize"] = json!(256);
@@ -904,7 +904,7 @@ fn an_analytic_pb_refuses_a_time_varying_field_direction() {
             .set_cell(
                 1,
                 "NUM_POLY",
-                casa_types::Value::Scalar(casa_types::ScalarValue::Int32(1)),
+                casa_core::Value::Scalar(casa_core::ScalarValue::Int32(1)),
             )
             .expect("NUM_POLY");
         for (column, rate) in [
@@ -916,7 +916,7 @@ fn an_analytic_pb_refuses_a_time_varying_field_direction() {
                 .set_cell(
                     1,
                     column,
-                    casa_types::Value::Array(casa_types::ArrayValue::Float64(polynomial(rate))),
+                    casa_core::Value::Array(casa_core::ArrayValue::Float64(polynomial(rate))),
                 )
                 .expect(column);
         }

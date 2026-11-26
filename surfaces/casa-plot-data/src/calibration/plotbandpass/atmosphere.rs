@@ -8,11 +8,11 @@ use std::sync::Arc;
 use casa_atmosphere::{
     AbsorptionProfile, AtmosphereProfile, AtmosphereType, ProfileParameters, Sky, SpectralGrid,
 };
-use casa_measures_data::{MeasuresRuntime, RuntimePolicy};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{EpochRef, MEpoch, MPosition, MeasFrame, PositionRef};
+use casa_core::{ArrayValue, ScalarValue, Value};
+use casa_measures::{MeasuresRuntime, RuntimePolicy};
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame, PositionRef};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use serde::Serialize;
 
 use super::spectrum::median;

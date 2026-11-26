@@ -33,8 +33,8 @@ trap cleanup EXIT
 if [[ -z "${CASA_RS_MEASURESPATH:-}" ]]; then
   measures_root="$tmp_root/casa-measures"
   mkdir -p "$measures_root"
-  tar -xzf crates/casa-measures-data/data/casa-measures-runtime.tar.gz -C "$measures_root"
-  cp crates/casa-measures-data/data/casa-measures-runtime.provenance.json \
+  tar -xzf libs/casacore/casa-measures/data/casa-measures-runtime.tar.gz -C "$measures_root"
+  cp libs/casacore/casa-measures/data/casa-measures-runtime.provenance.json \
     "$measures_root/.casa-rs-measures-provenance.json"
   export CASA_RS_MEASURESPATH="$measures_root"
 fi
@@ -136,11 +136,6 @@ echo "==> Installing from the sdist and running the binding tests"
 MATURIN_PEP517_ARGS="--profile dev" \
   CARGO_TARGET_DIR="$tmp_root/sdist-target" \
   "$sdist_venv/bin/python" -m pip install "${sdists[0]}[$extras]"
-# The sdist builds in a temporary source tree which is gone by test time.
-# Give its live binding cases the CLI hosts built above.
-task_bin_dir="$(cd "${CARGO_TARGET_DIR:-target}/debug" && pwd -P)"
-CASARS_CALIBRATE_BIN="$task_bin_dir/calibrate" \
-  CASARS_MSEXPLORE_BIN="$task_bin_dir/msexplore" \
 test_installed "$sdist_venv" \
   "$tests_dir/test_binding_snapshots.py" \
   "$tests_dir/test_parameters.py" \

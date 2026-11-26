@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Match the reference's actual EOP and 2024 leap-second inputs.
-use casa_types::measures::{
+use casa_core::measures::{
     EopValues, MeasuresProvider, MeasuresProviderState, ObservatoryPosition,
 };
 use serde_json::Value;

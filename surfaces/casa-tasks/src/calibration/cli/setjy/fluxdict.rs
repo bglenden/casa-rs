@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{TaskFailure, TaskInvocation};
 use casa_contracts::{CasaValue, ParameterValue};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
 use casa_ms::{MsSelection, ResolvedMsSelection};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 
 use super::{
     FluxParameters, add_time_selection, execution, flux_dictionary, model_files, prepare,

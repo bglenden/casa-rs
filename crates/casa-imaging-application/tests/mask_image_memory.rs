@@ -11,6 +11,7 @@ use casa_coordinates::{
     CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate,
     StokesCoordinate, StokesType,
 };
+use casa_core::measures::{direction::DirectionRef, frequency::FrequencyRef};
 use casa_images::PagedImage;
 use casa_imaging_application::{
     RunContext,
@@ -21,7 +22,6 @@ use casa_imaging_model::{
     DirectionCoordinateSpec, DirectionFrame, Projection as ImagingProjection, SkyDirection,
 };
 use casa_imaging_runtime::{HostResources, ReservationWindow, ResourcePolicy};
-use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
 use ndarray::{ArrayD, Dimension, IxDyn};
 
 #[global_allocator]

@@ -4,11 +4,11 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
+use casa_core::{ArrayValue, Complex32};
 use casa_ms::schema::main_table::initial_model_visibility;
 use casa_ms::selection::MsSelectionIndices;
 use casa_ms::{MeasurementSet, MsError, MsResult, MsSelection, ResolvedMsSelectionRow};
 use casa_tables::TableWriteLock;
-use casa_types::{ArrayValue, Complex32};
 use ndarray::{ArrayD, Axis, IxDyn};
 
 use super::StatWtMs;

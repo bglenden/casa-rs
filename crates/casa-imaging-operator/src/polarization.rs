@@ -3,8 +3,8 @@
 //! basis, pinned to CASA (`FTMachine::initMaps`, `StokesImageUtil`,
 //! `CStokesVector`).
 
+use casa_core::Correlation;
 use casa_imaging_model::PolarizationCoordinate;
-use casa_types::Correlation;
 use num_complex::Complex64;
 
 use crate::error::OperatorError;

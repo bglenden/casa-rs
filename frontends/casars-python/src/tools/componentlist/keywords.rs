@@ -8,8 +8,8 @@ pub(crate) use cache::{clear_locks, flush_pending};
 use std::path::Path;
 use std::sync::{Arc, PoisonError};
 
+use casa_core::{RecordValue, Value};
 use casa_tables::{Table, TableOptions};
-use casa_types::{RecordValue, Value};
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyString};

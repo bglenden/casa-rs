@@ -4,8 +4,8 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use casa_tables::{Table, TableError, TableOptions};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::{SubtableId, ms::subtable_path_from_main};
 

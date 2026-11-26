@@ -234,7 +234,7 @@ main() {
     run_timed_step "python docs build" scripts/build-python-docs.sh
   fi
 
-  for cargo_toml in crates/*/Cargo.toml; do
+  for cargo_toml in crates/*/Cargo.toml libs/casacore/*/Cargo.toml; do
     if ! grep -Eq '^version\.workspace = true$' "$cargo_toml"; then
       die "$cargo_toml does not use version.workspace = true"
     fi
@@ -242,6 +242,10 @@ main() {
 
   echo "==> Updating workspace version $current_version -> $version"
   perl -0pi -e 's/^version = "\Q'"$current_version"'\E"$/version = "'"$version"'"/m' Cargo.toml
+
+  ARCH_RELEASE_OLD="$current_version" ARCH_RELEASE_NEW="$version" perl -pi -e '
+    s{^(casa-[\w-]+ = \{ path = "libs/casacore/[^"]+", version = ")\Q$ENV{ARCH_RELEASE_OLD}\E(" \})$}{$1$ENV{ARCH_RELEASE_NEW}$2};
+  ' Cargo.toml
 
   if git diff --quiet -- Cargo.toml; then
     die "version update did not modify Cargo.toml"

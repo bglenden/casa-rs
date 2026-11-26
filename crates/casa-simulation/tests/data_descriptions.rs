@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Simulation selections/calculations/appends resolve actual DD-to-SPW mappings.
 mod existing_ms_calculations;
-use casa_simulation::{ApplySpec, PredictSpec, PredictionOptions, Simulator, SimulatorOptions};
-use casa_tables::{Table, TableOptions};
-use casa_types::{
+use casa_core::{
     ArrayValue, ScalarValue,
     measures::{EpochRef, MEpoch},
 };
+use casa_simulation::{ApplySpec, PredictSpec, PredictionOptions, Simulator, SimulatorOptions};
+use casa_tables::{Table, TableOptions};
 use existing_ms_calculations::predict_support;
 use flate2::read::GzDecoder;
 use serde_json::Value;
@@ -110,7 +110,7 @@ fn invalid_description_references_leave_the_input_unchanged() {
         table
             .cell_accessor_mut(2, column)
             .unwrap()
-            .set(casa_types::Value::Scalar(ScalarValue::Int32(-1)))
+            .set(casa_core::Value::Scalar(ScalarValue::Int32(-1)))
             .unwrap();
         table
             .save(TableOptions::new(path.join("DATA_DESCRIPTION")))

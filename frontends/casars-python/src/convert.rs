@@ -37,7 +37,7 @@ use std::ffi::{CString, c_char};
 use std::fmt;
 use std::ptr;
 
-use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim};
+use casa_core::quanta::{Dimension, Quantity, Unit, UnitDim};
 use num_complex::Complex64;
 use numpy::{PyReadonlyArrayDyn, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PyTypeError, PyValueError};
@@ -1208,7 +1208,7 @@ pub(crate) fn quantity_record(record: &BTreeMap<String, Variant>) -> Result<Quan
 /// casacore's `Unit(name)`: the name normalised as `Unit::check` normalises
 /// it, failing with casacore's message for a name it cannot read.
 pub(crate) fn casacore_unit(name: &str) -> Result<Unit, String> {
-    casa_types::quanta::casacore::casacore_unit(name).map_err(|error| error.0)
+    casa_core::quanta::casacore::casacore_unit(name).map_err(|error| error.0)
 }
 
 #[cfg(test)]

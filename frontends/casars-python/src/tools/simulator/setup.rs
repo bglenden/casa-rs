@@ -9,12 +9,12 @@
 //! session's work run with the GIL released (`PySimulator::on_session`), and
 //! messages are logged once it is back.
 
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{EpochRef, MEpoch, MPosition};
 use casa_simulation::{
     ArrayConfig, CoordinateSystem, ObserveManySpec, ObserveSpec, Pointing, SpectralWindowSpec,
     StateSpec,
 };
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, MEpoch, MPosition};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
@@ -104,7 +104,7 @@ pub(super) fn observe(
         return Ok(false);
     }
     let (start_s, stop_s) =
-        casa_types::quanta::registry::global_registry().with_stable_units(|| {
+        casa_core::quanta::registry::global_registry().with_stable_units(|| {
             Ok::<_, ConvertError>((
                 quantity_value(&request.start, "s")?,
                 quantity_value(&request.stop, "s")?,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Signed FPARAM samples share the complex lookup's storage and shape validation.
 use super::*;
-use casa_types::ArrayValue;
+use casa_core::ArrayValue;
 
 impl GainGrid {
     pub(crate) fn from_real_arrays(

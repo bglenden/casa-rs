@@ -16,12 +16,12 @@ mod postprocess;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
+use casa_core::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use casa_ms::MsError;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
 use casa_ms::selection::MsSelection;
 use casa_tables::{ColumnSchema, TableError, TableSchema};
-use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -73,7 +73,7 @@ impl BandpassFrequencyInterval {
     /// denotes valid input, and the inner one denotes frequency binning.
     #[must_use]
     pub fn from_casa(text: &str) -> Option<Option<Self>> {
-        use casa_types::quanta::{Quantity, Unit};
+        use casa_core::quanta::{Quantity, Unit};
         let text = text.trim();
         let upper = text.to_ascii_uppercase();
         if upper.is_empty() || upper.contains("NONE") {
@@ -880,20 +880,20 @@ fn write_bandpass_caltable(
     mode: crate::CalibrationOutputMode,
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
     let schema = TableSchema::new(vec![
-        ColumnSchema::scalar(COL_TIME, casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar(COL_FIELD_ID, casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_SPECTRAL_WINDOW_ID, casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_ANTENNA1, casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_ANTENNA2, casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_INTERVAL, casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar(COL_SCAN_NUMBER, casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_OBSERVATION_ID, casa_types::PrimitiveType::Int32),
-        ColumnSchema::array_variable(COL_CPARAM, casa_types::PrimitiveType::Complex32, Some(2)),
-        ColumnSchema::array_variable(COL_PARAMERR, casa_types::PrimitiveType::Float32, Some(2)),
-        ColumnSchema::array_variable(COL_FLAG, casa_types::PrimitiveType::Bool, Some(2)),
-        ColumnSchema::array_variable(COL_SNR, casa_types::PrimitiveType::Float32, Some(2)),
+        ColumnSchema::scalar(COL_TIME, casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar(COL_FIELD_ID, casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_SPECTRAL_WINDOW_ID, casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_ANTENNA1, casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_ANTENNA2, casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_INTERVAL, casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar(COL_SCAN_NUMBER, casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_OBSERVATION_ID, casa_core::PrimitiveType::Int32),
+        ColumnSchema::array_variable(COL_CPARAM, casa_core::PrimitiveType::Complex32, Some(2)),
+        ColumnSchema::array_variable(COL_PARAMERR, casa_core::PrimitiveType::Float32, Some(2)),
+        ColumnSchema::array_variable(COL_FLAG, casa_core::PrimitiveType::Bool, Some(2)),
+        ColumnSchema::array_variable(COL_SNR, casa_core::PrimitiveType::Float32, Some(2)),
         // CASA declares WEIGHT but leaves it undefined in bandpass solutions.
-        ColumnSchema::array_variable(COL_WEIGHT, casa_types::PrimitiveType::Float32, Some(2)),
+        ColumnSchema::array_variable(COL_WEIGHT, casa_core::PrimitiveType::Float32, Some(2)),
     ])
     .expect("valid bandpass schema");
     let mut writer = CalibrationTableWriter::with_mode(

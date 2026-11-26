@@ -4,8 +4,8 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use casa_core::{ScalarValue, Value};
 use casa_tables::{Table, TableError, TableOptions, add_directory};
-use casa_types::{ScalarValue, Value};
 use thiserror::Error;
 
 use crate::constants::{
@@ -573,7 +573,7 @@ fn scan_bpoly_spectral_window_ids(
             .cell_accessor(row, COL_SPECTRAL_WINDOW_ID)
             .and_then(|cell| cell.array())
         {
-            Ok(casa_types::ArrayValue::Int32(values)) => {
+            Ok(casa_core::ArrayValue::Int32(values)) => {
                 for value in values.iter().copied() {
                     spw_ids.insert(value);
                 }
@@ -623,7 +623,7 @@ fn collect_i32_cell(
     }
 }
 
-fn keyword_string(record: &casa_types::RecordValue, name: &str) -> Option<String> {
+fn keyword_string(record: &casa_core::RecordValue, name: &str) -> Option<String> {
     match record.get(name) {
         Some(Value::Scalar(ScalarValue::String(value))) => Some(value.clone()),
         _ => None,

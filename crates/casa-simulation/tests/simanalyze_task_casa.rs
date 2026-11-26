@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Native simobserve → simanalyze against 13 actual CASA 6.7.6.14 images.
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_images::PagedImage;
 use casa_simulation::simanalyze::{SimanalyzeRequest, simanalyze};
 use casa_simulation::simobserve::{SimobserveParameters, SimobserveRequest, simobserve};
 use casa_simulation::{ExecutionControls, SessionResources, SimulatorOptions};
-use casa_types::measures::{EpochRef, MEpoch};
 use flate2::read::GzDecoder;
 use serde_json::{Value, json};
 use std::path::Path;

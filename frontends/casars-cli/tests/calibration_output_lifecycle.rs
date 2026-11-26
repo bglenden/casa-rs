@@ -7,9 +7,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use casa_calibration::*;
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use casa_ms::MsSelection;
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use tempfile::TempDir;
 
 fn gain(path: &Path) -> GainSolveRequest {
@@ -344,7 +344,7 @@ fn report_aliasing_a_table_file_is_refused_before_replacement() {
 #[test]
 fn polynomial_bandpass_append_reuses_the_window_descriptor() {
     let dir = TempDir::new().unwrap();
-    let unit = casa_types::Complex32::new(1.0, 0.0);
+    let unit = casa_core::Complex32::new(1.0, 0.0);
     let ms = common::create_bandpass_solve_fixture_ms(
         dir.path(),
         &[common::SyntheticBandpassTimeCluster {
@@ -513,12 +513,12 @@ fn append_preserves_custom_keyword_subtables() {
     let mut extra = Table::with_schema(
         casa_tables::TableSchema::new(vec![casa_tables::ColumnSchema::scalar(
             "ORIGIN",
-            casa_types::PrimitiveType::Float64,
+            casa_core::PrimitiveType::Float64,
         )])
         .unwrap(),
     );
     extra
-        .add_row(RecordValue::new(vec![casa_types::RecordField::new(
+        .add_row(RecordValue::new(vec![casa_core::RecordField::new(
             "ORIGIN",
             Value::Scalar(ScalarValue::Float64(42.0)),
         )]))

@@ -30,6 +30,10 @@ use std::path::Path;
 use casa_atmosphere::{
     AbsorptionProfile, AtmosphereProfile, ChannelTotals, ProfileParameters, Sky, SpectralGrid,
 };
+use casa_core::ArrayValue;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_ms::MeasurementSet;
 use casa_ms::columns::data_columns::DataColumn;
@@ -43,10 +47,6 @@ use casa_simulation::{
     ObserveSpec, SessionResources, Simulator, SimulatorOptions, SimulatorResult,
     SpectralWindowSpec, StateSpec, TsysParameters,
 };
-use casa_types::ArrayValue;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
 use ndarray::IxDyn;
 use num_complex::Complex32;
 use pass_summary::capture;

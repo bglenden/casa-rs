@@ -4,10 +4,10 @@
 //! the selectors CASA's tclean refuses write no images.
 use std::path::Path;
 
+use casa_core::{ScalarValue, Value};
 use casa_imaging_application::{ImagingRequest, product_law};
 use casa_ms::{MeasurementSet, SubtableId};
 use casa_tasks::imaging::{ImagerRunTaskResult, ImagingParameters, resolve_request, run};
-use casa_types::{ScalarValue, Value};
 use serde_json::json;
 
 use super::fixture::{Component, Observation, PHASE_CENTER_RAD, Setup};

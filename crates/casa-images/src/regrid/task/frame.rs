@@ -2,11 +2,11 @@
 //! CASA's direction-reference template mode.
 
 use casa_coordinates::{Coordinate, CoordinateSystem, DirectionCoordinate, ProjectionType};
-use casa_types::measures::{
+use casa_core::measures::{
     MeasFrame,
     direction::{DirectionRef, MDirection},
 };
-use casa_types::{ArrayD, PrimitiveType};
+use casa_core::{ArrayD, PrimitiveType};
 use ndarray::{Axis, IxDyn, ShapeBuilder, Slice};
 
 use super::{

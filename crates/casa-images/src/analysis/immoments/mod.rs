@@ -12,7 +12,7 @@ pub use tool::{ImageMomentOptions, ImageMomentProducts, make_image_moments, mome
 
 use crate::analysis::MomentAxis;
 use crate::image::{ImageHistoryEntry, image_history_entries};
-use casa_types::{RecordValue, Value};
+use casa_core::{RecordValue, Value};
 
 use super::axes::{subimage_coordinate_record, subimage_coordinates_with_stokes};
 use super::imsubimage::{SubimageRegion, coords::subset_beam_set, region::SubimageSelection};

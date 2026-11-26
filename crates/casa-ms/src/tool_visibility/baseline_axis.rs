@@ -7,10 +7,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::f64::consts::{PI, TAU};
 use std::sync::{Arc, OnceLock};
 
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{EpochRef, MEpoch, MeasFrame, MeasuresProvider};
+use casa_core::{ArrayValue, RecordField, RecordValue, Value};
 use casa_tables::{RequiredScalarColumnValues, Table};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, MEpoch, MeasFrame, MeasuresProvider};
-use casa_types::{ArrayValue, RecordField, RecordValue, Value};
 use ndarray::ArrayD;
 
 use super::{averaging, input, shaped, typed_scalar_column, vector, visibility_product};

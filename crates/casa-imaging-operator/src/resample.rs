@@ -23,7 +23,7 @@ mod tabular;
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use casa_types::measures::PreparedFrequencyConversion;
+use casa_core::measures::PreparedFrequencyConversion;
 use num_complex::{Complex32, Complex64};
 
 use self::fine_grid::{FineGrid, linear_samples};

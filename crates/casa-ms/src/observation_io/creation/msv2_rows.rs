@@ -9,10 +9,11 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use casa_core::ScalarValue;
+use casa_core::measures::MjdHighPrec;
 use casa_observation::{Catalogue, ObservationError, PartitionId, VisibilityBatch};
-use casa_tables::{ColumnOverrides, StreamedScalarValues, StreamedTiledShapeValueType};
-use casa_types::ScalarValue;
-use casa_types::measures::MjdHighPrec;
+use casa_tables::streamed_tiled::StreamedTiledShapeValueType;
+use casa_tables::{ColumnOverrides, StreamedScalarValues};
 use ndarray::{ArrayView2, ArrayView3, Axis};
 use num_complex::Complex32;
 

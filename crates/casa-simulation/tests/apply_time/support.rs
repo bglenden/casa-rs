@@ -4,11 +4,11 @@ use super::{input, predict_support, support};
 use casa_calibration::{
     SimulatedJones, SimulatedSolution, SolutionValues, write_simulated_jones_table,
 };
+use casa_core::measures::{EpochRef, MEpoch};
+use casa_core::{ArrayValue, Complex32, ScalarValue, Value};
 use casa_ms::MeasurementSet;
 use casa_simulation::{ApplySpec, Simulator, SimulatorOptions};
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::{EpochRef, MEpoch};
-use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use num_complex::Complex64;
 use serde_json::Value as Json;

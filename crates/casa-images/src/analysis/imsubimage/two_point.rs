@@ -7,8 +7,8 @@ use std::path::Path;
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, LinearCoordinate,
 };
+use casa_core::{ArrayD, Complex32, Complex64, RecordValue};
 use casa_lattices::{TraversalCursorIter, TraversalSpec};
-use casa_types::{ArrayD, Complex32, Complex64, RecordValue};
 use ndarray::{Axis, Ix2, IxDyn};
 
 use crate::{ImageError, ImageInfo, ImageInterface, ImagePixel, ImageType, MutableImageInterface};

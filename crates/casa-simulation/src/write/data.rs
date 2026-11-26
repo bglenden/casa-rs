@@ -4,8 +4,8 @@
 
 use std::time::Duration;
 
+use casa_core::Complex32;
 use casa_imaging_runtime::pass::{BackendChoice, WorkerTeam};
-use casa_types::Complex32;
 
 use super::components::add_components;
 use super::geometry::RowGeometry;

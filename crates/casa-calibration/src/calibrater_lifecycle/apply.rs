@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
+use casa_core::{ArrayValue, RecordField, RecordValue, Value};
 use casa_ms::{MeasurementSet, MsSelection};
-use casa_types::{ArrayValue, RecordField, RecordValue, Value};
 
 use super::traditional_apply::{
     calibration_factory_type, non_calibration_table, open_apply_table, snapshot_table,

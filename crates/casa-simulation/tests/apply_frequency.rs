@@ -129,7 +129,7 @@ fn external_frequency_grid_is_loaded_and_held_at_setapply() {
     let mut table = Table::open(TableOptions::new(calibration)).unwrap();
     table.keywords_mut().upsert(
         "SPECTRAL_WINDOW",
-        casa_types::Value::TableRef(external.to_string_lossy().into_owned()),
+        casa_core::Value::TableRef(external.to_string_lossy().into_owned()),
     );
     table.save(TableOptions::new(calibration)).unwrap();
     drop(table);

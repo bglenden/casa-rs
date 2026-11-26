@@ -340,7 +340,7 @@ impl ExistingProducts {
     pub(crate) fn beam_reading_bytes(channels: usize, polarizations: usize) -> u64 {
         let planes = channels.saturating_mul(polarizations);
         let fields = 3 * 3 + 2;
-        let record = fields * (size_of::<casa_types::RecordField>() + 3 * size_of::<String>());
+        let record = fields * (size_of::<casa_core::RecordField>() + 3 * size_of::<String>());
         let per_plane = 3 * record
             + size_of::<casa_images::GaussianBeam>()
             + 4 * size_of::<RestoringBeam>()

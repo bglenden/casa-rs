@@ -4,9 +4,9 @@
 //! several, and the rows' arrays can be read for the latter (#980). CASA's
 //! imaging iterator orders its buffers by `ARRAY_ID` first.
 
+use casa_core::{ScalarValue, Value};
 use casa_ms::MeasurementSet;
 use casa_ms::observation_io::Msv2Observation;
-use casa_types::{ScalarValue, Value};
 
 use super::fields::mosaic;
 

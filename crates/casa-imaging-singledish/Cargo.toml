@@ -13,7 +13,7 @@ workspace = true
 [dependencies]
 casa-imaging-operator = { path = "../casa-imaging-operator" }
 casa-imaging-runtime = { path = "../casa-imaging-runtime" }
-casa-numerics = { path = "../casa-numerics" }
+casa-numerics.workspace = true
 libm = "0.2"
 ndarray.workspace = true
 num-complex.workspace = true

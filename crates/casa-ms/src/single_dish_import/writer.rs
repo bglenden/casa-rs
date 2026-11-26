@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, ArrayD, ShapeBuilder};
 use num_complex::Complex32;
 

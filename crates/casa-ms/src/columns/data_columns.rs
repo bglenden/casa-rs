@@ -7,8 +7,8 @@
 //!
 //! Cf. C++ `MSMainColumns::data()`, `correctedData()`, `modelData()`.
 
+use casa_core::ArrayValue;
 use casa_tables::Table;
-use casa_types::ArrayValue;
 
 use crate::error::{MsError, MsResult};
 use crate::subtables::{get_array, has_column, set_array};
@@ -153,7 +153,7 @@ mod tests {
     use crate::column_def::build_table_schema;
     use crate::schema;
     use crate::{MeasurementSetBuilder, OptionalMainColumn};
-    use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+    use casa_core::{RecordField, RecordValue, ScalarValue, Value};
     use ndarray::ArrayD;
     use num_complex::Complex32;
 
@@ -203,13 +203,11 @@ mod tests {
                     use crate::column_def::ColumnKind;
                     let val = match cdef.column_kind {
                         ColumnKind::Scalar => match cdef.data_type {
-                            casa_types::PrimitiveType::Int32 => {
-                                Value::Scalar(ScalarValue::Int32(0))
-                            }
-                            casa_types::PrimitiveType::Float64 => {
+                            casa_core::PrimitiveType::Int32 => Value::Scalar(ScalarValue::Int32(0)),
+                            casa_core::PrimitiveType::Float64 => {
                                 Value::Scalar(ScalarValue::Float64(0.0))
                             }
-                            casa_types::PrimitiveType::Bool => {
+                            casa_core::PrimitiveType::Bool => {
                                 Value::Scalar(ScalarValue::Bool(false))
                             }
                             _ => Value::Scalar(ScalarValue::Float64(0.0)),
@@ -224,15 +222,15 @@ mod tests {
                             let shape: Vec<usize> = vec![1; ndim];
                             let total: usize = shape.iter().product();
                             match cdef.data_type {
-                                casa_types::PrimitiveType::Bool => Value::Array(ArrayValue::Bool(
+                                casa_core::PrimitiveType::Bool => Value::Array(ArrayValue::Bool(
                                     ArrayD::from_shape_vec(shape, vec![false; total]).unwrap(),
                                 )),
-                                casa_types::PrimitiveType::Float32 => {
+                                casa_core::PrimitiveType::Float32 => {
                                     Value::Array(ArrayValue::Float32(
                                         ArrayD::from_shape_vec(shape, vec![1.0; total]).unwrap(),
                                     ))
                                 }
-                                casa_types::PrimitiveType::Complex32 => {
+                                casa_core::PrimitiveType::Complex32 => {
                                     Value::Array(ArrayValue::Complex32(
                                         ArrayD::from_shape_vec(
                                             shape,
@@ -290,13 +288,11 @@ mod tests {
                     use crate::column_def::ColumnKind;
                     let val = match cdef.column_kind {
                         ColumnKind::Scalar => match cdef.data_type {
-                            casa_types::PrimitiveType::Int32 => {
-                                Value::Scalar(ScalarValue::Int32(0))
-                            }
-                            casa_types::PrimitiveType::Float64 => {
+                            casa_core::PrimitiveType::Int32 => Value::Scalar(ScalarValue::Int32(0)),
+                            casa_core::PrimitiveType::Float64 => {
                                 Value::Scalar(ScalarValue::Float64(0.0))
                             }
-                            casa_types::PrimitiveType::Bool => {
+                            casa_core::PrimitiveType::Bool => {
                                 Value::Scalar(ScalarValue::Bool(false))
                             }
                             _ => Value::Scalar(ScalarValue::Float64(0.0)),
@@ -311,15 +307,15 @@ mod tests {
                             let shape: Vec<usize> = vec![1; ndim];
                             let total: usize = shape.iter().product();
                             match cdef.data_type {
-                                casa_types::PrimitiveType::Bool => Value::Array(ArrayValue::Bool(
+                                casa_core::PrimitiveType::Bool => Value::Array(ArrayValue::Bool(
                                     ArrayD::from_shape_vec(shape, vec![false; total]).unwrap(),
                                 )),
-                                casa_types::PrimitiveType::Float32 => {
+                                casa_core::PrimitiveType::Float32 => {
                                     Value::Array(ArrayValue::Float32(
                                         ArrayD::from_shape_vec(shape, vec![1.0; total]).unwrap(),
                                     ))
                                 }
-                                casa_types::PrimitiveType::Complex32 => {
+                                casa_core::PrimitiveType::Complex32 => {
                                     Value::Array(ArrayValue::Complex32(
                                         ArrayD::from_shape_vec(
                                             shape,

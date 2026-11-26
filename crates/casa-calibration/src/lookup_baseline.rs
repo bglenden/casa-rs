@@ -2,8 +2,8 @@
 //! Baseline coordinates for supplied additive simulation tables. Numerical
 //! loading and interpolation remain the ordinary calibration lookup's.
 use super::*;
+use casa_core::ScalarValue;
 use casa_tables::TableOptions;
-use casa_types::ScalarValue;
 
 impl CalibrationTableLookup {
     /// The query index for a baseline loaded by

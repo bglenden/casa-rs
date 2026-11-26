@@ -2,8 +2,8 @@
 
 use std::f64::consts::{LN_2, TAU};
 
+use casa_core::Complex64;
 use casa_fft::Fft2;
-use casa_types::Complex64;
 use ndarray::ArrayViewMut1;
 
 use crate::ImageError;

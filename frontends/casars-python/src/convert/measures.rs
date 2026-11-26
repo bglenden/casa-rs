@@ -29,10 +29,10 @@ use std::collections::BTreeMap;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasuresProvider};
-use casa_types::quanta::{Dimension, Quantity, UnitDim};
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::measures::{EpochRef, MEpoch, MPosition, MeasuresProvider};
+use casa_core::quanta::{Dimension, Quantity, UnitDim};
 
 use super::holder::{
     CasaMeasure, DIRECTION_CODES, EPOCH_CODES, FREQUENCY_CODES, HolderError, Measure, MeasureKind,

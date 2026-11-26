@@ -15,11 +15,12 @@ cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
 workspace = true
 
 [dependencies]
+casa-measures.workspace = true
 casa-atmosphere = { path = "../casa-atmosphere" }
 casa-calibration = { path = "../casa-calibration" }
 casa-components = { path = "../casa-components" }
-casa-coordinates = { path = "../casa-coordinates" }
-casa-fft = { path = "../casa-fft" }
+casa-coordinates.workspace = true
+casa-fft.workspace = true
 casa-images = { path = "../casa-images" }
 casa-imaging-application = { path = "../casa-imaging-application" }
 casa-imaging-model = { path = "../casa-imaging-model" }
@@ -27,11 +28,11 @@ casa-imaging-operator = { path = "../casa-imaging-operator" }
 casa-imaging-products = { path = "../casa-imaging-products" }
 casa-imaging-runtime = { path = "../casa-imaging-runtime" }
 casa-imaging-singledish = { path = "../casa-imaging-singledish" }
-casa-lattices = { path = "../casa-lattices" }
+casa-lattices.workspace = true
 casa-ms = { path = "../casa-ms" }
-casa-numerics = { path = "../casa-numerics" }
-casa-tables = { path = "../casa-tables" }
-casa-types = { path = "../casa-types" }
+casa-numerics.workspace = true
+casa-tables.workspace = true
+casa-core.workspace = true
 ndarray.workspace = true
 num-complex.workspace = true
 serde_json = { version = "1", features = ["float_roundtrip"] }

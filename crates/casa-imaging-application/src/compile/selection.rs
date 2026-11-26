@@ -7,6 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use casa_core::measures::frequency::FrequencyRef;
 use casa_imaging_model::{
     BaselineSelection, IdSelection, IntentSelection, ObservationSelection, RowSelection,
     SelectionBound, SpectralWindowCoordinateCatalog, SpectralWindowSelection, UvDistanceRange,
@@ -16,7 +17,6 @@ use casa_ms::{
     UvDistanceInterval, UvDistanceLimit, VisibilityDataColumn, parse_uv_distance_intervals,
 };
 use casa_observation::{Catalogue, StateId};
-use casa_types::measures::frequency::FrequencyRef;
 
 use super::opening::OpenedStore;
 use super::survey::Survey;
@@ -470,7 +470,7 @@ fn catalogue_spw_selection(
                 ref_frequency_hz: window
                     .reference_frequency
                     .as_ref()
-                    .map_or(f64::NAN, casa_types::measures::frequency::MFrequency::hz),
+                    .map_or(f64::NAN, casa_core::measures::frequency::MFrequency::hz),
                 total_bandwidth_hz: window
                     .total_bandwidth_hz
                     .unwrap_or_else(|| widths.iter().map(|width| width.abs()).sum()),
@@ -708,18 +708,18 @@ mod tests {
 
     /// A partition whose data groups are `groups`.
     fn partition(groups: &[&str]) -> casa_observation::PartitionEntry {
+        use casa_core::measures::direction::DirectionRef;
+        use casa_core::measures::frequency::FrequencyRef;
+        use casa_core::measures::{EpochRef, MjdHighPrec};
         use casa_observation::{
             DataGroupEntry, ObservationId, PartitionEntry, UvwFrame, VisibilityUnits, WindowId,
         };
-        use casa_types::measures::direction::DirectionRef;
-        use casa_types::measures::frequency::FrequencyRef;
-        use casa_types::measures::{EpochRef, MjdHighPrec};
         PartitionEntry {
             spectral_window: "spw".to_string(),
             frequencies_hz: vec![1.0e9],
             frequency_frame: FrequencyRef::LSRK,
             channel_widths_hz: vec![1.0e6],
-            correlations: vec![casa_types::Correlation::XX],
+            correlations: vec![casa_core::Correlation::XX],
             intents: Vec::new(),
             observation: ObservationId(0),
             feeds: None,

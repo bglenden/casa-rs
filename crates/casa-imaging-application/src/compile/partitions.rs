@@ -305,7 +305,7 @@ fn wavelength(
         .windows
         .get(window as usize)
         .and_then(|window| window.reference_frequency.as_ref())
-        .map(casa_types::measures::frequency::MFrequency::hz)
+        .map(casa_core::measures::frequency::MFrequency::hz)
         .filter(|hz| hz.is_finite() && *hz > 0.0)
         .map(|hz| Some(SPEED_OF_LIGHT_M_S / hz))
         .ok_or_else(|| {

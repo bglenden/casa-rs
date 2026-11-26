@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use casa_types::Complex32;
+use casa_core::Complex32;
 
 use super::{BandpassSolutionRow, BandpassSolveControls, BandpassSolveRequest};
 use crate::solve::{GainNormalization, GainSolveMode, grouping::median_with_even_mean, phase_only};

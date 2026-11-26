@@ -194,7 +194,7 @@ pub(super) fn mapped_reference_spw(spw: i32, mapping: &[i32]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use casa_types::Complex32;
+    use casa_core::Complex32;
     use ndarray::{ArrayD, IxDyn};
 
     #[derive(serde::Deserialize)]

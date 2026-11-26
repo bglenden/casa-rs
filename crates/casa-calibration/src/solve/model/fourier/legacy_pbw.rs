@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Restore the cache cell retained with a legacy nPBWProjectFT recipe.
 
+use casa_core::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
 use casa_images::PagedImage;
 use casa_imaging_operator::{GridGeometry, LegacyPbWConvolution, PolarizationRouting};
 use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
-use casa_types::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
 
 use super::{FourierRow, GainSolveError, complex_model_image_path, model_error, record_number};
 use crate::ft::legacy_pbw::KERNEL_IMAGE;
@@ -190,12 +190,12 @@ mod tests {
     #[test]
     fn shared_pbw_grids_hold_one_reservation_between_layouts() {
         use super::super::FourierGrids;
+        use casa_core::Correlation;
         use casa_imaging_model::PolarizationCoordinate;
         use casa_imaging_operator::{
             Basis, Boxcar, GridPrecision, MeasurementOperator, PlaneRange,
         };
         use casa_imaging_runtime::reserved_memory;
-        use casa_types::Correlation;
         use std::sync::Arc;
 
         if !isolated_test(

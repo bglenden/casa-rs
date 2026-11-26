@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem};
-use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
+use casa_core::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Ix2;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;

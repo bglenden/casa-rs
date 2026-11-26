@@ -330,7 +330,7 @@ fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary()
     let mask_path = root.path().join("shifted.mask");
     let mut coordinates = CoordinateSystem::new();
     coordinates.add_coordinate(DirectionCoordinate::new(
-        casa_types::measures::direction::DirectionRef::J2000,
+        casa_core::measures::direction::DirectionRef::J2000,
         Projection::new(ProjectionType::SIN),
         [1.0, 0.5],
         [

@@ -5,6 +5,7 @@
 use std::{collections::BTreeSet, error::Error, path::PathBuf};
 
 use casa_contracts::{ParameterValue, PersistenceClass, TaskRunRequest, builtin_surface_bundle};
+use casa_core::measures::{doppler::DopplerRef, frequency::FrequencyRef};
 use casa_imaging_application::{
     AwCfSource, AwProjection, Deconvolver, Gridder, ImagingRequest, PolarizationCoordinate,
     RestoringBeamPolicy, SpecMode, Weighting,
@@ -15,7 +16,6 @@ use casa_tasks::{
     BaseSource, DiagnosticCode, ParameterSession, ProfileError, parse_profile,
     project_provider_invocation, render_sparse_profile, resolve_profile,
 };
-use casa_types::measures::{doppler::DopplerRef, frequency::FrequencyRef};
 
 const VLASS_SINGLE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),

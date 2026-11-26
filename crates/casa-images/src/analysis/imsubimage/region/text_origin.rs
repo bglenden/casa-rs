@@ -5,7 +5,7 @@ use std::fs;
 use std::path::Path;
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
-use casa_types::RecordValue;
+use casa_core::RecordValue;
 
 use crate::analysis::axes::{direction_plane_axes_for_coordinates, stokes_for_axis};
 use crate::{ImageError, ImageInterface, ImagePixel};

@@ -255,7 +255,7 @@ fn scalar(value: Option<&Bound<'_, PyAny>>, name: &str) -> PyResult<Option<PvAmo
         Variant::Record(_) => match parameter_value(value)? {
             param @ ParameterValue::Table(_) => {
                 match casa_contracts::parameter_value_to_casacore(&param) {
-                    Ok(casa_types::Value::Record(record)) => PvAmount::Record(record),
+                    Ok(casa_core::Value::Record(record)) => PvAmount::Record(record),
                     Ok(_) => return Err(invalid()),
                     Err(error) => return Err(raised(error)),
                 }

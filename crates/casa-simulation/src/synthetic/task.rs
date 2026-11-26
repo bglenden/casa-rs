@@ -3,7 +3,7 @@
 use super::family::*;
 use super::spec::*;
 use super::{Report, generate};
-use casa_types::measures::{
+use casa_core::measures::{
     EpochRef, MEpoch, MeasFrame,
     direction::{DirectionRef, MDirection},
     position::MPosition,

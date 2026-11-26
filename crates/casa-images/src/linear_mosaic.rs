@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use casa_types::ArrayD;
+use casa_core::ArrayD;
 use ndarray::{IxDyn, ShapeBuilder, Zip};
 
 use crate::regrid::regrid_mosaic_pointing;

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The developer fixture route uses native session prediction and persistence.
+use casa_core::ArrayValue;
 use casa_ms::{MeasurementSet, VisibilityDataColumn};
 use casa_simulation::synthetic::*;
-use casa_types::ArrayValue;
 
 #[test]
 fn storage_fixtures_explicitly_disable_geometric_observing_cuts() {

@@ -3,8 +3,8 @@
 mod common;
 
 use casa_calibration::{FluxScaleRequest, fluxscale};
+use casa_core::{ArrayValue, Complex32, ScalarValue, Value};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use tempfile::TempDir;
 
 #[test]
@@ -29,8 +29,8 @@ fn fluxscale_retains_the_incremental_storage_gain_reader_fallback() {
 }
 
 fn use_incremental_gain_storage(input_table: &std::path::Path) {
+    use casa_core::PrimitiveType;
     use casa_tables::{ColumnBinding, ColumnOptions, ColumnSchema, DataManagerKind, TableSchema};
-    use casa_types::PrimitiveType;
     let mut table = Table::open(TableOptions::new(input_table)).unwrap();
     let mut columns = table.schema().unwrap().columns().to_vec();
     for column in &mut columns {

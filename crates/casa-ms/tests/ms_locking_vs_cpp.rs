@@ -109,7 +109,7 @@ fn stale_tiled_table(root: &std::path::Path) -> std::path::PathBuf {
     let save = |path: &std::path::Path, rows: usize| {
         let schema = TableSchema::new(vec![ColumnSchema::array_variable(
             "DATA",
-            casa_types::PrimitiveType::Complex32,
+            casa_core::PrimitiveType::Complex32,
             Some(2),
         )])
         .expect("schema");
@@ -135,15 +135,13 @@ fn stale_tiled_table(root: &std::path::Path) -> std::path::PathBuf {
     table
 }
 
-fn stale_row(value: f32) -> casa_types::RecordValue {
-    let cell = ndarray::ArrayD::from_shape_vec(
-        vec![2, 2],
-        vec![casa_types::Complex32::new(value, 0.0); 4],
-    )
-    .expect("2x2 cell");
-    casa_types::RecordValue::new(vec![casa_types::RecordField::new(
+fn stale_row(value: f32) -> casa_core::RecordValue {
+    let cell =
+        ndarray::ArrayD::from_shape_vec(vec![2, 2], vec![casa_core::Complex32::new(value, 0.0); 4])
+            .expect("2x2 cell");
+    casa_core::RecordValue::new(vec![casa_core::RecordField::new(
         "DATA",
-        casa_types::Value::Array(casa_types::ArrayValue::Complex32(cell)),
+        casa_core::Value::Array(casa_core::ArrayValue::Complex32(cell)),
     )])
 }
 

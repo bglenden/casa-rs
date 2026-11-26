@@ -14,11 +14,11 @@
 
 use std::path::PathBuf;
 
+use casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+use casa_measures::table_measures::{MeasureType, TableMeasDesc};
 use casa_ms::{MeasurementSet, SubtableId};
 use casa_simulation::synthetic::{Antenna, ObservationRequest, SpectralSetup, generate_unflagged};
-use casa_tables::table_measures::{MeasureType, TableMeasDesc};
 use casa_tables::{ColumnSchema, RowRange};
-use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
 /// The field's phase centre and its source's direction, radians (J2000).
 const DIRECTION_RAD: [f64; 2] = [1.23, -0.45];

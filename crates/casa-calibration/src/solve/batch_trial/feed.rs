@@ -13,11 +13,11 @@ use std::ops::Range;
 use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
+use casa_core::measures::MjdHighPrec;
 use casa_observation::{
     AccessRequest, BatchBuffers, BufferPool, Catalogue, GroupCompletion, GroupKey, Observation,
     OwnedEvent, ReadEvent, VisibilityBatch, WorkToken,
 };
-use casa_types::measures::MjdHighPrec;
 use ndarray::{ArrayView2, s};
 
 use crate::solve::grouping::{SolveAccumulator, SolveGroupOptions, SolveSampleRow, SolveSamples};

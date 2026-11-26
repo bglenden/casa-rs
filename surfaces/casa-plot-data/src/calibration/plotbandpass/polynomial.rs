@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Plot the legacy BPOLY coefficients with CASA's display normalization.
 
+use casa_core::{ArrayValue, ScalarValue};
 use casa_tables::Table;
-use casa_types::{ArrayValue, ScalarValue};
 
 use casa_calibration::legacy_bpoly_chebyshev_value;
 

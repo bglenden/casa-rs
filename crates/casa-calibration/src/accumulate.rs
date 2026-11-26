@@ -4,9 +4,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use casa_core::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use casa_ms::{MeasurementSet, MsSelection};
 use casa_tables::{Table, TableOptions, TableWriteLock};
-use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
 use crate::constants::{

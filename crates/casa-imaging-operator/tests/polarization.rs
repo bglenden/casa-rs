@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA correlation representation, polarization map and Stokes basis.
 
+use casa_core::Correlation as C;
 use casa_imaging_model::PolarizationCoordinate as P;
 use casa_imaging_operator::{GridPolarization, OperatorError, PolarizationRouting, SumwtSource};
-use casa_types::Correlation as C;
 use num_complex::Complex64;
 
 fn c(re: f64, im: f64) -> Complex64 {

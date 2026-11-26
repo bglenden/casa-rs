@@ -7,6 +7,11 @@ use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::MFrequency;
+use casa_core::measures::position::MPosition;
+use casa_core::measures::{EpochRef, MEpoch};
+use casa_core::quanta::time::MvTime;
 use casa_observation::{
     AccessRequest, AntennaEntry, AntennaId, BoundCursor, Catalogue, Correlation, DataGroupEntry,
     Estimate, FieldEntry, FieldId, FieldSelection, GroupKey, Grouping, Observation,
@@ -14,11 +19,6 @@ use casa_observation::{
     PartitionId, ProcessorEntry, ProcessorId, Receptors, ScanEntry, ScanId, TimeBaselineGrid,
     Traversal, UvwFrame, WindowEntry, WindowId,
 };
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::MFrequency;
-use casa_types::measures::position::MPosition;
-use casa_types::measures::{EpochRef, MEpoch};
-use casa_types::quanta::time::MvTime;
 use zarrs::array::{Array, CodecOptions};
 use zarrs::filesystem::FilesystemStore;
 use zarrs::group::Group;
@@ -629,8 +629,8 @@ impl Msv4Observation {
             fields: Vec::new(),
             scans: Vec::new(),
             baselines: Vec::new(),
-            time_scale: casa_types::measures::EpochRef::UTC,
-            time_origin: casa_types::measures::MjdHighPrec::new(0.0, 0.0),
+            time_scale: casa_core::measures::EpochRef::UTC,
+            time_origin: casa_core::measures::MjdHighPrec::new(0.0, 0.0),
             data_groups: Vec::new(),
             receptors: BTreeMap::new(),
             window: WindowId(0),

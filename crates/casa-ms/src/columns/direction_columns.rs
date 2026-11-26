@@ -7,9 +7,9 @@
 //!
 //! Cf. C++ `MSFieldColumns::phaseDirMeas()`.
 
+use casa_core::ArrayValue;
+use casa_core::measures::direction::{DirectionRef, MDirection};
 use casa_tables::Table;
-use casa_types::ArrayValue;
-use casa_types::measures::direction::{DirectionRef, MDirection};
 
 use crate::error::{MsError, MsResult};
 use crate::subtables::get_array;
@@ -148,7 +148,7 @@ mod tests {
     use super::*;
     use crate::column_def::build_table_schema;
     use crate::schema;
-    use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+    use casa_core::{RecordField, RecordValue, ScalarValue, Value};
     use ndarray::ArrayD;
 
     fn make_field_table_with_direction(ra: f64, dec: f64) -> Table {

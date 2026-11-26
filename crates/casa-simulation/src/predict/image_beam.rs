@@ -23,7 +23,7 @@ impl ImageBeam {
         images: Vec<Array2<f32>>,
         pointing: [f64; 2],
         angle: f64,
-        frame: Option<&casa_types::measures::MeasFrame>,
+        frame: Option<&casa_core::measures::MeasFrame>,
     ) -> Result<Vec<Array2<f32>>, PredictError> {
         let pixel_of = |direction| {
             frame.map_or_else(

@@ -3,8 +3,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use casa_tables::{StreamedTiledShapeValueType as ValueType, Table, TableOptions};
-use casa_types::{ArrayValue, ScalarValue, Value};
+use casa_core::{ArrayValue, ScalarValue, Value};
+use casa_tables::streamed_tiled::StreamedTiledShapeValueType as ValueType;
+use casa_tables::{Table, TableOptions};
 
 use crate::MeasurementSet;
 use crate::ms::{casa_interferometer_count, casa_visibility_tile_shape};
@@ -277,8 +278,8 @@ pub(super) fn pad_ddids(
     offset: usize,
     budget_bytes: usize,
 ) -> Result<(), MsTransformError> {
+    use casa_core::{RecordValue, ScalarValue, Value};
     use casa_tables::{Table, TableOptions};
-    use casa_types::{RecordValue, ScalarValue, Value};
     use std::fs;
 
     let path = output.join("DATA_DESCRIPTION");
@@ -337,8 +338,8 @@ pub(super) fn pad_ddids(
 
 #[cfg(test)]
 mod tests {
+    use casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
     use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
-    use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
     #[test]
     fn ddi_start_budgets_repeated_optional_array_payload() {

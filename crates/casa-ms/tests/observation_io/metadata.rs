@@ -8,14 +8,14 @@
 
 use std::path::Path;
 
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use casa_ms::observation_io::{OpenOptions, open};
 use casa_ms::{MeasurementSet, SubtableId};
 use casa_observation::{
     BindingTolerance, IntentError, ObservationError, PartitionId, ProcessorId, StateId, WindowId,
 };
 use casa_tables::ColumnSchema;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
 
 use super::fixture;

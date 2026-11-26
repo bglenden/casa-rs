@@ -4,7 +4,7 @@ use std::ops::{Add, Div, Mul, Range, Sub};
 use std::path::Path;
 
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, CoordinateType};
-use casa_types::{ArrayD, ArrayValue, RecordValue, Value};
+use casa_core::{ArrayD, ArrayValue, RecordValue, Value};
 use ndarray::{Axis, IxDyn, Zip};
 
 use crate::{ImageError, ImageInfo, ImageInterface, MutableImageInterface};

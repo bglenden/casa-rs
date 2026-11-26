@@ -6,9 +6,9 @@
 
 use std::sync::{Arc, OnceLock};
 
-use casa_measures_data::MeasuresRuntime;
+use casa_core::measures::{EpochRef, MEpoch, MPosition, MeasFrame, UvwFrame};
+use casa_measures::MeasuresRuntime;
 use casa_test_support::measures_interop::MeasuresOracle;
-use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame, UvwFrame};
 
 fn measures_runtime() -> Arc<MeasuresRuntime> {
     static RUNTIME: OnceLock<Arc<MeasuresRuntime>> = OnceLock::new();

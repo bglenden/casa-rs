@@ -318,8 +318,8 @@ fn materialize_plain_subset(
     row_indices: &[usize],
     columns: &[String],
 ) -> Result<Table, Fail> {
+    use casa_core::{RecordField, RecordValue};
     use casa_tables::TableSchema;
-    use casa_types::{RecordField, RecordValue};
 
     let selected_cols: Vec<casa_tables::ColumnSchema> = if columns.is_empty() {
         source

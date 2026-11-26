@@ -5,8 +5,8 @@ use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use casa_core::ScalarValue;
 use casa_tables::{ColumnOverrides, ColumnType, Table, TableOptions};
-use casa_types::ScalarValue;
 
 use crate::ms::{measurement_set_main_table_bindings, measurement_set_table_options};
 use crate::transform::task_history::append_history_messages;

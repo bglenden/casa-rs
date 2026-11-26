@@ -36,7 +36,7 @@ pub struct MsGroup {
 
 impl MsGroup {
     fn from_table_group(group: &TableGroup) -> Self {
-        use casa_types::{ScalarValue, Value};
+        use casa_core::{ScalarValue, Value};
 
         let get_i32 = |name: &str| -> Option<i32> {
             group.keys.get(name).and_then(|v| match v {
@@ -113,7 +113,7 @@ mod tests {
     use super::*;
     use crate::builder::MeasurementSetBuilder;
     use crate::test_helpers::default_value;
-    use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+    use casa_core::{RecordField, RecordValue, ScalarValue, Value};
 
     fn add_row(ms: &mut MeasurementSet, overrides: &[(&str, Value)]) {
         let schema = ms.main_table().schema().unwrap().clone();

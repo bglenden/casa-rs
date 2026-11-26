@@ -10,14 +10,14 @@ use casa_coordinates::{
     CoordinateSystem, DirectionCoordinate, LinearCoordinate, Projection, ProjectionType,
     SpectralCoordinate, StokesCoordinate, StokesType, TabularCoordinate,
 };
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::{Complex32, Complex64, Value};
 use casa_images::{Image, PagedImage, PolygonRegion};
 use casa_tables::{Table, TableOptions};
 use casa_test_support::{
     CppUnsupportedRegionKind, ImageOracle, casacore_oracle_available, discover_casa_python,
 };
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::{Complex32, Complex64, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use std::path::{Path, PathBuf};
 use std::process::Command;

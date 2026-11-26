@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use casa_core::{ArrayValue, Complex32, Complex64, RecordValue, ScalarValue, Value};
 use casa_ms::SubTable;
 use casa_ms::ms::MeasurementSet;
 use casa_tables::Table;
@@ -10,7 +11,6 @@ use casa_test_support::ms_interop::MeasurementSetOracle;
 use casa_test_support::{
     CasaTestDataTier, casacore_oracle_available, casatestdata_path_for_tier, discover_casa_python,
 };
-use casa_types::{ArrayValue, Complex32, Complex64, RecordValue, ScalarValue, Value};
 use casa_vla::{ImportVlaOptions, import_archive_files_to_measurement_set_from_options};
 use tempfile::TempDir;
 

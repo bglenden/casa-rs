@@ -4,13 +4,13 @@
 //! solution, rather than duplicate the already validated noise mathematics.
 
 use casa_atmosphere::{AbsorptionProfile, AtmosphereProfile};
+use casa_core::ArrayValue;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::{EpochRef, MEpoch};
+use casa_core::quanta::Quantity;
 use casa_imaging_runtime::{Demand, admit};
 use casa_tables::{Table, TableOptions};
-use casa_types::ArrayValue;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::{EpochRef, MEpoch};
-use casa_types::quanta::Quantity;
 
 use crate::corrupt::tsys_atm::{self, TsysAtm, WindowAtmosphere};
 use crate::corrupt::{RowNoise, TsysManual, WindowNoise, airmass};

@@ -11,13 +11,13 @@
 //! field's direction, as CASA's fillers write them and XRADIO's converter
 //! looks them up, which is noted as defaulted.
 
+use casa_core::RecordField;
+use casa_core::measures::MeasFrame;
+use casa_core::measures::direction::DirectionRef;
+use casa_measures::table_measures::{MeasureType, TableMeasDesc};
 use casa_observation::{Catalogue, FieldEntry, ObservationError, SourceRecord, SourceWindow};
-use casa_tables::table_measures::{MeasureType, TableMeasDesc};
 use casa_tables::table_quantum::TableQuantumDesc;
 use casa_tables::{ColumnSchema, Table};
-use casa_types::RecordField;
-use casa_types::measures::MeasFrame;
-use casa_types::measures::direction::DirectionRef;
 
 use super::Loss;
 use super::msv2_identity::{field_time, utc_seconds};
@@ -145,7 +145,7 @@ pub(super) fn write(
             if let Some(model) = &record.model {
                 row.push(RecordField::new(
                     "SOURCE_MODEL",
-                    casa_types::Value::Record((**model).clone()),
+                    casa_core::Value::Record((**model).clone()),
                 ));
             }
             table.add_row(row).map_err(storage)?;
@@ -166,7 +166,7 @@ fn required(
     record: &SourceRecord,
     time_range: [f64; 2],
     notes: &mut Notes,
-) -> Result<Vec<(&'static str, casa_types::Value)>, ObservationError> {
+) -> Result<Vec<(&'static str, casa_core::Value)>, ObservationError> {
     let time = record.time.as_ref().map(utc_seconds).transpose()?;
     let direction = record.direction.as_ref().map(|direction| {
         let (longitude, latitude) = direction.as_angles();
@@ -318,7 +318,7 @@ impl Columns {
     /// but the record states none.
     fn optional(
         &self,
-        row: &mut casa_types::RecordValue,
+        row: &mut casa_core::RecordValue,
         record: &SourceRecord,
         notes: &mut Notes,
     ) -> Result<(), ObservationError> {
@@ -462,9 +462,9 @@ fn from_fields(
 mod tests {
     use std::sync::Arc;
 
+    use casa_core::measures::direction::{DirectionRef, MDirection};
+    use casa_core::measures::radial_velocity::RadialVelocityRef;
     use casa_observation::{FieldEntry, FieldEphemeris};
-    use casa_types::measures::direction::{DirectionRef, MDirection};
-    use casa_types::measures::radial_velocity::RadialVelocityRef;
 
     use super::{SECONDS_PER_DAY, source_direction};
 

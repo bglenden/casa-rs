@@ -17,7 +17,7 @@
 //! holds radians and records every component as CASA records one read from
 //! a table; the quantities are the same.
 
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use num_complex::Complex64;
 
 use crate::component::SkyComponent;
@@ -181,7 +181,7 @@ fn quantity(value: f64, unit: &str) -> RecordValue {
     ])
 }
 
-fn quantity_of(value: &casa_types::quanta::Quantity) -> RecordValue {
+fn quantity_of(value: &casa_core::quanta::Quantity) -> RecordValue {
     quantity(value.value(), value.unit().name())
 }
 

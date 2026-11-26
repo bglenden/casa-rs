@@ -6,11 +6,11 @@ use casa_coordinates::display::{format_stream_value, format_stream_value_with_pr
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateType, DirectionCoordinate, QualityType, StokesType,
 };
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::doppler::DopplerRef;
-use casa_types::measures::position::PositionRef;
-use casa_types::quanta::Unit;
-use casa_types::quanta::format::{ANGLE, DIG2, TIME, YMD, format_angle, format_time};
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::doppler::DopplerRef;
+use casa_core::measures::position::PositionRef;
+use casa_core::quanta::Unit;
+use casa_core::quanta::format::{ANGLE, DIG2, TIME, YMD, format_angle, format_time};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::PyBool;

@@ -3,12 +3,12 @@
 use std::path::Path;
 
 use casa_coordinates::CoordinateType;
+use casa_core::RecordValue;
 use casa_images::{
     ImageInterface,
     analysis::{ImagePad, ImagePadOptions, ensure_outfile_does_not_alias_input},
     image::image_history_rows,
 };
-use casa_types::RecordValue;
 use pyo3::prelude::*;
 
 use super::PyImageTool;

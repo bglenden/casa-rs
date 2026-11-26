@@ -4,11 +4,11 @@
 use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_components::ComponentList;
 use casa_contracts::{CasaValue, NumpyScalarType, ParameterValue};
+use casa_core::quanta::Quantity;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::{
     MeasurementSet, MsSelection, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
 };
-use casa_types::quanta::Quantity;
 
 use casa_calibration::ft::image::{ImageModel, TaylorTerm, prepare_image, reference_frequency};
 use casa_calibration::ft::virtual_publication::VirtualFtPublication;

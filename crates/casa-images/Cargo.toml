@@ -12,12 +12,12 @@ workspace = true
 
 [dependencies]
 casa-components = { path = "../casa-components" }
-casa-fft = { path = "../casa-fft" }
-casa-coordinates = { path = "../casa-coordinates" }
-casa-lattices = { path = "../casa-lattices" }
-casa-numerics = { path = "../casa-numerics" }
-casa-tables = { path = "../casa-tables" }
-casa-types = { path = "../casa-types" }
+casa-fft.workspace = true
+casa-coordinates.workspace = true
+casa-lattices.workspace = true
+casa-numerics.workspace = true
+casa-tables.workspace = true
+casa-core.workspace = true
 fitsio = { version = "0.21", features = ["fitsio-src", "src-cmake"] }
 ndarray.workspace = true
 num-complex.workspace = true

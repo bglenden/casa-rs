@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Independent compact ALMA+ACA+two-TP-antenna CASA calculation products.
+use casa_core::ArrayValue;
 use casa_images::{ImageInterface, PagedImage};
 use casa_ms::MeasurementSet;
 use casa_simulation::{ExecutionControls, SessionResources, simalma::simalma};
-use casa_types::ArrayValue;
 #[path = "common/simalma_fixture.rs"]
 mod simalma_fixture;
 use serde_json::{Value, json};

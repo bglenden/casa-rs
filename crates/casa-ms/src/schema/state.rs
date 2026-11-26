@@ -3,7 +3,7 @@
 //!
 //! Cf. C++ `MSStateEnums.h`.
 
-use casa_types::PrimitiveType;
+use casa_core::PrimitiveType;
 
 use crate::column_def::{ColumnDef, ColumnKind};
 

@@ -10,8 +10,8 @@ mod writer;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
+use casa_core::Value;
 use casa_tables::{Table, TableOptions};
-use casa_types::Value;
 
 pub use asap::read_asap;
 pub use nro::read_nro;

@@ -5,7 +5,7 @@ use std::f64::consts::PI;
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate,
 };
-use casa_types::{Value, quanta::casacore};
+use casa_core::{Value, quanta::casacore};
 use ndarray::Array2;
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::PyRuntimeError;

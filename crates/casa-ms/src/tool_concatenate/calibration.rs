@@ -3,8 +3,8 @@
 
 use std::collections::BTreeMap;
 
+use casa_core::{RecordValue, ScalarValue, Value};
 use casa_tables::Table;
-use casa_types::{RecordValue, ScalarValue, Value};
 
 use super::{TableRowsChange, main_rows::sparse_id};
 use crate::{MeasurementSet, MsError, MsResult, SubtableId};
@@ -93,7 +93,7 @@ fn remap_attached_observations(
                 Ok(new) if new == old => None,
                 Ok(new) => Some(Ok((
                     row,
-                    RecordValue::new(vec![casa_types::RecordField::new(
+                    RecordValue::new(vec![casa_core::RecordField::new(
                         name,
                         Value::Scalar(ScalarValue::Int32(new)),
                     )]),

@@ -7,8 +7,8 @@ use std::fmt::Write;
 
 use casa_coordinates::CoordinateSystem;
 use casa_coordinates::display::format_stream_value;
+use casa_core::measures::doppler::DopplerRef;
 use casa_images::{ImageInterface, ImageType};
-use casa_types::measures::doppler::DopplerRef;
 use pyo3::prelude::*;
 
 use crate::convert::value::CasaValue;

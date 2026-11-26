@@ -5,11 +5,11 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::{AddAssign, DivAssign, Mul};
 
-use casa_tables::Table;
-use casa_types::{
+use casa_core::{
     ArrayValue, ScalarValue,
     quanta::{Quantity, Unit, casacore::convert},
 };
+use casa_tables::Table;
 use ndarray::{Array2, ArrayD, Ix2, Zip};
 
 use super::clip::{ClipOptions, apply_clip_array};
@@ -898,7 +898,7 @@ mod tests {
 
     #[test]
     fn fourier_roundoff_excludes_preflagged_and_zero_weight_members() {
-        use casa_types::Complex32;
+        use casa_core::Complex32;
         let ones_data = |val: f32| {
             ArrayValue::Complex32(Array2::from_elem((1, 5), Complex32::new(val, 0.0)).into_dyn())
         };
@@ -940,7 +940,7 @@ mod tests {
 
     #[test]
     fn combined_time_and_channel_average_preserves_exact_inverse_variance_weights() {
-        use casa_types::Complex32;
+        use casa_core::Complex32;
         let data = |c0: f32, c1: f32| {
             ArrayValue::Complex32(
                 Array2::from_shape_fn((1, 2), |(_, ch)| {

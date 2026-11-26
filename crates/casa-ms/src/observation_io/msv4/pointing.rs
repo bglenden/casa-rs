@@ -8,11 +8,11 @@
 use std::mem::size_of;
 use std::ops::Range;
 
+use casa_core::measures::direction::DirectionRef;
 use casa_observation::{
     AntennaId, AntennaPointing, ObservationError, PointingDirection, PointingRequest,
     PointingSeries,
 };
-use casa_types::measures::direction::DirectionRef;
 use zarrs::array::{Array, ArraySubset};
 use zarrs::filesystem::FilesystemStore;
 
@@ -47,7 +47,7 @@ const ANTENNA_WORKSPACE_BYTES: usize = 128;
 fn antenna_workspace(requested: usize) -> usize {
     requested
         .saturating_mul(ANTENNA_WORKSPACE_BYTES)
-        .saturating_add(casa_types::memory::btree_node_bytes::<
+        .saturating_add(casa_core::memory::btree_node_bytes::<
             AntennaId,
             AntennaPointing,
         >(requested))

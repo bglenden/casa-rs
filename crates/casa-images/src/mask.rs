@@ -5,7 +5,7 @@
 //! Persistent mask storage itself is implemented in the image types using native
 //! casacore-compatible mask tables and keyword records.
 
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
 
 use crate::error::ImageError;

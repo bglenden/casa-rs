@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's metadata history rendering for typed custom values.
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use super::projection_header::cpp_number_precision;
 
@@ -21,7 +21,7 @@ fn array_elements(array: &ArrayValue, column_major: bool) -> Vec<String> {
         ArrayValue::Float64(values) => {
             collect!(values, |value: &f64| cpp_number_precision(*value, 6))
         }
-        ArrayValue::Complex64(values) => collect!(values, |value: &casa_types::Complex64| format!(
+        ArrayValue::Complex64(values) => collect!(values, |value: &casa_core::Complex64| format!(
             "({},{})",
             cpp_number_precision(value.re, 6),
             cpp_number_precision(value.im, 6)

@@ -2,9 +2,9 @@
 //! Count the whole total-power image/weight, streaming scratch and worker team.
 use super::*;
 use casa_coordinates::{DirectionCoordinate, Projection, ProjectionType};
+use casa_core::measures::direction::DirectionRef;
 use casa_imaging_application::single_dish::{TotalPowerRequest, grid_observation};
 use casa_imaging_singledish::GridFunction;
-use casa_types::measures::direction::DirectionRef;
 
 #[test]
 fn grid_weight_and_streaming_are_admitted_and_retained() {

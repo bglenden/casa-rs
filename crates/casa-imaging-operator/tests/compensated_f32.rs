@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CPU f32 accuracy across apply boundaries on the real spheroidal (#991).
 mod common;
+use casa_core::Correlation;
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, CpuBackend, GridBackend, GridPrecision, Mode, ModeSet, PlaneRange, SampleBuffer, Work,
 };
-use casa_types::Correlation;
 use num_complex::{Complex32, Complex64};
 
 #[test]

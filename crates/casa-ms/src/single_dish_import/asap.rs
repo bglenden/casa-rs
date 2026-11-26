@@ -9,8 +9,8 @@ mod sources;
 use std::collections::HashMap;
 use std::path::Path;
 
+use casa_core::{RecordValue, Value};
 use casa_tables::{Table, TableOptions};
-use casa_types::{RecordValue, Value};
 
 use self::asap_row::{doubles, flags, floats, integer, invalid, number, string, subtable};
 use super::{

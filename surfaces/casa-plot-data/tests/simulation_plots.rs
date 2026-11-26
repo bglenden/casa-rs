@@ -4,6 +4,7 @@
 use std::io::Read;
 use std::path::Path;
 
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_plot_data::plot_document::{
     PlotArrayDtype, PlotBinaryArray, PlotDocumentPanel, PlotLayerData,
@@ -12,7 +13,6 @@ use casa_plot_data::simulation::{simanalyze_with_plots, simobserve_with_plots};
 use casa_simulation::simanalyze::SimanalyzeRequest;
 use casa_simulation::simobserve::{SimobserveParameters, SimobserveRequest, simobserve};
 use casa_simulation::{BackendRequest, ExecutionControls, SessionResources, SimulatorOptions};
-use casa_types::measures::{EpochRef, MEpoch};
 use flate2::read::GzDecoder;
 use serde_json::{Value, json};
 

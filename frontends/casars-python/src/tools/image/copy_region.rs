@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_coordinates::tabular::TabularEdit;
+use casa_coordinates::TabularEdit;
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, SpectralCoordinate,
     StokesCoordinate, TabularCoordinate,
 };
+use casa_core::quanta::{Quantity, Unit};
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use casa_images::analysis::{
     ImageRegionSection, reduce_subimage_coordinate_record, section_quality_labels,
 };
-use casa_types::quanta::{Quantity, Unit};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis};
 use pyo3::prelude::*;
 

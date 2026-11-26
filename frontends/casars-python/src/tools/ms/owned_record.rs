@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Move typed casacore visibility records into the Python reply representation.
 
-use casa_types::{ArrayValue, RecordValue, Value};
+use casa_core::{ArrayValue, RecordValue, Value};
 use ndarray::ArrayD;
 use num_complex::Complex64;
 

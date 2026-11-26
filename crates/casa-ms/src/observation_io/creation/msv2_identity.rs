@@ -6,11 +6,11 @@
 //! scale than UTC, a field direction in another frame than J2000) is
 //! refused.
 
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{EpochRef, MEpoch};
+use casa_measures::table_measures::{MeasureType, TableMeasDesc, default_frequency_ref_map};
 use casa_observation::{Catalogue, FieldEntry, ObservationError, PartitionEntry};
 use casa_tables::ColumnSchema;
-use casa_tables::table_measures::{MeasureType, TableMeasDesc, default_frequency_ref_map};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, MEpoch};
 
 use super::msv2_sources::{self, NamedSources};
 use super::msv2_tables::Notes;
@@ -466,7 +466,7 @@ pub(super) fn processors(
         let mut record = row_from_defs(schema::processor::REQUIRED_COLUMNS, &row);
         if passes {
             let pass = notes.or(processor.pass_id, "PROCESSOR PASS_ID", || -1);
-            record.push(casa_types::RecordField::new("PASS_ID", i(pass)));
+            record.push(casa_core::RecordField::new("PASS_ID", i(pass)));
         }
         table.add_row(record).map_err(storage)?;
     }

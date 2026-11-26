@@ -2,6 +2,7 @@
 
 mod common;
 
+use casa_core::{ArrayValue, Complex32, PrimitiveType, ScalarValue, Value};
 use casa_ms::selection::MsSelection;
 use casa_ms::{
     FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataRequest, FlagMerge, FlaggingError,
@@ -10,7 +11,6 @@ use casa_ms::{
     restore_flag_version, save_flag_version,
 };
 use casa_tables::{ColumnSchema, Table, TableInfo, TableOptions, TableSchema};
-use casa_types::{ArrayValue, Complex32, PrimitiveType, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 use std::process::Command;
 use tempfile::tempdir;

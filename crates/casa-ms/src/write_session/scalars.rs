@@ -12,8 +12,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use casa_core::ScalarValue;
 use casa_tables::{StreamedScalarValues, StreamingScalarColumnWriter};
-use casa_types::ScalarValue;
 
 use super::{
     MeasurementSetScalarColumnPlan, MeasurementSetWriteError, MeasurementSetWriteSession,

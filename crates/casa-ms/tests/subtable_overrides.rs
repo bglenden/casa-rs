@@ -16,13 +16,13 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use casa_ms::schema::SubtableId;
 use casa_ms::{MeasurementSet, MeasurementSetBuilder, MsError, SubtableColumnOverrides};
 use casa_tables::{
     ColumnOverrides, GeneratedArrayColumn, GeneratedArrayValueRun, GeneratedScalarColumn,
     GeneratedScalarValueRun, Table, TableOptions,
 };
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
 
 #[global_allocator]

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, SpectralCoordinate};
-use casa_types::measures::direction::{DirectionRef, format_declination, format_right_ascension};
-use casa_types::measures::doppler::{DopplerRef, MDoppler};
-use casa_types::measures::frame::MeasFrame;
-use casa_types::quanta::Unit;
-use casa_types::quanta::format::{DIG2, TIME, format_angle};
-use casa_types::{ScalarValue, Value};
+use casa_core::measures::direction::{DirectionRef, format_declination, format_right_ascension};
+use casa_core::measures::doppler::{DopplerRef, MDoppler};
+use casa_core::measures::frame::MeasFrame;
+use casa_core::quanta::Unit;
+use casa_core::quanta::format::{DIG2, TIME, format_angle};
+use casa_core::{ScalarValue, Value};
 
 use crate::ImageError;
 

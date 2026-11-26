@@ -9,10 +9,10 @@ mod predict_support;
 
 use std::path::Path;
 
+use casa_core::measures::direction::{DirectionRef, MDirection};
 use casa_simulation::{
     CasaOutcome, PredictionOptions, Simulator, SimulatorResult, VoltagePatternSpec,
 };
-use casa_types::measures::direction::{DirectionRef, MDirection};
 use predict_support::{
     CENTRE_RAD, CHANNELS, bits, data, extended_model, predict_spec, read_main, resources, scan,
     session_with_dishes,

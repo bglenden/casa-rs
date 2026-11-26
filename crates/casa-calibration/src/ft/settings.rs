@@ -3,11 +3,11 @@
 
 use std::path::PathBuf;
 
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::position::MPosition;
+use casa_core::quanta::{Quantity, Unit};
 use casa_imaging_operator::{GridPrecision, WPlaneCount};
 use casa_imaging_singledish::KernelParameters;
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::position::MPosition;
-use casa_types::quanta::{Quantity, Unit};
 
 use super::voltage_pattern::PreparedVoltagePattern;
 

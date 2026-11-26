@@ -5,8 +5,8 @@
 mod common;
 
 use casa_components::{ComponentError, ComponentList, ComponentListError};
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_tables::{DataManagerKind, Table, TableOptions};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use common::{copy_table, fixture_dir};
 
 /// The old-format fixture with one cell or column changed, saved as a new
@@ -54,7 +54,7 @@ fn direction_frame_labels_are_checked_and_planetary_labels_are_retained() {
     let direction = list.get(0).unwrap().shape().reference_direction();
     assert_eq!(
         direction.refer(),
-        casa_types::measures::direction::DirectionRef::MOON
+        casa_core::measures::direction::DirectionRef::MOON
     );
     let (longitude, latitude) = direction.as_angles();
     assert!((longitude - 45_f64.to_radians()).abs() < 1e-15);

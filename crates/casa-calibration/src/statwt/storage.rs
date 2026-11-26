@@ -4,11 +4,11 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use casa_core::ArrayValue;
 use casa_ms::{
     MeasurementSet, MsError, MsResult, MsSelection, MsSelectionError, ResolvedMsSelectionRow,
 };
 use casa_tables::{RequiredScalarColumnValues, Table, TablePartNames, TableWriteLock};
-use casa_types::ArrayValue;
 
 use crate::solve::grouping::VisibilityModels;
 use crate::visibility_model_source_paths;
@@ -363,7 +363,7 @@ impl StatWtMs {
                 rows.push(row);
                 writer.seek(row)?;
                 for (index, value) in values.into_iter().enumerate() {
-                    writer.set_value_at(index, casa_types::Value::Array(value))?;
+                    writer.set_value_at(index, casa_core::Value::Array(value))?;
                 }
             }
             writer.flush()?;
@@ -524,11 +524,11 @@ fn invalid(error: impl std::fmt::Display) -> MsError {
 mod legacy_tests {
     use super::*;
 
+    use casa_core::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
     use casa_ms::MeasurementSetBuilder;
     use casa_ms::column_def::ColumnKind;
     use casa_ms::schema::main_table::REQUIRED_COLUMNS;
     use casa_tables::{TableInfo, TableOptions};
-    use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
     use ndarray::{ArrayD, IxDyn};
 
     #[test]

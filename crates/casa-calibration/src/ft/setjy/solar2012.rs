@@ -4,15 +4,15 @@
 use std::path::PathBuf;
 
 use casa_components::{ComponentShape, Flux, ShapeType, SkyComponent, SpectralKind, SpectralModel};
-use casa_measures_data::MeasuresRuntime;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::doppler::{DopplerRef, MDoppler};
+use casa_core::measures::frame::MeasFrame;
+use casa_core::measures::frequency::MFrequency;
+use casa_core::measures::radial_velocity::{MRadialVelocity, RadialVelocityRef};
+use casa_core::{ArrayValue, ScalarValue, Value};
+use casa_measures::MeasuresRuntime;
 use casa_ms::MsResult;
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::doppler::{DopplerRef, MDoppler};
-use casa_types::measures::frame::MeasFrame;
-use casa_types::measures::frequency::MFrequency;
-use casa_types::measures::radial_velocity::{MRadialVelocity, RadialVelocityRef};
-use casa_types::{ArrayValue, ScalarValue, Value};
 
 use crate::ft::{invalid, setjy::sampled_shape};
 

@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use casa_coordinates::CoordinateType;
+use casa_core::{ArrayD, RecordValue};
 use casa_images::{
     ImageInterface,
     analysis::{
@@ -10,7 +11,6 @@ use casa_images::{
     },
     image::{ImageHistoryRow, image_history_rows},
 };
-use casa_types::{ArrayD, RecordValue};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyFloat, PyInt, PyList, PySlice, PyString, PyTuple};

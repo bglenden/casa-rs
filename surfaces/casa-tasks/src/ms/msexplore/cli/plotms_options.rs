@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use crate::{TaskFailure, TaskInvocation};
 use casa_contracts::ParameterValue;
-use casa_types::measures::direction::MDirection;
+use casa_core::measures::direction::MDirection;
 
 use super::super::{
     calibration, plotms_columns, plotms_figure::VisibilityAxisColumns, plotms_phasecenter,

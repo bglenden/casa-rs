@@ -3,8 +3,8 @@
 //! CASA's dirty MT-MFS-via-cube products: cube-major images and the weighted
 //! Taylor family both belong to the same run (#1069).
 
+use casa_core::{ArrayValue, Value};
 use casa_ms::{MeasurementSet, OptionalMainColumn};
-use casa_types::{ArrayValue, Value};
 use serde_json::json;
 
 use super::fixture::{Component, Geometry, Observation, Setup};
@@ -438,7 +438,7 @@ fn mvc_unrestored_tiny_weights_publish_blank_taylor_moments() {
 #[test]
 fn mvc_taylor_rest_frequency_follows_the_cube_label() {
     use casa_coordinates::CoordinateModel;
-    use casa_types::measures::frequency::FrequencyRef;
+    use casa_core::measures::frequency::FrequencyRef;
 
     let observation = Observation::synthesise_band(6, &[("point", POINT)]);
     let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();

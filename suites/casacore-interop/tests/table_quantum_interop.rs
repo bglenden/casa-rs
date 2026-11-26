@@ -5,10 +5,10 @@
 
 #![cfg(all(feature = "cpp-interop-tests", has_casacore_cpp))]
 
+use casa_core::*;
 use casa_tables::table_quantum::{ArrayQuantColumn, ScalarQuantColumn, TableQuantumDesc};
 use casa_tables::{ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
 use casa_test_support::table_quantum_interop::TableQuantumOracle;
-use casa_types::*;
 
 /// Build a Rust table with the same layout as the C++ shim creates.
 fn create_rust_quantum_table(path: &str) {

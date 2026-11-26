@@ -3,13 +3,13 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_numerics::PrimaryBeam;
-use casa_tables::{Table, TableOptions};
-use casa_types::{
+use casa_core::{
     RecordValue, ScalarValue, Value,
     measures::direction_from_record,
     quanta::{Quantity, Unit},
 };
+use casa_numerics::PrimaryBeam;
+use casa_tables::{Table, TableOptions};
 
 mod curves;
 pub use curves::{radial_curve_storage, radial_lookup};

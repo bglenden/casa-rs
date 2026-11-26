@@ -8,8 +8,8 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use casa_core::quanta::{Quantity, Unit};
 use casa_observation::{MergeTolerance, ObservationError};
-use casa_types::quanta::{Quantity, Unit};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

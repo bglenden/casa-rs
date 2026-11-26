@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use casa_contracts::{TaskFailureKind, TaskReply};
-use casa_logging::{
+use casa_tables::log_table::{
     CasaLogLayer, CasaLogSink, CasaPriority, CasaTableLogSink, CompositeSink, TableLogOpenMode,
     WriterSink,
 };

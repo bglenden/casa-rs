@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_tables::table_measures::{MeasOffsetDesc, MeasRefDesc, TableMeasDesc};
+use casa_core::measures::MeasFrame;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{EpochRef, direction_from_record};
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
+use casa_measures::table_measures::{MeasOffsetDesc, MeasRefDesc, TableMeasDesc};
 use casa_tables::{ColumnType, Table};
-use casa_types::measures::MeasFrame;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, direction_from_record};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::{MsError, MsResult};
 

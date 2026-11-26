@@ -400,7 +400,7 @@ fn saved_outlier_user_pixel_masks_follow_casa_restoration() {
     let path = directory.join("field.image");
     let options = casa_tables::TableOptions::new(&path);
     let mut table = casa_tables::Table::open_metadata_only(options.clone()).unwrap();
-    let Some(casa_types::Value::Record(masks)) = table.keywords_mut().get_mut("masks") else {
+    let Some(casa_core::Value::Record(masks)) = table.keywords_mut().get_mut("masks") else {
         panic!("expected a saved mask record");
     };
     let support = masks.get("prior_support").unwrap().clone();
@@ -410,7 +410,7 @@ fn saved_outlier_user_pixel_masks_follow_casa_restoration() {
     masks.upsert("logtable", support);
     table.keywords_mut().upsert(
         "Image_defaultmask",
-        casa_types::Value::Scalar(casa_types::ScalarValue::String("logtable".into())),
+        casa_core::Value::Scalar(casa_core::ScalarValue::String("logtable".into())),
     );
     table.save_metadata_only(options).unwrap();
     drop(table);

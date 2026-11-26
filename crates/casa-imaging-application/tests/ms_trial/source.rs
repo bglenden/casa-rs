@@ -10,6 +10,7 @@
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
+use casa_core::measures::MjdHighPrec;
 use casa_imaging_operator::{PlaneRange, RowContext, RowSpectrum, SpectralAxis};
 use casa_imaging_runtime::pass::{
     BlockShape, BoundedSource, DomainProjection, NativeBlock, NativeRowHeader, RowAddress,
@@ -20,7 +21,6 @@ use casa_observation::{
     Observation, PartitionId, ReadEvent, Roles, TimeSelection, Traversal, VisibilityBatch,
     WeightRequest,
 };
-use casa_types::measures::MjdHighPrec;
 
 /// The request one wave of the pass binds: the native channels `channels`
 /// of partition `partition`, with or without the visibilities, under

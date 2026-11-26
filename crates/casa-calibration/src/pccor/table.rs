@@ -3,9 +3,9 @@
 
 use std::path::Path;
 
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use casa_ms::MeasurementSet;
 use casa_tables::TableWriteLock;
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::PccorError;

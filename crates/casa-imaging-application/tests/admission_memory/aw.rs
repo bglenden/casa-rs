@@ -255,7 +255,7 @@ fn check_awp2_admission(
             .set_i32(
                 spw,
                 "MEAS_FREQ_REF",
-                casa_types::measures::frequency::FrequencyRef::TOPO.casacore_code(),
+                casa_core::measures::frequency::FrequencyRef::TOPO.casacore_code(),
             )
             .unwrap();
     }

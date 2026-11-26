@@ -112,7 +112,7 @@ impl ComponentList {
     pub fn write_table_with_spectral_records(
         &self,
         path: impl AsRef<Path>,
-        records: &std::collections::BTreeMap<usize, casa_types::RecordValue>,
+        records: &std::collections::BTreeMap<usize, casa_core::RecordValue>,
     ) -> Result<(), ComponentListError> {
         table::write_component_list(self, path.as_ref(), records)
     }
@@ -128,7 +128,7 @@ impl ComponentList {
     pub fn rewrite_table_with_spectral_records(
         &self,
         path: impl AsRef<Path>,
-        records: &std::collections::BTreeMap<usize, casa_types::RecordValue>,
+        records: &std::collections::BTreeMap<usize, casa_core::RecordValue>,
     ) -> Result<(), ComponentListError> {
         table::rewrite_component_list(self, path.as_ref(), records)
     }
