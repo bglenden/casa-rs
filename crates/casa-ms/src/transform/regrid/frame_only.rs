@@ -2,11 +2,12 @@
 //! Frame-only updates for legacy regridspw leave visibility cells in place.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, btree_map::Entry};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use casa_tables::publication::{copy_locked_table_tree_with_shared_files, exchange_directories};
+use casa_tables::publication::copy_locked_table_tree_with_shared_files;
 use casa_tables::{
     RequiredScalarColumnValues, Table, TableOptions, TablePartNames, TableWriteLock,
 };
@@ -93,7 +94,10 @@ pub fn reframe_staged_ms(
         }
         Ok(())
     })?;
-    layout.write_subtables(&paths, records)?;
+    let descriptions = ms
+        .subtable(SubtableId::DataDescription)
+        .ok_or_else(|| invalid("Missing DATA_DESCRIPTION.".into()))?;
+    layout.write_subtables(&paths, windows, descriptions, records)?;
     maybe_log_transform_progress(
         "frame_only_subtables",
         metadata_started.elapsed(),
@@ -115,7 +119,7 @@ pub fn reframe_staged_ms(
 }
 
 fn open_frame_tables(stage: &Path) -> Result<(MeasurementSet, LocalTables), MsTransformError> {
-    let main = Table::open_metadata_only(TableOptions::new(stage)).map_err(ms_error)?;
+    let main = Table::open(TableOptions::new(stage)).map_err(ms_error)?;
     let paths = local_tables(&main, stage)?;
     let read_links = [
         SubtableId::Antenna,
@@ -136,7 +140,7 @@ fn open_frame_tables(stage: &Path) -> Result<(MeasurementSet, LocalTables), MsTr
             links.insert(id, path);
         }
     }
-    let ms = MeasurementSet::open_with_subtable_paths(stage, &links).map_err(ms_error)?;
+    let ms = MeasurementSet::with_open_main(main, stage.to_owned(), &links).map_err(ms_error)?;
     Ok((ms, paths))
 }
 
@@ -434,18 +438,24 @@ impl Layout {
         let main = Table::open(TableOptions::new(stage)).map_err(ms_error)?;
         let paths = local_tables(&main, stage)?;
         let windows = Table::open(TableOptions::new(&paths.windows)).map_err(ms_error)?;
+        let descriptions = Table::open(TableOptions::new(&paths.descriptions)).map_err(ms_error)?;
         let records = self.window_records(&windows, &mut populate)?;
-        drop(windows);
-        self.write_subtables(&paths, records)
+        self.write_subtables(&paths, &windows, &descriptions, records)
     }
 
     fn write_subtables(
         &self,
         paths: &LocalTables,
+        original_windows: &Table,
+        original_descriptions: &Table,
         windows: Vec<RecordValue>,
     ) -> Result<(), MsTransformError> {
-        replace_rows(&paths.windows, windows)?;
-        replace_rows(&paths.descriptions, self.descriptions.clone())?;
+        replace_staged_rows(&paths.windows, original_windows, windows)?;
+        replace_staged_rows(
+            &paths.descriptions,
+            original_descriptions,
+            self.descriptions.clone(),
+        )?;
         if let Some(source) = &paths.source {
             rewrite_sources(source, &self.sources)?;
         }
@@ -556,31 +566,32 @@ fn set_i32(record: &mut RecordValue, column: &str, value: i32) {
     record.upsert(column, Value::Scalar(ScalarValue::Int32(value)));
 }
 
-fn replace_rows(path: &Path, records: Vec<RecordValue>) -> Result<(), MsTransformError> {
-    let original = Table::open(TableOptions::new(path)).map_err(ms_error)?;
+fn replace_staged_rows(
+    path: &Path,
+    original: &Table,
+    records: Vec<RecordValue>,
+) -> Result<(), MsTransformError> {
     let schema = original
         .schema()
         .ok_or_else(|| invalid("Missing table schema".into()))?;
     let mut table = Table::with_schema(schema.clone());
-    table.copy_info(&original);
+    table.copy_info(original);
     *table.keywords_mut() = original.keywords().clone();
     for column in schema.columns() {
         if let Some(keywords) = original.column_keywords(column.name()) {
             table.set_column_keywords(column.name(), keywords.clone());
         }
     }
-    drop(original);
     for record in records {
         table.add_row(record).map_err(ms_error)?;
     }
-    let workspace =
-        tempfile::tempdir_in(path.parent().unwrap_or_else(|| Path::new("."))).map_err(ms_error)?;
-    let staged = workspace.path().join("subtable");
+    // LocalTables checked that this physical subtable is inside the private
+    // stage. The outer transaction owns cleanup if saving it fails.
+    fs::remove_dir_all(path).map_err(ms_error)?;
     table
         .prepare_write()
-        .save(TableOptions::new(&staged))
-        .map_err(ms_error)?;
-    exchange_directories(&staged, path).map_err(ms_error)
+        .save(TableOptions::new(path))
+        .map_err(ms_error)
 }
 
 fn rewrite_sources(path: &Path, links: &[(i32, i32, i32)]) -> Result<(), MsTransformError> {
@@ -621,6 +632,5 @@ fn rewrite_sources(path: &Path, links: &[(i32, i32, i32)]) -> Result<(), MsTrans
         set_i32(&mut record, SPW_ID, output);
         records.push(record);
     }
-    drop(table);
-    replace_rows(path, records)
+    replace_staged_rows(path, &table, records)
 }

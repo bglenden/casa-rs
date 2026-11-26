@@ -5,6 +5,7 @@ use std::fmt::Write;
 use std::path::Path;
 
 use casa_ms::SubtableId;
+use casa_ms::ms::subtable_path_from_main;
 use casa_ms::selection::MsSelectionIoBudget;
 use casa_ms::spectral_selection::LegacyRegridQuantity;
 use casa_ms::subtables::{MsAntenna, MsSpectralWindow};
@@ -520,7 +521,7 @@ fn rewrite_attached(ms: &AttachedMs, rewrite: SpectralRewrite) -> PyResult<Optio
         return Ok(None);
     }
     let table = Table::open(TableOptions::new(&staged)).map_err(runtime_error)?;
-    let history = spectral_history(&staged, &interpolation)?;
+    let history = spectral_history(&table, &staged, &interpolation)?;
     append_tool_history(
         &table,
         true,
@@ -559,9 +560,10 @@ fn rewrite_attached(ms: &AttachedMs, rewrite: SpectralRewrite) -> PyResult<Optio
     }
 }
 
-fn spectral_history(staged: &Path, interpolation: &str) -> PyResult<String> {
-    let table =
-        Table::open(TableOptions::new(staged.join("SPECTRAL_WINDOW"))).map_err(runtime_error)?;
+fn spectral_history(main: &Table, staged: &Path, interpolation: &str) -> PyResult<String> {
+    let path = subtable_path_from_main(main, staged, SubtableId::SpectralWindow)
+        .ok_or_else(|| runtime_error("Missing SPECTRAL_WINDOW."))?;
+    let table = Table::open(TableOptions::new(path)).map_err(runtime_error)?;
     let windows = MsSpectralWindow::new(&table);
     let mut history = String::new();
     for row in 0..table.row_count() {

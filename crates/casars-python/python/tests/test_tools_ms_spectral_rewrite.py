@@ -172,6 +172,35 @@ def test_barycentric_regrid_builds_one_window_per_field(native_dataset, tmp_path
             np.testing.assert_array_equal(actual, expected, strict=True)
 
 
+def test_frame_only_regrid_follows_the_spectral_window_link(native_dataset, tmp_path):
+    casa = pinned_casa()
+    axes = []
+    for api, name in ((casa, "reference"), (tools, "native")):
+        path = tmp_path / f"{name}.ms"
+        copytree(native_dataset, path)
+        window = path / "SPECTRAL_WINDOW"
+        linked = path / "FREQUENCIES"
+        with closing(casa.table()) as table:
+            assert table.open(str(window))
+            with closing(table.copy(str(linked), deep=True, valuecopy=True)) as output:
+                assert output.nrows() == 1
+            assert table.done()
+            assert table.open(str(path), nomodify=False)
+            assert table.putkeyword("SPECTRAL_WINDOW", f"Table: {linked}")
+        window.rename(tmp_path / f"{name}-old")
+        with closing(api.ms()) as ms:
+            assert ms.open(str(path), nomodify=False)
+            assert ms.regridspw(outframe="BARY", mode="") is True
+            assert ms.name() == str(path)
+        assert not window.exists()
+        with closing(casa.table()) as table:
+            assert table.open(str(path))
+            assert table.getkeyword("SPECTRAL_WINDOW") == f"Table: {linked}"
+        axes.append(read_cells(casa, linked, ("CHAN_FREQ", "CHAN_WIDTH", "MEAS_FREQ_REF")))
+    for column in axes[0]:
+        np.testing.assert_allclose(axes[1][column], axes[0][column], atol=1e-6, rtol=0, strict=True)
+
+
 def test_spectral_writers_preserve_read_only_and_selected_attachments(native_dataset):
     columns = ("DATA", "FLAG", "DATA_DESC_ID", "TIME")
     before = read_cells(tools, native_dataset, columns)
