@@ -11,6 +11,8 @@ mod generated_array_storage;
 mod keyword_array_order;
 #[path = "api/manager_layout.rs"]
 mod manager_layout;
+#[path = "api/memory_harness.rs"]
+mod memory_harness;
 #[path = "api/selected_incremental_arrays.rs"]
 mod selected_incremental_arrays;
 #[path = "api/selected_read_footprint.rs"]

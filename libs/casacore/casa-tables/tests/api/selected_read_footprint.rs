@@ -5,7 +5,7 @@
 //! A counting global allocator records the peak live heap above the level
 //! before one warm read. The law measures in its own test process.
 
-use super::streamed_writer_memory::{alone, peak_temporary_heap};
+use super::memory_harness::{alone, peak_temporary_heap};
 use casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, Value};
 use casa_tables::{
     ColumnBinding, ColumnOptions, ColumnSchema, DataManagerKind, SelectedArray2DCellsMut,
