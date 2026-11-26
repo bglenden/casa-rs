@@ -4,7 +4,7 @@
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate,
 };
-use casa_types::ArrayD;
+use casa_core::ArrayD;
 use ndarray::{Axis, Slice};
 
 use crate::analysis::{

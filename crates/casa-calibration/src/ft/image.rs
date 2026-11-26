@@ -8,6 +8,9 @@ use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate, ObsInfo,
     SpectralCoordinate, StokesCoordinate, StokesType,
 };
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::record::direction_from_record;
+use casa_core::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use casa_images::PagedImage;
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
@@ -28,9 +31,6 @@ use casa_ms::{
     MeasurementSet, MsResult, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
     convert_frequency_to_frame_with_frame, virtual_model_image_path,
 };
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::record::direction_from_record;
-use casa_types::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, ArrayD, IxDyn, ShapeBuilder};
 
 use super::moving_source::MovingSourceAnchor;

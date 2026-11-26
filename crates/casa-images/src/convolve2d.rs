@@ -31,8 +31,8 @@ use std::f64::consts::{LN_2, PI};
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate,
 };
+use casa_core::ArrayD;
 use casa_fft::Fft2;
-use casa_types::ArrayD;
 use num_complex::Complex64;
 
 use crate::{GaussianBeam, ImageError, ImageInterface};
@@ -574,7 +574,7 @@ mod tests {
     use super::*;
 
     use casa_coordinates::{Projection, ProjectionType};
-    use casa_types::measures::direction::DirectionRef;
+    use casa_core::measures::direction::DirectionRef;
 
     /// Sky offsets of RA increasing to the left and Dec up, 1e-6 rad pixels.
     const UNROTATED: [[f64; 2]; 2] = [[-1.0e-6, 0.0], [0.0, 1.0e-6]];

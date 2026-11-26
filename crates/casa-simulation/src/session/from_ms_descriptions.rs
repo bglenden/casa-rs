@@ -2,10 +2,10 @@
 //! Resolve stored DD/POL mappings, admitting their buffers before decoding.
 use std::sync::Arc;
 
+use casa_core::ArrayValue;
 use casa_imaging_runtime::{Demand, Reservation, admit};
 use casa_ms::{MeasurementSet, SubtableId};
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
-use casa_types::ArrayValue;
 
 use super::super::{SessionResources, spectral::DataDescription};
 use super::{SimulatorError, SimulatorResult, index};

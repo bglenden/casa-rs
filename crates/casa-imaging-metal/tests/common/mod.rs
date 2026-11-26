@@ -3,6 +3,7 @@
 
 #![allow(dead_code, reason = "each law file uses a subset of the fixtures")]
 
+use casa_core::Correlation;
 use casa_imaging_metal::MetalBackend;
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
@@ -13,7 +14,6 @@ use casa_imaging_operator::{
     PolarizationRouting, PrimaryBeam, RowContext, SampleBuffer, Spheroidal, TapFootprint,
     TapLayout, Tile, WPlaneCount, WPlanes, pair_plane,
 };
-use casa_types::Correlation;
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
 

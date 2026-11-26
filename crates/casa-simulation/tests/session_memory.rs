@@ -178,6 +178,9 @@ use casa_coordinates::{
     CoordinateSystem as ImageCoordinates, DirectionCoordinate, Projection, ProjectionType,
     SpectralCoordinate, StokesCoordinate, StokesType,
 };
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::measures::{EpochRef, MEpoch, MeasuresProvider};
 use casa_images::PagedImage;
 use casa_imaging_runtime::{
     HostResources, ReservationWindow, ResourcePolicy, charge_process_caches, process_cache_bytes,
@@ -188,9 +191,6 @@ use casa_simulation::{
     PredictSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions,
     SpectralWindowSpec, StateSpec, TsysParameters, VoltagePatternSpec,
 };
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::measures::{EpochRef, MEpoch, MeasuresProvider};
 use heap::{BATCH_ALLOCATED, EXCESS, LIVE, OWN_LIVE, OWN_PEAK, PEAK, excess_now};
 use ndarray::{ArrayD, IxDyn};
 use num_complex::Complex32;

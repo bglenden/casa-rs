@@ -6,7 +6,7 @@ use std::process::Command;
 
 use casa_test_support::casacore_oracle_available;
 
-#[path = "../../../crates/casa-aipsio/examples/support/taipsio.rs"]
+#[path = "../../../libs/casacore/casa-aipsio/examples/support/taipsio.rs"]
 mod taipsio;
 use taipsio::run_taipsio_like_demo;
 

@@ -8,9 +8,9 @@ use crate::convert::holder::{
 use crate::convert::value::CasaValue;
 use crate::convert::{RecordArg, Variant, quantity};
 use crate::tools::LogLine;
-use casa_types::measures::MeasFrame;
-use casa_types::measures::doppler::{DopplerRef, MDoppler};
-use casa_types::quanta::Quantity;
+use casa_core::measures::MeasFrame;
+use casa_core::measures::doppler::{DopplerRef, MDoppler};
+use casa_core::quanta::Quantity;
 use pyo3::prelude::*;
 
 fn failed(lines: &mut Vec<LogLine>, message: impl Into<String>) -> CasaValue {
@@ -81,7 +81,7 @@ fn doppler_rest_hz(value: &Variant) -> Result<Option<f64>, String> {
         return Ok(Some(hz));
     }
     let q = quantity(value).map_err(|error| error.to_string())?;
-    let hz = casa_types::quanta::Unit::new("Hz").expect("Hz");
+    let hz = casa_core::quanta::Unit::new("Hz").expect("Hz");
     Ok(q.get_value_in(&hz).ok())
 }
 
@@ -96,7 +96,7 @@ fn quantity_rest_hz(value: &RecordArg) -> Option<f64> {
         }
         quantity(value.0.get("m0")?).ok()
     })?;
-    let hz = casa_types::quanta::Unit::new("Hz").ok()?;
+    let hz = casa_core::quanta::Unit::new("Hz").ok()?;
     if q.unit().val().dim != hz.val().dim {
         return None;
     }

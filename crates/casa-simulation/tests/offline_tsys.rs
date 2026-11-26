@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA OTF=False Tsys: fixed unit A parameters, scaled by T/Tf noise gains.
 mod predict_support;
+use casa_core::{ArrayValue, Complex32};
 use casa_simulation::{NoiseSpec, Simulator, SimulatorOptions};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, Complex32};
 use ndarray::IxDyn;
 use predict_support::{REFERENCE_MJD, Row, resources};
 use std::path::Path;
@@ -110,9 +110,9 @@ fn run(
             SimulatorOptions {
                 measures: casa_test_support::deterministic_measures_provider(),
                 resources: resources(workers, 512 << 20),
-                now: casa_types::measures::MEpoch::from_mjd(
+                now: casa_core::measures::MEpoch::from_mjd(
                     REFERENCE_MJD,
-                    casa_types::measures::EpochRef::UTC,
+                    casa_core::measures::EpochRef::UTC,
                 ),
             },
         )

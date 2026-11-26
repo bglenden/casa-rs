@@ -19,18 +19,17 @@ extension-module = ["pyo3/extension-module"]
 casa-atmosphere = { path = "../../crates/casa-atmosphere" }
 casa-calibration = { path = "../../crates/casa-calibration" }
 casa-components = { path = "../../crates/casa-components" }
-casa-coordinates = { path = "../../crates/casa-coordinates" }
+casa-coordinates.workspace = true
 casa-images = { path = "../../crates/casa-images" }
-casa-lattices = { path = "../../crates/casa-lattices" }
-casa-logging = { path = "../../crates/casa-logging" }
-casa-measures-data = { path = "../../crates/casa-measures-data" }
+casa-lattices.workspace = true
+casa-measures.workspace = true
 casa-ms = { path = "../../crates/casa-ms" }
 casa-contracts = { path = "../../surfaces/casa-contracts" }
 casa-plot-data = { path = "../../surfaces/casa-plot-data", features = ["ms", "simulation"] }
 casa-simulation = { path = "../../crates/casa-simulation" }
-casa-tables = { path = "../../crates/casa-tables" }
+casa-tables.workspace = true
 casa-tasks = { path = "../../surfaces/casa-tasks", features = ["calibration", "imaging", "images", "ms", "simulation", "vla"] }
-casa-types = { path = "../../crates/casa-types" }
+casa-core.workspace = true
 ndarray.workspace = true
 num-complex.workspace = true
 numpy = "0.28"

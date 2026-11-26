@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
-use casa_types::{ArrayD, RecordValue};
+use casa_core::{ArrayD, RecordValue};
 use ndarray::IxDyn;
 
 use crate::image_expr::ImageExprValue;

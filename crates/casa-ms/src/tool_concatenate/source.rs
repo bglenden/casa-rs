@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use casa_types::{RecordValue, ScalarValue, Value};
+use casa_core::{RecordValue, ScalarValue, Value};
 
 use crate::subtables::{get_f64, get_i32};
 use crate::{MeasurementSet, MsError, MsResult, SubtableId};

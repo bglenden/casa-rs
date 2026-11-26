@@ -150,7 +150,7 @@ pub(super) fn touvw(
     let result = source
         .map(|value| {
             let vector =
-                casa_types::measures::baseline::j2000_baseline_uvw(cartesian(value)?, &direction);
+                casa_core::measures::baseline::j2000_baseline_uvw(cartesian(value)?, &direction);
             xyz.extend(vector);
             dot.extend([
                 (-sd * vector[1] + cd * vector[2]) * rate,
@@ -170,10 +170,10 @@ pub(super) fn touvw(
     ]))
 }
 
-use casa_types::measures::MeasFrame;
-use casa_types::measures::baseline::baseline_rotation;
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::earth_magnetic::{EarthMagneticRef, MEarthMagnetic};
+use casa_core::measures::MeasFrame;
+use casa_core::measures::baseline::baseline_rotation;
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::earth_magnetic::{EarthMagneticRef, MEarthMagnetic};
 
 enum Operator {
     Matrix([[f64; 3]; 3]),
@@ -200,7 +200,7 @@ impl Conversion {
                     Box::new(frame),
                     target
                         .parse()
-                        .map_err(|e: casa_types::measures::MeasureError| e.to_string())?,
+                        .map_err(|e: casa_core::measures::MeasureError| e.to_string())?,
                 )
             } else {
                 let from = input
@@ -228,7 +228,7 @@ impl Conversion {
                 let from = input
                     .refer
                     .parse()
-                    .map_err(|e: casa_types::measures::MeasureError| e.to_string())?;
+                    .map_err(|e: casa_core::measures::MeasureError| e.to_string())?;
                 let value = MEarthMagnetic::from_xyz_nt(v[0], v[1], v[2], from)
                     .convert_to(*target, frame)
                     .map_err(|e| e.to_string())?;
@@ -256,7 +256,7 @@ fn rotate(m: [[f64; 3]; 3], v: [f64; 3]) -> [f64; 3] {
     std::array::from_fn(|i| (0..3).map(|j| m[i][j] * v[j]).sum())
 }
 use crate::convert::quantum::quantum_holder;
-use casa_types::quanta::Quantity;
+use casa_core::quanta::Quantity;
 
 fn failure(lines: &mut Vec<LogLine>, error: impl Into<String>) -> CasaValue {
     lines.push(LogLine::error(error));
@@ -329,7 +329,7 @@ pub(super) fn define_three(
         triples.push(q);
     }
     if kind == MeasureKind::EarthMagnetic {
-        use casa_types::quanta::{Dimension, UnitDim};
+        use casa_core::quanta::{Dimension, UnitDim};
         let angle = UnitDim::basis(Dimension::Angle);
         if triples[0][1..].iter().any(|q| q.unit().val().dim != angle) {
             return Ok(failure(

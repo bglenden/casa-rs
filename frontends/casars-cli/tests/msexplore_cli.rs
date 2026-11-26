@@ -7,6 +7,10 @@ use std::f64::consts::PI;
 use std::path::Path;
 use std::process::Command;
 
+use casa_core::ArrayValue;
+use casa_core::measures::doppler::{DopplerRef, MDoppler};
+use casa_core::measures::frame::MeasFrame;
+use casa_core::measures::frequency::FrequencyRef;
 use casa_ms::columns::frequency_columns::ChanFreqColumn;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::subtables::SubTable;
@@ -29,10 +33,6 @@ use casa_plot_data::{
 use casa_tasks::ms::msexplore::task_contract::{
     MSEXPLORE_TASK_PROTOCOL_NAME, MsExploreFlagEditRequest, MsExploreRunTaskRequest,
 };
-use casa_types::ArrayValue;
-use casa_types::measures::doppler::{DopplerRef, MDoppler};
-use casa_types::measures::frame::MeasFrame;
-use casa_types::measures::frequency::FrequencyRef;
 use common::{
     TIME_BASE_SECONDS, create_msexplore_averaging_fixture_ms, create_msexplore_fixture_ms,
     create_msexplore_fixture_ms_with_flags, create_msexplore_geometry_fixture_ms,

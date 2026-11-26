@@ -41,13 +41,13 @@ pub use set::Msv4ProcessingSetWriter;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use casa_core::measures::position::PositionRef;
+use casa_core::measures::{EpochView, MjdHighPrec};
+use casa_core::quanta::{Quantity, Unit};
 use casa_observation::{
     AntennaEntry, AntennaId, Catalogue, Correlation, DataGroupEntry, ObservationError,
     PartitionEntry, PartitionId, Receptors, ScanId, TimeBaselineGrid, VisibilityUnits,
 };
-use casa_types::measures::position::PositionRef;
-use casa_types::measures::{EpochView, MjdHighPrec};
-use casa_types::quanta::{Quantity, Unit};
 use ndarray::ArrayView1;
 use serde_json::{Value, json};
 use zarrs::array::{

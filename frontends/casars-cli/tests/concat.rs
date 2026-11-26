@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The native task against CASA 6.7.6-14, including stored uncertainties,
 //! raw row flags, pointing metadata, input ordering and atomic append.
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_ms::{
     MeasurementSet, SubtableId,
     concat::{ConcatRequest, concat},
 };
 use casa_tables::Table;
-use casa_types::{ArrayValue, ScalarValue, Value};
 use serde_json::{Value as Json, json};
 use std::collections::BTreeMap;
 use std::path::Path;

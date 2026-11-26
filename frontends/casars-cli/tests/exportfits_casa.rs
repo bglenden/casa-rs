@@ -11,13 +11,13 @@ use casa_coordinates::{
     CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate,
     StokesCoordinate, StokesType, fits::FitsHeader,
 };
+use casa_core::{
+    Array2, ArrayD,
+    measures::{direction::DirectionRef, frequency::FrequencyRef},
+};
 use casa_images::{
     AnyPagedImage, ExportFitsRequest, ImageBeamSet, ImageError, PagedImage, exportfits, imhead,
     import_fits,
-};
-use casa_types::{
-    Array2, ArrayD,
-    measures::{direction::DirectionRef, frequency::FrequencyRef},
 };
 use fitsio::{FitsFile, hdu::HduInfo};
 use ndarray::{IxDyn, ShapeBuilder};

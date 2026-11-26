@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_ms::{MeasurementSet, VisibilityDataColumn};
 use casa_simulation::synthetic::{
     PolarizationBasis, PolarizationSetup, SpectralSetup, tutorial_vla_a_antennas,
 };
-use casa_types::{ArrayValue, ScalarValue, Value};
 use serde_json::json;
 
 use super::fixture::{Component, Geometry, Observation, Setup};
@@ -206,7 +206,7 @@ fn l_band_point(
         .set_i32(
             0,
             "MEAS_FREQ_REF",
-            casa_types::measures::frequency::FrequencyRef::TOPO.casacore_code(),
+            casa_core::measures::frequency::FrequencyRef::TOPO.casacore_code(),
         )
         .unwrap();
     ms.save().unwrap();

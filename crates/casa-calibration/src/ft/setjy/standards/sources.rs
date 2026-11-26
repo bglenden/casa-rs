@@ -3,10 +3,10 @@
 
 use std::path::Path;
 
+use casa_core::ScalarValue;
+use casa_core::measures::direction::MDirection;
 use casa_ms::MsResult;
 use casa_tables::{Table, TableOptions};
-use casa_types::ScalarValue;
-use casa_types::measures::direction::MDirection;
 
 use crate::ft::invalid;
 
@@ -269,7 +269,7 @@ fn named(field: &str) -> Option<&'static str> {
 
 /// The reference positions compiled into CASA's FluxStdSrcs.
 pub fn source_direction(field: &str) -> Option<MDirection> {
-    use casa_types::measures::direction::DirectionRef;
+    use casa_core::measures::direction::DirectionRef;
 
     // fluxcalibrator.data is used for positional source identification.
     // The component still uses the calibrated source's fixed J2000 position.

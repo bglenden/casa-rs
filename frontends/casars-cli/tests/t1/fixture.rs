@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{CoordinateModel, ProjectionType, StokesType};
+use casa_core::{ArrayValue, Complex32};
 use casa_images::{GaussianBeam, PagedImage};
 use casa_imaging_application::store_law::compare_stores;
 use casa_imaging_application::{Cancel, HostResources, ImagingRequest, RunContext};
@@ -19,7 +20,6 @@ use casa_simulation::synthetic::{
 use casa_tasks::imaging::{
     ImagerArtifact, ImagerRunReport, ImagingParameters, resolve_request, run,
 };
-use casa_types::{ArrayValue, Complex32};
 use ndarray::{Array2, Axis};
 use serde_json::{Value, json};
 
@@ -843,7 +843,7 @@ impl Observation {
                 let recorded = product.image.misc_info().get("useweightimage").cloned();
                 assert_eq!(
                     recorded,
-                    Some(casa_types::Value::Scalar(casa_types::ScalarValue::Bool(
+                    Some(casa_core::Value::Scalar(casa_core::ScalarValue::Bool(
                         weight_image
                     ))),
                     "{suffix} useweightimage"

@@ -7,8 +7,8 @@ use std::path::Path;
 
 use crate::{TaskFailure, TaskInvocation};
 use casa_contracts::{DefaultSpec, ParameterValue, python_repr};
-use casa_types::quanta::format::{TIME, YMD, format_time};
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::quanta::format::{TIME, YMD, format_time};
+use casa_core::quanta::{Quantity, Unit};
 
 use super::super::command_values::{Assignments, parse_assignments};
 use super::super::shadow;

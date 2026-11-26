@@ -6,8 +6,8 @@ use std::collections::{BTreeSet, HashSet};
 use std::fs::File;
 use std::sync::Arc;
 
+use casa_core::{Complex64, RecordValue};
 use casa_tables::{LockType, lexical_absolute};
-use casa_types::{Complex64, RecordValue};
 
 use crate::concat_file::{ConcatManifest, is_image_concat};
 use crate::concatenate::{ConcatInput, ConcatenationPlan};

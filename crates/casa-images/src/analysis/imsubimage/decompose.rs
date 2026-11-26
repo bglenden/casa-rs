@@ -7,7 +7,7 @@ mod points;
 mod runs;
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem};
-use casa_types::{ArrayD, RecordValue};
+use casa_core::{ArrayD, RecordValue};
 use ndarray::IxDyn;
 
 use crate::analysis::lel_mask::PreparedMask;

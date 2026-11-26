@@ -3,8 +3,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{ArrayShapeContract, ColumnType, EncodedArrayAppend, RecordAppendOptions, Table};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, IxDyn};
 use rayon::prelude::*;
 

@@ -3,9 +3,9 @@
 
 use std::collections::BTreeSet;
 
+use casa_core::quanta::Quantity;
 use casa_ms::MeasurementSet;
 use casa_tables::RequiredScalarColumnValues::{Float64, Int32};
-use casa_types::quanta::Quantity;
 use time::Date;
 
 use super::{PccorError, PccorRequest};

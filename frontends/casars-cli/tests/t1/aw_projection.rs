@@ -17,9 +17,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use casa_logging::{CasaLogLayer, CasaPriority, MemorySink};
 use casa_numerics::AnnularApertureVoltageTable;
 use casa_simulation::synthetic::{Antenna, SpectralSetup, tutorial_vla_a_antennas};
+use casa_tables::log_table::{CasaLogLayer, CasaPriority, MemorySink};
 use ndarray::Array2;
 use serde_json::{Value, json};
 use tracing_subscriber::layer::SubscriberExt;
@@ -783,7 +783,7 @@ fn aw_data_frame_cube_uses_the_casa_frequency_grid() {
         .set_i32(
             0,
             "MEAS_FREQ_REF",
-            casa_types::measures::frequency::FrequencyRef::TOPO.casacore_code(),
+            casa_core::measures::frequency::FrequencyRef::TOPO.casacore_code(),
         )
         .expect("declare TOPO input");
     ms.save().expect("save TOPO input");
@@ -873,8 +873,8 @@ fn an_aw_cubic_cube_uses_the_cubic_stencil() {
         "cubic and linear AW residual difference: {difference}"
     );
 
+    use casa_core::measures::frequency::FrequencyRef;
     use casa_ms::MeasurementSet;
-    use casa_types::measures::frequency::FrequencyRef;
     let mut ms = MeasurementSet::open(observation.measurement_set()).expect("open test MS");
     ms.spectral_window_mut()
         .expect("spectral window")
@@ -959,8 +959,8 @@ fn an_aw_cube_nearest_samples_a_multichannel_window() {
 /// plane is outside the selected native span and remains blank (#1121).
 #[test]
 fn an_offset_aw_linear_cube_keeps_both_in_band_planes() {
+    use casa_core::measures::frequency::FrequencyRef;
     use casa_ms::MeasurementSet;
-    use casa_types::measures::frequency::FrequencyRef;
 
     let setup = Setup {
         spectral_windows: vec![SpectralSetup {
@@ -1012,8 +1012,8 @@ fn an_offset_aw_linear_cube_keeps_both_in_band_planes() {
 /// The offset axis reaches two native intervals and leaves its last plane blank.
 #[test]
 fn tracked_aw_linear_cubes_preserve_supported_planes() {
+    use casa_core::measures::frequency::FrequencyRef;
     use casa_ms::MeasurementSet;
-    use casa_types::measures::frequency::FrequencyRef;
 
     let setup = Setup {
         spectral_windows: vec![SpectralSetup {
@@ -1314,8 +1314,8 @@ fn imported_aw_runtime_pa_rotation_changes_the_residual_and_psf() {
 /// simultaneously observed windows with the same antenna-0 feed.
 #[test]
 fn imported_aw_runtime_rotation_cleans_two_window_mtmfs() {
+    use casa_core::{ScalarValue, Value as CellValue};
     use casa_ms::MeasurementSet;
-    use casa_types::{ScalarValue, Value as CellValue};
 
     let observation = Observation::synthesise_setup(two_window_setup(), &[("off-axis", OFF_AXIS)]);
     let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
@@ -1368,7 +1368,7 @@ fn imported_aw_runtime_rotation_cleans_two_window_mtmfs() {
         .set_cell(
             other_feed_row,
             "RECEPTOR_ANGLE",
-            CellValue::Array(casa_types::ArrayValue::Float64(
+            CellValue::Array(casa_core::ArrayValue::Float64(
                 ndarray::ArrayD::from_shape_vec(vec![2], vec![0.2, 0.0]).unwrap(),
             )),
         )
@@ -1384,7 +1384,7 @@ fn imported_aw_runtime_rotation_cleans_two_window_mtmfs() {
         .set_cell(
             other_feed_row,
             "RECEPTOR_ANGLE",
-            CellValue::Array(casa_types::ArrayValue::Float64(
+            CellValue::Array(casa_core::ArrayValue::Float64(
                 ndarray::ArrayD::from_shape_vec(vec![2], vec![0.0, 0.0]).unwrap(),
             )),
         )

@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::{CasaValue, ParameterValue};
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_ms::{
     MeasurementSet, MeasurementSetSummary, MeasurementSetSummaryOutputFormat, MsSelection,
 };
@@ -22,7 +23,6 @@ use casa_plot_data::msexplore::{
     export_msexplore_plot, preview_msexplore_flag_edit_for_request,
     resolve_selected_rows_with_msselect,
 };
-use casa_types::{ArrayValue, ScalarValue, Value};
 use serde::Deserialize;
 
 use super::plotms_columns;
@@ -368,7 +368,7 @@ fn run_visibility_plot(
     calibration: Option<(PlotMsCalibrationLoader, Vec<String>)>,
     atmosphere: Option<super::calibration::atmosphere::Options>,
     load_models: Option<PlotMsModelLoader>,
-    phasecenter: Option<casa_types::measures::direction::MDirection>,
+    phasecenter: Option<casa_core::measures::direction::MDirection>,
 ) -> Result<TaskSuccess, TaskFailure> {
     let is_text = super::plotms_text::requests_text(task, options.plot_output.as_deref())?;
     let offset_grid = calibration.is_none() && atmosphere.is_none();

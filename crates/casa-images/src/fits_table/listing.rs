@@ -7,7 +7,7 @@ use std::ffi::CStr;
 use std::fmt::Write;
 use std::ptr::{self, NonNull};
 
-use casa_types::ScalarValue;
+use casa_core::ScalarValue;
 use fitsio::sys;
 
 use super::{

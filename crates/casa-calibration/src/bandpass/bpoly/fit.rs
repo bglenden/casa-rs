@@ -3,8 +3,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use casa_core::Complex32;
 use casa_numerics::invert_symmetric_positive_definite;
-use casa_types::Complex32;
 use num_complex::Complex64;
 
 use super::legacy_bpoly_basis;

@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use casa_types::quanta::MvTime;
+use casa_core::quanta::MvTime;
 
 use casa_ms::MeasurementSet;
 use casa_ms::subtables::MsAntenna;

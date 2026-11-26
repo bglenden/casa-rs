@@ -13,6 +13,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
+use casa_core::Complex32;
 use casa_images::expr_file;
 use casa_images::expr_parser::{HashMapResolver, parse_image_expr};
 use casa_images::image::ImageInterface;
@@ -21,7 +22,6 @@ use casa_lattices::{
     ExecutionPolicy, Lattice, LatticeIterExt, LatticeStatistics, Statistic, TraversalSpec,
 };
 use casa_test_support::{ImageOracle, casacore_oracle_available};
-use casa_types::Complex32;
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use std::time::{Duration, Instant};
 

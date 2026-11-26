@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_coordinates::tabular::TabularEdit;
+use casa_coordinates::TabularEdit;
 use casa_coordinates::{
     Coordinate, CoordinateError, CoordinateModel, CoordinateSystem, CoordinateType,
 };
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Array2;
 use numpy::{PyArrayDescrMethods, PyReadonlyArrayDyn, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::PyRuntimeError;

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Actual CASA input MSs retain old cells while observe appends new rows.
 mod predict_support;
+use casa_core::measures::{EpochRef, MEpoch};
+use casa_core::{ArrayValue, ScalarValue};
 use casa_simulation::{ApplySpec, ObserveManySpec, Pointing, Simulator, SimulatorOptions};
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::{EpochRef, MEpoch};
-use casa_types::{ArrayValue, ScalarValue};
 use flate2::read::GzDecoder;
 use serde_json::Value;
 use std::path::Path;
@@ -198,7 +198,7 @@ fn reopened_observe_and_observemany_match_actual_casa() {
                 table
                     .cell_accessor_mut(row, "ARRAY_ID")
                     .unwrap()
-                    .set(casa_types::Value::Scalar(ScalarValue::Int32(7)))
+                    .set(casa_core::Value::Scalar(ScalarValue::Int32(7)))
                     .unwrap();
             }
             table.save(TableOptions::new(&path)).unwrap();

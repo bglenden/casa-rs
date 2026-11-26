@@ -13,13 +13,13 @@
 
 use std::collections::BTreeMap;
 
+use casa_core::measures::PreparedFrequencyConversion;
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::frame::MeasFrame;
+use casa_core::measures::frequency::{FrequencyRef, MFrequencyConverter};
 use casa_ms::PhaseCentreEphemeris;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_observation::Catalogue;
-use casa_types::measures::PreparedFrequencyConversion;
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::frame::MeasFrame;
-use casa_types::measures::frequency::{FrequencyRef, MFrequencyConverter};
 
 use super::PrepareError;
 use super::selection::{SourceSpectralWindow, WindowChannels};
@@ -516,7 +516,7 @@ fn matched_range(
 
 #[cfg(test)]
 mod tests {
-    use casa_types::measures::frequency::FrequencyRef;
+    use casa_core::measures::frequency::FrequencyRef;
 
     use super::selected_edges;
     use crate::compile::selection::SourceSpectralWindow;

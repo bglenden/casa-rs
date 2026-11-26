@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::{Coordinate, CoordinateSystem};
+use casa_core::quanta::unit_val::UnitVal;
+use casa_core::quanta::{Quantity, Unit, casacore};
 use casa_images::{BeamComponent, GaussianBeam, ImagePixelType};
-use casa_types::quanta::unit_val::UnitVal;
-use casa_types::quanta::{Quantity, Unit, casacore};
 use pyo3::prelude::*;
 
 use crate::convert::{Variant, quantity, value::CasaValue};

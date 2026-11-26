@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA multi-feed metadata and per-integration offset geometry.
 mod predict_support;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{EpochRef, MEpoch, frequency::FrequencyRef};
+use casa_core::{ArrayValue, ScalarValue};
 use casa_simulation::{
     ArrayConfig, CoordinateSystem, Simulator, SimulatorOptions, SpectralWindowSpec,
 };
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, MEpoch, frequency::FrequencyRef};
-use casa_types::{ArrayValue, ScalarValue};
 use flate2::read::GzDecoder;
 use serde_json::Value;
 use std::{io::Read, path::Path};

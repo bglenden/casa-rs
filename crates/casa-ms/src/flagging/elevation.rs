@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::direction::{DirectionRef, MDirection};
 
 use crate::MeasurementSet;
 use crate::derived::engine::MsCalEngine;

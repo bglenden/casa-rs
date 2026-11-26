@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_ms::OptionalMainColumn;
 use casa_ms::SubTable;
 use casa_ms::builder::MeasurementSetBuilder;
@@ -28,7 +29,6 @@ use casa_observation::{
 use casa_test_support::casacore_oracle_available;
 use casa_test_support::ms_digest;
 use casa_test_support::ms_interop::MeasurementSetOracle;
-use casa_types::{ArrayValue, ScalarValue, Value};
 
 use common::{populate_main_rows, populate_subtables};
 
@@ -75,7 +75,7 @@ fn rust_model_data_sample(
     row: usize,
     correlation: usize,
     channel: usize,
-) -> casa_types::Complex32 {
+) -> casa_core::Complex32 {
     let measurement_set = MeasurementSet::open(path).expect("open MODEL_DATA probe in Rust");
     let value = measurement_set
         .main_table()
@@ -96,7 +96,7 @@ fn rust_model_data_sample(
 /// with CASA's initial model. Each cell is found in its partition's batches
 /// by its row's time, baseline and data description, and written alone:
 /// every other cell keeps what the session seeds or the column holds.
-fn write_model_cells(path: &Path, cells: &[(usize, usize, usize, casa_types::Complex32)]) {
+fn write_model_cells(path: &Path, cells: &[(usize, usize, usize, casa_core::Complex32)]) {
     let keys = {
         let ms = MeasurementSet::open(path).expect("open the MS");
         let main = ms.main_table();
@@ -269,7 +269,7 @@ fn model_data_write_read_interoperability_matrix() {
     populate_main_rows(&mut ms, 6);
     ms.save().unwrap();
 
-    let rust_written = casa_types::Complex32::new(4.5, -1.25);
+    let rust_written = casa_core::Complex32::new(4.5, -1.25);
     write_model_cells(&ms_path, &[(0, 0, 0, rust_written)]);
 
     MeasurementSet::open(&ms_path).expect("reopen committed MS in Rust");
@@ -285,7 +285,7 @@ fn model_data_write_read_interoperability_matrix() {
     // Every cell the run did not predict holds CASA's initial model, as
     // tclean creates the column: 1 in RR and LL, 0 in RL and LR.
     for (correlation, initial) in [(0, 1.0), (1, 0.0), (2, 0.0), (3, 1.0)] {
-        let initial = casa_types::Complex32::new(initial, 0.0);
+        let initial = casa_core::Complex32::new(initial, 0.0);
         for (row, channel) in [(0, 15), (5, 0)] {
             assert_eq!(
                 rust_model_data_sample(&ms_path, row, correlation, channel),
@@ -315,7 +315,7 @@ fn model_data_write_read_interoperability_matrix() {
     populate_main_rows(&mut cpp_written_ms, 6);
     cpp_written_ms.save().unwrap();
     drop(cpp_written_ms);
-    let cpp_written = casa_types::Complex32::new(-7.25, 3.5);
+    let cpp_written = casa_core::Complex32::new(-7.25, 3.5);
     MeasurementSetOracle::write_model_data_sample(&cpp_path, 1, 0, 0, cpp_written)
         .expect("C++ MODEL_DATA write");
     assert_eq!(rust_model_data_sample(&cpp_path, 1, 0, 0), cpp_written); // C++ write, Rust read.
@@ -339,8 +339,8 @@ fn model_data_clone_preserves_cpp_heterogeneous_tiled_shape_storage() {
     let path = directory.path().join("cpp-heterogeneous-tiled-shape.ms");
     MeasurementSetOracle::write_heterogeneous_tiled_shape_fixture(&path)
         .expect("C++ creates heterogeneous TiledShapeStMan fixture");
-    let rust_first = casa_types::Complex32::new(4.25, -0.75);
-    let rust_second = casa_types::Complex32::new(-3.0, 2.5);
+    let rust_first = casa_core::Complex32::new(4.25, -0.75);
+    let rust_second = casa_core::Complex32::new(-3.0, 2.5);
     write_model_cells(&path, &[(0, 3, 15, rust_first), (1, 2, 7, rust_second)]);
 
     MeasurementSetOracle::verify_heterogeneous_model_clone(&path)
@@ -352,7 +352,7 @@ fn model_data_clone_preserves_cpp_heterogeneous_tiled_shape_storage() {
         rust_first
     );
 
-    let cpp_written = casa_types::Complex32::new(9.5, 1.25);
+    let cpp_written = casa_core::Complex32::new(9.5, 1.25);
     MeasurementSetOracle::write_model_data_sample(&path, 1, 1, 6, cpp_written)
         .expect("C++ writes heterogeneous MODEL_DATA cell");
     assert_eq!(rust_model_data_sample(&path, 1, 1, 6), cpp_written);

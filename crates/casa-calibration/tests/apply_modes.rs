@@ -6,8 +6,8 @@ mod common;
 use casa_calibration::{
     ApplyCalibrationTableSpec, ApplyMode, ApplyPlanRequest, execute_apply_from_path,
 };
+use casa_core::{ArrayValue, Complex32, Value};
 use casa_ms::{MeasurementSet, MsSelection};
-use casa_types::{ArrayValue, Complex32, Value};
 use ndarray::{ArrayD, IxDyn};
 
 #[test]

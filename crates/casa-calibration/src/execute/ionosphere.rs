@@ -3,8 +3,8 @@
 
 use std::sync::Mutex;
 
-use casa_types::measures::calculate_igrf_at_shell_offset;
-use casa_types::measures::epoch::{EpochRef, MEpoch};
+use casa_core::measures::calculate_igrf_at_shell_offset;
+use casa_core::measures::epoch::{EpochRef, MEpoch};
 
 use super::*;
 use crate::gencal::tecim::{DEFAULT_HEIGHT_KM, HEIGHT_KEYWORD};

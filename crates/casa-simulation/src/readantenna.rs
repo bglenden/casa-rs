@@ -120,7 +120,7 @@ pub(crate) mod parse;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use casa_types::measures::{MPosition, MeasureError, MeasuresProvider, PositionRef};
+use casa_core::measures::{MPosition, MeasureError, MeasuresProvider, PositionRef};
 use thiserror::Error;
 
 /// The telescope name CASA uses when the file has no `observatory` header.

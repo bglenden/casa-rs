@@ -7,11 +7,11 @@
 //! direction, the transitions, the rest frequencies and the systemic
 //! velocities, the last without a frame. The two still bind.
 
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::radial_velocity::RadialVelocityRef;
 use casa_ms::observation_io::{OpenOptions, open};
 use casa_observation::{BindingTolerance, Catalogue, FieldId, SourceRecord, WindowId};
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::radial_velocity::RadialVelocityRef;
 
 use super::fixture;
 

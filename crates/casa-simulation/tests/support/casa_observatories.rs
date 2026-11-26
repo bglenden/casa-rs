@@ -5,8 +5,8 @@
 
 use std::path::Path;
 
-use casa_types::measures::{MeasuresProvider, ObservatoryPosition};
-use casa_types::quanta::unique_prefix_position;
+use casa_core::measures::{MeasuresProvider, ObservatoryPosition};
+use casa_core::quanta::unique_prefix_position;
 use serde_json::Value;
 
 /// CASA's observatory table, looked up as casa-measures-data and casacore

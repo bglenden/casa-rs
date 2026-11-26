@@ -4,13 +4,13 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use casa_core::{RecordField, RecordValue};
 use casa_ms::SubtableId;
 use casa_ms::selection::taql_selection::{select_legacy_rows, select_projected_scalar_rows};
 use casa_ms::subtables::{
     MsDataDescription, MsPolarization, MsSpectralWindow, linked_subtable_row,
 };
 use casa_tables::{RequiredScalarColumnValues, Table, TableOptions};
-use casa_types::{RecordField, RecordValue};
 use pyo3::exceptions::PyNotImplementedError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;

@@ -5,8 +5,8 @@ use std::path::Path;
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, DirectionCoordinate, RecordCoordinate,
 };
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use casa_images::ImagePixelType;
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Array2;
 use pyo3::prelude::*;
 

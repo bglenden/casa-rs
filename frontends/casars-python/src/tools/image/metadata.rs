@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem};
-use casa_types::quanta::{Unit, unit::normalize_casa_unit_name};
+use casa_core::quanta::{Unit, unit::normalize_casa_unit_name};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 

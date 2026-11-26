@@ -20,11 +20,11 @@ use casa_calibration::{
     GainSolveMode, GainSolveModelSource, GainSolveRequest, GainType, RefAntSelector,
     export_corrected_data, fluxscale, solve_calibration,
 };
+use casa_core::Complex32;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::selection::MsSelection;
 use casa_tasks::calibration::{CalibrationTaskRequest, ExecuteApplyTaskRequest};
-use casa_types::Complex32;
 use tempfile::TempDir;
 
 /// Every file under `path`, by relative path, with its bytes.

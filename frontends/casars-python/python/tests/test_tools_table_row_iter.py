@@ -19,8 +19,8 @@ from casars import tools
 
 
 TILED_MULTI_FIXTURE = (
-    Path(__file__).resolve().parents[4] / "crates"
-    / "casa-tables"
+    Path(__file__).resolve().parents[4]
+    / "libs/casacore/casa-tables"
     / "tests"
     / "data"
     / "tiled_data_stman"

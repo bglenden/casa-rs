@@ -4,9 +4,9 @@
 use std::path::Path;
 
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType};
+use casa_core::{ArrayValue, Complex32, RecordValue, Value};
 use casa_images::{ImagePixel, PagedImage};
 use casa_ms::voltage_pattern::VoltagePatternTable;
-use casa_types::{ArrayValue, Complex32, RecordValue, Value};
 use ndarray::{Array2, Axis, Ix2};
 
 use super::{FourierRow, GainSolveError, model_error, record_text};

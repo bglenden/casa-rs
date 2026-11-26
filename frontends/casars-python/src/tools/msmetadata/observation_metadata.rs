@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_core::ArrayValue;
+use casa_core::measures::{EpochRef, MEpoch, MPosition};
+use casa_measures::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_ms::{MeasurementSet, MsError, MsObservation, MsResult, open_measures_runtime};
-use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
-use casa_types::ArrayValue;
-use casa_types::measures::{EpochRef, MEpoch, MPosition};
 use pyo3::prelude::*;
 
 use super::PyMsMetadata;

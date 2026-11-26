@@ -13,10 +13,10 @@ use casa_calibration::{
     ApplyCalibrationTableSpec, ApplyExecutionOptions, ApplyExecutionReport, ApplyMode,
     ApplyPlanRequest, execute_apply_from_path_with_options,
 };
+use casa_core::ArrayValue;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_ms::{FlagMerge, list_flag_versions, restore_flag_version};
-use casa_types::ArrayValue;
 use tempfile::TempDir;
 
 /// An MS whose row 0 has no solution for antenna 1, so `calflag` flags it.
@@ -31,8 +31,8 @@ fn fixture(dir: &Path) -> (PathBuf, PathBuf) {
             spectral_window_id: 0,
             antenna_id: 0,
             gains: vec![
-                casa_types::Complex32::new(2.0, 0.0),
-                casa_types::Complex32::new(4.0, 0.0),
+                casa_core::Complex32::new(2.0, 0.0),
+                casa_core::Complex32::new(4.0, 0.0),
             ],
             flags: vec![false, false],
         }],

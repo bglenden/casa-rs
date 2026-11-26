@@ -4,8 +4,8 @@ mod fft;
 
 use std::path::Path;
 
+use casa_core::{ArrayD, RecordValue};
 use casa_lattices::{TraversalCursor, TraversalCursorIter, TraversalSpec};
-use casa_types::{ArrayD, RecordValue};
 use ndarray::{Dimension, IxDyn, Slice, Zip};
 
 use crate::convolve2d::GaussianSamples;

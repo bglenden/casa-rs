@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Sampled radial beam laws stored by CASA VPManager.
 
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use casa_numerics::BeamPattern;
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use super::{VoltagePatternError, radial_pattern, reference_radius};
 

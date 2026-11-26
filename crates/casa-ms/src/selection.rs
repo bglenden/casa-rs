@@ -23,9 +23,9 @@
 use crate::error::{MsError, MsResult};
 use crate::ms::MeasurementSet;
 use crate::selection::syntax::{ChannelSelection, parse_spw_selector};
-use casa_tables::Table;
 #[cfg(test)]
-use casa_types::ArrayValue;
+use casa_core::ArrayValue;
+use casa_tables::Table;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -1799,7 +1799,7 @@ mod tests {
     use crate::test_helpers::{default_value, default_value_for_def};
 
     fn add_selection_test_fields(ms: &mut MeasurementSet, count: usize) {
-        use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+        use casa_core::{RecordField, RecordValue, ScalarValue, Value};
         for id in 0..count {
             let fields = crate::schema::field::REQUIRED_COLUMNS
                 .iter()
@@ -1834,8 +1834,8 @@ mod tests {
 
     #[test]
     fn first_match_stops_before_loading_later_uv_blocks() {
+        use casa_core::{PrimitiveType, RecordField, RecordValue, Value};
         use casa_tables::{ColumnSchema, TableSchema};
-        use casa_types::{PrimitiveType, RecordField, RecordValue, Value};
 
         let mut ms = MeasurementSet::create_memory(crate::MeasurementSetBuilder::new()).unwrap();
         let main = ms.main_table_mut();
@@ -2071,10 +2071,10 @@ mod tests {
             .unwrap()
             .columns()
             .iter()
-            .map(|column| casa_types::RecordField::new(column.name(), default_value(column.name())))
+            .map(|column| casa_core::RecordField::new(column.name(), default_value(column.name())))
             .collect();
         ms.main_table_mut()
-            .add_row(casa_types::RecordValue::new(fields))
+            .add_row(casa_core::RecordValue::new(fields))
             .unwrap();
         for selector in ["999", "9~2147483647"] {
             let request = MsSelection {
@@ -2102,7 +2102,7 @@ mod tests {
     fn apply_field_selection() {
         use crate::builder::MeasurementSetBuilder;
         use crate::test_helpers::default_value;
-        use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+        use casa_core::{RecordField, RecordValue, ScalarValue, Value};
 
         let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
         add_selection_test_fields(&mut ms, 3);
@@ -2135,7 +2135,7 @@ mod tests {
     fn apply_time_range_selection() {
         use crate::builder::MeasurementSetBuilder;
         use crate::test_helpers::default_value;
-        use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+        use casa_core::{RecordField, RecordValue, ScalarValue, Value};
 
         let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
 
@@ -2165,7 +2165,7 @@ mod tests {
     #[test]
     fn apply_antenna_name_selection() {
         use crate::builder::MeasurementSetBuilder;
-        use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+        use casa_core::{RecordField, RecordValue, ScalarValue, Value};
 
         let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
 
@@ -2235,7 +2235,7 @@ mod tests {
     fn apply_spw_selection_without_matching_ddid_returns_no_rows() {
         use crate::builder::MeasurementSetBuilder;
         use crate::schema;
-        use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+        use casa_core::{RecordField, RecordValue, ScalarValue, Value};
 
         let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
 
@@ -2292,7 +2292,7 @@ mod tests {
     #[test]
     fn apply_field_and_spw_selection_returns_only_intersection() {
         use crate::builder::MeasurementSetBuilder;
-        use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+        use casa_core::{RecordField, RecordValue, ScalarValue, Value};
 
         let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
         add_selection_test_fields(&mut ms, 2);

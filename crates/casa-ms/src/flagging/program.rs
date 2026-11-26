@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
-use casa_types::ScalarValue;
+use casa_core::ScalarValue;
 
 use crate::ms::MeasurementSet;
 use crate::schema::SubtableId;

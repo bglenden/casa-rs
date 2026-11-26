@@ -9,17 +9,19 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Instant;
 
-use casa_tables::{
-    ColumnBinding, ColumnOverrides, STREAMING_TILED_COLUMN_BUFFER_BYTES, StreamedScalarType,
-    StreamedTiledPrimitiveColumn, StreamedTiledPrimitiveType, StreamedTiledShapeComplex32Column,
-    StreamedTiledShapeValueType, StreamingTiledPrimitiveWriter, StreamingTiledShapeComplex32Writer,
-    StreamingTiledShapeWriter, Table, TableError, TableOptions, TableWriteLock,
-    install_streamed_tiled_column, install_streamed_tiled_column_primitive_column,
-    install_streamed_tiled_shape_column, install_streamed_tiled_shape_complex32_column,
-    install_streamed_tiled_shape_primitive_column, install_undefined_tiled_shape_column,
-    streamed_scalar_columns_resident_bytes,
+use casa_core::{ArrayValue, PrimitiveType, ScalarValue, Value};
+use casa_tables::streamed_tiled::{
+    STREAMING_TILED_COLUMN_BUFFER_BYTES, StreamedTiledPrimitiveColumn, StreamedTiledPrimitiveType,
+    StreamedTiledShapeComplex32Column, StreamedTiledShapeValueType, StreamingTiledPrimitiveWriter,
+    StreamingTiledShapeComplex32Writer, StreamingTiledShapeWriter, install_streamed_tiled_column,
+    install_streamed_tiled_column_primitive_column, install_streamed_tiled_shape_column,
+    install_streamed_tiled_shape_complex32_column, install_streamed_tiled_shape_primitive_column,
+    install_undefined_tiled_shape_column,
 };
-use casa_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
+use casa_tables::{
+    ColumnBinding, ColumnOverrides, StreamedScalarType, Table, TableError, TableOptions,
+    TableWriteLock, streamed_scalar_columns_resident_bytes,
+};
 use num_complex::Complex32;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

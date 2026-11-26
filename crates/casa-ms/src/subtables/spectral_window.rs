@@ -6,9 +6,9 @@
 //!
 //! Cf. C++ `MSSpWindowColumns`.
 
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::{ArrayValue, ScalarValue};
 use casa_tables::Table;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::{ArrayValue, ScalarValue};
 
 use crate::column_def::ColumnDef;
 use crate::error::{MsError, MsResult};
@@ -221,7 +221,7 @@ fn extract_f64_vec(arr: &ArrayValue) -> MsResult<Vec<f64>> {
 mod tests {
     use super::*;
     use crate::column_def::build_table_schema;
-    use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+    use casa_core::{RecordField, RecordValue, ScalarValue, Value};
     use ndarray::ArrayD;
 
     fn make_spw_table() -> Table {

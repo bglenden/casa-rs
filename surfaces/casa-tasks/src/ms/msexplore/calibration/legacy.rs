@@ -4,11 +4,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use casa_numerics::{legacy_bpoly_chebyshev_value, legacy_cubic_spline};
-use casa_tables::{ColumnSchema, Table, TableInfo, TableSchema};
-use casa_types::{
+use casa_core::{
     ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
+use casa_numerics::{legacy_bpoly_chebyshev_value, legacy_cubic_spline};
+use casa_tables::{ColumnSchema, Table, TableInfo, TableSchema};
 use ndarray::Array2;
 
 use super::axis::{Axis, SampleCoordinates};

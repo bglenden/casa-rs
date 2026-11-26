@@ -15,6 +15,9 @@
 
 use std::path::Path;
 
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::{EpochRef, MEpoch, MPosition};
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_simulation::{
     ArrayConfig, BackendRequest, CoordinateSystem, NoiseSpec, ObserveSpec, PredictSpec,
@@ -23,9 +26,6 @@ use casa_simulation::{
 use casa_test_support::ms_digest;
 use casa_test_support::ms_interop::MeasurementSetOracle;
 use casa_test_support::{casacore_oracle_available, deterministic_measures_provider};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::{EpochRef, MEpoch, MPosition};
 
 fn options() -> SimulatorOptions {
     SimulatorOptions {

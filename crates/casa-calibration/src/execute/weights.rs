@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! VisBufferImpl2::resetWeightsUsingSigma, before every calibration apply.
 
+use casa_core::ArrayValue;
 use casa_ms::MsError;
 use casa_tables::Table;
-use casa_types::ArrayValue;
 
 use crate::model::{CalibrationParameterFamily, CalibrationTableSummary};
 

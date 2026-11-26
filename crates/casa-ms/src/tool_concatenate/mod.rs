@@ -21,8 +21,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use casa_core::RecordValue;
 use casa_tables::{Table, TableWriteLock};
-use casa_types::RecordValue;
 
 use crate::{MeasurementSet, MsError, MsResult, SubtableId};
 

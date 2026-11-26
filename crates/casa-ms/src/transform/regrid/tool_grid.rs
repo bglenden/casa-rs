@@ -4,15 +4,15 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use casa_core::measures::epoch::MEpoch;
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::frequency_conversion::PreparedFrequencyConversion;
+use casa_core::measures::position::MPosition;
+use casa_core::measures::{MeasFrame, MeasuresProvider};
 use casa_tables::{
     RequiredScalarColumnDestination, RequiredScalarColumnValues, RequiredScalarColumnValuesMut,
     Table,
 };
-use casa_types::measures::epoch::MEpoch;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::frequency_conversion::PreparedFrequencyConversion;
-use casa_types::measures::position::MPosition;
-use casa_types::measures::{MeasFrame, MeasuresProvider};
 
 use crate::spectral_selection::combine_windows;
 use crate::subtables::measured_columns::antenna_position;

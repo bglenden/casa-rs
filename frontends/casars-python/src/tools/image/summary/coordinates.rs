@@ -6,11 +6,11 @@ use casa_coordinates::display::format_stream_value;
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, QualityType, SpectralCoordinate,
 };
-use casa_types::measures::doppler::{DopplerRef, MDoppler};
-use casa_types::measures::frame::MeasFrame;
-use casa_types::measures::position::PositionRef;
-use casa_types::quanta::{MvTime, Unit};
-use casa_types::{ArrayValue, RecordValue, Value};
+use casa_core::measures::doppler::{DopplerRef, MDoppler};
+use casa_core::measures::frame::MeasFrame;
+use casa_core::measures::position::PositionRef;
+use casa_core::quanta::{MvTime, Unit};
+use casa_core::{ArrayValue, RecordValue, Value};
 use pyo3::PyResult;
 
 use crate::convert::value::CasaValue;

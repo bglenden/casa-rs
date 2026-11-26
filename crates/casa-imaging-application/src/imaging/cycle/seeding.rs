@@ -18,13 +18,13 @@
 //! gives that run's products (the T1 laws; CASA 6.7.6 does the same on a
 //! 14-pointing mosaic).
 
+use casa_core::Correlation;
 use casa_imaging_deconvolution::{FinalNormalState, MajorCycle, MajorCycleError, ModelGeneration};
 use casa_imaging_model::{CompiledProblem, ProductNormalization, ReconstructionBasis};
 use casa_imaging_operator::{Basis, ModeSet, PlaneRange};
 use casa_imaging_products::{MinorCycleImageResponse, MosaicSensitivity};
 use casa_imaging_runtime::pass::{NativeBlock, SampleContent};
 use casa_imaging_runtime::{Admitted, Demand, Reservation, admit};
-use casa_types::Correlation;
 
 use super::{Major, Run};
 use crate::compile::StartModel;

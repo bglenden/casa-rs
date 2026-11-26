@@ -39,6 +39,7 @@
 use std::collections::VecDeque;
 use std::sync::{Mutex, PoisonError};
 
+use casa_core::measures::MjdHighPrec;
 use casa_imaging_model::{
     CompiledProblem, InstrumentResponse, ReconstructionBasis, SequentialContinuumTransform,
 };
@@ -48,7 +49,6 @@ use casa_observation::{
     AccessRequest, BatchAddress, Correlation, Deliver, ObservationError, PatchValues, UpdateTarget,
     Updater, WritableRole,
 };
-use casa_types::measures::MjdHighPrec;
 use ndarray::ArrayView3;
 use num_complex::Complex32;
 

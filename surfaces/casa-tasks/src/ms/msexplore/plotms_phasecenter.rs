@@ -2,9 +2,9 @@
 //! Parse and validate the requested PlotMS phase center for CLI tasks.
 
 use crate::{TaskFailure, TaskInvocation};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frame::MeasFrame;
 use casa_ms::derived::parse_phase_direction;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frame::MeasFrame;
 
 pub(super) fn requested(task: &TaskInvocation<'_>) -> Result<Option<String>, TaskFailure> {
     if task.flag("transform")? {

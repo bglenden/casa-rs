@@ -10,9 +10,9 @@ use casa_coordinates::{
     CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate,
     StokesCoordinate, StokesType,
 };
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::quanta::Quantity;
-use casa_types::quanta::casacore::{casacore_unit, tos};
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::quanta::Quantity;
+use casa_core::quanta::casacore::{casacore_unit, tos};
 
 use super::modify::check_increments;
 use super::{SkyModelError, add_components, flat_image, shape_obs_info, write_image, zeros};
@@ -151,7 +151,7 @@ impl ComponentModel {
             .epoch
             .trim()
             .parse()
-            .unwrap_or(casa_types::measures::direction::DirectionRef::J2000);
+            .unwrap_or(casa_core::measures::direction::DirectionRef::J2000);
         let reread = |value: &Quantity| -> Result<f64, SimutilError> {
             qa::value_in(&qa::read(&tos(value, 9))?, "rad")
         };
@@ -187,6 +187,6 @@ impl ComponentModel {
 }
 
 /// casacore's unit `name`, which is known.
-fn unit(name: &str) -> casa_types::quanta::Unit {
+fn unit(name: &str) -> casa_core::quanta::Unit {
     casacore_unit(name).expect("a unit casacore knows")
 }

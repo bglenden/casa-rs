@@ -15,7 +15,7 @@
 //! whatever they hold. `POINTING` is inventoried by the pointing plan, and
 //! MAIN by the losses' inventory.
 
-use casa_types::{ArrayValue, ScalarValue, Value};
+use casa_core::{ArrayValue, ScalarValue, Value};
 
 use super::Loss;
 use crate::MeasurementSet;
@@ -251,7 +251,7 @@ pub(super) fn inventory(ms: &MeasurementSet, losses: &mut Vec<Loss>) {
 
 #[cfg(test)]
 mod tests {
-    use casa_types::{ArrayValue, ScalarValue, Value};
+    use casa_core::{ArrayValue, ScalarValue, Value};
     use ndarray::ArrayD;
     use num_complex::Complex32;
 

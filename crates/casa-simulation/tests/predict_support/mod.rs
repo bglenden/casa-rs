@@ -10,6 +10,11 @@ use casa_coordinates::{
     CoordinateSystem as ImageCoordinates, DirectionCoordinate, Projection, ProjectionType,
     SpectralCoordinate, StokesCoordinate, StokesType,
 };
+use casa_core::ArrayValue;
+use casa_core::Correlation;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_images::PagedImage;
 use casa_imaging_model::GridFtProjection;
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
@@ -26,11 +31,6 @@ use casa_simulation::{
     ArrayConfig, BackendRequest, CoordinateSystem, ObserveSpec, PredictSpec, SessionResources,
     Simulator, SimulatorOptions, SpectralWindowSpec, StateSpec,
 };
-use casa_types::ArrayValue;
-use casa_types::Correlation;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::{EpochRef, MEpoch};
 use ndarray::{ArrayD, IxDyn};
 use num_complex::Complex32;
 
@@ -242,7 +242,7 @@ pub fn session_with_measures(
     channels: usize,
     dishes: &[f64],
     resources: SessionResources,
-    measures: std::sync::Arc<dyn casa_types::measures::MeasuresProvider>,
+    measures: std::sync::Arc<dyn casa_core::measures::MeasuresProvider>,
 ) -> Simulator {
     session_with_band(
         path,
@@ -263,7 +263,7 @@ pub fn session_with_band(
     (channels, start_hz, step_hz): (usize, f64, f64),
     dishes: &[f64],
     resources: SessionResources,
-    measures: std::sync::Arc<dyn casa_types::measures::MeasuresProvider>,
+    measures: std::sync::Arc<dyn casa_core::measures::MeasuresProvider>,
 ) -> Simulator {
     let mut session = Simulator::open(
         path,
@@ -341,7 +341,7 @@ pub fn write_stokes_point_list(path: &Path, direction: [f64; 2], [i, q, u, v]: [
     use casa_components::{
         ComponentList, ComponentShape, Flux, SkyComponent, SpectralKind, SpectralModel,
     };
-    use casa_types::measures::frequency::MFrequency;
+    use casa_core::measures::frequency::MFrequency;
     let mut list = ComponentList::new();
     list.push(SkyComponent::new(
         Flux::stokes_jy(i, q, u, v),

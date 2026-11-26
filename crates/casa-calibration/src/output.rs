@@ -365,7 +365,7 @@ mod tests {
         let mut table = Table::with_schema(
             casa_tables::TableSchema::new(vec![casa_tables::ColumnSchema::scalar(
                 "TIME",
-                casa_types::PrimitiveType::Float64,
+                casa_core::PrimitiveType::Float64,
             )])
             .unwrap(),
         );

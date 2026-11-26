@@ -5,9 +5,9 @@ mod opacity;
 
 use std::path::Path;
 
+use casa_core::ScalarValue;
+use casa_core::quanta::format::{YMD, format_time};
 use casa_tables::{Table, TableOptions};
-use casa_types::ScalarValue;
-use casa_types::quanta::format::{YMD, format_time};
 
 /// Opacity and station measurements prepared for `plotweather`.
 pub struct WeatherEstimate {

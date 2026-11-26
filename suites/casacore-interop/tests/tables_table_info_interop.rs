@@ -6,10 +6,10 @@
 
 #![cfg(feature = "cpp-interop-tests")]
 
+use casa_core::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{Table, TableInfo, TableOptions};
 use casa_test_support::table_interop::{ManagerKind, TableFixture};
 use casa_test_support::{CppTableFixture, TableOracle};
-use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
 use casa_tables::ColumnSchema;
 use casa_tables::TableSchema;

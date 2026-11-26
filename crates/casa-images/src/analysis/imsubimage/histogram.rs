@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_types::{ArrayD, ArrayValue, RecordValue, Value};
+use casa_core::{ArrayD, ArrayValue, RecordValue, Value};
 use ndarray::{Dimension, IxDyn, Zip};
 
 use crate::analysis::axes::StridedSection;

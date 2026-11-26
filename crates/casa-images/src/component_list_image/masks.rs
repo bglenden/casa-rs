@@ -2,10 +2,10 @@
 
 use std::path::{Path, PathBuf};
 
+use casa_core::{RecordValue, ScalarValue, Value};
 use casa_lattices::{Lattice, LatticeMut, PagedArray, TiledShape};
 use casa_tables::publication::{lock_table_tree_for_replacement, rename_without_replacing};
 use casa_tables::{Table, TableOptions, TableUseLock, TableWriteLock, add_directory};
-use casa_types::{RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
 
 use super::native::{ComponentTable, keyword_record};

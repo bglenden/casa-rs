@@ -15,11 +15,11 @@ mod weights;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use casa_core::{ArrayValue, Complex32};
 use casa_ms::ChannelSelection;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_ms::{MsError, ResolvedMsSelectionRow};
-use casa_types::{ArrayValue, Complex32};
 use ndarray::{ArrayD, ArrayView2};
 
 use super::{

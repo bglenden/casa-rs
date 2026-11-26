@@ -5,7 +5,7 @@ use super::imhead_mutations::assert_header_value_near;
 use super::*;
 
 fn apply_direction_setup(path: &Path, setup: &Value) {
-    use casa_types::{ArrayValue, ScalarValue, Value as TableValue};
+    use casa_core::{ArrayValue, ScalarValue, Value as TableValue};
 
     let mut image = casa_images::PagedImage::<f32>::open(path).unwrap();
     let mut coordinates = image.coordinates().to_record();

@@ -2,7 +2,7 @@
 //! Selected finite-distance geometry remains charged with its prediction.
 use super::polynomial_fields::measured;
 use super::{PredictSpec, alone, charge_process_caches, configured, resources, scan};
-use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::direction::{DirectionRef, MDirection};
 
 #[test]
 fn finite_distance_positions_hold_their_charge() {

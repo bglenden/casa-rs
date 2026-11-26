@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
+use casa_core::{ArrayD, RecordValue, Value, measures::doppler::DopplerRef};
 use casa_lattices::{ScratchSpace, TempStoragePolicy};
-use casa_types::{ArrayD, RecordValue, Value, measures::doppler::DopplerRef};
 use ndarray::{IxDyn, ShapeBuilder};
 
 use crate::analysis::imsubimage::fitprofile::selection::ProfileSelection;

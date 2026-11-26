@@ -2,8 +2,8 @@
 //! Selected noise has CASA's support and analytic moments; random sequences
 //! differ between the implementations, so do not compare draws pointwise.
 
+use casa_core::Complex32;
 use casa_simulation::BackendRequest;
-use casa_types::Complex32;
 use serde_json::{Value, json};
 
 use super::{fixture, opened_case};

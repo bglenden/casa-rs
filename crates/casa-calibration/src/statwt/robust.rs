@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Exposure-weighted robust variances for the real and imaginary visibility parts.
 
+use casa_core::Complex32;
 use casa_lattices::robust_statistics::{FitHalfCenter, max_zscore};
 use casa_ms::{MsError, MsResult};
-use casa_types::Complex32;
 
 use super::classic::Moments;
 

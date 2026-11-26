@@ -14,8 +14,8 @@ use super::{
 };
 use crate::subtables::has_column;
 use crate::{ListObsOptions, MeasurementSet, MsError, MsResult};
+use casa_core::ScalarValue;
 use casa_tables::Table;
-use casa_types::ScalarValue;
 
 pub(super) fn apply(
     ms: &MeasurementSet,

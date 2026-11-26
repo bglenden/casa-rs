@@ -18,11 +18,11 @@
 mod common;
 
 use casa_components::ComponentList;
+use casa_core::measures::direction::MDirection;
 use casa_tables::{Table, TableOptions};
 use casa_test_support::casacore_oracle_available;
 use casa_test_support::table_measures_interop::TableMeasuresOracle;
 use casa_test_support::taql_interop::{TaqlOracle, results_match, rust_taql_query};
-use casa_types::measures::direction::MDirection;
 use common::{copy_table, fixture_dir};
 
 const COLUMNS: &str = "Flux, Flux_Unit, Flux_Polarisation, Flux_Error, Shape, \
@@ -75,8 +75,8 @@ fn casacore_reads_the_lists_casa_rs_writes() {
 #[test]
 fn casacore_reads_dynamical_direction_labels_without_a_frame() {
     use casa_components::{ComponentShape, Flux, SkyComponent, SpectralKind, SpectralModel};
-    use casa_types::measures::direction::DirectionRef;
-    use casa_types::measures::frequency::{FrequencyRef, MFrequency};
+    use casa_core::measures::direction::DirectionRef;
+    use casa_core::measures::frequency::{FrequencyRef, MFrequency};
 
     if !casacore_oracle_available() {
         eprintln!("skipped: casacore C++ is not available (pkg-config casacore)");

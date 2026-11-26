@@ -3,8 +3,8 @@
 
 use std::collections::BTreeSet;
 
+use casa_core::Complex32;
 use casa_ms::MeasurementSet;
-use casa_types::Complex32;
 
 use super::{SolutionRow, error};
 use crate::GainSolveError;

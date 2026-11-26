@@ -9,13 +9,13 @@
 
 mod common;
 
+use casa_core::Correlation;
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     BandwidthTaper, DensityCellRule, DensityFieldKeys, DensityGrid, DensityGridShape,
     GridPrecision, MeasurementOperator, NativeRow, RowContext, SampleBuffer, SpectralAxis,
     SpectralKernel, SpectralResampler, WeightingGeneration, build_density_grid,
 };
-use casa_types::Correlation;
 use common::{Rng, operator};
 use num_complex::Complex32;
 

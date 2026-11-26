@@ -5,12 +5,12 @@
 
 #![cfg(all(feature = "cpp-interop-tests", has_casacore_cpp))]
 
-use casa_tables::table_measures::*;
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::epoch::EpochRef;
+use casa_core::*;
+use casa_measures::table_measures::*;
 use casa_tables::{ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
 use casa_test_support::table_measures_interop::*;
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::epoch::EpochRef;
-use casa_types::*;
 
 fn tmp_path(name: &str) -> String {
     format!("/private/tmp/claude-501/table_meas_{name}")

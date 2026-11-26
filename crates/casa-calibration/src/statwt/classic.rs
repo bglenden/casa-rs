@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Sample weights from the classical variances of the real and imaginary data.
 
-use casa_types::Complex32;
+use casa_core::Complex32;
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct Moments {

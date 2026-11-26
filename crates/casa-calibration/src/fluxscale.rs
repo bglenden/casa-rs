@@ -6,8 +6,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
+use casa_core::{ArrayValue, Complex32, ScalarValue, Value};
 use casa_tables::{Table, TableError, TableOptions};
-use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

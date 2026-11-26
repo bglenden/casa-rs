@@ -3,9 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
+use casa_core::Value;
 use casa_ms::MeasurementSet;
 use casa_tables::{Table, TableOptions, add_directory, strip_directory};
-use casa_types::Value;
 
 use super::{CalibraterLifecycle, CalibraterLifecycleError};
 use crate::constants::{STANDARD_SUBTABLE_KEYWORDS, TABLE_INFO_TYPE};

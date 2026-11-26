@@ -4,9 +4,9 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_ms::MeasurementSet;
 use casa_tables::{ColumnType, RequiredScalarColumnValues, Table, TableOptions};
-use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
 use super::{GencalError, GencalType, PriorCalRow, get_f64};

@@ -2,6 +2,7 @@
 //! The measurement operator, spectral resampler and weighting rule of one
 //! compiled problem, projected from `CompiledProblem`.
 
+use casa_core::Correlation;
 use casa_imaging_model::{
     AntennaResponseClass, CompiledImageDomain, CompiledProblem, DensityCells, FrequencyFrame,
     InstrumentModel, ReconstructionBasis, SpectralKernel, SpectralWcs,
@@ -17,7 +18,6 @@ use casa_imaging_runtime::pass::{BackendChoice, RowSamples};
 use casa_imaging_runtime::{
     Demand, FRAME_MARGIN, HostResources, Reservation, ResourcePolicy, admit, row_layout,
 };
-use casa_types::Correlation;
 
 use super::ImagingError;
 use super::observation_source::StoreKeys;

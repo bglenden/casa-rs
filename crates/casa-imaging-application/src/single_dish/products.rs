@@ -264,7 +264,7 @@ fn beam(
     let fwhm = theoretical_beam_arcsec(&BeamSetup {
         diameter_m: antenna
             .dish_diameter
-            .get_value_in(&casa_types::quanta::Unit::new("m").map_err(failure)?)
+            .get_value_in(&casa_core::quanta::Unit::new("m").map_err(failure)?)
             .map_err(failure)?,
         obscuration_m: if ["PM", "DV", "DA", "CM"]
             .iter()

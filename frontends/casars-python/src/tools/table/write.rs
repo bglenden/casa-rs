@@ -12,8 +12,8 @@
 //! opened with `permanent` locking holds it. A table opened read-only
 //! refuses. With no table open a write logs and returns `False`.
 
+use casa_core::{RecordField, RecordValue, Value};
 use casa_tables::{LockType, Table, TableError, TableOptions};
-use casa_types::{RecordField, RecordValue, Value};
 
 use super::keyword_value::Incoming;
 use super::read::KeywordRef;

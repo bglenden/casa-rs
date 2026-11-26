@@ -2,8 +2,8 @@
 //! Format extrema positions as CASA's ImageMetaDataBase does.
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, StokesType};
-use casa_types::measures::direction::DirectionRef;
-use casa_types::quanta::format::{ANGLE, DIG2, TIME, format_angle};
+use casa_core::measures::direction::DirectionRef;
+use casa_core::quanta::format::{ANGLE, DIG2, TIME, format_angle};
 
 use super::projection_header::cpp_number_precision;
 use crate::ImageError;
@@ -139,8 +139,8 @@ mod tests {
     use std::path::Path;
 
     use casa_coordinates::LinearCoordinate;
+    use casa_core::Value;
     use casa_tables::{Table, TableOptions};
-    use casa_types::Value;
 
     use super::{CoordinateSystem, format_position};
 

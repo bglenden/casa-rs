@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_core::measures::position::MPosition;
+use casa_core::{RecordValue, ScalarValue, Value};
 use casa_images::{ImageInfo, PagedImage};
 use casa_imaging_operator::WPlaneCount;
 use casa_ms::schema::main_table::VisibilityDataColumn::ModelData;
@@ -14,8 +16,6 @@ use casa_ms::{
     MeasurementSet, MsError, MsResult, MsSelection, ResolvedMsSelection, VirtualModelEntry,
     VirtualModelKind,
 };
-use casa_types::measures::position::MPosition;
-use casa_types::{RecordValue, ScalarValue, Value};
 
 use crate::model_columns::has_column;
 use crate::solve::grouping::VisibilityModels;

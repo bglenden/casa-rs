@@ -9,9 +9,9 @@ use std::time::Duration;
 
 use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::CasaValue;
+use casa_core::quanta::Quantity;
+use casa_core::quanta::format::{YMD, format_time};
 use casa_tables::{TableOptions, publication::lock_table_tree_for_replacement};
-use casa_types::quanta::Quantity;
-use casa_types::quanta::format::{YMD, format_time};
 
 use casa_calibration::output::CalibrationOutput;
 

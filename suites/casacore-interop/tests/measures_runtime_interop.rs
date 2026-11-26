@@ -4,9 +4,9 @@
 //! model (#845).
 #![cfg(all(feature = "cpp-interop-tests", has_casacore_cpp))]
 
-use casa_measures_data::MeasuresRuntime;
+use casa_core::measures::MeasuresProvider;
+use casa_measures::MeasuresRuntime;
 use casa_test_support::measures_interop::MeasuresOracle;
-use casa_types::measures::MeasuresProvider;
 use std::path::Path;
 
 const J2000_MJD: f64 = 51_544.5;

@@ -10,7 +10,7 @@
 //! an unsigned integer (undefined behaviour, which differs between CASA's
 //! platforms) the port saturates, as Rust's casts and CASA's arm64 build do.
 
-use casa_types::quanta::format::CalendarDate;
+use casa_core::quanta::format::CalendarDate;
 
 use super::grammar::{TimeFields, UNSET};
 

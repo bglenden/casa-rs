@@ -7,12 +7,12 @@ mod common;
 
 use std::time::Instant;
 
+use casa_core::ArrayValue;
 use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::{OptionalMainColumn, VisibilityDataColumn};
 use casa_test_support::casacore_oracle_available;
 use casa_test_support::ms_interop::MeasurementSetOracle;
-use casa_types::ArrayValue;
 use common::{populate_main_rows, populate_subtables};
 
 #[test]

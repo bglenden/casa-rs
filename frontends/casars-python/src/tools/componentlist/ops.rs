@@ -31,12 +31,12 @@ use casa_components::{
     ComponentList, ComponentListError, Flux, Polarisation, PowerLogPolynomial, SkyComponent,
     SpectralIndex, SpectralKind, SpectralModel, TabularSpectrum,
 };
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::measures::{MeasFrame, MeasureError, MeasuresProvider};
+use casa_core::quanta::{Dimension, Unit, UnitDim};
+use casa_core::{RecordValue, Value};
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::measures::{MeasFrame, MeasureError, MeasuresProvider};
-use casa_types::quanta::{Dimension, Unit, UnitDim};
-use casa_types::{RecordValue, Value};
 
 use super::add::AddComponent;
 use crate::convert::value::CasaValue;

@@ -10,8 +10,8 @@
 mod common;
 
 use casa_components::{ComponentList, ShapeType, SpectralKind};
+use casa_core::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use casa_tables::{ArrayShapeContract, ColumnType, Table, TableOptions};
-use casa_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use common::{assert_matches_casa, copy_table, fixture_dir, load_json};
 use serde_json::Value as Json;
 

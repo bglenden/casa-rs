@@ -3,7 +3,7 @@
 
 use std::str::FromStr;
 
-use casa_types::measures::direction::DirectionRef;
+use casa_core::measures::direction::DirectionRef;
 use pyo3::exceptions::{PyNotImplementedError, PyOverflowError, PySystemError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyInt, PyString};

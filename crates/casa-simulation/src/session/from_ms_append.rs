@@ -3,7 +3,7 @@
 use super::*;
 use crate::session::feeds::Feed;
 use crate::session::observe::{PlannedRows, ScanRows, StateSpec};
-use casa_types::ArrayValue;
+use casa_core::ArrayValue;
 
 impl Simulator {
     /// Evaluate cell-dependent selection against the current logical MS.
@@ -198,7 +198,7 @@ impl Simulator {
                 .into_iter()
                 .flatten()
             {
-                if let casa_types::ScalarValue::Int32(value) = value {
+                if let casa_core::ScalarValue::Int32(value) = value {
                     maximum = Some(maximum.map_or(value, |old: i32| old.max(value)));
                 }
             }

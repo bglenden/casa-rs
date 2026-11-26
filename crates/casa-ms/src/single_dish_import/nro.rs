@@ -10,8 +10,8 @@ use std::fs::File;
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
+use casa_core::{PrimitiveType, RecordField, RecordValue};
 use casa_tables::{ColumnSchema, Table, TableSchema};
-use casa_types::{PrimitiveType, RecordField, RecordValue};
 
 use self::binary::{OBSERVATION_HEADER_BYTES, Record, invalid};
 use self::header::Header;

@@ -30,12 +30,11 @@ images = [
 ]
 ms = [
     "dep:casa-atmosphere",
-    "dep:casa-measures-data",
+    "dep:casa-measures",
     "dep:casa-ms",
     "dep:casa-numerics",
     "dep:casa-observation",
     "dep:casa-plot-data",
-    "dep:casa-tables",
     "dep:ndarray",
     "dep:num-complex",
     "dep:tempfile",
@@ -45,10 +44,9 @@ simulation = [
     "casa-plot-data/simulation",
     "dep:casa-calibration",
     "dep:casa-components",
-    "dep:casa-measures-data",
+    "dep:casa-measures",
     "dep:casa-ms",
     "dep:casa-simulation",
-    "dep:casa-tables",
 ]
 vla = ["dep:casa-ms", "dep:casa-vla"]
 
@@ -62,16 +60,15 @@ casa-components = { path = "../../crates/casa-components", optional = true }
 casa-contracts = { path = "../casa-contracts" }
 casa-images = { path = "../../crates/casa-images", optional = true }
 casa-imaging-application = { path = "../../crates/casa-imaging-application", optional = true }
-casa-lattices = { path = "../../crates/casa-lattices", optional = true }
-casa-logging = { path = "../../crates/casa-logging" }
-casa-measures-data = { path = "../../crates/casa-measures-data", optional = true }
+casa-lattices = { workspace = true, optional = true }
+casa-measures = { workspace = true, optional = true }
 casa-ms = { path = "../../crates/casa-ms", features = ["msv4"], optional = true }
-casa-numerics = { path = "../../crates/casa-numerics", optional = true }
-casa-observation = { path = "../../crates/casa-observation", optional = true }
+casa-numerics = { workspace = true, optional = true }
+casa-observation = { workspace = true, optional = true }
 casa-plot-data = { path = "../casa-plot-data", features = ["ms"], optional = true }
 casa-simulation = { path = "../../crates/casa-simulation", optional = true }
-casa-tables = { path = "../../crates/casa-tables", optional = true }
-casa-types = { path = "../../crates/casa-types" }
+casa-tables.workspace = true
+casa-core.workspace = true
 casa-vla = { path = "../../crates/casa-vla", optional = true }
 fs2 = "0.4"
 ndarray = { workspace = true, optional = true }

@@ -11,14 +11,14 @@ use std::path::{Path, PathBuf};
 use casa_components::{
     ComponentList, ComponentShape, Flux, SkyComponent, SpectralKind, SpectralModel,
 };
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::measures::{EpochRef, MEpoch};
+use casa_core::{ArrayValue, Complex32};
 use casa_ms::MeasurementSet;
 use casa_simulation::simobserve::{SimobserveParameters, SimobserveRequest, simobserve};
 use casa_simulation::simutil::direction::Directions;
 use casa_simulation::{ExecutionControls, SessionResources, SimulatorOptions};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::measures::{EpochRef, MEpoch};
-use casa_types::{ArrayValue, Complex32};
 
 /// Six ALMA antennas in local coordinates.
 const CONFIGURATION: &str = "\
@@ -139,7 +139,7 @@ fn data(ms: &Path) -> Vec<(i32, Vec<Complex32>)> {
                 .scalar()
                 .expect("a scalar")
             {
-                casa_types::ScalarValue::Int32(field) => *field,
+                casa_core::ScalarValue::Int32(field) => *field,
                 other => panic!("FIELD_ID {other:?}"),
             };
             (field, values.iter().copied().collect())

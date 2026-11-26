@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use casa_coordinates::CoordinateSystem;
+use casa_core::{ArrayD, Complex32, Complex64};
 use casa_lattices::Lattice;
 use casa_tables::TableUseLock;
-use casa_types::{ArrayD, Complex32, Complex64};
 use ndarray::{IxDyn, Slice};
 
 use crate::analysis::axes::StridedSection;

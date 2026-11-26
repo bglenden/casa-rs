@@ -9,6 +9,12 @@
 
 use std::sync::Arc;
 
+use casa_core::Correlation;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::epoch::EpochRef;
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::{EopValues, MPosition, MeasuresProvider, MjdHighPrec};
+use casa_core::quanta::Quantity;
 use casa_imaging_model::{
     AxisOrder, CentreLaws, CompiledProblem, DeclaredInnerProducts, DirectionCoordinateSpec,
     DirectionFrame, DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FrequencyFrame,
@@ -31,12 +37,6 @@ use casa_observation::{
     FieldEntry, FieldId, ObservationEntry, ObservationId, OrderedBaseline, PartitionEntry,
     PartitionId, Roles, ScanEntry, ScanId, Sharing, UvwFrame, VisibilityUnits, WeightRule,
 };
-use casa_types::Correlation;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::epoch::EpochRef;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::{EopValues, MPosition, MeasuresProvider, MjdHighPrec};
-use casa_types::quanta::Quantity;
 
 /// The image's reference direction (J2000).
 pub const REFERENCE: [f64; 2] = [1.0, -0.5];

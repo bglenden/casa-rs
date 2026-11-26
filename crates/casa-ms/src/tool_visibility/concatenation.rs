@@ -3,8 +3,8 @@
 
 use std::collections::{HashMap, hash_map::Entry};
 
+use casa_core::ArrayValue;
 use casa_tables::{RequiredScalarColumnValues, Table};
-use casa_types::ArrayValue;
 use ndarray::ArrayD;
 
 use super::{input, shaped};

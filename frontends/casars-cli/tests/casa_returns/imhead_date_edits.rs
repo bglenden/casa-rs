@@ -91,7 +91,7 @@ fn observation_date_edits_match_casa() {
                     .as_ref()
                     .unwrap()
                     .refer(),
-                casa_types::measures::EpochRef::UTC
+                casa_core::measures::EpochRef::UTC
             );
         }
         let value = returned(

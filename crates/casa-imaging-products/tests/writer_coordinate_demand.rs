@@ -4,11 +4,11 @@
 mod common;
 
 use casa_coordinates::{CoordinateSystem, SpectralCoordinate};
+use casa_core::measures::frequency::FrequencyRef;
 use casa_imaging_model::{ImageDomainRole, ProductKind, RestoringBeamPolicy};
 use casa_imaging_products::{
     CasaImageWriter, ContinuumProductControls, PlannedContinuumGeneration, ProductStoragePlan,
 };
-use casa_types::measures::frequency::FrequencyRef;
 
 #[test]
 fn alternate_family_demand_accounts_for_its_own_coordinate_metadata() {

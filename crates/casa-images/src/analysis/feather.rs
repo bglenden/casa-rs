@@ -4,12 +4,12 @@
 use std::{io, path::Path};
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_core::{ArrayD, Value};
 use casa_fft::Fft2;
 use casa_tables::publication::{
     exchange_directories, lock_table_tree_for_replacement, rename_without_replacing,
 };
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayD, Value};
 use ndarray::{Array2, IxDyn, ShapeBuilder, Zip};
 use num_complex::Complex32;
 

@@ -5,8 +5,8 @@ use super::{
     ALLOWANCE_BYTES, BUDGET_32, CHANNEL_HZ, FREQUENCY_HZ, REFERENCE_MJD, ROWS_ALLOWANCE_BYTES,
     alone, charge_process_caches, configured, measured_close, resources, scan,
 };
+use casa_core::measures::{EpochRef, MEpoch, frequency::FrequencyRef};
 use casa_simulation::{ApplySpec, NoiseSpec, Simulator, SimulatorOptions, SpectralWindowSpec};
-use casa_types::measures::{EpochRef, MEpoch, frequency::FrequencyRef};
 
 #[test]
 fn partial_window_coverage_admits_batch_masks_and_preserved_scratch() {
@@ -115,7 +115,7 @@ fn uncovered_frequency_windows_reserve_no_sample_grids() {
     use casa_calibration::{
         SimulatedJones, SimulatedSolution, SolutionValues, write_simulated_jones_table,
     };
-    use casa_types::Complex32;
+    use casa_core::Complex32;
     if !alone("coverage::uncovered_frequency_windows_reserve_no_sample_grids") {
         return;
     }

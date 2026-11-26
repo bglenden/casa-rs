@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Read only referenced cells and keep CASA's typed Boolean predicates.
 use super::{SimulatorResult, error};
+use casa_core::{RecordValue, Value};
 use casa_tables::{
     Table,
     taql::{
@@ -8,7 +9,6 @@ use casa_tables::{
         eval::{EvalContext, ExprValue, eval_expr},
     },
 };
-use casa_types::{RecordValue, Value};
 
 pub(super) fn prepare(select: &mut SelectStatement) -> SimulatorResult<(Vec<String>, usize)> {
     let mut columns = Vec::new();
@@ -211,7 +211,7 @@ pub(super) fn row_bytes(
             .schema()
             .and_then(|schema| schema.column(name))
             .ok_or_else(|| error(format!("unknown column {name}")))?;
-        if schema.data_type() == Some(casa_types::PrimitiveType::String) {
+        if schema.data_type() == Some(casa_core::PrimitiveType::String) {
             return Err(super::super::query::unsupported("stored string columns"));
         }
         if matches!(schema.column_type(), casa_tables::ColumnType::Array(_)) {

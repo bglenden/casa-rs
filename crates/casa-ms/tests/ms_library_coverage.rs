@@ -3,6 +3,8 @@
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
+use casa_core::measures::{EpochRef, PositionRef};
+use casa_core::{ArrayD, ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_ms::column_def::{ColumnDef, ColumnKind, build_table_schema};
 use casa_ms::columns::data_columns::FloatDataColumn;
 use casa_ms::columns::direction_columns::DirectionColumn;
@@ -18,8 +20,6 @@ use casa_ms::{
     VisibilityDataColumn,
 };
 use casa_tables::{ColumnSchema, Table, TableSchema};
-use casa_types::measures::{EpochRef, PositionRef};
-use casa_types::{ArrayD, ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use flate2::read::GzDecoder;
 use tar::Archive;
 use tempfile::tempdir;
@@ -78,7 +78,7 @@ fn measurement_set_accessors_cover_real_fixture_columns_and_subtables() {
         .expect("phase direction");
     assert_eq!(
         phase_dir.refer(),
-        casa_types::measures::direction::DirectionRef::J2000
+        casa_core::measures::direction::DirectionRef::J2000
     );
     let (lon, lat) = phase_dir.as_angles();
     assert!(lon.is_finite());

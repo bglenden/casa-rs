@@ -3,10 +3,10 @@
 
 use std::collections::BTreeMap;
 
+use casa_core::ArrayValue;
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::ephemeris::offset_true_angle;
 use casa_ms::{MeasurementSet, MsError, MsResult, SubtableId};
-use casa_types::ArrayValue;
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::ephemeris::offset_true_angle;
 use ndarray::IxDyn;
 
 use super::{GainSolveError, SelectedSolveRow, field_direction, get_i32, read_error};

@@ -3,8 +3,8 @@
 //!
 //! Cf. C++ `MSMainColumns::flag()`, `flagRow()`, `flagCategory()`.
 
+use casa_core::ArrayValue;
 use casa_tables::Table;
-use casa_types::ArrayValue;
 
 use crate::error::MsResult;
 use crate::subtables::{get_array, get_bool};

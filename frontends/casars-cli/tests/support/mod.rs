@@ -7,9 +7,9 @@ use std::path::Path;
 use casa_coordinates::{
     CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate,
 };
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::frequency::FrequencyRef;
 use casa_images::{GaussianBeam, ImageBeamSet, ImageInfo, ImageType, PagedImage};
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::frequency::FrequencyRef;
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 /// A 4x4x3 direction-and-frequency image with a beam, whose pixels are

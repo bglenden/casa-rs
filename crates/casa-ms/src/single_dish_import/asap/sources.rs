@@ -3,8 +3,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use casa_core::{ArrayValue, RecordValue, Value};
 use casa_tables::Table;
-use casa_types::{ArrayValue, RecordValue, Value};
 
 use super::asap_row::{doubles, integer, invalid, number, string};
 use super::{DAY, direction, tag_rows};

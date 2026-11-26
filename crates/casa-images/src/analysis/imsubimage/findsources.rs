@@ -8,7 +8,7 @@ pub use maxfit::{ImageMaxFit, MaxFitOptions, fit_image_maximum};
 
 use casa_components::{ComponentList, SkyComponent};
 use casa_coordinates::{CoordinateModel, CoordinateType};
-use casa_types::{RecordValue, Value};
+use casa_core::{RecordValue, Value};
 
 use crate::analysis::lel_mask::PreparedMask;
 use crate::{ImageError, ImageInterface};

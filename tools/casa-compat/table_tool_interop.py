@@ -434,7 +434,7 @@ def command_structure_write(fixture, ms, out_dir, out_json):
     # manager's hypercube values).
     tiled = (
         Path(__file__).resolve().parents[2]
-        / "crates/casa-tables/tests/data/tiled_data_stman/multi/big"
+        / "libs/casacore/casa-tables/tests/data/tiled_data_stman/multi/big"
     )
     target = out_dir / "tiled_multi.table"
     target.mkdir()

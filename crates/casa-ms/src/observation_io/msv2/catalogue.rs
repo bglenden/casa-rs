@@ -5,17 +5,17 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::position::MPosition;
+use casa_core::measures::{EpochRef, MEpoch};
+use casa_core::quanta::Quantity;
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_observation::{
     AntennaEntry, Correlation, FieldEntry, ObservationEntry, ObservationError, PartitionEntry,
     Receptors, ScanEntry, ScanId, UvwFrame, VisibilityUnits,
 };
 use casa_tables::Table;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::position::MPosition;
-use casa_types::measures::{EpochRef, MEpoch};
-use casa_types::quanta::Quantity;
-use casa_types::{ArrayValue, ScalarValue, Value};
 
 use super::{invalid, storage};
 use crate::derived::engine::resolve_direction_reference_selected;
@@ -24,7 +24,7 @@ use crate::subtables::SubTable;
 use crate::{MeasurementSet, SubtableId};
 
 /// A column's `MEASINFO` record, if it has one.
-fn measinfo<'t>(table: &'t Table, column: &str) -> Option<&'t casa_types::RecordValue> {
+fn measinfo<'t>(table: &'t Table, column: &str) -> Option<&'t casa_core::RecordValue> {
     match table.column_keywords(column)?.get("MEASINFO")? {
         Value::Record(record) => Some(record),
         _ => None,
@@ -481,7 +481,7 @@ pub fn read_feeds(ms: &MeasurementSet) -> Result<Feeds, ObservationError> {
 impl Feeds {
     /// The retained feed lookup and all rows of receptor values it owns.
     pub(super) fn held_bytes(&self) -> usize {
-        casa_types::memory::btree_node_bytes::<(i32, i32, i32), Vec<Receptors>>(self.rows.len())
+        casa_core::memory::btree_node_bytes::<(i32, i32, i32), Vec<Receptors>>(self.rows.len())
             + self
                 .rows
                 .values()

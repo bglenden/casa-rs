@@ -26,6 +26,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use casa_core::ScalarValue;
 use casa_ms::{
     MeasurementSet, MeasurementSetBuilder, MeasurementSetCreateTarget,
     MeasurementSetScalarColumnPlan, MeasurementSetWritePlan, MeasurementSetWriteResources,
@@ -35,7 +36,6 @@ use casa_tables::{
     ColumnOverrides, StreamedScalarType, StreamedScalarValues,
     streamed_scalar_columns_resident_bytes,
 };
-use casa_types::ScalarValue;
 use num_complex::Complex32;
 
 #[global_allocator]

@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use casa_core::{ArrayValue, Value};
 use casa_tables::{ColumnOverrides, ColumnType, DataManagerKind, Table, TableOptions};
-use casa_types::{ArrayValue, Value};
 
 use super::{FluxScaleError, FluxScaleEstimate, GainSampleRow};
 

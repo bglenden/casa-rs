@@ -13,6 +13,10 @@
 
 use std::path::Path;
 
+use casa_core::ArrayValue;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_ms::MeasurementSet;
 use casa_ms::columns::data_columns::DataColumn;
@@ -24,10 +28,6 @@ use casa_simulation::{
     ObserveSpec, SessionResources, Simulator, SimulatorOptions, SimulatorResult,
     SpectralWindowSpec, StateSpec,
 };
-use casa_types::ArrayValue;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::{EpochRef, MEpoch};
 use ndarray::IxDyn;
 use num_complex::Complex32;
 

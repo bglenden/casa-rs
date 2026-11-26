@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_core::ScalarValue;
+use casa_core::measures::MEpoch;
 use casa_ms::subtables::MetadataDirection;
 use casa_ms::{MeasurementSet, MsError, MsResult};
 use casa_tables::Table;
-use casa_types::ScalarValue;
-use casa_types::measures::MEpoch;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 

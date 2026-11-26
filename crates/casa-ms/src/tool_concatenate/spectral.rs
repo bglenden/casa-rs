@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Spectral-window, polarization and data-description reconciliation.
 
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value, measures::frequency::FrequencyRef};
 use casa_tables::{Table, table_quantum::ScalarQuantColumn};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value, measures::frequency::FrequencyRef};
 
 use crate::columns::frequency_columns::ChanFreqColumn;
 use crate::subtables::{get_array, get_bool, get_i32};
@@ -84,15 +84,15 @@ pub(super) fn reconcile(
         });
         if description.is_none() {
             rows.descriptions.push(RecordValue::new(vec![
-                casa_types::RecordField::new(
+                casa_core::RecordField::new(
                     "SPECTRAL_WINDOW_ID",
                     Value::Scalar(ScalarValue::Int32(row_id(window_id)?)),
                 ),
-                casa_types::RecordField::new(
+                casa_core::RecordField::new(
                     "POLARIZATION_ID",
                     Value::Scalar(ScalarValue::Int32(row_id(polarization_id)?)),
                 ),
-                casa_types::RecordField::new("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
+                casa_core::RecordField::new("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
             ]));
             known_descriptions.push((window_id, polarization_id));
         }

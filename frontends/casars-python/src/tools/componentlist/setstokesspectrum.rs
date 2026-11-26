@@ -2,7 +2,7 @@
 //! CASA's Stokes-spectrum arguments and validation.
 
 use casa_components::{SpectralIndex, SpectralKind, TabularSpectrum};
-use casa_types::measures::frequency::FrequencyRef;
+use casa_core::measures::frequency::FrequencyRef;
 use pyo3::exceptions::{PyOverflowError, PySystemError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::PyInt;

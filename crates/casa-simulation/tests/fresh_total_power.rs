@@ -3,11 +3,11 @@
 #[path = "image_frame_combinations/eop.rs"]
 mod eop;
 mod existing_ms_calculations;
+use casa_core::measures::direction::{DirectionRef, MDirection};
 use casa_simulation::{
     BackendRequest, ObserveManySpec, Pointing, PredictSpec, PredictionOptions, SessionResources,
     VoltagePatternSpec,
 };
-use casa_types::measures::direction::{DirectionRef, MDirection};
 use existing_ms_calculations::{copy, predict_support as support};
 use flate2::read::GzDecoder;
 use serde_json::Value;

@@ -5,11 +5,11 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
+use casa_core::{RecordValue, Value};
 use casa_tables::publication::{copy_locked_table_tree, lock_table_tree_for_replacement};
 use casa_tables::{
     Table, TableOptions, TablePartNames, TableWriteLock, add_directory, strip_directory,
 };
-use casa_types::{RecordValue, Value};
 
 use super::invalid;
 use crate::MsResult;

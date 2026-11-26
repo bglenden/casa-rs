@@ -4,6 +4,7 @@
 //! problem compiles against: one measurement set with two selected
 //! partitions in two spectral windows, Stokes I only.
 
+use casa_core::Correlation;
 use casa_imaging_model::{
     CorrelationProduct, FlagPolicy, IdSelection, IntentSelection, ObservationSelection,
     ObservationSourceInput, ObservationSourceProvenance, PartitionId, PartitionSelection,
@@ -11,7 +12,6 @@ use casa_imaging_model::{
     ProductValidityPolicies, RowSelection, SelectedColumns, SpectralWindowSelection,
     TaylorSupportReference, TaylorValidityPolicy, UvSelection, VisibilityColumn, WeightColumn,
 };
-use casa_types::Correlation;
 
 /// One measurement set selecting `2 + seed` samples of two partitions, each
 /// in its own spectral window, with provenance `fixture://<label>/<seed>`.

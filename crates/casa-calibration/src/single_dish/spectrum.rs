@@ -5,9 +5,9 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use casa_ms::MeasurementSet;
 use casa_tables::Table;
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, IxDyn, Zip};
 
 use crate::CalibrationOutputMode;

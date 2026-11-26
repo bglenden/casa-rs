@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_core::ScalarValue;
 use casa_ms::{MeasurementSet, MsError, MsResult};
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, Table};
-use casa_types::ScalarValue;
 
 /// Read only the scalar columns needed by a MAIN metadata operation. Keep
 /// chunk allocations reusable, including when the table is a reference or a

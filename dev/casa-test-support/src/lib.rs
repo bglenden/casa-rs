@@ -69,25 +69,25 @@ pub fn test_log_dir() -> std::path::PathBuf {
 }
 
 /// Deterministic, filesystem-free measures inputs for cross-crate tests.
-pub fn deterministic_measures_provider()
--> std::sync::Arc<dyn casa_types::measures::MeasuresProvider> {
+pub fn deterministic_measures_provider() -> std::sync::Arc<dyn casa_core::measures::MeasuresProvider>
+{
     deterministic_measures_provider_for_identity([90; 32])
 }
 
 /// Deterministic Measures inputs with an explicit fixture-owned state identity.
 pub fn deterministic_measures_provider_for_identity(
     identity_sha256: [u8; 32],
-) -> std::sync::Arc<dyn casa_types::measures::MeasuresProvider> {
+) -> std::sync::Arc<dyn casa_core::measures::MeasuresProvider> {
     #[derive(Debug)]
     struct Provider {
         identity_sha256: [u8; 32],
     }
 
-    impl casa_types::measures::MeasuresProvider for Provider {
+    impl casa_core::measures::MeasuresProvider for Provider {
         fn prepare_bounded_state(
             &self,
-        ) -> Result<Option<casa_types::measures::MeasuresProviderState>, String> {
-            Ok(Some(casa_types::measures::MeasuresProviderState::new(
+        ) -> Result<Option<casa_core::measures::MeasuresProviderState>, String> {
+            Ok(Some(casa_core::measures::MeasuresProviderState::new(
                 self.identity_sha256,
                 0,
             )))
@@ -96,8 +96,8 @@ pub fn deterministic_measures_provider_for_identity(
         fn eop_values(
             &self,
             _utc_mjd: f64,
-        ) -> Result<Option<casa_types::measures::EopValues>, String> {
-            Ok(Some(casa_types::measures::EopValues {
+        ) -> Result<Option<casa_core::measures::EopValues>, String> {
+            Ok(Some(casa_core::measures::EopValues {
                 dut1_seconds: 0.0,
                 x_arcsec: 0.0,
                 y_arcsec: 0.0,
@@ -129,21 +129,21 @@ pub fn deterministic_measures_provider_for_identity(
         fn observatory(
             &self,
             name: &str,
-        ) -> Result<Option<casa_types::measures::ObservatoryPosition>, String> {
+        ) -> Result<Option<casa_core::measures::ObservatoryPosition>, String> {
             Ok(match name.to_ascii_uppercase().as_str() {
                 "ALMA" | "ALMASD" | "ACA" => {
-                    Some(casa_types::measures::ObservatoryPosition::Wgs84 {
+                    Some(casa_core::measures::ObservatoryPosition::Wgs84 {
                         longitude_rad: -67.754_929_f64.to_radians(),
                         latitude_rad: -23.022_886_f64.to_radians(),
                         height_m: 5056.8,
                     })
                 }
-                "VLA" => Some(casa_types::measures::ObservatoryPosition::Itrf {
+                "VLA" => Some(casa_core::measures::ObservatoryPosition::Itrf {
                     x_m: -1_601_185.0,
                     y_m: -5_041_977.0,
                     z_m: 3_554_875.0,
                 }),
-                "WSRT" => Some(casa_types::measures::ObservatoryPosition::Itrf {
+                "WSRT" => Some(casa_core::measures::ObservatoryPosition::Itrf {
                     x_m: 3_826_577.0,
                     y_m: 461_022.0,
                     z_m: 5_064_892.0,
@@ -155,9 +155,9 @@ pub fn deterministic_measures_provider_for_identity(
         fn source(
             &self,
             name: &str,
-        ) -> Result<Option<casa_types::measures::NamedSourceDirection>, String> {
+        ) -> Result<Option<casa_core::measures::NamedSourceDirection>, String> {
             Ok(name.eq_ignore_ascii_case("CASA").then(|| {
-                casa_types::measures::NamedSourceDirection {
+                casa_core::measures::NamedSourceDirection {
                     reference: "J2000".to_string(),
                     longitude_rad: 6.123_487_680_622_104,
                     latitude_rad: 1.026_515_399_560_464_8,

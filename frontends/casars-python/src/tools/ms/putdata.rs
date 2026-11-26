@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Write visibility records through the current MS tool view.
 
-use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, Value};
+use casa_core::{ArrayValue, Complex32, RecordField, RecordValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use num_complex::Complex64;
 use numpy::{PyArrayDescrMethods, PyArrayDyn, PyArrayMethods, PyUntypedArrayMethods};

@@ -8,7 +8,7 @@
 //! and string ones of NumPy's unicode type, as casatools returns them.
 //! [`CasaValue::from_record`] converts a casacore record built in Rust.
 
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use num_complex::Complex64;
 use numpy::IntoPyArray;
@@ -296,7 +296,7 @@ pub(crate) fn fortran_array<T>(shape: Vec<usize>, values: Vec<T>) -> PyResult<Ar
 }
 
 /// `value` as a C++ `ostream` writes a `double` by default.
-pub(crate) use casa_types::quanta::casacore::stream_double;
+pub(crate) use casa_core::quanta::casacore::stream_double;
 
 #[cfg(test)]
 mod tests {

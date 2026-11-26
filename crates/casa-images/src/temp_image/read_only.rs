@@ -25,7 +25,7 @@ impl TempImage<f32> {
     pub fn set_component_coordinates(
         &mut self,
         coordinates: casa_coordinates::CoordinateSystem,
-        record: &casa_types::RecordValue,
+        record: &casa_core::RecordValue,
     ) -> Result<(), ImageError> {
         let updated = self
             .component_source()?
@@ -34,7 +34,7 @@ impl TempImage<f32> {
             crate::component_list_image::write_component_keyword(
                 path,
                 "coords",
-                casa_types::Value::Record(record.clone()),
+                casa_core::Value::Record(record.clone()),
             )?;
         }
         self.read_only.as_mut().expect("component source").source = Box::new(updated);
@@ -69,7 +69,7 @@ impl<T: ImagePixel> TempImage<T> {
     /// Returns an error for invalid image metadata or geometry.
     pub fn from_virtual_concat(
         source: ConcatImage<T>,
-        info: casa_types::RecordValue,
+        info: casa_core::RecordValue,
     ) -> Result<Self, ImageError> {
         let mut image = Self::from_read_only_image(
             source,

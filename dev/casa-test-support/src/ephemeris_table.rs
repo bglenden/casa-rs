@@ -8,8 +8,8 @@
 
 use std::path::{Path, PathBuf};
 
+use casa_core::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{ColumnSchema, Table, TableInfo, TableOptions, TableSchema};
-use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
 /// One sample: MJD (days), RA and DEC (degrees, ICRS), geocentric
 /// distance `Rho` (AU) and radial velocity `RadVel` (AU a day).

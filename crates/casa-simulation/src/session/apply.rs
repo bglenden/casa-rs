@@ -33,9 +33,9 @@ use casa_calibration::{
     CalibrationTableLookup, FrequencyInterpolation, LegacySplineTable, TimeInterpolation,
     TimeInterpolationOptions,
 };
+use casa_core::{ScalarValue, Value};
 use casa_imaging_runtime::{Demand, Reservation, admit};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ScalarValue, Value};
 use num_complex::Complex32;
 
 use super::Simulator;

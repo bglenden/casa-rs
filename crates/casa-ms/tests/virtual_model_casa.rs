@@ -13,11 +13,11 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use casa_core::{ScalarValue, Value};
 use casa_ms::{
     MeasurementSet, MsSelection, VirtualModelEntry, VirtualModelKind, clear_virtual_model,
     put_virtual_model, virtual_model, virtual_model_index_combination,
 };
-use casa_types::{ScalarValue, Value};
 
 /// CASA's steps, by name: copy a MeasurementSet, `tclean` a virtual model
 /// of it, and its model visibilities as the iterator predicts them into an

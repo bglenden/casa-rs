@@ -9,8 +9,8 @@ use std::path::Path;
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, SpectralCoordinate, StokesType,
 };
-use casa_types::quanta::Quantity;
-use casa_types::quanta::casacore::mvangle_radians;
+use casa_core::quanta::Quantity;
+use casa_core::quanta::casacore::mvangle_radians;
 
 use crate::saved_region::PolygonPixelPlane;
 
@@ -642,7 +642,7 @@ fn parse_spectral_endpoint(
                 .map_err(|e| {
                     ImageError::InvalidMetadata(format!("invalid CRTF range {text:?}: {e}"))
                 })?
-                .get_value_in(&casa_types::quanta::Unit::new("Hz").expect("known unit"))
+                .get_value_in(&casa_core::quanta::Unit::new("Hz").expect("known unit"))
                 .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?,
         };
         let world = input.value_from_hz(hz)?;
@@ -1425,7 +1425,7 @@ fn resolve_stokes(
 #[cfg(test)]
 mod mapped_tests {
     use casa_coordinates::LinearCoordinate;
-    use casa_types::measures::frequency::FrequencyRef;
+    use casa_core::measures::frequency::FrequencyRef;
 
     use super::{CoordinateSystem, SpectralCoordinate, parse_spectral_endpoint};
 

@@ -6,13 +6,13 @@ use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
+use casa_core::measures::MeasFrame;
+use casa_core::measures::epoch::{EpochRef, MEpoch};
+use casa_core::quanta::{Quantity, Unit};
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_measures::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_tables::table_quantum::TableQuantumDesc;
 use casa_tables::{Table, TableOptions, TablePartNames, TableWriteLock};
-use casa_types::measures::MeasFrame;
-use casa_types::measures::epoch::{EpochRef, MEpoch};
-use casa_types::quanta::{Quantity, Unit};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 use crate::column_def::build_table_schema;
 use crate::ms::linked_subtables::strict_subtable_path;

@@ -5,15 +5,15 @@ mod image_beam;
 mod saved;
 
 use casa_coordinates::{Coordinate, DirectionCoordinate};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::{ArrayValue, Complex32, RecordValue, Value};
 use casa_imaging_operator::{
     AiryDish, ConvolutionFunctionSet, GridGeometry, MosaicBufferBand, MosaicPb, MosaicRules,
     MosaicWindow, PolarizationRouting, SavedMosaicPlanes,
 };
 use casa_ms::{SubtableId, convert_frequency_to_frame, voltage_pattern};
 use casa_numerics::{BeamPattern, PrimaryBeam};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::{ArrayValue, Complex32, RecordValue, Value};
 
 use super::{FourierRow, GainSolveError, model_error, record_text};
 
@@ -97,7 +97,7 @@ impl MosaicLayout {
                 autocorrelations: legacy
                     && matches!(
                         record.get("usezero"),
-                        Some(Value::Scalar(casa_types::ScalarValue::Bool(true)))
+                        Some(Value::Scalar(casa_core::ScalarValue::Bool(true)))
                     ),
             },
         ))

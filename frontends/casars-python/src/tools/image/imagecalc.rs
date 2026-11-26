@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{CoordinateSystem, CoordinateType, StokesCoordinate, StokesType};
+use casa_core::{Complex32, RecordValue};
 use casa_images::analysis::{
     ImageToolExpressionInputs, ImageToolPixelExpression, ensure_outfile_does_not_alias_input,
     materialize_image_tool_expression,
@@ -10,7 +11,6 @@ use casa_images::analysis::{
 use casa_images::{
     ImageExpression, ImageInfo, ImagePixelType, TempImage, image_expr::ImageExprValue,
 };
-use casa_types::{Complex32, RecordValue};
 use pyo3::prelude::*;
 
 use super::PyImageTool;

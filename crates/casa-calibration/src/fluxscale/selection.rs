@@ -4,13 +4,13 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 
+use casa_core::ArrayValue;
 use casa_ms::selection::syntax::parse_numeric_row_id_ranges;
 use casa_ms::selection::{
     AntennaRow, TimeDefaults, TimeSelection, TimeSelector, TimeSelectorDefaults,
     resolve_antenna_selector,
 };
 use casa_tables::{Table, TableOptions};
-use casa_types::ArrayValue;
 
 use super::{FluxScaleError, FluxScaleOptions, GainSampleRow};
 

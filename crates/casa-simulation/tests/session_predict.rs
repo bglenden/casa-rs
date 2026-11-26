@@ -17,9 +17,9 @@
 
 mod predict_support;
 
+use casa_core::Correlation;
 use casa_simulation::VoltagePatternSpec;
 use casa_simulation::predict::PrimaryBeam;
-use casa_types::Correlation;
 use num_complex::Complex32;
 use predict_support::{
     N, Row, bits, cube_model, data, extended_model, predict_spec, read_main, reference, resources,

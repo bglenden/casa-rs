@@ -13,14 +13,14 @@ use casa_coordinates::{
         align_fits_pc_rows, fallback_fits_linear_coordinates, from_fits_header_with_axis_order,
     },
 };
-use casa_lattices::{Lattice, LatticeError, TraversalCursorIter, TraversalSpec};
-use casa_types::measures::{
+use casa_core::measures::{
     EpochRef, MEpoch, MPosition,
     direction::{DirectionRef, MDirection},
     record::{direction_to_record, epoch_to_record, position_to_record},
 };
-use casa_types::quanta::Quantity;
-use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
+use casa_core::quanta::Quantity;
+use casa_core::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
+use casa_lattices::{Lattice, LatticeError, TraversalCursorIter, TraversalSpec};
 use fitsio::{
     FitsFile,
     errors::check_status,

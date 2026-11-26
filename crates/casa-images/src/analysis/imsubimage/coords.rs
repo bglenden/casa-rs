@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_coordinates::{CoordinateSystem, CoordinateType, StokesType};
-use casa_types::{ArrayValue, RecordField, RecordValue, Value};
+use casa_core::{ArrayValue, RecordField, RecordValue, Value};
 
 use crate::analysis::axes::subimage_coordinates_with_stokes;
 use crate::{ImageBeamSet, ImageError, ImageInfo};

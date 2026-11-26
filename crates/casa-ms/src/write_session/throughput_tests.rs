@@ -5,8 +5,8 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::time::Instant;
 
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{ColumnOverrides, GeneratedScalarColumn, StreamedScalarValues};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
 use num_complex::Complex32;
 use serde_json::json;

@@ -22,9 +22,9 @@
 //! nothing unless `MeasureHolder::fromRecord` reads the record's `frequency`
 //! as a frequency, and a tabulation nothing unless it also reads `freqRef`.
 
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::quanta::{Dimension, Unit, UnitDim};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::quanta::{Dimension, Unit, UnitDim};
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 use crate::error::ComponentError;
 use crate::spectrum::{FREQUENCY_DIM, SpectralKind, SpectralModel, TabularSpectrum};
@@ -37,7 +37,7 @@ use crate::spectrum::{FREQUENCY_DIM, SpectralKind, SpectralModel, TabularSpectru
 /// frequency CASA could not express in its tabulation frame.
 pub(crate) fn spectral_record(model: &SpectralModel) -> Result<RecordValue, ComponentError> {
     let reference = model.reference_frequency();
-    let registry = casa_types::quanta::registry::global_registry();
+    let registry = casa_core::quanta::registry::global_registry();
     let unit = model.frequency_unit();
     if unit.val().dim != FREQUENCY_DIM {
         return Err(ComponentError::Spectrum {
@@ -354,7 +354,7 @@ fn real_array(value: &Value) -> Option<Vec<f64>> {
 
 #[cfg(test)]
 mod tests {
-    use casa_types::measures::frequency::MFrequency;
+    use casa_core::measures::frequency::MFrequency;
 
     use super::*;
     use crate::component_type::SpectralType;

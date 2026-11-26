@@ -7,8 +7,8 @@ use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 
 use casa_coordinates::{CoordinateModel, CoordinateType};
-use casa_types::quanta::Quantity;
-use casa_types::{ArrayD, RecordValue};
+use casa_core::quanta::Quantity;
+use casa_core::{ArrayD, RecordValue};
 use ndarray::{Array2, Axis, Ix2, IxDyn, Zip};
 
 use crate::image_expr::bounded_read_cursor;

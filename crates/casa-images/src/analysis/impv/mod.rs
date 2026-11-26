@@ -16,10 +16,10 @@ use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate,
     LinearCoordinate,
 };
+use casa_core::quanta::{Quantity, Unit};
+use casa_core::{ArrayD, ArrayValue, RecordValue, Value};
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{Table, TableOptions};
-use casa_types::quanta::{Quantity, Unit};
-use casa_types::{ArrayD, ArrayValue, RecordValue, Value};
 use ndarray::{IxDyn, ShapeBuilder};
 
 use super::axes::{
@@ -451,7 +451,7 @@ fn output_io(error: io::Error) -> ImageError {
 #[cfg(test)]
 mod tests {
     use casa_coordinates::{DirectionCoordinate, Projection, ProjectionType};
-    use casa_types::measures::direction::DirectionRef;
+    use casa_core::measures::direction::DirectionRef;
     use ndarray::IxDyn;
 
     use super::{ArrayD, geometry, sample};

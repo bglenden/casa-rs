@@ -15,11 +15,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::radial_velocity::RadialVelocityRef;
+use casa_core::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_observation::{Catalogue, FieldEphemeris, ObservationError};
 use casa_tables::{ColumnSchema, RowRange, Table, TableInfo, TableOptions, TableSchema};
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::radial_velocity::RadialVelocityRef;
-use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
 use super::Loss;
 use crate::ephemeris::AU_METRES;

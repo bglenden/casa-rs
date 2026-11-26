@@ -704,7 +704,7 @@ mod tests {
     use casa_coordinates::{
         DirectionCoordinate, Projection, ProjectionType, StokesCoordinate, StokesType,
     };
-    use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
+    use casa_core::measures::{direction::DirectionRef, frequency::FrequencyRef};
 
     fn spectral(increment_hz: f64) -> SpectralCoordinate {
         SpectralCoordinate::new(FrequencyRef::LSRK, 1.0e9, increment_hz, 0.0, 1.0e9)

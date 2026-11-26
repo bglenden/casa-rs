@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA 6.7.6.14 OTF=False controls: a full A Noise field, reused on corrupt.
 mod predict_support;
+use casa_core::{ArrayValue, Complex32, ScalarValue};
 use casa_simulation::{NoiseSpec, Simulator, SimulatorOptions};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, Complex32, ScalarValue};
 use ndarray::IxDyn;
 use std::path::Path;
 
@@ -203,9 +203,9 @@ fn an_opened_measurement_set_uses_each_integrations_saved_field() {
         SimulatorOptions {
             measures: casa_test_support::deterministic_measures_provider(),
             resources: predict_support::resources(3, 512 << 20),
-            now: casa_types::measures::MEpoch::from_mjd(
+            now: casa_core::measures::MEpoch::from_mjd(
                 predict_support::REFERENCE_MJD,
-                casa_types::measures::EpochRef::UTC,
+                casa_core::measures::EpochRef::UTC,
             ),
         },
     )

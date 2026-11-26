@@ -11,13 +11,13 @@
 
 use std::path::Path;
 
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::quanta::{Quantity, Unit};
+use casa_core::{ArrayValue, ScalarValue, Value};
+use casa_measures::table_measures::{MeasRefDesc, MeasureType, TableMeasDesc};
 use casa_tables::Table;
-use casa_tables::table_measures::{MeasRefDesc, MeasureType, TableMeasDesc};
 use casa_tables::table_quantum::TableQuantumDesc;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::quanta::{Quantity, Unit};
-use casa_types::{ArrayValue, ScalarValue, Value};
 
 use crate::error::ComponentListError;
 
@@ -205,7 +205,7 @@ impl MeasureColumn {
                     cell_error(path, row, column, "expected a frame code".to_string())
                 })?;
                 if self.measure == MeasureType::Frequency {
-                    return casa_tables::table_measures::frequency_ref_for_table_code(
+                    return casa_measures::table_measures::frequency_ref_for_table_code(
                         types, codes, code,
                     )
                     .map(|frame| frame.as_str().to_string())

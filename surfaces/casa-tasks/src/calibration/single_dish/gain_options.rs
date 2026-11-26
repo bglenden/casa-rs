@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::{TaskFailure, TaskInvocation};
 use casa_contracts::ParameterValue;
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::quanta::{Quantity, Unit};
 
 use casa_calibration::{ApplyCalibrationTableSpec, ApplyInterpolationMode};
 

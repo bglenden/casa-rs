@@ -16,7 +16,7 @@ use casa_imaging_runtime::{Admitted, Demand, Reservation, admit};
 
 use super::direction;
 use super::domains::PreparedImageDomain;
-use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::direction::{DirectionRef, MDirection};
 
 use super::spectral::{self, FrameContext, PreparedSpectralAxis};
 use super::{PrepareError, Surveyed, envelope, instrument, selection};

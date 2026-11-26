@@ -68,9 +68,9 @@ pub use troposphere::TroposphereSpec;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{EpochRef, MEpoch, MeasFrame, MeasuresProvider};
 use casa_imaging_operator::PaddingFactor;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, MEpoch, MeasFrame, MeasuresProvider};
 
 use crate::corrupt::jones::HeldTerm;
 use crate::predict::SingleDishKernel;

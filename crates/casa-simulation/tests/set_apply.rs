@@ -13,12 +13,12 @@ use casa_calibration::{
     ApplyInterpolationMode, CalibrationTableLookup, SimulatedJones, SimulatedSolution,
     SolutionValues, write_simulated_jones_table,
 };
+use casa_core::Complex32;
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{
     ApplySpec, CasaOutcome, GainSpec, LeakageSpec, PredictSpec, Simulator, SimulatorOptions,
     SimulatorResult,
 };
-use casa_types::Complex32;
-use casa_types::measures::{EpochRef, MEpoch};
 use predict_support::{
     ANTENNAS, CENTRE_RAD, REFERENCE_MJD, Row, bits, data, read_main, resources, scan, session,
     write_point_list,
@@ -403,8 +403,8 @@ fn options() -> SimulatorOptions {
 
 /// MAIN's TIME, row by row.
 fn read_times(path: &Path) -> Vec<f64> {
+    use casa_core::{ScalarValue, Value};
     use casa_tables::{Table, TableOptions};
-    use casa_types::{ScalarValue, Value};
     let table = Table::open(TableOptions::new(path)).expect("open MAIN");
     table
         .rows()
@@ -420,8 +420,8 @@ fn read_times(path: &Path) -> Vec<f64> {
 /// CASA skips the new window beyond the mapping snapshot captured by setapply.
 #[test]
 fn a_new_window_after_setapply_skips_the_corruption_step() {
+    use casa_core::measures::frequency::FrequencyRef;
     use casa_simulation::SpectralWindowSpec;
-    use casa_types::measures::frequency::FrequencyRef;
     use predict_support::{CHANNEL_HZ, FREQUENCY_HZ};
     let directory = tempfile::tempdir().unwrap();
     let point = point(directory.path());

@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
+use casa_core::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::IxDyn;
 
 use super::axis::ProfileAxis;

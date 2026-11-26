@@ -156,9 +156,9 @@ implementation, not a wrapper around casacore C++.
 
 | Area | Crates or source |
 |---|---|
-| Values and foundations | `casa-types`, internal `casa-values` and `casa-aipsio`, `casa-logging` |
+| Values and foundations | `casa-core`, `casa-aipsio` |
 | Persistent data | `casa-tables`, `casa-ms`, `casa-observation`, `casa-lattices`, `casa-images` |
-| Coordinates and runtime catalogs | `casa-coordinates`, `casa-measures-data`, `casa-measures-tools` |
+| Coordinates and runtime catalogs | `casa-coordinates`, `casa-measures` |
 | Numerics and Fourier transforms | `casa-numerics`, `casa-fft` |
 | Calibration, simulation, import | `casa-calibration`, `casa-simulation`, `casa-components`, `casa-atmosphere`, `casa-vla` |
 | Imaging | `casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`, `casa-imaging-singledish`, `casa-imaging-application` |
@@ -172,11 +172,11 @@ are shared by the task executables and Python. The
 [architecture document](ARCHITECTURE.md) describes ownership and dependency
 rules in detail.
 
-For example, the public `casa-types` value model can hold scalar, array, and
+For example, the public `casa-core` value model can hold scalar, array, and
 record values:
 
 ```rust
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 let temperature = Value::Scalar(ScalarValue::Float64(273.15));
 let spectrum = Value::Array(ArrayValue::from_f32_vec(vec![1.0, 2.0, 3.0]));
@@ -345,17 +345,17 @@ To download and refresh a runtime explicitly from a source checkout:
 
 ```bash
 CARGO_INCREMENTAL=0 cargo run --example update_measures \
-  -p casa-measures-data --features update -- --data-dir /path/to/measures-data
+  -p casa-measures --features update -- --data-dir /path/to/measures-data
 export CASA_RS_MEASURESPATH=/path/to/measures-data
 ```
 
 Omitting `--data-dir` selects `~/.casa/data`. A packaged snapshot can also be
-installed explicitly with `casa_measures_data::install_packaged_snapshot`;
+installed explicitly with `casa_measures::install_packaged_snapshot`;
 scientific calls do not silently install it. Maintainers regenerate the
 packaged archive and provenance with:
 
 ```bash
-CARGO_INCREMENTAL=0 cargo run -p casa-measures-tools --bin package_snapshot \
+CARGO_INCREMENTAL=0 cargo run -p casa-dev-tools --bin package_snapshot \
   -- --input /path/to/measures-data
 ```
 

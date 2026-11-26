@@ -19,12 +19,12 @@ use crate::{
     ImregridOutcome, ImregridRequest, ImregridTemplate, PagedImage,
 };
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_core::measures::direction::DirectionRef;
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use casa_tables::publication::{
     exchange_directories, lock_table_tree_for_replacement, rename_without_replacing,
 };
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::direction::DirectionRef;
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 /// Return an image's coordinate template, or regrid its pixels onto a template.
 ///
@@ -57,8 +57,8 @@ pub fn imregrid(request: &ImregridRequest) -> Result<ImregridOutcome, ImageError
             }
         }
         let template = Value::Record(RecordValue::new(vec![
-            casa_types::RecordField::new("csys", Value::Record(coordinates)),
-            casa_types::RecordField::new("shap", Value::Array(ArrayValue::from_i32_vec(shape))),
+            casa_core::RecordField::new("csys", Value::Record(coordinates)),
+            casa_core::RecordField::new("shap", Value::Array(ArrayValue::from_i32_vec(shape))),
         ]));
         return Ok(ImregridOutcome::Template(template));
     }

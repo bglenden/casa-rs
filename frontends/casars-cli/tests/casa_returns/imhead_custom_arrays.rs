@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Custom-array writes and deletes compared with CASA's stored metadata.
 use super::*;
-use casa_types::ArrayValue;
+use casa_core::ArrayValue;
 
 #[test]
 fn custom_array_sequences_match_casa() {
@@ -89,7 +89,7 @@ fn custom_array_sequences_match_casa() {
             };
             assert_eq!(
                 info.get("custom"),
-                Some(&casa_types::Value::Array(array)),
+                Some(&casa_core::Value::Array(array)),
                 "{index}: stored"
             );
             drop(image);
@@ -129,7 +129,7 @@ fn casa_created_custom_arrays_are_read_by_the_image_layer() {
                 .unwrap();
         assert_eq!(
             image.misc_info().get("custom"),
-            Some(&casa_types::Value::Array(expected)),
+            Some(&casa_core::Value::Array(expected)),
             "{name}"
         );
     }

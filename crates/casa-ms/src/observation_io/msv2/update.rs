@@ -24,13 +24,13 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use casa_tables::TableWriteLock;
 
+use casa_core::ArrayValue;
+use casa_core::measures::MjdHighPrec;
 use casa_observation::{
     AccessRequest, BatchAddress, Correlation, ObservationError, PartitionEntry, PatchValues,
     ResolvedTarget, TimeRuns, UpdateReport, Updater, VisibilityBatch, WeightChannels, WritableRole,
     check_values, refuse_payload_checks, uniform_over_channels,
 };
-use casa_types::ArrayValue;
-use casa_types::measures::MjdHighPrec;
 use ndarray::{ArrayD, ArrayView3, Axis, IxDyn, ShapeBuilder};
 use num_complex::Complex32;
 
@@ -458,7 +458,8 @@ fn mutate(
         MeasurementSetWriteResources {
             available_bytes: rows.len().max(1).saturating_mul(bytes_per_row.max(1)),
             maximum_live_batches: 1,
-            tiled_column_buffer_bytes: casa_tables::STREAMING_TILED_COLUMN_BUFFER_BYTES,
+            tiled_column_buffer_bytes:
+                casa_tables::streamed_tiled::STREAMING_TILED_COLUMN_BUFFER_BYTES,
         },
     )
     .map_err(storage)?;
@@ -617,7 +618,8 @@ fn seed_model(
                 MeasurementSetWriteResources {
                     available_bytes: batch.len() * cell_bytes,
                     maximum_live_batches: 1,
-                    tiled_column_buffer_bytes: casa_tables::STREAMING_TILED_COLUMN_BUFFER_BYTES,
+                    tiled_column_buffer_bytes:
+                        casa_tables::streamed_tiled::STREAMING_TILED_COLUMN_BUFFER_BYTES,
                 },
             )
             .map_err(storage)?;

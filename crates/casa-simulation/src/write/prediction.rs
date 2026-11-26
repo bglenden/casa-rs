@@ -33,6 +33,8 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use casa_core::Complex32;
+use casa_core::measures::direction::{DirectionRef, MDirection};
 use casa_imaging_model::GridFtProjection;
 use casa_imaging_operator::{RowContext, RowSpectrum};
 use casa_imaging_runtime::pass::{
@@ -41,8 +43,6 @@ use casa_imaging_runtime::pass::{
     WorkerTeam,
 };
 use casa_numerics::cell_noise::metal_draws_exactly;
-use casa_types::Complex32;
-use casa_types::measures::direction::{DirectionRef, MDirection};
 
 use super::geometry::RowGeometry;
 use super::grids::{FieldGridCache, GridKey};
@@ -151,9 +151,9 @@ impl FrameProjection {
             let initial = prediction.frame(scan)?;
             let current = initial
                 .clone()
-                .with_epoch(casa_types::measures::MEpoch::from_mjd(
+                .with_epoch(casa_core::measures::MEpoch::from_mjd(
                     epoch / 86400.,
-                    casa_types::measures::EpochRef::UTC,
+                    casa_core::measures::EpochRef::UTC,
                 ));
             self.rotation
                 .recalculate_with_frame(&source, &prediction.tangent, &initial, &current)

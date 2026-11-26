@@ -23,8 +23,8 @@
 //! A field of the wrong type raises casacore's own message, whose type names
 //! are padded to eight characters.
 
+use casa_core::{PrimitiveType, RecordValue, Value};
 use casa_tables::{ColumnOptions, ColumnSchema};
-use casa_types::{PrimitiveType, RecordValue, Value};
 
 use super::keyword_value::Incoming;
 use super::state::Fail;

@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+use casa_core::{RecordField, RecordValue, ScalarValue, Value};
 
 use super::ApplyPlan;
 use super::chain::viscal_order;

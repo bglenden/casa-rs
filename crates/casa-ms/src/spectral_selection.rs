@@ -9,13 +9,13 @@
 
 use std::str::FromStr;
 
-use casa_types::measures::PreparedFrequencyConversion;
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::doppler::DopplerRef;
-use casa_types::measures::doppler::MDoppler;
-use casa_types::measures::frame::MeasFrame;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::measures::PreparedFrequencyConversion;
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::doppler::DopplerRef;
+use casa_core::measures::doppler::MDoppler;
+use casa_core::measures::frame::MeasFrame;
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::quanta::{Quantity, Unit};
 
 use crate::derived::engine::MsCalEngine;
 use crate::error::{MsError, MsResult};
@@ -2150,18 +2150,18 @@ impl CubeSpectralSetup {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use casa_types::measures::frequency::MFrequency;
+    use casa_core::measures::frequency::MFrequency;
 
     fn test_engine() -> MsCalEngine {
-        let observatory = casa_types::measures::position::MPosition::new_itrf(
+        let observatory = casa_core::measures::position::MPosition::new_itrf(
             -1_601_185.4,
             -5_041_977.5,
             3_554_875.9,
         );
-        let direction = casa_types::measures::direction::MDirection::from_angles(
+        let direction = casa_core::measures::direction::MDirection::from_angles(
             0.0,
             std::f64::consts::FRAC_PI_4,
-            casa_types::measures::direction::DirectionRef::J2000,
+            casa_core::measures::direction::DirectionRef::J2000,
         );
         MsCalEngine::from_parts(
             vec![observatory.clone()],
@@ -2854,35 +2854,35 @@ mod tests {
         let measures = crate::open_measures_runtime().expect("test measures runtime");
         let source_frame = MeasFrame::new()
             .with_measures(measures.clone())
-            .with_epoch(casa_types::measures::epoch::MEpoch::from_mjd(
+            .with_epoch(casa_core::measures::epoch::MEpoch::from_mjd(
                 59_000.0,
-                casa_types::measures::epoch::EpochRef::UTC,
+                casa_core::measures::epoch::EpochRef::UTC,
             ))
-            .with_position(casa_types::measures::position::MPosition::new_itrf(
+            .with_position(casa_core::measures::position::MPosition::new_itrf(
                 -1_601_185.4,
                 -5_041_977.5,
                 3_554_875.9,
             ))
-            .with_direction(casa_types::measures::direction::MDirection::from_angles(
+            .with_direction(casa_core::measures::direction::MDirection::from_angles(
                 1.0,
                 0.5,
-                casa_types::measures::direction::DirectionRef::J2000,
+                casa_core::measures::direction::DirectionRef::J2000,
             ));
         let target_frame = MeasFrame::new()
             .with_measures(measures)
-            .with_epoch(casa_types::measures::epoch::MEpoch::from_mjd(
+            .with_epoch(casa_core::measures::epoch::MEpoch::from_mjd(
                 59_001.0,
-                casa_types::measures::epoch::EpochRef::UTC,
+                casa_core::measures::epoch::EpochRef::UTC,
             ))
-            .with_position(casa_types::measures::position::MPosition::new_itrf(
+            .with_position(casa_core::measures::position::MPosition::new_itrf(
                 -1_601_185.4,
                 -5_041_977.5,
                 3_554_875.9,
             ))
-            .with_direction(casa_types::measures::direction::MDirection::from_angles(
+            .with_direction(casa_core::measures::direction::MDirection::from_angles(
                 1.1,
                 0.55,
-                casa_types::measures::direction::DirectionRef::J2000,
+                casa_core::measures::direction::DirectionRef::J2000,
             ));
         let frequency_hz = 6.667_582_296e9;
 

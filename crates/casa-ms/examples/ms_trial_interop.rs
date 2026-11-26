@@ -213,7 +213,7 @@ fn dump(store: &Path, out: &Path) -> Result<(), Error> {
     // The represented instants, as the epoch views give them: two-part MJD
     // in the delivered scale, for the oracle to compare with astropy's
     // reading of XRADIO's attributes.
-    let instants = |view: casa_types::measures::EpochView<'_>| {
+    let instants = |view: casa_core::measures::EpochView<'_>| {
         let epochs: Vec<_> = (0..view.len())
             .map(|index| view.get(index).value())
             .collect();

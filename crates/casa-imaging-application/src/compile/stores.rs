@@ -12,15 +12,15 @@
 
 use std::sync::Arc;
 
+use casa_core::measures::MeasuresProvider;
+use casa_core::measures::doppler::{DopplerRef, MDoppler};
+use casa_core::measures::frame::MeasFrame;
+use casa_core::measures::frequency::FrequencyRef;
 use casa_imaging_runtime::{Admitted, Reservation};
 use casa_ms::CubeAxisValue;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::observation_io::{Msv2Observation, PartitionScheme};
 use casa_observation::Catalogue;
-use casa_types::measures::MeasuresProvider;
-use casa_types::measures::doppler::{DopplerRef, MDoppler};
-use casa_types::measures::frame::MeasFrame;
-use casa_types::measures::frequency::FrequencyRef;
 
 use super::envelope::{self, SpectralEnvelope};
 use super::opening::{OpenedStore, open_observation};

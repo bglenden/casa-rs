@@ -135,7 +135,7 @@ fn tpnant_overrides_custom_tp_array_and_one_array_uses_final_correlator() {
     }
 }
 
-fn tp_data(path: &std::path::Path) -> Vec<casa_types::ArrayValue> {
+fn tp_data(path: &std::path::Path) -> Vec<casa_core::ArrayValue> {
     let ms = casa_ms::MeasurementSet::open(path).unwrap();
     let main = ms.main_table();
     let rows = (0..main.row_count()).collect::<Vec<_>>();

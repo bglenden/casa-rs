@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use casa_types::{ArrayValue, measures::direction::MDirection};
+use casa_core::{ArrayValue, measures::direction::MDirection};
 
 use crate::derived::engine::resolve_direction_reference;
 use crate::schema::{self, SubtableId};

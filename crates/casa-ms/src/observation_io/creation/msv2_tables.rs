@@ -12,8 +12,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use casa_core::quanta::Unit;
 use casa_observation::{AntennaId, Catalogue, Correlation, ObservationError, Receptors, UvwFrame};
-use casa_types::quanta::Unit;
 use num_complex::Complex32;
 
 use super::msv2_rows::Spans;
@@ -546,8 +546,8 @@ mod tests {
 
     use std::collections::BTreeMap;
 
+    use casa_core::quanta::Quantity;
     use casa_observation::{AntennaId, Receptors};
-    use casa_types::quanta::Quantity;
 
     use super::{feed_plan, position_or_push, receptor_pair};
 

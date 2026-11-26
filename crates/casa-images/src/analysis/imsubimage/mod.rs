@@ -81,9 +81,9 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+use casa_core::{ArrayD, RecordValue, Value};
 use casa_lattices::{TraversalIter, TraversalSpec};
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
-use casa_types::{ArrayD, RecordValue, Value};
 use ndarray::{Axis, IxDyn, Slice, SliceInfoElem, Zip};
 use num_complex::Complex;
 

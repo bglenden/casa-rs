@@ -9,14 +9,14 @@ use casa_components::{
     ComponentShape, Ellipse, EllipseErrors, Flux, ShapeKind, ShapeTransform, SkyComponent,
     SpectralModel,
 };
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::ephemeris::offset_true_angle;
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::quanta::Unit;
+use casa_core::{Complex64, ScalarValue};
 use casa_ms::columns::direction_columns::DirectionColumn;
 use casa_ms::derived::engine::raw_field_phase_direction;
 use casa_ms::{MeasurementSet, MsError, MsResult, ResolvedMsSelection, SubTable};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::ephemeris::offset_true_angle;
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::quanta::Unit;
-use casa_types::{Complex64, ScalarValue};
 
 const ARCSECOND_RAD: f64 = PI / 648_000.0;
 const LIGHT_SPEED: f64 = 299_792_458.0;

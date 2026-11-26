@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
-use casa_types::measures::doppler::DopplerRef;
-use casa_types::quanta::{Dimension, UnitDim, casacore};
+use casa_core::measures::doppler::DopplerRef;
+use casa_core::quanta::{Dimension, UnitDim, casacore};
 use ndarray::{Array2, ShapeBuilder};
 use numpy::{IntoPyArray, PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyRuntimeError, PySystemError, PyTypeError};

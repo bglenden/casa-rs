@@ -8,10 +8,10 @@
 use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
 
+use casa_core::measures::direction::DirectionRef;
+use casa_measures::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_observation::{AntennaId, ObservationError};
-use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, Table};
-use casa_types::measures::direction::DirectionRef;
 
 use super::losses::Store;
 use crate::derived::engine::resolve_direction_reference_selected;

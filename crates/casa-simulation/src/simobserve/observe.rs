@@ -5,13 +5,13 @@
 
 use std::path::{Path, PathBuf};
 
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::quanta::Quantity;
+use casa_core::quanta::casacore::tos;
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_ms::MeasurementSet;
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::quanta::Quantity;
-use casa_types::quanta::casacore::tos;
-use casa_types::{ArrayValue, ScalarValue, Value};
 
 use super::antennas::Array;
 use super::pointings::Pointings;

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Bind casacore's MSCAL selection functions to the shared MS row grammars.
 
+use casa_core::PrimitiveType;
 use casa_tables::taql::ast::{
     BinaryOp, Expr, GivingClause, InSetElement, IndexElement, Literal, SelectStatement, UnaryOp,
 };
 use casa_tables::taql::{self, IndexStyle, RecordExpressionType, Statement, TaqlError, TaqlResult};
 use casa_tables::{ArrayShapeContract, ColumnType, RequiredScalarColumnValues, Table, TableError};
-use casa_types::PrimitiveType;
 
 use super::intent::MatchMode;
 use super::taql_geometry::GeometryBinder;

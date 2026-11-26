@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Read CASA's per-plane FITS BEAMS extension.
 
-use casa_types::{
+use casa_core::{
     RecordValue, Value,
     quanta::{Quantity, Unit},
 };

@@ -4,9 +4,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_components::{ComponentList, Polarisation};
+use casa_core::measures::{MEpoch, MeasFrame, UvwMachine};
+use casa_core::{ArrayValue, Complex32, Complex64, RecordValue, ScalarValue, Value};
 use casa_tables::Table;
-use casa_types::measures::{MEpoch, MeasFrame, UvwMachine};
-use casa_types::{ArrayValue, Complex32, Complex64, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use crate::derived::engine::{MsCalEngine, raw_field_phase_direction};

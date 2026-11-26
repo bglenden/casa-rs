@@ -5,7 +5,7 @@
 //! offsets and names to every antenna, then `NewMSSimulator::initAnt`
 //! appends one ANTENNA row per antenna, converting local positions to ITRF.
 
-use casa_types::measures::MPosition;
+use casa_core::measures::MPosition;
 
 use super::error::{SimulatorError, SimulatorResult};
 

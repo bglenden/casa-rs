@@ -4,9 +4,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_ms::{MeasurementSet, ResolvedMsSelection};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
 use crate::single_dish::edges::Integration;

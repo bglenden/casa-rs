@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Domain value representation for `imhead` header-editing operations.
 
-use casa_types::{ArrayValue, RecordValue};
+use casa_core::{ArrayValue, RecordValue};
 
 /// Domain-level value passed to `imhead` put/add/del metadata operations.
 #[derive(Debug, Clone, PartialEq)]

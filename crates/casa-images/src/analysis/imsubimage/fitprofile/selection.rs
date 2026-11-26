@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use casa_coordinates::CoordinateType;
+use casa_core::{ArrayD, RecordValue};
 use casa_lattices::{TraversalCursorIter, TraversalSpec};
-use casa_types::{ArrayD, RecordValue};
 use ndarray::{Axis, AxisDescription, Slice, Zip};
 
 use crate::analysis::axes::stokes_for_axis;

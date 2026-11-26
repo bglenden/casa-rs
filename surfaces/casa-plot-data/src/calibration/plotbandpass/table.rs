@@ -4,8 +4,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_tables::{Table, TableOptions, add_directory};
-use casa_types::{ArrayValue, ScalarValue, Value};
 
 use casa_calibration::paths::subtable_owner;
 

@@ -4,8 +4,8 @@
 
 use std::str::FromStr;
 
+use casa_core::quanta::{Quantity, Unit};
 use casa_imaging_model::UvTaper;
-use casa_types::quanta::{Quantity, Unit};
 use serde::{Deserialize, Deserializer, de::Error as _};
 use serde_json::Value;
 

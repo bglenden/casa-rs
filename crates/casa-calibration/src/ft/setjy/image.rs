@@ -6,13 +6,13 @@ use std::path::Path;
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateType, SpectralCoordinate, StokesType,
 };
+use casa_core::measures::frame::MeasFrame;
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::measures::{direction::MDirection, position::MPosition};
+use casa_core::quanta::{Quantity, Unit};
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_images::PagedImage;
 use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection};
-use casa_types::measures::frame::MeasFrame;
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::measures::{direction::MDirection, position::MPosition};
-use casa_types::quanta::{Quantity, Unit};
-use casa_types::{ArrayValue, ScalarValue, Value};
 
 use crate::ft::image::{ImageModel, prepare_image};
 use crate::ft::{invalid, spectral_with_runtime};

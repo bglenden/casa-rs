@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::{CoordinateModel, CoordinateType, Projection, ProjectionType};
-use casa_types::Value;
+use casa_core::Value;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 

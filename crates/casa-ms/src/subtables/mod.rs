@@ -8,8 +8,8 @@
 //! Immutable wrappers (`Ms*<'a>`) provide read access; mutable wrappers
 //! (`Ms*Mut<'a>`) additionally support write operations.
 
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_tables::Table;
-use casa_types::{ArrayValue, ScalarValue, Value};
 
 use crate::column_def::ColumnDef;
 use crate::error::{MsError, MsResult};
@@ -115,7 +115,7 @@ macro_rules! define_generic_subtable {
             }
 
             /// Read an array column by name.
-            pub fn array(&self, row: usize, col: &str) -> crate::MsResult<&casa_types::ArrayValue> {
+            pub fn array(&self, row: usize, col: &str) -> crate::MsResult<&casa_core::ArrayValue> {
                 crate::subtables::get_array(self.table, row, col)
             }
 
@@ -124,7 +124,7 @@ macro_rules! define_generic_subtable {
                 &self,
                 row: usize,
                 col: &str,
-            ) -> crate::MsResult<Option<&casa_types::ArrayValue>> {
+            ) -> crate::MsResult<Option<&casa_core::ArrayValue>> {
                 crate::subtables::optional_array(self.table, row, col)
             }
         }
@@ -176,7 +176,7 @@ macro_rules! define_generic_subtable {
                     self.table,
                     row,
                     col,
-                    casa_types::ScalarValue::Int32(value),
+                    casa_core::ScalarValue::Int32(value),
                 )
             }
 
@@ -186,7 +186,7 @@ macro_rules! define_generic_subtable {
                     self.table,
                     row,
                     col,
-                    casa_types::ScalarValue::Float64(value),
+                    casa_core::ScalarValue::Float64(value),
                 )
             }
 
@@ -196,7 +196,7 @@ macro_rules! define_generic_subtable {
                     self.table,
                     row,
                     col,
-                    casa_types::ScalarValue::Bool(value),
+                    casa_core::ScalarValue::Bool(value),
                 )
             }
 
@@ -211,7 +211,7 @@ macro_rules! define_generic_subtable {
                     self.table,
                     row,
                     col,
-                    casa_types::ScalarValue::String(value.into()),
+                    casa_core::ScalarValue::String(value.into()),
                 )
             }
 
@@ -220,7 +220,7 @@ macro_rules! define_generic_subtable {
                 &mut self,
                 row: usize,
                 col: &str,
-                value: casa_types::ArrayValue,
+                value: casa_core::ArrayValue,
             ) -> crate::MsResult<()> {
                 crate::subtables::set_array(self.table, row, col, value)
             }

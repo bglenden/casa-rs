@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+use casa_core::{RecordField, RecordValue, ScalarValue, Value};
 
 use super::reduction::Moments;
 use crate::{MsError, MsResult};

@@ -2,7 +2,7 @@
 //! CASA image-metadata list presentation, independent of the task front end.
 
 use casa_coordinates::StokesType;
-use casa_types::quanta::{
+use casa_core::quanta::{
     Quantity, Unit,
     format::{CLEAN, format_angle},
 };

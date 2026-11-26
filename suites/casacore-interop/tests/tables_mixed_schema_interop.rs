@@ -4,12 +4,12 @@
 
 #![cfg(feature = "cpp-interop-tests")]
 
+use casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{ColumnOptions, ColumnSchema};
 use casa_test_support::CppTableFixture;
 use casa_test_support::table_interop::{
     ManagerKind, MatrixCellResult, TableFixture, run_full_cross_matrix,
 };
-use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ShapeBuilder;
 
 /// 2-row table with:

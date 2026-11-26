@@ -16,15 +16,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use casa_core::{
+    ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
+};
 use casa_tables::{
     ColumnBinding, ColumnSchema, DataManagerKind, Table, TableError, TableOptions, TableSchema,
     TableWriteLock,
 };
 #[cfg(unix)]
 use casa_tables::{LockMode, LockOptions};
-use casa_types::{
-    ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
-};
 use ndarray::{ArrayD, Ix2, IxDyn};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

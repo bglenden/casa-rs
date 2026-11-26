@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_core::Correlation;
 use casa_imaging_model::{
     CompileObservationError, CorrelationProduct, FlagPolicy, FrequencyBands, FrequencyFrame,
     IdSelection, IntentSelection, ObservationSelection, ObservationSnapshot,
@@ -8,7 +9,6 @@ use casa_imaging_model::{
     SpectralWindowCoordinateCatalog, SpectralWindowSelection, UvDistanceRange, UvDistanceUnit,
     UvSelection, VisibilityColumn, WeightColumn, compile_observation,
 };
-use casa_types::Correlation;
 
 fn columns() -> SelectedColumns {
     SelectedColumns::new(

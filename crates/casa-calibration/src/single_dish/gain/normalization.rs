@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Flag-aware double-circle gain normalization.
 
-use casa_types::Complex32;
+use casa_core::Complex32;
 use ndarray::ArrayD;
 
 use crate::single_dish::edges::Integration;

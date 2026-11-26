@@ -11,12 +11,12 @@ use std::ops::Range;
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
+use casa_core::ScalarValue;
+use casa_core::{ArrayValue, Complex32, Complex64, PrimitiveType};
 use casa_tables::{
     RequiredScalarColumnValues, SelectedArray1DCells, SelectedArray2DCellsMut, Table,
 };
-#[cfg(test)]
-use casa_types::ScalarValue;
-use casa_types::{ArrayValue, Complex32, Complex64, PrimitiveType};
 use ndarray::Ix1;
 use serde::Serialize;
 
@@ -2116,8 +2116,8 @@ fn column_type_error(column_name: &str, expected: &str, found: PrimitiveType) ->
 
 #[cfg(test)]
 mod tests {
+    use casa_core::{RecordField, RecordValue, Value};
     use casa_tables::Table;
-    use casa_types::{RecordField, RecordValue, Value};
     use ndarray::ArrayD;
 
     use super::*;

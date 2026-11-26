@@ -32,7 +32,7 @@
 //! ```rust
 //! use casa_coordinates::{CoordinateSystem, DirectionCoordinate, Projection, ProjectionType};
 //! use casa_images::{PagedImage, PolygonRegion};
-//! use casa_types::measures::direction::DirectionRef;
+//! use casa_core::measures::direction::DirectionRef;
 //!
 //! let mut coords = CoordinateSystem::new();
 //! coords.add_coordinate(DirectionCoordinate::new(
@@ -69,8 +69,8 @@ pub(crate) use record::{
 };
 
 use casa_coordinates::CoordinateSystem;
+use casa_core::RecordValue;
 use casa_lattices::StatsElement;
-use casa_types::RecordValue;
 use ndarray::{Array2, ArrayD, Dimension, IxDyn, Slice};
 
 use self::geometry::{enumerate_axis_indices, polygon_contains_pixel, validate_polygon};

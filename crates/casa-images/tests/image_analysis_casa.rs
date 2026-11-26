@@ -39,13 +39,13 @@ use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate, Projection,
     ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
 };
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::frequency::FrequencyRef;
 use casa_images::{
     FeatherRequest, GaussianBeam, ImageBeamSet, ImageInfo, ImageInterface, ImmathRequest,
     ImpbcorRequest, PagedImage, RegridMethod, RegridTemplate, TempImage, convolve2d, regrid,
 };
 use casa_lattices::{LatticeStatistics, Statistic, TempStoragePolicy};
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::frequency::FrequencyRef;
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use serde_json::Value;
 

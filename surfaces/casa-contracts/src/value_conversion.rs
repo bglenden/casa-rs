@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Conversions between parameter values and casacore's typed values.
 
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 mod multidimensional;
 
@@ -117,7 +117,7 @@ pub fn parameter_value_to_casacore(value: &ParameterValue) -> Result<Value, &'st
             }
             ParameterValue::Float(value) => Value::Scalar(ScalarValue::Float64(*value)),
             ParameterValue::Complex([real, imag]) => Value::Scalar(ScalarValue::Complex64(
-                casa_types::Complex64::new(real.0, imag.0),
+                casa_core::Complex64::new(real.0, imag.0),
             )),
             ParameterValue::EmptyArray { dtype, shape } => {
                 let array = empty_parameter_array(*dtype, shape)?;
@@ -456,14 +456,12 @@ pub fn parameter_array_to_casa(values: &[ParameterValue]) -> Result<ArrayValue, 
                 .iter()
                 .map(|value| match value {
                     ParameterValue::Bool(value) => {
-                        casa_types::Complex64::new(f64::from(u8::from(*value)), 0.0)
+                        casa_core::Complex64::new(f64::from(u8::from(*value)), 0.0)
                     }
-                    ParameterValue::Integer(value) => {
-                        casa_types::Complex64::new(*value as f64, 0.0)
-                    }
-                    ParameterValue::Float(value) => casa_types::Complex64::new(*value, 0.0),
+                    ParameterValue::Integer(value) => casa_core::Complex64::new(*value as f64, 0.0),
+                    ParameterValue::Float(value) => casa_core::Complex64::new(*value, 0.0),
                     ParameterValue::Complex([real, imag]) => {
-                        casa_types::Complex64::new(real.0, imag.0)
+                        casa_core::Complex64::new(real.0, imag.0)
                     }
                     _ => unreachable!(),
                 })
@@ -549,7 +547,7 @@ mod tests {
 
     #[test]
     fn record_arrays_use_fortran_order_and_casa_numeric_promotions() {
-        let array = casa_types::ArrayD::from_shape_vec(vec![2, 3], vec![1_i32, 2, 3, 4, 5, 6])
+        let array = casa_core::ArrayD::from_shape_vec(vec![2, 3], vec![1_i32, 2, 3, 4, 5, 6])
             .unwrap()
             .reversed_axes();
         let value = casacore_value_to_casa(&Value::Array(ArrayValue::Int32(array))).unwrap();
@@ -571,7 +569,7 @@ mod tests {
             }
         );
         let complex = Value::Array(ArrayValue::from_complex32_vec(vec![
-            casa_types::Complex32::new(1.5, -2.0),
+            casa_core::Complex32::new(1.5, -2.0),
         ]));
         assert_eq!(
             casacore_value_to_casa(&complex).unwrap(),
@@ -590,7 +588,7 @@ mod tests {
             }
         );
         let unsigned_matrix =
-            casa_types::ArrayD::from_shape_vec(vec![2, 3], vec![1_u32, 2, 3, 4, 5, u32::MAX])
+            casa_core::ArrayD::from_shape_vec(vec![2, 3], vec![1_u32, 2, 3, 4, 5, u32::MAX])
                 .unwrap();
         assert_eq!(
             casacore_value_to_casa(&Value::Array(ArrayValue::UInt32(unsigned_matrix))).unwrap(),
@@ -603,7 +601,7 @@ mod tests {
 
     #[test]
     fn record_complex_scalars_preserve_components_and_promote_float32() {
-        let single = Value::Scalar(ScalarValue::Complex32(casa_types::Complex32::new(
+        let single = Value::Scalar(ScalarValue::Complex32(casa_core::Complex32::new(
             1.25, -2.5,
         )));
         assert_eq!(
@@ -613,7 +611,7 @@ mod tests {
                 imag: CasaFloat(-2.5),
             }
         );
-        let double = Value::Scalar(ScalarValue::Complex64(casa_types::Complex64::new(
+        let double = Value::Scalar(ScalarValue::Complex64(casa_core::Complex64::new(
             f64::INFINITY,
             f64::NEG_INFINITY,
         )));

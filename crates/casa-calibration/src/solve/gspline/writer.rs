@@ -3,9 +3,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_ms::MeasurementSet;
 use casa_tables::{ColumnSchema, TableSchema};
-use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use num_complex::Complex32;
 

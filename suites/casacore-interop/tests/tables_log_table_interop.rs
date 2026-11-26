@@ -3,13 +3,13 @@
 
 #![cfg(feature = "cpp-interop-tests")]
 
-use casa_logging::{
+use casa_core::{ScalarValue, Value};
+use casa_tables::log_table::{
     CasaLogRecord, CasaLogSink, CasaPriority, CasaTableLogSink, TableLogOpenMode,
     validate_log_table,
 };
 use casa_tables::{Table, TableOptions};
 use casa_test_support::{CppTableFixture, TableOracle, casacore_oracle_available};
-use casa_types::{ScalarValue, Value};
 
 const LOG_TABLE_README: &str = "Repository for software-generated logging messages";
 

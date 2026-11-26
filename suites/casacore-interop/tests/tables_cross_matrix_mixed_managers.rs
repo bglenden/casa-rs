@@ -9,14 +9,14 @@
 
 use std::path::Path;
 
+use casa_core::{
+    ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
+};
 use casa_tables::{ColumnBinding, ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
 use casa_test_support::table_interop::{
     ManagerKind, MatrixCellResult, TableFixture, run_endian_cross_matrix, run_full_cross_matrix,
 };
 use casa_test_support::{CppTableFixture, casacore_oracle_available};
-use casa_types::{
-    ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
-};
 
 const TIMES: [f64; 3] = [100.0, 100.0, 110.0];
 

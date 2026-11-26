@@ -5,8 +5,8 @@ use super::{
     ReservationWindow, Simulator, SimulatorOptions, alone, charge_process_caches, configured,
     excess_now, measured_close, noise, reserved_memory, resources, scan, scan_from,
 };
+use casa_core::{RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{Table, TableOptions};
-use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 
 #[test]
 fn mapped_patch_is_admitted_before_expansion() {

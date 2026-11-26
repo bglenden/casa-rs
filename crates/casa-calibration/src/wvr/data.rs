@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Group the MeasurementSet's WVR data by time and antenna.
 
+use casa_core::{ArrayValue, ScalarValue};
 use casa_ms::{MeasurementSet, MsError};
 use casa_tables::{RequiredScalarColumnValues, Table};
-use casa_types::{ArrayValue, ScalarValue};
 
 use crate::constants::{COL_ANTENNA1, COL_ANTENNA2, COL_FIELD_ID, COL_FLAG, COL_TIME};
 

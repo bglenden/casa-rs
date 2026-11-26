@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 
-use casa_types::quanta::Quantity;
+use casa_core::quanta::Quantity;
 
 use crate::ImageError;
 

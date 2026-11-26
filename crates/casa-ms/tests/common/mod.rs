@@ -5,12 +5,12 @@ pub mod casa_plotms;
 
 use std::path::{Path, PathBuf};
 
+use casa_core::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use casa_ms::MeasurementSetBuilder;
 use casa_ms::column_def::{ColumnDef, ColumnKind};
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::main_table::OptionalMainColumn;
 use casa_ms::schema::{self, SubtableId};
-use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 pub const NUM_CORR: usize = 4;
@@ -1103,10 +1103,10 @@ fn make_subtable_row(defs: &[ColumnDef], overrides: &[(&str, Value)]) -> RecordV
 fn default_value_for_def(c: &ColumnDef) -> Value {
     match c.column_kind {
         ColumnKind::Scalar => match c.data_type {
-            casa_types::PrimitiveType::Int32 => Value::Scalar(ScalarValue::Int32(0)),
-            casa_types::PrimitiveType::Float64 => Value::Scalar(ScalarValue::Float64(0.0)),
-            casa_types::PrimitiveType::Bool => Value::Scalar(ScalarValue::Bool(false)),
-            casa_types::PrimitiveType::String => Value::Scalar(ScalarValue::String(String::new())),
+            casa_core::PrimitiveType::Int32 => Value::Scalar(ScalarValue::Int32(0)),
+            casa_core::PrimitiveType::Float64 => Value::Scalar(ScalarValue::Float64(0.0)),
+            casa_core::PrimitiveType::Bool => Value::Scalar(ScalarValue::Bool(false)),
+            casa_core::PrimitiveType::String => Value::Scalar(ScalarValue::String(String::new())),
             _ => Value::Scalar(ScalarValue::Float64(0.0)),
         },
         ColumnKind::FixedArray { shape } => {
@@ -1119,19 +1119,19 @@ fn default_value_for_def(c: &ColumnDef) -> Value {
             let shape: Vec<usize> = vec![1; ndim];
             let total: usize = shape.iter().product();
             match c.data_type {
-                casa_types::PrimitiveType::Bool => Value::Array(ArrayValue::Bool(
+                casa_core::PrimitiveType::Bool => Value::Array(ArrayValue::Bool(
                     ArrayD::from_shape_vec(shape, vec![false; total]).unwrap(),
                 )),
-                casa_types::PrimitiveType::Float32 => Value::Array(ArrayValue::Float32(
+                casa_core::PrimitiveType::Float32 => Value::Array(ArrayValue::Float32(
                     ArrayD::from_shape_vec(shape, vec![0.0; total]).unwrap(),
                 )),
-                casa_types::PrimitiveType::Complex32 => Value::Array(ArrayValue::Complex32(
+                casa_core::PrimitiveType::Complex32 => Value::Array(ArrayValue::Complex32(
                     ArrayD::from_shape_vec(shape, vec![Complex32::new(0.0, 0.0); total]).unwrap(),
                 )),
-                casa_types::PrimitiveType::Int32 => Value::Array(ArrayValue::Int32(
+                casa_core::PrimitiveType::Int32 => Value::Array(ArrayValue::Int32(
                     ArrayD::from_shape_vec(shape, vec![0; total]).unwrap(),
                 )),
-                casa_types::PrimitiveType::String => Value::Array(ArrayValue::String(
+                casa_core::PrimitiveType::String => Value::Array(ArrayValue::String(
                     ArrayD::from_shape_vec(shape, vec![String::new(); total]).unwrap(),
                 )),
                 _ => Value::Array(ArrayValue::Float64(
@@ -1180,7 +1180,7 @@ pub fn install_cloned_columns(
             .add_column(
                 casa_tables::ColumnSchema::array_variable(
                     *name,
-                    casa_types::PrimitiveType::Complex32,
+                    casa_core::PrimitiveType::Complex32,
                     Some(2),
                 ),
                 None,

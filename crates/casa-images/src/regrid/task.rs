@@ -9,13 +9,13 @@ use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateType, DirectionCoordinate, LinearCoordinate,
     SpectralCoordinate, StokesCoordinate,
 };
-use casa_types::ArrayD;
-use casa_types::measures::{
+use casa_core::ArrayD;
+use casa_core::measures::{
     MeasFrame,
     doppler::{DopplerRef, MDoppler},
     frequency::MFrequency,
 };
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::quanta::{Quantity, Unit};
 use ndarray::{Axis, IxDyn, ShapeBuilder};
 
 use super::{

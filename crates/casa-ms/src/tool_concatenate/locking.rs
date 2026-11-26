@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, Metadata};
 use std::path::{Path, PathBuf};
 
+use casa_core::{RecordValue, Value};
 use casa_tables::{Table, TableOptions, TableWriteLock, add_directory};
-use casa_types::{RecordValue, Value};
 use rayon::prelude::*;
 
 use super::publication::io;

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! PlotMS page metadata from the first selected MAIN row, before reduction.
 
-use casa_types::ArrayValue;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::epoch::{EpochRef, MEpoch};
-use casa_types::measures::frame::MeasFrame;
-use casa_types::quanta::MvTime;
-use casa_types::quanta::format::{ANGLE, CLEAN, TIME, format_angle, format_time};
+use casa_core::ArrayValue;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::epoch::{EpochRef, MEpoch};
+use casa_core::measures::frame::MeasFrame;
+use casa_core::quanta::MvTime;
+use casa_core::quanta::format::{ANGLE, CLEAN, TIME, format_angle, format_time};
 
 use super::{
     MsDataColumn, MsExploreSpec, MsPageHeaderItem, PlotMsInput, axis_name, wrap_header_segments,
