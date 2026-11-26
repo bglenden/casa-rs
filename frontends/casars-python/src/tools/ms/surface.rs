@@ -128,8 +128,8 @@ const METHODS: &[Method] = &[
             param("veltype", K::Text, Text("radio")),
             param("hanning", K::Bool, Bool(true)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "cvelfreqs",
@@ -458,8 +458,8 @@ const METHODS: &[Method] = &[
             param("chanwidth", K::Float, Float(-1.0)),
             param("hanning", K::Bool, Bool(true)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method("reset", &[], R::Bool, Yes),
     method(

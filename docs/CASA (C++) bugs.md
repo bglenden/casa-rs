@@ -12193,3 +12193,99 @@ when reading the observation epoch and segfaults. Casa-rs returns the
 persisted spectral grid for unframed queries and an empty float64 axis
 when conversion needs an observation epoch. The empty view remains
 attached (#1030).
+
+
+## Spectral regridding can leave later fields on the original noise scale
+
+In CASA 6.7.6.14, regrid a MeasurementSet with several fields sharing one
+spectral window through `ms.regridspw(mode="chan", chanwidth=2, hanning=False)`
+without changing its frequency reference. CASA doubles the per-row and
+spectral weights and scales sigma by the inverse square root of two for
+the first field. It reuses the same grid for later fields while leaving
+their weights and sigma at the original scale. Casa-rs applies the same
+bandwidth ratio to all fields that use the same spectral grid (#1030).
+
+## Legacy spectral writers can modify an MS after a read-only open or a failed selection
+
+CASA 6.7.6.14 `ms.cvel(mode="channel", width=2)` can reopen and rewrite a
+MeasurementSet after the tool was opened with `nomodify=True`. On the pinned
+`ngc5921_ut.ms` fixture the overload changed the source from 63 to 31 channels.
+With a row selection active, `ms.regridspw(chanwidth=2)` can change the parent
+spectral-window table and then fail while the parent DATA cells still have their
+original shape.
+
+casa-rs honors the attachment's write mode and requires the complete attached MS
+for a spectral rewrite. It prepares and checks a private output before
+publication so a failed operation keeps the original MS usable (#1030).
+
+An LSRK input also reproduces the detached state with
+`ms.cvel(outframe="REST", width=2, hanning=False)`. CASA closes the tool
+before calling `SubMS::regridSpw`, and the unsupported conversion raises
+`No MeasFrame specified for conversion of Frequency`. The caller receives the
+same error from casa-rs and can continue using the original attachment (#1030).
+
+On a two-window LSRK input, `ms.cvel(width=2, interp="invalid",
+hanning=False)` combines the two windows before SubMS rejects the interpolation.
+CASA returns `True` with one combined window and fewer MAIN rows. Casa-rs
+keeps both windows and the original rows when it declines the unsupported
+interpolation. The same ordering issue occurs with an unknown `outframe`
+(#1030).
+
+## A converted regridspw channel midpoint can address a channel past the input band
+
+In CASA 6.7.6.14, `ms.regridspw(outframe="BARY", chanwidth=2,
+hanning=False)` on `ngc5921_ut.ms` selects original channel 32 as the
+midpoint of the first field's 63-channel band after frame conversion.
+`SubMS::regridChanBounds` accepts a 63-channel span centered there and
+calculates an inclusive range of 1 through 63, although the last input
+index is 62. The reference run logged an upper bound of 0 Hz and a
+negative span of about 1.41 GHz.
+
+casa-rs clips the requested range to the available input grid. When the
+midpoint would select the same out-of-range endpoint, that field has
+31 valid two-channel bins. Explicitly setting `center=31` covers all
+63 input channels and yields 32 output channels, including the partial
+edge, with valid bounds (#1030).
+
+## Regridspw can flag a new data description that was valid in the input
+
+Run `ms.regridspw(outframe="BARY", center=31, chanwidth=2, hanning=False)`
+on pinned CASA 6.7.6.14's `ngc5921_ut.ms`. The one input DATA_DESCRIPTION
+record has `FLAG_ROW=False`. SubMS intends to copy that flag when it creates
+the three output records, but the persisted flag is `True` on the third
+record. Both readers observe the same flag in CASA's output. Casa-rs keeps
+all three output data descriptions valid, as in the input (#1030).
+
+## In-place spectral resampling can reverse values on a descending grid
+
+A four-channel MeasurementSet with descending frequencies 1403, 1402,
+1401, and 1400 MHz and input visibility samples 0, 1, 2, and 3 exercises
+this in CASA 6.7.6.14. A width-two linear regrid through either
+`ms.cvel(hanning=False)` or `ms.regridspw(outframe="", hanning=False)`
+writes descending output frequencies 1402.5 and 1400.5 MHz, with
+visibility samples 2.5 and 0.5 in those slots. In
+`SubMS::regridChanBounds`, reversing the casacore Vector used to calculate
+bounds also reverses the shared input coordinate array used for
+interpolation, while the input visibility array retains its original order.
+
+casa-rs retains the association between frequencies and input samples.
+On this input it writes 0.5 at 1402.5 MHz and 2.5 at 1400.5 MHz (#1030).
+
+## Spectral width regridding can widen a table descriptor's permissions
+
+On CASA 6.7.6.14, set a writable MeasurementSet's directory mode to 0700
+and its `table.dat` mode to 0600. With umask 022,
+`ms.regridspw(outframe="", chanwidth=2, hanning=False)` can recreate
+`table.dat` with mode 0644. Casa-rs retains the original directory and table
+file modes when publishing the rewritten MeasurementSet (#1030).
+
+## Frame-only regridding can write through a linked MAIN storage file
+
+In CASA 6.7.6.14, bind `DATA_DESC_ID` to an IncrementalStMan file, then
+replace that file in the MeasurementSet with a symbolic link to a copy
+outside the MS. With two fields sharing one input window,
+`ms.regridspw(outframe="BARY", mode="")` returns `True`, preserves the link,
+and changes its external target while assigning the new data-description IDs.
+Casa-rs requires a private writable payload for the replacement and refuses
+this linked layout before changing the original MeasurementSet or its external
+file (#1030).

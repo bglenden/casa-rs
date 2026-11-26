@@ -257,6 +257,7 @@ pub(crate) mod measured_columns;
 mod metadata_field;
 mod metadata_measure;
 pub use metadata_field::FieldDirectionColumn;
+pub(crate) use metadata_field::FieldDirectionPolynomial;
 pub use metadata_measure::MetadataDirection;
 pub use metadata_measure::epoch_reference;
 pub mod observation;

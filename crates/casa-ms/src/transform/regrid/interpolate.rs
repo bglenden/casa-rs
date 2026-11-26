@@ -5,7 +5,7 @@ use std::ops::{Add, Div, Mul, Sub};
 
 use casa_tables::TableError;
 use casa_types::ArrayValue;
-use ndarray::{Array2, ArrayView2, ArrayView3, Ix2};
+use ndarray::{Array2, ArrayView2, ArrayView3, Ix2, ShapeBuilder};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Method {
@@ -141,7 +141,8 @@ impl Interpolation {
     }
 
     fn values<T: SampleValue>(&self, input: ArrayView2<'_, T>) -> Array2<T> {
-        let mut output = Array2::default((input.nrows(), self.samples.len()));
+        // MeasurementSet cells store all correlations of a channel together.
+        let mut output = Array2::default((input.nrows(), self.samples.len()).f());
         let mut coefficients = Vec::new();
         let mut curvature = Vec::new();
         for (corr, mut row) in output.rows_mut().into_iter().enumerate() {
@@ -209,12 +210,14 @@ impl Interpolation {
                     .view()
                     .into_dimensionality::<Ix2>()
                     .map_err(|_| error())?;
-                let flags =
-                    Array2::from_shape_fn((input.nrows(), self.samples.len()), |(corr, chan)| {
+                let flags = Array2::from_shape_fn(
+                    (input.nrows(), self.samples.len()).f(),
+                    |(corr, chan)| {
                         let sample = &self.samples[chan];
                         let [left, right] = sample.bracket.map(|index| self.physical(index));
                         sample.outside || input[[corr, left]] || input[[corr, right]]
-                    });
+                    },
+                );
                 Ok(ArrayValue::Bool(flags.into_dyn()))
             }
             _ => Err(error()),
@@ -224,7 +227,7 @@ impl Interpolation {
     pub(super) fn apply_categories(&self, input: ArrayView3<'_, bool>) -> ArrayValue {
         let (corr, channels, categories) = input.dim();
         let output = ndarray::Array3::from_shape_fn(
-            (corr, self.samples.len(), categories),
+            (corr, self.samples.len(), categories).f(),
             |(corr, chan, category)| {
                 let [left, right] = self.samples[chan].bracket.map(|index| self.physical(index));
                 input[[corr, left.min(channels - 1), category]]

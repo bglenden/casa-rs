@@ -126,6 +126,17 @@ impl MeasurementSet {
         })
     }
 
+    /// Open the requested subtables of an already opened MAIN table.
+    pub(crate) fn with_open_main(
+        main: Table,
+        path: PathBuf,
+        subtables: &HashMap<SubtableId, PathBuf>,
+    ) -> MsResult<Self> {
+        Self::open_subtables(main, path, Some(subtables), |path| {
+            Table::open(TableOptions::new(path))
+        })
+    }
+
     /// Open only the descriptors used by the metadata phase of concatenation.
     pub(crate) fn open_concatenation_metadata(
         main: Table,
@@ -198,7 +209,15 @@ impl MeasurementSet {
     ) -> MsResult<Self> {
         tracing::info!(path = %path.display(), "opening MeasurementSet");
         let main = open_table(&path)?;
+        Self::open_subtables(main, path, linked, open_table)
+    }
 
+    fn open_subtables(
+        main: Table,
+        path: PathBuf,
+        linked: Option<&HashMap<SubtableId, PathBuf>>,
+        mut open_table: impl FnMut(&Path) -> Result<Table, TableError>,
+    ) -> MsResult<Self> {
         let mut subtables = HashMap::new();
         let mut subtable_paths = HashMap::new();
 

@@ -83,8 +83,9 @@ pub use input_view::{PreparedTransformInputView, TransformInputColumns, Transfor
 use main_arrays::MainArrayBlock;
 pub use model_references::{PlotMsModelReferences, PlotMsModelSpwSelection};
 pub use regrid::{
-    ToolGridFrameTables, ToolGridPhaseCentre, ToolSpectralWindow, tool_channel_frequencies,
-    tool_grid_frame_at_epoch, tool_grid_reference_epoch,
+    LegacySpectralGrid, ToolGridFrameTables, ToolGridPhaseCentre, ToolSpectralWindow,
+    reframe_staged_ms, stage_frame_only_ms, tool_channel_frequencies, tool_grid_frame_at_epoch,
+    tool_grid_reference_epoch,
 };
 pub use selection_metadata::selected_plotms_integration_order;
 use single_dish_polarization::PolarizationProjection;
@@ -199,6 +200,8 @@ pub enum LegacyMsTool {
     Partition(LegacyTimeOptions),
     /// Compact subtable IDs while keeping partial channel bins.
     Split(LegacyTimeOptions),
+    /// Preserve the spectral calculation and layout of the legacy regrid tools.
+    Regrid(LegacySpectralGrid),
 }
 
 /// Additional chunk boundaries used by the legacy MeasurementSet tools.
@@ -338,6 +341,10 @@ pub enum MsTransformError {
         /// Reason for rejection.
         reason: String,
     },
+    /// The legacy spectral writer declines a non-equidistant channel grid
+    /// for FFT interpolation and leaves the input unchanged.
+    #[error("FFT interpolation requires equidistant output channels")]
+    LegacyRegridUnchanged,
     /// A Multi-MS argument was rejected.
     #[error("{reason}")]
     MultiMsParameter {
@@ -681,7 +688,11 @@ fn mstransform_staged(
     };
     let legacy_time = match options.legacy_tool {
         Some(LegacyMsTool::Partition(time) | LegacyMsTool::Split(time)) => Some(time),
-        None => None,
+        _ => None,
+    };
+    let legacy_grid = match options.legacy_tool {
+        Some(LegacyMsTool::Regrid(grid)) => Some(grid),
+        _ => None,
     };
     let legacy = legacy_time.is_some();
     let splitting = matches!(options.legacy_tool, Some(LegacyMsTool::Split(_)));
@@ -855,6 +866,7 @@ fn mstransform_staged(
                     .map_or(&channel_selection, |(_, channels)| channels),
                 normalized_width(request.width),
                 budget.available_bytes / budget.maximum_live_blocks,
+                matches!(legacy_grid, Some(LegacySpectralGrid::Cvel)),
             )?
         } else {
             None
@@ -923,6 +935,12 @@ fn mstransform_staged(
             });
         }
     }
+    let legacy_direct_band = legacy_grid.is_some()
+        && combined_grid.is_none()
+        && options.time_averaging.is_none()
+        && options.channel_widths.is_none()
+        && normalized_width(request.width) == 1
+        && spw == "*";
     let first_selected_row = selected_rows
         .iter()
         .copied()
@@ -947,11 +965,25 @@ fn mstransform_staged(
         .map(|options| {
             regrid::Plan::new(
                 &input,
-                options,
+                (options, legacy_grid),
                 combined_grid.as_mut(),
                 &channel_selection,
                 &mut channel_bins,
-                first_selected_row,
+                (
+                    first_selected_row,
+                    ((legacy_direct_band
+                        && matches!(
+                            legacy_grid,
+                            Some(
+                                LegacySpectralGrid::CenteredChannels { .. }
+                                    | LegacySpectralGrid::CenteredNumeric { .. }
+                            )
+                        )
+                        && options.nspw == 1)
+                        || (matches!(legacy_grid, Some(LegacySpectralGrid::Cvel))
+                            && !options.outframe.trim().is_empty()))
+                    .then_some(selected_rows.as_slice()),
+                ),
                 budget.available_bytes / budget.maximum_live_blocks,
             )
         })
@@ -1013,7 +1045,8 @@ fn mstransform_staged(
             starts_visibility_buffer: Vec::new(),
             phase_reference_rows: Vec::new(),
         }
-    } else if legacy {
+    } else if legacy || legacy_direct_band {
+        // In-place regridding leaves existing MAIN rows in their original order.
         selection_metadata::OrderedMainRows {
             rows: selected_rows,
             descriptions: selected_ddids,
@@ -1150,6 +1183,8 @@ fn mstransform_staged(
         );
     let mut spectra = if legacy {
         SpectrumProjection::partition(input.main_table(), first_selected_row, averaging_time)
+    } else if legacy_grid.is_some() {
+        Ok(SpectrumProjection::existing(input.main_table()))
     } else {
         SpectrumProjection::resolve(
             input.main_table(),
@@ -1342,7 +1377,7 @@ fn mstransform_staged(
     if combined_grid.is_some() {
         combine::remap_subtable_references(request)?;
     }
-    if grammar == RowGrammar::Transform {
+    if grammar == RowGrammar::Transform && (legacy_grid.is_none() || combined_grid.is_some()) {
         selection_metadata::remove_virtual_model_links(
             &input,
             &mut output_main,
@@ -1583,6 +1618,7 @@ fn mstransform_staged(
             && !read_spectral_weights
             && combination.is_none()
             && !legacy
+            && legacy_grid.is_none()
         {
             input_block.resolve_buffer_spectra(
                 row_spectrum_names,
@@ -1819,7 +1855,8 @@ fn mstransform_staged(
             } else {
                 None
             };
-            let average_regrid_input = regrid.is_some() && !bins_are_single_channel(bins);
+            let average_regrid_input =
+                !legacy_direct_band && regrid.is_some() && !bins_are_single_channel(bins);
             let averages = if let (true, Some((weight, sigma))) =
                 (task_average || average_regrid_input, &noise)
             {
@@ -1848,10 +1885,17 @@ fn mstransform_staged(
                 averages.flags()
             } else if let Some(averages) = &averages {
                 averages.flags()
+            } else if legacy_direct_band {
+                flags.clone()
             } else {
                 transform_flag_channels(flags.clone(), bins).map_err(mutation_error)?
             };
-            let hanning_noise = if let (true, Some(noise)) = (hanning, noise.as_ref()) {
+            let hanning_noise = if hanning && legacy_grid.is_some() {
+                if bins.len() > 1 {
+                    hanning::flag(&mut transformed_flags);
+                }
+                None
+            } else if let (true, Some(noise)) = (hanning, noise.as_ref()) {
                 let statistics = hanning::statistics(
                     noise,
                     spectra_cells,
@@ -1873,7 +1917,14 @@ fn mstransform_staged(
                 .transpose()
                 .map_err(mutation_error)?
                 .flatten();
-            let combined_noise = if let Some(regrid) = &regrid {
+            let combined_noise = if let Some(regrid) = &regrid
+                && legacy_grid.is_some()
+            {
+                transformed_flags = regrid
+                    .apply(transformed_flags, None)
+                    .map_err(mutation_error)?;
+                None
+            } else if let Some(regrid) = &regrid {
                 let source_noise = if let Some(statistics) =
                     hanning_noise.or_else(|| averages.as_ref().map(ChannelAverages::statistics))
                 {
@@ -1941,15 +1992,17 @@ fn mstransform_staged(
             for (column, values) in &mut data_values {
                 let source = column.source.name();
                 let target = column.output.name();
+                let independent_lag =
+                    column.source == OptionalMainColumn::LagData && legacy_grid.is_none();
                 let Some(value) = values.next().flatten() else {
-                    if column.source == OptionalMainColumn::LagData {
+                    if legacy_direct_band || column.source == OptionalMainColumn::LagData {
                         undefined(&mut write_session, target)?;
                         continue;
                     }
                     return Err(missing_column_error(&request.output_ms, row_index, source));
                 };
                 let value = select_correlations(value, source)?;
-                let mut transformed = if column.source == OptionalMainColumn::LagData {
+                let mut transformed = if independent_lag || legacy_direct_band {
                     value
                 } else if let Some(averages) = &legacy_averages {
                     averages.visibility(value).map_err(mutation_error)?
@@ -1965,14 +2018,23 @@ fn mstransform_staged(
                         }
                     })?
                 };
-                if hanning && column.source != OptionalMainColumn::LagData {
-                    hanning::smooth(
-                        &mut transformed,
-                        &[transformed_flags.shape()[0], bins.len()],
-                    )
-                    .map_err(mutation_error)?;
+                let smooth_visibility = if legacy_grid.is_some() {
+                    column.source != OptionalMainColumn::ModelData
+                } else {
+                    !independent_lag
+                };
+                if hanning && smooth_visibility {
+                    if legacy_grid.is_some() {
+                        hanning::smooth_regrid(&mut transformed, &flags).map_err(mutation_error)?;
+                    } else {
+                        hanning::smooth(
+                            &mut transformed,
+                            &[transformed_flags.shape()[0], bins.len()],
+                        )
+                        .map_err(mutation_error)?;
+                    }
                 }
-                if column.source != OptionalMainColumn::LagData {
+                if !independent_lag {
                     if let Some(regrid) = &regrid {
                         transformed = regrid
                             .apply(transformed, fft_flags.as_ref())
@@ -2032,7 +2094,7 @@ fn mstransform_staged(
                 if !writes_rows {
                     continue;
                 }
-                if column.source == OptionalMainColumn::LagData {
+                if independent_lag {
                     for _ in 0..copies_per_row {
                         regrid::write_spectrum(
                             &mut write_session,
@@ -2212,7 +2274,16 @@ fn mstransform_staged(
             } else {
                 (weight, sigma, None)
             };
-            if continuum.is_some()
+            if let Some(regrid) = &regrid
+                && legacy_grid.is_some()
+            {
+                regrid
+                    .scale_noise(&mut weight, false, hanning)
+                    .map_err(mutation_error)?;
+                regrid
+                    .scale_noise(&mut sigma, true, hanning)
+                    .map_err(mutation_error)?;
+            } else if continuum.is_some()
                 && !task_average
                 && !convolving
                 && !hanning
@@ -2264,6 +2335,22 @@ fn mstransform_staged(
                 .map(legacy_split::ChannelAverages::weight_spectrum);
             for &name in &spectra.output {
                 let transformed = match name {
+                    _ if legacy_grid.is_some() => {
+                        let projector = regrid.as_ref().expect("legacy spectral rewrite grid");
+                        source_spectrum(name)
+                            .and_then(|index| row_spectra[index].take())
+                            .map(|value| {
+                                let mut output = projector.apply(value, fft_flags.as_ref())?;
+                                projector.scale_noise(
+                                    &mut output,
+                                    name == "SIGMA_SPECTRUM",
+                                    hanning,
+                                )?;
+                                Ok(output)
+                            })
+                            .transpose()
+                            .map_err(mutation_error)?
+                    }
                     "WEIGHT_SPECTRUM" if legacy_weight_spectrum.is_some() => {
                         legacy_weight_spectrum.take().flatten()
                     }
@@ -2321,11 +2408,14 @@ fn mstransform_staged(
     for name in spectra.output {
         output_column_overrides.insert_deferred(name);
     }
-    for ddid in &output_input_ddids[..selected_output_rows] {
-        let compact = compact_metadata
-            .ddid_map
-            .get(ddid)
-            .copied()
+    for (&input_row, ddid) in output_input_rows[..selected_output_rows]
+        .iter()
+        .zip(&output_input_ddids[..selected_output_rows])
+    {
+        let compact = regrid
+            .as_ref()
+            .and_then(|plan| plan.output_description(input_row))
+            .or_else(|| compact_metadata.ddid_map.get(ddid).copied())
             .ok_or_else(|| MsTransformError::SpectralMetadata {
                 path: request.output_ms.display().to_string(),
                 reason: format!(
@@ -2701,9 +2791,13 @@ fn transform_array_write_plan(
     }
     let mut shape_counts = BTreeMap::<Vec<usize>, usize>::new();
     let mut weight_shape_counts = BTreeMap::<Vec<usize>, usize>::new();
-    for &ddid in selected_ddids {
+    for (&row, &ddid) in selected_rows.iter().zip(selected_ddids) {
         let shape = &dimensions[&ddid];
-        for &channels in &shape.output_parts {
+        let field_channels = regrid.and_then(|plan| plan.field_channel_count(row));
+        let parts = field_channels
+            .as_ref()
+            .map_or(&shape.output_parts[..], std::slice::from_ref);
+        for &channels in parts {
             *shape_counts
                 .entry(vec![shape.output_correlations, channels])
                 .or_default() += 1;
@@ -2745,7 +2839,7 @@ fn transform_array_write_plan(
         &dimensions,
         correlations.is_some() || polarization.is_some(),
         (groups, metadata_budget),
-        combined,
+        (combined, regrid),
     )?;
     let io_error = |error: MsSelectionError| MsTransformError::WriteMeasurementSet {
         path: input_path.display().to_string(),
@@ -2828,8 +2922,9 @@ fn transform_array_write_plan(
             storage_manager: MeasurementSetColumnStorage::TiledShape,
         });
     }
+    let independent_lag = !regrid.is_some_and(regrid::Plan::is_legacy);
     for column in visibility.copies() {
-        let shapes = if column.source == OptionalMainColumn::LagData {
+        let shapes = if independent_lag && column.source == OptionalMainColumn::LagData {
             lag_shapes.clone()
         } else {
             shapes.clone()
@@ -2880,6 +2975,23 @@ struct SpectrumProjection {
 }
 
 impl SpectrumProjection {
+    fn existing(table: &Table) -> Self {
+        let source = MAIN_SPECTRA
+            .into_iter()
+            .filter(|name| {
+                table
+                    .schema()
+                    .is_some_and(|schema| schema.contains_column(name))
+            })
+            .collect::<Vec<_>>();
+        Self {
+            output: source.clone(),
+            source,
+            propagate_weights: false,
+            fill_standard: false,
+        }
+    }
+
     fn partition(
         table: &Table,
         selected_row: usize,
@@ -2912,16 +3024,7 @@ impl SpectrumProjection {
                 .is_some_and(|schema| schema.contains_column(name))
         };
         if grammar != RowGrammar::Transform {
-            let source = MAIN_SPECTRA
-                .into_iter()
-                .filter(|&name| exists(name))
-                .collect::<Vec<_>>();
-            return Ok(Self {
-                output: source.clone(),
-                source,
-                propagate_weights: false,
-                fill_standard: false,
-            });
+            return Ok(Self::existing(table));
         }
         let defined = |row, name| -> Result<bool, TableError> {
             Ok(exists(name) && table.array_shape_uncached(row, name)?.is_some())
@@ -3110,7 +3213,7 @@ fn plan_flag_category_shapes(
     dimensions: &BTreeMap<i32, TransformArrayDimensions>,
     correlation_subset: bool,
     (groups, budget): (Option<&[time_average::TimeGroup]>, MsSelectionIoBudget),
-    combined: Option<CombinedArrayRows<'_>>,
+    (combined, regrid): (Option<CombinedArrayRows<'_>>, Option<&regrid::Plan>),
 ) -> Result<(Vec<MeasurementSetArrayShapePlan>, usize), MsTransformError> {
     let main = input.main_table();
     let default_categories = match main
@@ -3149,7 +3252,7 @@ fn plan_flag_category_shapes(
     } else {
         optional_array_shapes(input, selected_rows, groups, "FLAG_CATEGORY", budget)?
     };
-    for (original, ddid) in shapes.into_iter().zip(selected_ddids) {
+    for ((original, ddid), &row) in shapes.into_iter().zip(selected_ddids).zip(selected_rows) {
         let shape = &dimensions[ddid];
         let cell = match original.as_deref() {
             Some(&[corr, chan, categories]) if corr > 0 && chan > 0 && categories > 0 => {
@@ -3171,7 +3274,11 @@ fn plan_flag_category_shapes(
             }
             _ => [shape.output_correlations, 1, default_categories],
         };
-        for &channels in &shape.output_parts {
+        let field_channels = regrid.and_then(|plan| plan.field_channel_count(row));
+        let parts = field_channels
+            .as_ref()
+            .map_or(&shape.output_parts[..], std::slice::from_ref);
+        for &channels in parts {
             let cell = [cell[0], if cell[1] == 1 { 1 } else { channels }, cell[2]];
             *counts.entry(cell).or_default() += 1;
         }

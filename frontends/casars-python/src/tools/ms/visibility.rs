@@ -518,7 +518,7 @@ impl PyMsTool {
 }
 
 impl AttachedMs {
-    fn hanning_rows(&mut self, mode: HanningDataColumn) -> PyResult<bool> {
+    pub(super) fn hanning_rows(&mut self, mode: HanningDataColumn) -> PyResult<bool> {
         let link = self.working_metadata_link();
         link.verify_directory().map_err(runtime_error)?;
         let main = self.visibility.current_main(&self.path)?;
