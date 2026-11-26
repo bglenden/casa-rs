@@ -70,7 +70,7 @@ IMPLEMENTED["singledishms"] = {
     "subtract_baseline_variable", "apply_baseline_table",
 }
 IMPLEMENTED["ms"] = {
-    "addephemeris", "close", "concatenate", "continuumsub", "continuumsubold", "contsub", "createmultims", "cvel", "cvelfreqs", "done", "getdata", "getdataold", "getfielddirmeas", "getreferencedtables", "getspectralwindowinfo",
+    "addephemeris", "close", "concatenate", "continuumsub", "continuumsubold", "contsub", "createmultims", "cvel", "cvelfreqs", "done", "fromfits", "getdata", "getdataold", "getfielddirmeas", "getreferencedtables", "getspectralwindowinfo",
     "getscansummary", "hanningsmooth", "ismultims", "iswritable",
     "iterend", "iterendold", "iterinit", "iterinitold", "iternext", "iternextold",
     "iterorigin", "iteroriginold", "listfits", "listhistory", "lister",
@@ -78,7 +78,7 @@ IMPLEMENTED["ms"] = {
     "ngetdata", "niterend", "niterinit", "niternext", "niterorigin", "nrow", "nrowold", "oldstatwt",
     "open", "partition", "putdata", "putdataold", "range", "rangeold", "regridspw", "reset", "select", "selectinit", "selectinitold", "selectold",
     "selectchannel", "selectchannelold", "selectpolarization", "selectpolarizationold", "selecttaql", "sort", "split",
-    "statistics", "statisticsold", "statwt", "summary", "testconcatenate", "timesort", "uvsub", "virtconcatenate",
+    "statistics", "statisticsold", "statwt", "summary", "testconcatenate", "timesort", "tofits", "uvsub", "virtconcatenate",
     "writehistory", "writehistory_batch",
 }
 IMPLEMENTED["agentflagger"] = {

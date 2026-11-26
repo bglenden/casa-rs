@@ -12427,3 +12427,62 @@ identifier also identifies its spectral window. When the two DATA_DESCRIPTION
 entries reference windows `[1, 0]`, `continuumsubold(fitspw='0', mode='model')`
 fits rows from window 1. casa-rs follows the DATA_DESCRIPTION mapping and
 fits window 0.
+
+## UVFITS import can lose fully flagged initial visibility rows
+
+CASA 6.7.6.14's column-wise UVFITS importer can leave `FLAG_ROW` false
+while every channel and correlation in the row is flagged. Export the
+upstream `uvfits_test.ms` with `ms.tofits()` and import the result with
+`ms.fromfits()`. In the 630-row export, this happens on rows 1 through 29.
+The signed per-sample weights and `FLAG` agree across readers. casa-rs
+derives `FLAG_ROW` from all the flags in each persisted visibility cell.
+
+## WSRT UVFITS output can shift channel frequencies and antenna positions
+
+CASA 6.7.6.14 dispatches `ms.tofits()` to `MSFitsOutputAstron` when
+`OBSERVATION.TELESCOPE_NAME` is `WSRT`. Its output can contain an extra IF
+for a selected single spectral window. For a one-channel stride-two export
+of a topocentric window, its frequency reference pixel and AIPS FQ offset
+can cancel the absolute frequency. Its private antenna coordinate rotation
+also changes the positions obtained by the pinned UVFITS reader.
+
+The repository test reproduces the WSRT dispatch by labelling the upstream
+`uvfits_test.ms` as WSRT and selecting `spw='1:0~2^2'`. The pinned reader
+reports two windows near −0.0123 Hz and changed antenna positions for the
+pinned writer's file. The native file has one window at the mean of the
+two averaged channel centres, about 230.508 GHz, in the original
+topocentric frame. Antenna positions round-trip in ITRF. The native
+writer emits the actual selected windows and uses standard UVFITS antenna
+coordinates.
+
+The Astron averaging loop also indexes the selected channels' weights
+without the correlation stride. On the two-correlation fixture with a
+flagged channel and unequal weights, the native file has independently
+weighted means of 1 and 24, with weights 2 and 10. These values are the
+means and summed weights of the unflagged samples for each correlation.
+## Legacy AIPS visibility tables can fail after preceding metadata
+
+CASA 6.7.6.14 accepts the legacy primary-array marker `NAXIS1=777777701`
+and looks for visibility data in an AIPS binary table. If AIPS FQ precedes
+AIPS UV in the fixture, its deferred FQ reader can advance to the wrong
+HDU and raise `NAXIS keyword missing`. casa-rs locates the visibility
+extension independently of the metadata order. It interprets the table's
+scaled parameters and signed weights and produces a normal MSv2 that the
+pinned reader can open.
+
+## UVFITS import can fail for apparent directions and shift separate subarrays
+
+For a nonzero proper motion in an AIPS SU row, CASA 6.7.6.14 attempts to
+convert the apparent direction without an observation frame. It raises
+`Missing information in Frame specified for conversion` and removes the
+incomplete output. casa-rs supplies the FITS observation epoch and
+converts the direction and its rate into the primary direction frame.
+The regression compares both coefficients with pinned CASA's measures
+tool using an explicit epoch.
+
+The pinned exporter writes a one-based `SUBARRAY` random-group parameter
+when antenna station numbers require separate `ANTENNA1` and `ANTENNA2`
+parameters. Its importer then uses that parameter as a zero-based MS ID.
+On the eight-antenna stock fixture with a station renamed to 300, the
+pinned reader imports `ARRAY_ID` 1 for the original array 0. Native
+import converts the one-based FITS parameter back to the original MS ID.

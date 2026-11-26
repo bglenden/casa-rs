@@ -48,6 +48,7 @@ pub mod columns;
 pub mod derived;
 mod ephemeris;
 mod error;
+pub mod fits_visibility;
 mod grouping;
 mod listobs;
 mod metadata;

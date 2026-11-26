@@ -621,6 +621,7 @@ dependencies = [
  "casa-tables",
  "casa-test-support",
  "fancy-regex",
+ "fitsio",
  "flate2",
  "libc",
  "ndarray",

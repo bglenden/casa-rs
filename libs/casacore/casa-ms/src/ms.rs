@@ -81,6 +81,10 @@ impl MeasurementSet {
         Self::from_schemas(schemas, None)
     }
 
+    pub(crate) fn create_staged(path: &Path, builder: MeasurementSetBuilder) -> MsResult<Self> {
+        Self::from_schemas(builder.build_schemas()?, Some(path.to_owned()))
+    }
+
     /// Create an MS on disk at the given path.
     ///
     /// Creates the main table directory and subtable subdirectories.
@@ -283,7 +287,10 @@ impl MeasurementSet {
         self.save_using(save_main_table_with_policy)
     }
 
-    fn save_using(&mut self, save_main: fn(&mut Table, &Path) -> MsResult<()>) -> MsResult<()> {
+    fn save_using(
+        &mut self,
+        save_main: impl FnOnce(&mut Table, &Path) -> MsResult<()>,
+    ) -> MsResult<()> {
         let path = self
             .path
             .as_ref()
@@ -529,7 +536,7 @@ impl MeasurementSet {
     fn save_as_using(
         &mut self,
         path: &Path,
-        save_main: fn(&mut Table, &Path) -> MsResult<()>,
+        save_main: impl FnOnce(&mut Table, &Path) -> MsResult<()>,
     ) -> MsResult<()> {
         let path = path.to_path_buf();
         let target = crate::write_session::MeasurementSetCreateTarget::prepare(&path, true)
@@ -1439,16 +1446,17 @@ fn merge_measinfo_keywords(existing: Option<&RecordValue>, defaults: &RecordValu
 }
 
 fn ensure_main_column_keywords(main: &mut Table) {
-    main.set_column_keywords("FLAG_CATEGORY", flag_category_keywords());
-}
-
-fn flag_category_keywords() -> RecordValue {
-    RecordValue::new(vec![RecordField::new(
-        "CATEGORY",
-        Value::Array(ArrayValue::String(
-            ndarray::ArrayD::from_shape_vec(vec![0], Vec::<String>::new()).unwrap(),
-        )),
-    )])
+    let mut keywords = main
+        .column_keywords("FLAG_CATEGORY")
+        .cloned()
+        .unwrap_or_default();
+    if keywords.get("CATEGORY").is_none() {
+        keywords.upsert(
+            "CATEGORY",
+            Value::Array(ArrayValue::from_string_vec(Vec::new())),
+        );
+        main.set_column_keywords("FLAG_CATEGORY", keywords);
+    }
 }
 
 /// Resolve the filesystem path of a subtable from the MAIN table keywords.
