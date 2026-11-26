@@ -268,6 +268,10 @@ impl SpwSelection {
         &self.channels
     }
 
+    pub(crate) fn keep_all_channels(&mut self) {
+        self.channels = Box::default();
+    }
+
     /// Whether the selection restricts MAIN rows by `DATA_DESC_ID`: false
     /// for the empty expression and for a parenthesized one.
     #[must_use]

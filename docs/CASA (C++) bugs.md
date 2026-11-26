@@ -12380,3 +12380,50 @@ correlation types, `StatWT::process` reports failure to `GroupProcessor`,
 whose return value `Reweighter::reweight` discards. CASA returns `True`
 after publishing the earlier integrations. casa-rs raises `RuntimeError`
 and leaves the whole update unpublished.
+
+
+## Legacy continuum scratch fitting and failed output publication
+
+CASA 6.7.6.14 `continuumsubold()` obtains a `WEIGHT` cube with axes
+`(correlation, baseline, time)` from `MSSelector::getData`.
+`MSSelUtil2<Complex>::timeAverage` advances its weight offset once per
+baseline and time, reusing one value for every correlation. This also shifts
+weights between baselines and times in the cube. A three-integration fit
+with distinct per-hand weights on baseline `0&1` returned real model values
+121.285713 and 136.333328. The per-correlation weighted means are 128.031738
+and 113.587639, as pinned `continuumsub()` also confirms. casa-rs uses each
+sample's own weight with both methods. It keeps the legacy method's
+all-flagged channel behavior and its time bins.
+
+`continuumsub()` and `continuumsubold()` pass a negative `fitorder` to
+the casacore polynomial constructor. The type expects a nonnegative degree.
+CASA 6.7.6.14 terminates the process on the paired four-channel fixture.
+casa-rs raises `RuntimeError` and preserves the attached MS. The named-output
+`contsub()` deliberately uses a negative degree to copy the selection with
+the continuum retained, and casa-rs follows that behavior.
+
+Both in-place methods can also terminate CASA when the attachment is a
+saved RefTable over an MMS and its constituents lack scratch columns. The
+pinned test used a six-row view spanning two 30-row constituent tables.
+CASA completes the same fit if both columns are installed on the constituents
+first. casa-rs initializes the visible physical rows under the constituent
+locks, publishes the saved column projection, and fits across both members.
+Both readers can reopen the fitted cells and the unselected scratch cells
+remain undefined.
+
+With `contsub(outputms, fitspw='0', spw='99', whichcol='data')` on a
+single-window MS, `SubMS` creates the named output before checking whether
+the output window exists. Pinned CASA raises a selection error and leaves a
+zero-row MS at `outputms`. casa-rs checks and writes through the MS transform's
+private stage. The selection error leaves the requested output unpublished.
+
+On an MS with only one physical scratch column, pinned CASA can replace a
+preexisting `MODEL_DATA` with unity when it creates `CORRECTED_DATA`, or
+terminate during modelling when only `CORRECTED_DATA` exists. casa-rs
+initializes the missing column and preserves the existing cells.
+
+The scratch continuum subtractors in CASA 6.7.6.14 assume a data-description
+identifier also identifies its spectral window. When the two DATA_DESCRIPTION
+entries reference windows `[1, 0]`, `continuumsubold(fitspw='0', mode='model')`
+fits rows from window 1. casa-rs follows the DATA_DESCRIPTION mapping and
+fits window 0.

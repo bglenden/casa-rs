@@ -16,6 +16,16 @@ use crate::{MeasurementSet, ResolvedMsSelectionRow};
 /// returns one cell per requested physical row in request order and may
 /// leave untouched column names to the ordinary table reader.
 pub trait TransformInputView: std::fmt::Debug + Send + Sync {
+    /// Arrange the selected rows in the input operator's publication order.
+    /// The default keeps the order provided by the transform selection.
+    fn order_output_rows(
+        &self,
+        _input: &MeasurementSet,
+        _rows: &mut [ResolvedMsSelectionRow],
+    ) -> Result<(), TableError> {
+        Ok(())
+    }
+
     /// Prepare the input view for the exact physical rows and channels used
     /// by one transform product. Called again for each Multi-MS partition.
     fn prepare<'a>(
