@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use casa_core::RecordValue;
 use casa_images::concat_file::{ConcatManifest, is_image_concat};
 use casa_images::concatenate::ConcatenationPlan;
 use casa_images::virtual_concat::{ConcatImage, ConcatLockState, ConcatMember};
@@ -14,7 +15,6 @@ use casa_images::{
 };
 use casa_lattices::Lattice;
 use casa_tables::LockType;
-use casa_types::RecordValue;
 use ndarray::ArrayD;
 use num_complex::{Complex32, Complex64};
 use pyo3::prelude::*;

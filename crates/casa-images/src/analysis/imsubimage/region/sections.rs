@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_types::{RecordValue, ScalarValue, Value};
+use casa_core::{RecordValue, ScalarValue, Value};
 
 use crate::{ImageError, ImageInterface, ImagePixel, PolygonRegion};
 

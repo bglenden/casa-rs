@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Consume existing simulation POINTING in beam, mosaic and total power.
 mod existing_ms_calculations;
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{
     PredictSpec, PredictionOptions, Simulator, SimulatorOptions, VoltagePatternSpec,
 };
-use casa_types::measures::{EpochRef, MEpoch};
 use existing_ms_calculations::{copy, predict_support};
 use flate2::read::GzDecoder;
 use serde_json::Value;
@@ -22,8 +22,8 @@ fn changing_offset_pointings_follow_the_antennas() {
 
 #[test]
 fn incomplete_antenna_pointings_are_refused_before_prediction() {
+    use casa_core::{ScalarValue, Value};
     use casa_tables::{Table, TableOptions};
-    use casa_types::{ScalarValue, Value};
     let inputs = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/sm_offset_pointings");
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("incomplete.ms");

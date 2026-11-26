@@ -12,17 +12,17 @@
 
 use std::collections::BTreeMap;
 
+use casa_core::ArrayValue;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::measures::position::MPosition;
+use casa_core::measures::radial_velocity::RadialVelocityRef;
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_observation::{
     ObservationError, ProcessorEntry, SourceEntry, SourceId, SourceRecord, SourceWindow,
     StateEntry, Velocity, WindowEntry, WindowId,
 };
 use casa_tables::Table;
-use casa_types::ArrayValue;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::measures::position::MPosition;
-use casa_types::measures::radial_velocity::RadialVelocityRef;
-use casa_types::measures::{EpochRef, MEpoch};
 
 use super::catalogue::{measure_reference, require_units};
 use super::{invalid, storage};
@@ -379,9 +379,9 @@ pub(super) fn read_processors(
 
 #[cfg(test)]
 mod tests {
+    use casa_core::{RecordField, RecordValue, ScalarValue, Value};
+    use casa_measures::table_measures::{MeasureType, TableMeasDesc};
     use casa_tables::ColumnSchema;
-    use casa_tables::table_measures::{MeasureType, TableMeasDesc};
-    use casa_types::{RecordField, RecordValue, ScalarValue, Value};
     use ndarray::ArrayD;
 
     use super::*;
@@ -507,7 +507,7 @@ mod tests {
         let table = ms.subtable_mut(SubtableId::Source).expect("SOURCE");
         table
             .add_column(
-                ColumnSchema::array_variable("POSITION", casa_types::PrimitiveType::Float64, None),
+                ColumnSchema::array_variable("POSITION", casa_core::PrimitiveType::Float64, None),
                 None,
             )
             .expect("POSITION");
@@ -541,7 +541,7 @@ mod tests {
                 .add_column(
                     ColumnSchema::array_variable(
                         "POSITION",
-                        casa_types::PrimitiveType::Float64,
+                        casa_core::PrimitiveType::Float64,
                         None,
                     ),
                     None,

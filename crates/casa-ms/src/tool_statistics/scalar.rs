@@ -2,8 +2,8 @@
 
 use std::collections::BTreeMap;
 
+use casa_core::ArrayValue;
 use casa_tables::{RequiredScalarColumnValues, Table};
-use casa_types::ArrayValue;
 
 use super::cube::{SampleAxes, read_cells, required};
 use super::reduction::Moments;

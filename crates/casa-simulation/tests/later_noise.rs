@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Actual CASA later-scan controls: nearest original A/T solutions and window gates.
 mod predict_support;
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::{ArrayValue, Complex32};
 use casa_simulation::{NoiseSpec, Simulator, SpectralWindowSpec, TsysParameters};
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::{ArrayValue, Complex32};
 use ndarray::IxDyn;
 use predict_support::Row;
 use std::path::Path;

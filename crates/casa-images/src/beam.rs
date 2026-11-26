@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Beam metadata corresponding to C++ `GaussianBeam` and `ImageBeamSet`.
 
+use casa_core::quanta::{Quantity, Unit};
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use casa_numerics::{EllipticalGaussian, common_enclosing_gaussian, deconvolving_gaussian};
-use casa_types::quanta::{Quantity, Unit};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 use crate::error::ImageError;
 
@@ -26,7 +26,7 @@ pub(crate) fn quantity_from_record(record: &RecordValue) -> Result<Quantity, Ima
     let Some(Value::Scalar(ScalarValue::String(unit))) = record.get("unit") else {
         return Err(ImageError::InvalidMetadata("invalid quantity unit".into()));
     };
-    let unit = casa_types::quanta::casacore::casacore_unit(unit)
+    let unit = casa_core::quanta::casacore::casacore_unit(unit)
         .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
     Ok(Quantity::with_unit(number, unit))
 }
@@ -67,11 +67,11 @@ pub fn wrap_position_angle(pa: &Quantity) -> Result<Quantity, ImageError> {
         ));
     }
     let quarter = Quantity::new(90.0, "deg").expect("built-in degrees");
-    let threshold = casa_types::quanta::casacore::convert(&quarter, Some(pa.unit()))
+    let threshold = casa_core::quanta::casacore::convert(&quarter, Some(pa.unit()))
         .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?
         .value();
     if pa.value() > threshold || pa.value() <= -threshold {
-        let mut degrees = casa_types::quanta::casacore::get_conformant_value(pa, &degree)
+        let mut degrees = casa_core::quanta::casacore::get_conformant_value(pa, &degree)
             .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?
             % 180.0;
         if degrees > 90.0 {
@@ -80,7 +80,7 @@ pub fn wrap_position_angle(pa: &Quantity) -> Result<Quantity, ImageError> {
             degrees += 180.0;
         }
         let wrapped = Quantity::with_unit(degrees, degree);
-        casa_types::quanta::casacore::convert(&wrapped, Some(pa.unit()))
+        casa_core::quanta::casacore::convert(&wrapped, Some(pa.unit()))
             .map_err(|error| ImageError::InvalidMetadata(error.to_string()))
     } else {
         Ok(pa.clone())
@@ -116,7 +116,7 @@ impl StoredGaussianBeam {
                 "beam axes cannot be negative".into(),
             ));
         }
-        let minor_in_major = casa_types::quanta::casacore::convert(&minor, Some(major.unit()))
+        let minor_in_major = casa_core::quanta::casacore::convert(&minor, Some(major.unit()))
             .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
         if major.value() < minor_in_major.value() {
             return Err(ImageError::InvalidMetadata(
@@ -881,11 +881,9 @@ mod tests {
             assert_eq!(wrap_position_angle(&quantity).unwrap().value(), expected);
         }
         let radians = wrap_position_angle(&Quantity::new(2., "rad").unwrap()).unwrap();
-        let degrees = casa_types::quanta::casacore::get_conformant_value(
-            &radians,
-            &Unit::new("deg").unwrap(),
-        )
-        .unwrap();
+        let degrees =
+            casa_core::quanta::casacore::get_conformant_value(&radians, &Unit::new("deg").unwrap())
+                .unwrap();
         assert!((degrees - (-65.40844097383535)).abs() < 1e-12);
     }
 

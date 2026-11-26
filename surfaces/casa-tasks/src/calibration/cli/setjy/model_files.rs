@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::CasaValue;
-use casa_measures_data::MeasuresRuntime;
+use casa_measures::MeasuresRuntime;
 use serde::Serialize;
 
 const JPL_2010_OBJECTS: &[&str] = &[

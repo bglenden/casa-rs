@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::{TaskFailure, TaskInvocation};
-use casa_types::quanta::format::{TIME, format_time};
+use casa_core::quanta::format::{TIME, format_time};
 
 use super::PlotSeries;
 use super::axis::SampleCoordinates;

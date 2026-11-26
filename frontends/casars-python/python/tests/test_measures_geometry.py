@@ -86,7 +86,7 @@ def snapshot(tmp_path_factory):
         provenance = configured / provenance_name
         if provenance.is_file() and json.loads(provenance.read_text()) == ORACLE["measures_snapshot"]:
             return configured
-    archive = Path(__file__).resolve().parents[4] / "crates" / "casa-measures-data" / "data"
+    archive = Path(__file__).resolve().parents[4] / "libs/casacore/casa-measures/data"
     expected = json.loads((archive / "casa-measures-runtime.provenance.json").read_text())
     assert expected == ORACLE["measures_snapshot"], "regenerate the fixture for the bundled measures snapshot"
     root = tmp_path_factory.mktemp("geometry-measures")

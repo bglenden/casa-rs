@@ -3,9 +3,9 @@
 
 use std::path::Path;
 
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_ms::MeasurementSet;
 use casa_tables::{RequiredScalarColumnValues, Table};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use ndarray::ArrayD;
 use num_complex::Complex32;
 

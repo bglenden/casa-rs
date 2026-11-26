@@ -2,8 +2,8 @@
 
 use std::collections::BTreeMap;
 
+use casa_core::ArrayValue;
 use casa_ms::{MsDataDescription, MsError, MsResult};
-use casa_types::ArrayValue;
 use numpy::IntoPyArray;
 use pyo3::prelude::*;
 

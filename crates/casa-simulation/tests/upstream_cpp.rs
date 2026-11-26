@@ -4,11 +4,11 @@
 //! independent input arrays also check persisted antenna metadata.
 use std::{num::NonZeroUsize, path::Path};
 
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_ms::MeasurementSet;
 use casa_simulation::{
     ArrayConfig, CoordinateSystem, ExecutionControls, SessionResources, Simulator, SimulatorOptions,
 };
-use casa_types::measures::{EpochRef, MEpoch};
 
 fn opened(path: &Path) -> Simulator {
     Simulator::open(

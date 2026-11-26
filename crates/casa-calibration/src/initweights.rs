@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Initialize the MeasurementSet's visibility weights without loading visibilities.
 
+use casa_core::{ArrayValue, Value};
 use casa_ms::{MeasurementSet, MsError, MsResult};
 use casa_tables::{RequiredScalarColumnValues, Table, TableWriteLock};
-use casa_types::{ArrayValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use crate::weight_spectra::{NewSpectra, SIGMA_SPECTRUM, WEIGHT_SPECTRUM, has_column};

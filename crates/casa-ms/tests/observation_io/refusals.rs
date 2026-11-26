@@ -6,13 +6,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use casa_core::measures::EpochRef;
+use casa_core::{ScalarValue, Value};
 use casa_ms::MeasurementSet;
 use casa_ms::observation_io::{Msv2Observation, Msv4Observation, Msv4ProcessingSetWriter};
 use casa_observation::{
     AccessRequest, BatchBuffers, FieldId, Grouping, ObservationError, PartitionId, ReadEvent, Roles,
 };
-use casa_types::measures::EpochRef;
-use casa_types::{ScalarValue, Value};
 use zarrs::array::{Array, ArraySubset};
 use zarrs::filesystem::FilesystemStore;
 
@@ -185,7 +185,7 @@ fn missing_metadata_fails_binding() {
 }
 
 /// Rewrite `column`'s `MEASINFO` in the MSv2 at `path`.
-fn set_measinfo(path: &Path, column: &str, edit: impl Fn(&mut casa_types::RecordValue)) {
+fn set_measinfo(path: &Path, column: &str, edit: impl Fn(&mut casa_core::RecordValue)) {
     let mut ms = MeasurementSet::open(path).expect("ms");
     let main = ms.main_table_mut();
     let mut keywords = main.column_keywords(column).expect("keywords").clone();
@@ -206,7 +206,7 @@ fn set_measinfo(path: &Path, column: &str, edit: impl Fn(&mut casa_types::Record
 fn the_msv2_time_reference_is_read_not_assumed() {
     let root = tempfile::tempdir().expect("root");
     let path = fixture(root.path(), "ms_trial.ms");
-    let tai = |measinfo: &mut casa_types::RecordValue| {
+    let tai = |measinfo: &mut casa_core::RecordValue| {
         measinfo.upsert("Ref", Value::Scalar(ScalarValue::String("TAI".to_string())));
     };
     set_measinfo(&path, "TIME", tai);

@@ -9,12 +9,12 @@
 //! consistent with C++ casacore's measure conversion engine.
 #![cfg(all(feature = "cpp-interop-tests", has_casacore_cpp))]
 
+use casa_core::quanta::Quantity;
+use casa_core::{RecordValue, measures::MeasuresProvider};
 use casa_tables::taql::ast::IndexStyle;
 use casa_tables::taql::eval::{EvalContext, ExprValue};
 use casa_tables::taql::functions::call_function;
 use casa_test_support::measures_interop::MeasuresOracle;
-use casa_types::quanta::Quantity;
-use casa_types::{RecordValue, measures::MeasuresProvider};
 use std::sync::{Arc, OnceLock};
 
 const J2000_MJD: f64 = 51544.5;
@@ -43,7 +43,7 @@ fn measures_provider() -> &'static Arc<dyn MeasuresProvider> {
     static PROVIDER: OnceLock<Arc<dyn MeasuresProvider>> = OnceLock::new();
     PROVIDER.get_or_init(|| {
         Arc::new(
-            casa_measures_data::MeasuresRuntime::open_discovered(Default::default())
+            casa_measures::MeasuresRuntime::open_discovered(Default::default())
                 .expect("open explicit measures runtime for TaQL interop"),
         )
     })

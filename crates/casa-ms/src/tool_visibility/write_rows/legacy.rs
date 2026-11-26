@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Write layouts for the row and baseline axes returned by the legacy selector.
 
+use casa_core::RecordValue;
 use casa_tables::Table;
-use casa_types::RecordValue;
 
 use super::super::{VisibilityChannels, VisibilityPolarization};
 use super::{

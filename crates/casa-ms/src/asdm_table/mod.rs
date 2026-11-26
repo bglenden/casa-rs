@@ -10,8 +10,8 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+use casa_core::{RecordField, RecordValue};
 use casa_tables::{ColumnSchema, Table, TableSchema};
-use casa_types::{RecordField, RecordValue};
 use quick_xml::events::{BytesRef, BytesStart, Event};
 use quick_xml::{Reader, XmlVersion};
 

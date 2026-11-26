@@ -4,8 +4,8 @@
 use std::collections::BTreeMap;
 use std::ops::{AddAssign, Div, Mul};
 
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_tables::{Table, TableError, TableOptions};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use ndarray::{Array1, Array2, Array3, ArrayView2, Ix2, Ix3};
 
 use crate::MeasurementSet;

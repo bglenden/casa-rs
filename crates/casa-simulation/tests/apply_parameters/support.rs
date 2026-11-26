@@ -9,10 +9,10 @@ use super::predict_support::{ANTENNAS, REFERENCE_MJD, read_main, resources, scan
 use casa_calibration::{
     SimulatedJones, SimulatedSolution, SolutionValues, write_simulated_jones_table,
 };
+use casa_core::measures::{EpochRef, MEpoch};
+use casa_core::{ArrayValue, Complex32, ScalarValue};
 use casa_ms::MeasurementSet;
 use casa_simulation::{ApplySpec, Simulator, SimulatorOptions};
-use casa_types::measures::{EpochRef, MEpoch};
-use casa_types::{ArrayValue, Complex32, ScalarValue};
 use serde_json::Value;
 use std::path::Path;
 
@@ -109,8 +109,8 @@ fn table(path: &Path, output: &Path, case: &Value) {
         return;
     }
     if kind == "T" {
+        use casa_core::Value;
         use casa_tables::{Table, TableOptions};
-        use casa_types::Value;
         let mut table = Table::open(TableOptions::new(output)).unwrap();
         let mut info = table.info().clone();
         info.sub_type = "T Jones".to_string();
@@ -325,8 +325,8 @@ pub(super) fn compare(path: &Path, case: &Value) -> Vec<Vec<Complex32>> {
 }
 
 fn flag_solutions(path: &Path, probe: &str, times: [f64; 2]) {
+    use casa_core::Value;
     use casa_tables::{Table, TableOptions};
-    use casa_types::Value;
     use ndarray::{ArrayD, IxDyn, ShapeBuilder};
     let mut table = Table::open(TableOptions::new(path)).unwrap();
     for row in 0..table.row_count() {
@@ -396,7 +396,7 @@ pub(super) fn prepared(
     let second_window = case["data_window"] == 1;
     if second_window {
         use super::predict_support::{CHANNEL_HZ, FREQUENCY_HZ};
-        use casa_types::measures::frequency::FrequencyRef;
+        use casa_core::measures::frequency::FrequencyRef;
         sm.set_spectral_window(&casa_simulation::SpectralWindowSpec {
             name: "second".to_string(),
             start_frequency_hz: FREQUENCY_HZ,
@@ -429,7 +429,7 @@ pub(super) fn prepared(
                 .save(TableOptions::new(path.join(name)))
                 .unwrap();
             root.keywords_mut()
-                .upsert(name, casa_types::Value::table_ref(name));
+                .upsert(name, casa_core::Value::table_ref(name));
         }
         root.save(TableOptions::new(&path)).unwrap();
     }
@@ -446,7 +446,7 @@ pub(super) fn prepared(
             table
                 .cell_accessor_mut(row, "TIME")
                 .unwrap()
-                .set(casa_types::Value::Scalar(ScalarValue::Float64(shifted)))
+                .set(casa_core::Value::Scalar(ScalarValue::Float64(shifted)))
                 .unwrap();
         }
         table.save(TableOptions::new(&path)).unwrap();

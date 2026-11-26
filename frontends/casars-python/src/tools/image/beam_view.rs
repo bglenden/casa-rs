@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
+use casa_core::RecordValue;
 use casa_images::{ImageBeamSet, ImageError, ImageInfo};
-use casa_types::RecordValue;
 
 use super::beams::{image_info, image_info_record};
 use super::handle::ImageHandle;

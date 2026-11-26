@@ -33,11 +33,11 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use casa_coordinates::CoordinateSystem;
+use casa_core::{RecordField, RecordValue, ScalarValue, Value};
 use casa_images::{GaussianBeam, ImageBeamSet, ImageInfo, ImageType, PagedImage};
 use casa_imaging_model::{
     ImageDomainRole, ProductPixelMask, ProductRole, ProductTerm, ProductUnit,
 };
-use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
 use crate::storage::{ProductWindow, ProductWindowLayout};

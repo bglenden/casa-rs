@@ -378,7 +378,7 @@ fn rewrite_sigmas(path: &Path) {
         ms.main_table_mut()
             .cell_accessor_mut(row, "SIGMA")
             .and_then(|mut cell| {
-                cell.set(casa_types::Value::Array(casa_types::ArrayValue::Float32(
+                cell.set(casa_core::Value::Array(casa_core::ArrayValue::Float32(
                     sigma,
                 )))
             })
@@ -433,7 +433,7 @@ fn sigma_weighted_batch_solves_equal_the_production_gaincal() {
 /// A row flagged only by FLAG_ROW is also excluded by the batch reader.
 #[test]
 fn row_flagged_outlier_is_excluded_from_production_and_batch_gaincal() {
-    use casa_types::{ArrayValue, ScalarValue, Value};
+    use casa_core::{ArrayValue, ScalarValue, Value};
 
     let root = tempfile::tempdir().expect("root");
     let path = fixture(root.path(), "ms_trial.ms");

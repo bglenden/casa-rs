@@ -4,8 +4,8 @@
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
+use casa_core::{ArrayValue, Value};
 use casa_tables::{ColumnType, PlainReferenceRead, RequiredScalarColumnValues, Table};
-use casa_types::{ArrayValue, Value};
 
 use super::{compare_scalar, same_interval};
 use crate::error::{MsError, MsResult};

@@ -3,9 +3,9 @@
 
 use std::collections::{BTreeMap, btree_map::Entry};
 
+use casa_core::measures::direction::DirectionRef;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{MeasurementSet, PlanetaryEphemeris};
-use casa_types::measures::direction::DirectionRef;
 
 pub(super) struct MapTargets {
     field_sources: Vec<i32>,

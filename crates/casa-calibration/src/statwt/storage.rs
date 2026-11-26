@@ -4,11 +4,11 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use casa_core::ArrayValue;
 use casa_ms::{
     MeasurementSet, MsError, MsResult, MsSelection, MsSelectionError, ResolvedMsSelectionRow,
 };
 use casa_tables::{RequiredScalarColumnValues, Table, TableWriteLock};
-use casa_types::ArrayValue;
 
 use crate::solve::grouping::VisibilityModels;
 use crate::visibility_model_source_paths;

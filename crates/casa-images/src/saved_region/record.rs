@@ -8,9 +8,9 @@
 //! `*2`, … under `regions`, with their count in `regions.nr`.
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
-use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
-use casa_types::quanta::{Quantity, Unit};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+use casa_core::measures::{direction::DirectionRef, frequency::FrequencyRef};
+use casa_core::quanta::{Quantity, Unit};
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use super::PolygonRegion;
 use super::geometry::validate_polygon;

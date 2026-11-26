@@ -6,10 +6,10 @@ use std::io;
 use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
+use casa_core::quanta::{Quantity, Unit, casacore::convert};
+use casa_core::{RecordValue, Value};
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{Table, TableOptions};
-use casa_types::quanta::{Quantity, Unit, casacore::convert};
-use casa_types::{RecordValue, Value};
 
 use super::{FitsImportSummary, ImportFitsRequest, ImportFitsValue};
 use crate::fits_read::FitsToolImport;

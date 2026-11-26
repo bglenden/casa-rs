@@ -12,11 +12,12 @@ use crate::write_session::{
     MeasurementSetScalarColumnPlan, MeasurementSetWritePlan, MeasurementSetWriteResources,
     MeasurementSetWriteSession,
 };
+use casa_core::{ArrayValue, ScalarValue};
+use casa_tables::streamed_tiled::StreamedTiledShapeValueType;
 use casa_tables::{
-    ColumnBinding, ColumnOverrides, DataManagerKind, StreamedScalarType,
-    StreamedTiledShapeValueType, Table, TableColumn, TableError, TableOptions,
+    ColumnBinding, ColumnOverrides, DataManagerKind, StreamedScalarType, Table, TableColumn,
+    TableError, TableOptions,
 };
-use casa_types::{ArrayValue, ScalarValue};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;

@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use casa_types::{ArrayValue, ScalarValue};
+use casa_core::{ArrayValue, ScalarValue};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

@@ -44,6 +44,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::doppler::DopplerRef;
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::quanta::{MvAngle, MvTime};
+use casa_core::{ArrayValue, Complex64, ScalarValue, Value};
 use casa_ms::columns::{
     frequency_columns::ChanFreqColumn,
     weight_columns::{SigmaSpectrumColumn, WeightSpectrumColumn},
@@ -64,11 +69,6 @@ use casa_ms::transform::{
 };
 use casa_ms::{MeasurementSet, MeasurementSetSummaryOutputFormat, MsSelection};
 use casa_tables::Table;
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::doppler::DopplerRef;
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::quanta::{MvAngle, MvTime};
-use casa_types::{ArrayValue, Complex64, ScalarValue, Value};
 use ndarray::{Ix1, Ix2};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -8741,7 +8741,7 @@ impl VisibilityColumnProjection {
         averaged_operands: bool,
     ) -> Option<f64> {
         let as_complex_float =
-            |value: Complex64| casa_types::Complex32::new(value.re as f32, value.im as f32);
+            |value: Complex64| casa_core::Complex32::new(value.re as f32, value.im as f32);
         match self {
             Self::VectorResidual => Some(Self::vector_axis_value(axis, observed - model)),
             Self::ScalarResidual if averaged_operands => {
@@ -8814,7 +8814,7 @@ impl VisibilityColumnProjection {
     }
 
     fn vector_axis_value(axis: MsAxis, value: Complex64) -> f64 {
-        let value = casa_types::Complex32::new(value.re as f32, value.im as f32);
+        let value = casa_core::Complex32::new(value.re as f32, value.im as f32);
         f64::from(match axis {
             MsAxis::Amplitude => value.norm(),
             MsAxis::Phase => Self::float_phase_degrees(value.arg()),
@@ -9955,13 +9955,13 @@ where
 mod tests {
     use super::*;
     use crate::plot::UvCoveragePlotPayload;
+    use casa_core::{RecordField, RecordValue};
     use casa_ms::column_def::{ColumnDef, ColumnKind};
     use casa_ms::listobs::{
         AntennaSummary, DataDescriptionSummary, FieldSummary, MeasurementSetInfo,
         ObservationSummary, PolarizationSummary, SourceSummary, SpectralWindowSummary,
     };
     use casa_ms::{MeasurementSetBuilder, OptionalMainColumn, schema};
-    use casa_types::{RecordField, RecordValue};
     use ndarray::ArrayD;
     use num_complex::Complex32;
     use tempfile::tempdir;
@@ -9981,10 +9981,10 @@ mod tests {
     fn default_value_for_def(c: &ColumnDef) -> Value {
         match c.column_kind {
             ColumnKind::Scalar => match c.data_type {
-                casa_types::PrimitiveType::Int32 => Value::Scalar(ScalarValue::Int32(0)),
-                casa_types::PrimitiveType::Float64 => Value::Scalar(ScalarValue::Float64(0.0)),
-                casa_types::PrimitiveType::Bool => Value::Scalar(ScalarValue::Bool(false)),
-                casa_types::PrimitiveType::String => {
+                casa_core::PrimitiveType::Int32 => Value::Scalar(ScalarValue::Int32(0)),
+                casa_core::PrimitiveType::Float64 => Value::Scalar(ScalarValue::Float64(0.0)),
+                casa_core::PrimitiveType::Bool => Value::Scalar(ScalarValue::Bool(false)),
+                casa_core::PrimitiveType::String => {
                     Value::Scalar(ScalarValue::String(String::new()))
                 }
                 _ => Value::Scalar(ScalarValue::Float64(0.0)),
@@ -9999,10 +9999,10 @@ mod tests {
                 let shape: Vec<usize> = vec![1; ndim];
                 let total: usize = shape.iter().product();
                 match c.data_type {
-                    casa_types::PrimitiveType::Bool => Value::Array(ArrayValue::Bool(
+                    casa_core::PrimitiveType::Bool => Value::Array(ArrayValue::Bool(
                         ArrayD::from_shape_vec(shape, vec![false; total]).unwrap(),
                     )),
-                    casa_types::PrimitiveType::Float32 => Value::Array(ArrayValue::Float32(
+                    casa_core::PrimitiveType::Float32 => Value::Array(ArrayValue::Float32(
                         ArrayD::from_shape_vec(shape, vec![1.0; total]).unwrap(),
                     )),
                     _ => Value::Array(ArrayValue::Float64(

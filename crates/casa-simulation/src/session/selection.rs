@@ -7,7 +7,7 @@ mod captured;
 mod query;
 use super::error::SimulatorResult;
 pub(super) use captured::capture;
-use casa_types::measures::MeasuresProvider;
+use casa_core::measures::MeasuresProvider;
 pub(crate) use query::{QueryWorkspace, RowHeader, RowQuery};
 
 use super::observe::Scan;

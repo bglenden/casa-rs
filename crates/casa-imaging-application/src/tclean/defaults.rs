@@ -4,7 +4,7 @@
 
 use std::str::FromStr;
 
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::quanta::{Quantity, Unit};
 use serde_json::{Map, Value, json};
 
 /// Return the unconditional canonical CASA 6.7.6 `tclean` parameter defaults as plain JSON.

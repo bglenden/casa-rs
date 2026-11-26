@@ -4,7 +4,7 @@
 use casa_calibration::{
     ImagerGridder, ImagerSingleDish, ImagerSingleDishKernel, ImagerTransformOptions,
 };
-use casa_types::measures::position::PositionRef;
+use casa_core::measures::position::PositionRef;
 use pyo3::{
     Borrowed,
     exceptions::{PySystemError, PyTypeError},

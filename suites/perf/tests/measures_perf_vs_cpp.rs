@@ -8,20 +8,20 @@
 //! when `CASA_RS_ENFORCE_PERF` is set.
 #![cfg(all(feature = "performance-tests", has_casacore_cpp))]
 
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::doppler::{DopplerRef, MDoppler};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::measures::radial_velocity::{MRadialVelocity, RadialVelocityRef};
+use casa_core::measures::{EpochRef, MEpoch, MPosition, MeasFrame, PositionRef};
 use casa_test_support::measures_interop::MeasuresOracle;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::doppler::{DopplerRef, MDoppler};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::measures::radial_velocity::{MRadialVelocity, RadialVelocityRef};
-use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame, PositionRef};
 
 const J2000_MJD: f64 = 51544.5;
 const COUNT: i32 = 10_000;
 const ITERATIONS: i32 = 1;
 
-fn measures_runtime() -> std::sync::Arc<casa_measures_data::MeasuresRuntime> {
+fn measures_runtime() -> std::sync::Arc<casa_measures::MeasuresRuntime> {
     std::sync::Arc::new(
-        casa_measures_data::MeasuresRuntime::open_discovered(Default::default())
+        casa_measures::MeasuresRuntime::open_discovered(Default::default())
             .expect("performance measures runtime"),
     )
 }

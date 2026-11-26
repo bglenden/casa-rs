@@ -23,13 +23,13 @@ use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
+use casa_core::measures::MeasuresProvider;
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::position::{MPosition, PositionRef};
+use casa_core::quanta::{MvAngle, MvTime};
+use casa_core::{ArrayValue, ScalarValue};
+use casa_measures::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_tables::Table;
-use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
-use casa_types::measures::MeasuresProvider;
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::position::{MPosition, PositionRef};
-use casa_types::quanta::{MvAngle, MvTime};
-use casa_types::{ArrayValue, ScalarValue};
 use ndarray::IxDyn;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -2138,7 +2138,7 @@ pub fn stokes_name(code: i32) -> &'static str {
 mod tests {
     use super::*;
 
-    use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+    use casa_core::{RecordField, RecordValue, ScalarValue, Value};
     use ndarray::ArrayD;
 
     use crate::MeasurementSetBuilder;

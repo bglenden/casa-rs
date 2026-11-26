@@ -4,8 +4,8 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use casa_core::{ScalarValue, Value};
 use casa_tables::{RequiredScalarColumnValues, Table, TableOptions, TableWriteLock};
-use casa_types::{ScalarValue, Value};
 
 use crate::CalibrationOutputMode;
 use crate::constants::{COL_SPECTRAL_WINDOW_ID, STANDARD_SUBTABLE_KEYWORDS, TABLE_INFO_TYPE};

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Read original row identities for single-dish baseline fits and application.
 
+use casa_core::ArrayValue;
 use casa_tables::Table;
-use casa_types::ArrayValue;
 use ndarray::ArrayD;
 
 use super::{MsTransformError, MsTransformRequest, scalar_f64, scalar_i32};

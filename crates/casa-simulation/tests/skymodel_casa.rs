@@ -24,14 +24,14 @@
 use std::path::{Path, PathBuf};
 
 use casa_components::ComponentList;
+use casa_core::quanta::Quantity;
+use casa_core::{ArrayValue, RecordValue, ScalarValue};
 use casa_images::PagedImage;
 use casa_simulation::simutil::python_float;
 use casa_simulation::simutil::skymodel::{
     ComponentModel, ModelOverrides, ModelSummary, ModelValue, SkyModelError, add_components,
     flat_image, modify_model,
 };
-use casa_types::quanta::Quantity;
-use casa_types::{ArrayValue, RecordValue, ScalarValue};
 use serde_json::{Map, Value, json};
 
 fn data_dir() -> PathBuf {
@@ -216,10 +216,10 @@ fn record_json(record: &RecordValue) -> Value {
     let mut object = Map::new();
     for field in record.fields() {
         let value = match &field.value {
-            casa_types::Value::Scalar(value) => scalar_json(value),
-            casa_types::Value::Array(value) => array_json(value),
-            casa_types::Value::Record(value) => record_json(value),
-            casa_types::Value::TableRef(path) => json!(path),
+            casa_core::Value::Scalar(value) => scalar_json(value),
+            casa_core::Value::Array(value) => array_json(value),
+            casa_core::Value::Record(value) => record_json(value),
+            casa_core::Value::TableRef(path) => json!(path),
         };
         object.insert(field.name.clone(), value);
     }
@@ -381,7 +381,7 @@ fn beam_differences(image: &PagedImage<f32>, casa: &Value) -> Vec<String> {
                 let quantity = &record[field];
                 Quantity::read(&format!("{}{}", quantity["value"], text(&quantity["unit"])))
                     .expect("a beam quantity")
-                    .get_value_in(&casa_types::quanta::Unit::new(unit).expect("a unit"))
+                    .get_value_in(&casa_core::quanta::Unit::new(unit).expect("a unit"))
                     .expect("an angle")
             };
             let ours = [

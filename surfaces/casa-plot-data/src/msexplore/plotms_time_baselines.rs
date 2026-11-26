@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use casa_types::Complex64;
+use casa_core::Complex64;
 use ndarray::ArrayView2;
 
 use super::plotms_columns::ChannelWeightSum;

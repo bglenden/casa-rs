@@ -5,6 +5,8 @@ mod types;
 
 use std::sync::Arc;
 
+use casa_core::measures::MeasuresProvider;
+use casa_core::{RecordField, RecordValue, ScalarValue, Value};
 use casa_imaging_runtime::{Demand, admit, charge_process_caches};
 use casa_ms::MeasurementSet;
 use casa_tables::taql::{
@@ -13,8 +15,6 @@ use casa_tables::taql::{
     eval::{EvalContext, ExprValue, eval_expr},
 };
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
-use casa_types::measures::MeasuresProvider;
-use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 
 use super::super::Simulator;
 use super::super::error::{SimulatorError, SimulatorResult};

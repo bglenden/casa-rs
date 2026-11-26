@@ -126,7 +126,7 @@ fn autosave_comment() -> String {
             );
         }
     }
-    let date = casa_types::quanta::MvTime::from_mjd_seconds(unix as f64 + 40_587.0 * 86_400.0);
+    let date = casa_core::quanta::MvTime::from_mjd_seconds(unix as f64 + 40_587.0 * 86_400.0);
     format!(
         "Flags autosave on {:04}-{:02}-{:02} {}",
         date.year(),

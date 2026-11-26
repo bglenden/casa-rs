@@ -3,8 +3,8 @@
 
 use std::collections::BTreeMap;
 
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, MEpoch, MeasFrame};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{EpochRef, MEpoch, MeasFrame};
 
 use crate::derived::engine::{MsCalEngine, detect_epoch_reference};
 

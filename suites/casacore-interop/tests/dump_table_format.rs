@@ -2,9 +2,9 @@
 // Temporary diagnostic test to compare C++ vs Rust table binary output.
 #![cfg(feature = "cpp-interop-tests")]
 
+use casa_core::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casa_test_support::{CppTableFixture, TableOracle};
-use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
 #[test]
 fn dump_scalar_primitives_comparison() {

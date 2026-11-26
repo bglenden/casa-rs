@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use casa_types::{ArrayD, RecordValue, Value};
+use casa_core::{ArrayD, RecordValue, Value};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

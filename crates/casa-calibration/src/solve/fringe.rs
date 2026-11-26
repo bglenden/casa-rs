@@ -10,8 +10,8 @@ mod search;
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::TAU;
 
+use casa_core::{Complex32, Complex64};
 use casa_ms::MeasurementSet;
-use casa_types::{Complex32, Complex64};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

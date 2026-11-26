@@ -21,14 +21,14 @@ use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate, LinearCoordinate,
     Projection, ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
 };
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::{ArrayValue, Value};
 use casa_images::{
     FeatherRequest, GaussianBeam, ImageBeamSet, ImageInfo, ImageType, ImpvRequest,
     ImsubimageRequest, PagedImage, PvPosition, feather, impv, imsubimage,
 };
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::{ArrayValue, Value};
 use ndarray::Array2;
 use serde_json::Value as Json;
 
@@ -175,7 +175,7 @@ fn transposed_casa_images_read_as_casa_reads_them() {
 }
 
 /// The `coords` keyword record of the image at `path`.
-fn coords_record(path: &Path) -> casa_types::RecordValue {
+fn coords_record(path: &Path) -> casa_core::RecordValue {
     let table = Table::open(TableOptions::new(path)).expect("open image table");
     match table.keywords().get("coords") {
         Some(Value::Record(record)) => record.clone(),
@@ -184,7 +184,7 @@ fn coords_record(path: &Path) -> casa_types::RecordValue {
 }
 
 /// The fields of `record`'s coordinates, in the order casa-rs reads them.
-fn fields(record: &casa_types::RecordValue) -> Vec<String> {
+fn fields(record: &casa_core::RecordValue) -> Vec<String> {
     CoordinateSystem::record_coordinates(record)
         .unwrap()
         .into_iter()
@@ -192,7 +192,7 @@ fn fields(record: &casa_types::RecordValue) -> Vec<String> {
         .collect()
 }
 
-fn int_map(record: &casa_types::RecordValue, field: &str) -> Vec<i32> {
+fn int_map(record: &casa_core::RecordValue, field: &str) -> Vec<i32> {
     match record.get(field) {
         Some(Value::Array(ArrayValue::Int32(values))) => values.iter().copied().collect(),
         other => panic!("{field}: {other:?}"),

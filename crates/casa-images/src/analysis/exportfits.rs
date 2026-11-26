@@ -12,7 +12,7 @@ use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, FitsHeader, FitsValue,
     fits::try_to_fits_header,
 };
-use casa_types::{ArrayD, RecordValue, quanta::time::MvTime};
+use casa_core::{ArrayD, RecordValue, quanta::time::MvTime};
 use fitsio::{
     FitsFile,
     hdu::FitsHdu,
@@ -186,8 +186,8 @@ fn export_paged<T: ExportFitsPixel>(
 
 fn stored_position_angle_degrees(stored: &StoredGaussianBeam) -> Result<f64, ImageError> {
     let wrapped = stored.wrapped_position_angle()?;
-    let degrees = casa_types::quanta::Unit::new("deg").expect("built-in degrees");
-    casa_types::quanta::casacore::get_conformant_value(&wrapped, &degrees)
+    let degrees = casa_core::quanta::Unit::new("deg").expect("built-in degrees");
+    casa_core::quanta::casacore::get_conformant_value(&wrapped, &degrees)
         .map_err(|error| ImageError::InvalidMetadata(error.to_string()))
 }
 

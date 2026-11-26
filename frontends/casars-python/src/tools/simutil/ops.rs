@@ -2,10 +2,10 @@
 //! Arguments and results of `casars.simutil.simutil`'s methods, as CASA's
 //! `simutil` takes and returns them, over [`casa_simulation::simutil`].
 
+use casa_core::quanta::Quantity;
 use casa_simulation::simutil::SimutilError;
 use casa_simulation::simutil::direction::{CentredDirections, Directions};
 use casa_simulation::simutil::skymodel::{ModelSummary, ModelValue, SkyModelError};
-use casa_types::quanta::Quantity;
 use pyo3::exceptions::{PyOSError, PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
@@ -56,9 +56,9 @@ pub(super) fn size_values(
 ) -> PyResult<(
     [Variant; 2],
     [Quantity; 2],
-    casa_types::quanta::registry::UnitState,
+    casa_core::quanta::registry::UnitState,
 )> {
-    let registry = casa_types::quanta::registry::global_registry();
+    let registry = casa_core::quanta::registry::global_registry();
     let before = registry.unit_state();
     let one = |item: &Bound<'_, PyAny>| {
         let value = item.extract::<Variant>()?;

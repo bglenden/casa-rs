@@ -47,6 +47,7 @@ pub(super) fn stream_blocks(
 ) -> Result<u64, PassError> {
     let shape = source.maximum_block();
     let started = std::time::Instant::now();
+    let dispatch = tracing::dispatcher::get_default(Clone::clone);
     std::thread::scope(|scope| {
         let (full_sender, full) = mpsc::sync_channel::<Result<NativeBlock, SourceError>>(SLOTS);
         let (free_sender, free) = mpsc::sync_channel::<NativeBlock>(SLOTS);
@@ -58,28 +59,30 @@ pub(super) fn stream_blocks(
         let producer = std::thread::Builder::new()
             .name("imaging-source".to_string())
             .spawn_scoped(scope, move || {
-                let mut filling = std::time::Duration::ZERO;
-                while let Ok(mut block) = free.recv() {
-                    if cancel.is_cancelled() {
-                        return filling;
-                    }
-                    let started = std::time::Instant::now();
-                    let filled = match source.fill(&mut block) {
-                        // Ordered here, off the consumer's path.
-                        Ok(true) => {
-                            block.order_rows_by_baseline();
-                            Ok(block)
+                tracing::dispatcher::with_default(&dispatch, || {
+                    let mut filling = std::time::Duration::ZERO;
+                    while let Ok(mut block) = free.recv() {
+                        if cancel.is_cancelled() {
+                            return filling;
                         }
-                        Ok(false) => return filling,
-                        Err(error) => Err(error),
-                    };
-                    filling += started.elapsed();
-                    let failed = filled.is_err();
-                    if full_sender.send(filled).is_err() || failed {
-                        return filling;
+                        let started = std::time::Instant::now();
+                        let filled = match source.fill(&mut block) {
+                            // Ordered here, off the consumer's path.
+                            Ok(true) => {
+                                block.order_rows_by_baseline();
+                                Ok(block)
+                            }
+                            Ok(false) => return filling,
+                            Err(error) => Err(error),
+                        };
+                        filling += started.elapsed();
+                        let failed = filled.is_err();
+                        if full_sender.send(filled).is_err() || failed {
+                            return filling;
+                        }
                     }
-                }
-                filling
+                    filling
+                })
             })
             .map_err(|_| PassError::ProducerPanicked)?;
         let mut blocks = 0_u64;
@@ -141,4 +144,109 @@ pub(super) fn stream_blocks(
         }
         result.map(|()| blocks)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use tracing::field::{Field, Visit};
+    use tracing::{Event, Id, Metadata, Subscriber};
+
+    use super::*;
+    use crate::pass::{PlaneRange, SampleContent};
+
+    type RecordedEvent = (String, Option<String>);
+
+    #[derive(Default)]
+    struct EventLog(Arc<Mutex<Vec<RecordedEvent>>>);
+
+    impl EventLog {
+        fn push(&self, message: String, thread_name: Option<String>) {
+            self.0
+                .lock()
+                .expect("event log lock")
+                .push((message, thread_name));
+        }
+
+        fn snapshot(&self) -> Vec<RecordedEvent> {
+            self.0.lock().expect("event log lock").clone()
+        }
+    }
+
+    struct MessageVisitor(Option<String>);
+
+    impl Visit for MessageVisitor {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "message" {
+                self.0 = Some(format!("{value:?}"));
+            }
+        }
+    }
+
+    impl Subscriber for EventLog {
+        fn enabled(&self, _: &Metadata<'_>) -> bool {
+            true
+        }
+
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> Id {
+            Id::from_u64(1)
+        }
+
+        fn record(&self, _: &Id, _: &tracing::span::Record<'_>) {}
+
+        fn record_follows_from(&self, _: &Id, _: &Id) {}
+
+        fn event(&self, event: &Event<'_>) {
+            let mut visitor = MessageVisitor(None);
+            event.record(&mut visitor);
+            let thread_name = std::thread::current().name().map(str::to_owned);
+            self.push(visitor.0.unwrap_or_default(), thread_name);
+        }
+
+        fn enter(&self, _: &Id) {}
+
+        fn exit(&self, _: &Id) {}
+    }
+
+    struct WarningSource(bool);
+
+    impl BoundedSource for WarningSource {
+        fn begin(&mut self, _: PlaneRange, _: bool, _: SampleContent) -> Result<(), SourceError> {
+            Ok(())
+        }
+
+        fn fill(&mut self, _: &mut NativeBlock) -> Result<bool, SourceError> {
+            if self.0 {
+                return Ok(false);
+            }
+            self.0 = true;
+            tracing::warn!("source-fill-warning");
+            Ok(true)
+        }
+
+        fn maximum_block(&self) -> BlockShape {
+            BlockShape::default()
+        }
+    }
+
+    #[test]
+    fn source_thread_tracing_reaches_caller_default_subscriber() {
+        let log = EventLog::default();
+        let captured = EventLog(Arc::clone(&log.0));
+        let mut source = WarningSource(false);
+        let cancel = Cancel::new();
+        let blocks = tracing::subscriber::with_default(captured, || {
+            stream_blocks(&mut source, &cancel, false, |_| Ok(())).unwrap()
+        });
+        assert_eq!(blocks, 1);
+        let events = log.snapshot();
+        assert!(
+            events
+                .iter()
+                .any(|(msg, thread)| msg.contains("source-fill-warning")
+                    && thread.as_deref() == Some("imaging-source")),
+            "expected warning from imaging-source thread, got {events:?}"
+        );
+    }
 }

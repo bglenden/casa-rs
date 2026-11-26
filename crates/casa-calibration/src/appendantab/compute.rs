@@ -3,9 +3,9 @@
 
 use std::collections::HashMap;
 
+use casa_core::ArrayValue;
 use casa_ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
-use casa_types::ArrayValue;
 use time::Date;
 
 use super::parse::{Antab, Header};

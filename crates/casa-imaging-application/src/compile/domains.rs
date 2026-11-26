@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, ObsInfo};
+use casa_core::measures::direction::DirectionRef;
 use casa_imaging_deconvolution::{
     AutoMultithreshControls, ImageDomainReconstructionMaskPlans, MaskBox, MaskPlanes,
     NoiseEstimate, ReconstructionMask, ReconstructionMaskPlan,
@@ -18,7 +19,6 @@ use casa_imaging_model::{
     ImageDomainSpec, ImageShape, PolarizationCoordinate, Projection, SkyDirection,
     optimum_image_size,
 };
-use casa_types::measures::direction::DirectionRef;
 
 use super::PrepareError;
 use super::direction::{
@@ -753,8 +753,8 @@ mod tests {
         DirectionCoordinate, Projection as CoordinateProjection, ProjectionType,
         SpectralCoordinate, StokesCoordinate, StokesType,
     };
+    use casa_core::measures::frequency::FrequencyRef;
     use casa_images::{ImagePixel, PagedImage};
-    use casa_types::measures::frequency::FrequencyRef;
     use ndarray::{ArrayD, IxDyn};
     use std::path::Path;
 

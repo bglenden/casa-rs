@@ -5,8 +5,8 @@ use crate::convert::holder::{CasaMeasure, HolderError, Measure, MeasureValue};
 use crate::convert::value::CasaValue;
 use crate::convert::{RecordArg, Variant};
 use crate::tools::LogLine;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{MEpoch, MeasFrame, MeasureError};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{MEpoch, MeasFrame, MeasureError};
 use std::collections::BTreeMap;
 
 /// Decodes the scalar epoch and its offsets stored by `ObsInfo`.
@@ -156,7 +156,7 @@ impl Measures {
         for i in 0..length.unwrap_or(1) {
             for (index, array) in &arrays {
                 let q = &mut definition.quantities[*index];
-                *q = casa_types::quanta::Quantity::with_unit(array[i], q.unit().clone());
+                *q = casa_core::quanta::Quantity::with_unit(array[i], q.unit().clone());
             }
             values.push(Measure::from_values(
                 definition.kind,
@@ -392,7 +392,7 @@ fn offset_value(mut base: Measure, offset: Measure, sign: f64) -> Result<Measure
         }
         (MeasureValue::Doppler(a), MeasureValue::Doppler(b)) => MeasureValue::Doppler(a + sign * b),
         (MeasureValue::Epoch(a), MeasureValue::Epoch(b)) => {
-            MeasureValue::Epoch(casa_types::measures::MjdHighPrec::new(
+            MeasureValue::Epoch(casa_core::measures::MjdHighPrec::new(
                 a.day() + sign * b.day(),
                 a.frac() + sign * b.frac(),
             ))

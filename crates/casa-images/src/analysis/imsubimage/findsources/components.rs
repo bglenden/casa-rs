@@ -6,10 +6,10 @@ use casa_components::{
     ComponentShape, Ellipse, Flux, Polarisation, ShapeKind, SkyComponent, SpectralModel,
 };
 use casa_coordinates::{Coordinate, DirectionCoordinate};
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::quanta::{Unit, UnitVal};
-use casa_types::{RecordValue, ScalarValue, Value};
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::quanta::{Unit, UnitVal};
+use casa_core::{RecordValue, ScalarValue, Value};
 use num_complex::Complex64;
 
 use crate::{GaussianBeam, ImageError};

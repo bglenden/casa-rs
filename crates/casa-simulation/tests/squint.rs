@@ -2,14 +2,14 @@
 //! Standard and saved-beam squint in simulated component and image DATA.
 mod existing_ms_calculations;
 
-use casa_simulation::{
-    ArrayConfig, BackendRequest, CoordinateSystem, PredictSpec, SessionResources, Simulator,
-    SimulatorOptions, SpectralWindowSpec, VoltagePatternSpec,
-};
-use casa_types::measures::{
+use casa_core::measures::{
     EpochRef, MEpoch,
     direction::{DirectionRef, MDirection},
     frequency::FrequencyRef,
+};
+use casa_simulation::{
+    ArrayConfig, BackendRequest, CoordinateSystem, PredictSpec, SessionResources, Simulator,
+    SimulatorOptions, SpectralWindowSpec, VoltagePatternSpec,
 };
 use existing_ms_calculations::{copy, predict_support as support};
 use flate2::read::GzDecoder;

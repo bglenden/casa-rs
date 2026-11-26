@@ -3,7 +3,7 @@
 use std::f64::consts::FRAC_PI_2;
 
 use casa_coordinates::DirectionCoordinate;
-use casa_types::quanta::Unit;
+use casa_core::quanta::Unit;
 
 use crate::ImageError;
 

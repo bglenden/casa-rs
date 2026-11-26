@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use casa_types::measures::frequency::MFrequency;
+use casa_core::measures::frequency::MFrequency;
 
 use super::ChannelBin;
 use super::plotms_ordinates::ScalarSpanPlan;

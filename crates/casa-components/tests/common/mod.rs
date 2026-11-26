@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 use casa_components::{
     ComponentList, Polarisation, ShapeType, SkyComponent, SpectralKind, SpectralType,
 };
-use casa_types::measures::direction::MDirection;
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::measures::direction::MDirection;
+use casa_core::quanta::{Quantity, Unit};
 use num_complex::Complex64;
 use serde_json::Value;
 

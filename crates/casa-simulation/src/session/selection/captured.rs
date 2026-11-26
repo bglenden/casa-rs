@@ -5,6 +5,7 @@ mod key;
 use super::{DataSelection, SimulatorResult};
 use crate::session::Simulator;
 use crate::session::error::SimulatorError;
+use casa_core::{RecordField, RecordValue, Value};
 use casa_imaging_runtime::{Demand, Reservation, admit};
 use casa_ms::MeasurementSet;
 use casa_tables::taql::{
@@ -12,7 +13,6 @@ use casa_tables::taql::{
     ast::*,
     eval::{EvalContext, ExprValue, eval_expr},
 };
-use casa_types::{RecordField, RecordValue, Value};
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -125,9 +125,7 @@ fn capture_from_ms(
         let mut row_record = RecordValue::new(
             columns
                 .iter()
-                .map(|name| {
-                    RecordField::new(name, Value::Scalar(casa_types::ScalarValue::Int64(0)))
-                })
+                .map(|name| RecordField::new(name, Value::Scalar(casa_core::ScalarValue::Int64(0))))
                 .collect(),
         );
         let mut rank = 0usize;

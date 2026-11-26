@@ -11,16 +11,16 @@ mod predict_support;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use casa_core::Complex32;
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::{EpochRef, MEpoch};
+use casa_core::{ArrayValue, ScalarValue};
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_ms::MeasurementSet;
 use casa_simulation::{
     ApplySpec, BackendRequest, CasaOutcome, NoiseSpec, PredictSpec, SessionResources, Simulator,
     SimulatorOptions, SpectralWindowSpec,
 };
-use casa_types::Complex32;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::{EpochRef, MEpoch};
-use casa_types::{ArrayValue, ScalarValue};
 use flate2::read::GzDecoder;
 use predict_support::{
     CHANNEL_HZ, FREQUENCY_HZ, N, read_main, scan, session, write_model, write_model_of,

@@ -8,7 +8,9 @@ use casa_ms::{
     MeasurementSetCreateTarget, MeasurementSetWritePlan, MeasurementSetWriteResources,
     standard_main_scalar_column_plans,
 };
-use casa_tables::{STREAMING_TILED_COLUMN_BUFFER_BYTES, StreamedTiledShapeValueType};
+use casa_tables::streamed_tiled::{
+    STREAMING_TILED_COLUMN_BUFFER_BYTES, StreamedTiledShapeValueType,
+};
 
 use super::*;
 

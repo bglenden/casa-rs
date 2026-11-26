@@ -3,8 +3,8 @@
 use std::ffi::{CStr, c_char};
 use std::ptr;
 
+use casa_core::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use casa_tables::{ColumnOptions, ColumnSchema};
-use casa_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use fitsio::sys;
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use num_complex::{Complex32, Complex64};

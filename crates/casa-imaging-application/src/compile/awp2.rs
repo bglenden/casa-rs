@@ -3,12 +3,12 @@
 //! Bind the native AWPLPG beam inputs from the selected observation.
 
 use casa_coordinates::{CoordinateModel, CoordinateType};
-use casa_imaging_runtime::{Demand, admit};
-use casa_ms::CubeInterpolation;
-use casa_types::measures::{
+use casa_core::measures::{
     direction::MDirection,
     frequency::{FrequencyRef, MFrequencyConverter},
 };
+use casa_imaging_runtime::{Demand, admit};
+use casa_ms::CubeInterpolation;
 
 use super::{
     PrepareError, Surveyed, domains::PreparedImageDomain, native_aw,

@@ -7,9 +7,9 @@ use casa_components::{
     SkyComponent, SpectralModel,
 };
 use casa_coordinates::{Coordinate, StokesType};
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::frequency::MFrequency;
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::frequency::MFrequency;
+use casa_core::quanta::{Quantity, Unit};
 use num_complex::Complex64;
 
 use crate::{GaussianBeam, ImageError};

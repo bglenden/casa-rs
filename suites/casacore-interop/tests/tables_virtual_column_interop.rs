@@ -9,10 +9,10 @@
 
 use casa_test_support::{CppTableFixture, TableOracle, casacore_oracle_available};
 
-use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
-use casa_types::{
+use casa_core::{
     ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
+use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 fn table_cell<'a>(

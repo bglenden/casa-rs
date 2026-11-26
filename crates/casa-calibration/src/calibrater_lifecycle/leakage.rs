@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Configure and run the retained polarization solvers.
 
+use casa_core::{RecordField, Value};
 use casa_ms::MeasurementSet;
-use casa_types::{RecordField, Value};
 
 use super::{CalibraterLifecycle, CalibraterLifecycleError, CalibraterModel, ConfiguredSolve};
 use crate::solve::grouping::leakage::{
@@ -144,7 +144,7 @@ impl CalibraterLifecycle {
                         Value::Record(fractional_stokes_record(outcome.source)),
                     ),
                 );
-                record = casa_types::RecordValue::new(fields);
+                record = casa_core::RecordValue::new(fields);
             }
             self.last_activity = Some(record);
         }

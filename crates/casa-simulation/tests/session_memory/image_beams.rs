@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Admitted image-plane beams retain and prepare their sky within their charges.
 use super::*;
+use casa_core::Value;
 use casa_tables::{Table, TableOptions};
-use casa_types::Value;
 
 fn profile(path: &Path, n: usize) {
     let mut cs = ImageCoordinates::new();
@@ -60,7 +60,7 @@ pub(super) fn beam_table(source: &Path, path: &Path, image: &Path) {
             .unwrap()
             .record()
             .unwrap();
-        *record.get_mut("compleximage").unwrap() = Value::Scalar(casa_types::ScalarValue::String(
+        *record.get_mut("compleximage").unwrap() = Value::Scalar(casa_core::ScalarValue::String(
             image.to_string_lossy().into_owned(),
         ));
         table

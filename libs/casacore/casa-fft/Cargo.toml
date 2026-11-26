@@ -1,0 +1,22 @@
+[package]
+name = "casa-fft"
+publish = true
+version.workspace = true
+edition.workspace = true
+license = "LGPL-3.0-or-later"
+rust-version.workspace = true
+description = "Shared FFTW execution boundary for CASA-compatible numerical kernels"
+repository.workspace = true
+build = "build.rs"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[dependencies]
+num-complex.workspace = true
+
+[build-dependencies]
+pkg-config.workspace = true
+
+[lints]
+workspace = true

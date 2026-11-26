@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_core::{ArrayValue, PrimitiveType, ScalarValue, Value};
 use casa_tables::ColumnSchema;
-use casa_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 use num_complex::Complex32;
 

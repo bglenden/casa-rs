@@ -43,8 +43,8 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use casa_core::{RecordValue, ScalarValue, Value};
 use casa_tables::{Table, TableError, TableOptions, TableWriteLock};
-use casa_types::{RecordValue, ScalarValue, Value};
 
 use crate::ms::{MeasurementSet, measurement_set_table_options};
 use crate::schema::SubtableId;
@@ -498,8 +498,8 @@ fn delete_model_images(ms: &MeasurementSet) {
 mod tests {
     use std::path::{Path, PathBuf};
 
+    use casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
     use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
-    use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
     use super::prepare_write;
     use crate::MeasurementSet;

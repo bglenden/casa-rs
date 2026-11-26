@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, SpectralCoordinate};
-use casa_types::measures::{
+use casa_core::measures::{
     doppler::{DopplerRef, MDoppler},
     frame::MeasFrame,
     frequency::FrequencyRef,
 };
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::quanta::{Quantity, Unit};
 
 use crate::ImageError;
 

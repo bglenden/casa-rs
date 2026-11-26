@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use std::f64::consts::TAU;
 use std::path::Path;
 
+use casa_core::{ArrayValue, Complex64};
 use casa_tables::RequiredScalarColumnValues::{Float64, Int32};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, Complex64};
 use ndarray::ArrayD;
 
 use super::PccorError;

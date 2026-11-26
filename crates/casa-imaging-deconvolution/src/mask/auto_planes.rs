@@ -364,15 +364,18 @@ where
         let block_support = &mut slots[block.start * per_channel..block.end * per_channel];
         let block_rows = &mut rows[block.start * polarizations..block.end * polarizations];
         let positive = if source.workers > 1 {
+            let dispatch = tracing::dispatcher::get_default(Clone::clone);
             block_support
                 .par_chunks_mut(per_channel)
                 .zip(block_rows.par_chunks_mut(polarizations))
                 .zip(block.clone().into_par_iter())
                 .map(|((support, rows), channel)| {
-                    masking.channel(ChannelSlots {
-                        channel,
-                        support,
-                        rows,
+                    tracing::dispatcher::with_default(&dispatch, || {
+                        masking.channel(ChannelSlots {
+                            channel,
+                            support,
+                            rows,
+                        })
                     })
                 })
                 .try_reduce(|| false, |left, right| Ok(left || right))?
@@ -1006,24 +1009,178 @@ mod channel_law {
             previous: None,
             stopped_channels: &[],
         };
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(WORKERS)
-            .build()
-            .unwrap()
-            .install(|| {
-                auto_mask_domain(
-                    &state,
-                    0,
-                    [8, 8],
-                    MaskPlanes::new(CHANNELS, 4).unwrap(),
-                    &source,
-                )
-                .unwrap();
-            });
+        pool_with_tracing(WORKERS).install(|| {
+            auto_mask_domain(
+                &state,
+                0,
+                [8, 8],
+                MaskPlanes::new(CHANNELS, 4).unwrap(),
+                &source,
+            )
+            .unwrap();
+        });
         assert_eq!(opened.load(Ordering::SeqCst), CHANNELS);
         assert_eq!(reads.load(Ordering::SeqCst), CHANNELS * 4);
         assert_eq!(masked.load(Ordering::SeqCst), CHANNELS * 4);
         assert!(peak.load(Ordering::SeqCst) <= WORKERS);
         assert_eq!(live.load(Ordering::SeqCst), 0);
+    }
+
+    fn pool_with_tracing(workers: usize) -> rayon::ThreadPool {
+        let dispatch = tracing::dispatcher::get_default(Clone::clone);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(workers)
+            .spawn_handler(move |worker| {
+                let dispatch = dispatch.clone();
+                let mut thread = std::thread::Builder::new();
+                if let Some(name) = worker.name() {
+                    thread = thread.name(name.to_owned());
+                }
+                if let Some(stack) = worker.stack_size() {
+                    thread = thread.stack_size(stack);
+                }
+                thread
+                    .spawn(move || {
+                        tracing::dispatcher::with_default(&dispatch, || worker.run());
+                    })
+                    .map(|_| ())
+            })
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn worker_pool_tracing_reaches_caller_default_subscriber() {
+        use std::sync::Mutex;
+        use std::thread::ThreadId;
+
+        use casa_imaging_model::{DirectionFrame, NoiseEstimate, Projection, SkyDirection};
+        use tracing::field::{Field, Visit};
+        use tracing::{Event, Id, Metadata, Subscriber};
+
+        struct Capture {
+            events: Arc<Mutex<Vec<(String, ThreadId)>>>,
+        }
+
+        struct MessageVisitor(Option<String>);
+
+        impl Visit for MessageVisitor {
+            fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+                if field.name() == "message" {
+                    self.0 = Some(format!("{value:?}"));
+                }
+            }
+        }
+
+        impl Subscriber for Capture {
+            fn enabled(&self, _: &Metadata<'_>) -> bool {
+                true
+            }
+
+            fn new_span(&self, _: &tracing::span::Attributes<'_>) -> Id {
+                Id::from_u64(1)
+            }
+
+            fn record(&self, _: &Id, _: &tracing::span::Record<'_>) {}
+
+            fn record_follows_from(&self, _: &Id, _: &Id) {}
+
+            fn event(&self, event: &Event<'_>) {
+                let mut visitor = MessageVisitor(None);
+                event.record(&mut visitor);
+                self.events
+                    .lock()
+                    .unwrap()
+                    .push((visitor.0.unwrap_or_default(), std::thread::current().id()));
+            }
+
+            fn enter(&self, _: &Id) {}
+
+            fn exit(&self, _: &Id) {}
+        }
+
+        let mut values = vec![0.0; 64];
+        values[36] = 1.0;
+        let summary = PsfSummary::with_saved_beam(
+            &values,
+            crate::PlaneShape::new(8, 8),
+            RestoringBeam::new(2.0, 2.0, 0.0).unwrap(),
+        )
+        .unwrap();
+        let read = |key: MaskPlaneKey| -> Result<Option<AutoMaskPlane>, MaskError> {
+            tracing::warn!(channel = key.channel, "auto-mask-read-warning");
+            Ok(Some(AutoMaskPlane {
+                residual: vec![0.0; 64],
+                valid: vec![true; 64],
+                statistics: None,
+            }))
+        };
+        let psf = |_: MaskPlaneKey| Some(summary);
+        let source = AutoMaskSource {
+            read: &read,
+            channel: None,
+            psf: &psf,
+            workers: 2,
+        };
+        let coordinate = DirectionCoordinateSpec::new(
+            Projection::Sin,
+            SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+            [4.0, 4.0],
+            [-1.0e-4, 1.0e-4],
+            [[1.0, 0.0], [0.0, 1.0]],
+            [180.0, 90.0],
+        );
+        let controls = AutoMultithreshControls {
+            sidelobe_factor: 2.0,
+            noise_factor: 4.25,
+            low_noise_factor: 1.5,
+            negative_factor: 0.0,
+            minimum_beam_fraction: 0.0,
+            smooth_factor: 1.0,
+            cut_threshold: 0.01,
+            grow_iterations: 0,
+            grow_prune: false,
+            minimum_percent_change: -1.0,
+            noise: NoiseEstimate::Fast,
+            verbose: false,
+        };
+        let state = AutoMaskState {
+            coordinate,
+            controls: &controls,
+            completed_major_cycles: 0,
+            threshold_reached: false,
+            previous: None,
+            stopped_channels: &[],
+        };
+        let caller = std::thread::current().id();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = Capture {
+            events: Arc::clone(&events),
+        };
+        tracing::subscriber::with_default(subscriber, || {
+            pool_with_tracing(2).install(|| {
+                auto_mask_domain(&state, 0, [8, 8], MaskPlanes::new(4, 1).unwrap(), &source)
+                    .unwrap();
+            });
+            // Also verify global Rayon pool execution via par_chunks_mut.
+            auto_mask_domain(&state, 0, [8, 8], MaskPlanes::new(4, 1).unwrap(), &source).unwrap();
+        });
+        let recorded = events.lock().unwrap();
+        let pool_warnings = recorded[..4]
+            .iter()
+            .filter(|(msg, thread)| msg.contains("auto-mask-read-warning") && *thread != caller)
+            .count();
+        assert_eq!(
+            pool_warnings, 4,
+            "expected 4 custom-pool warnings, got {recorded:?}"
+        );
+        let total_warnings = recorded
+            .iter()
+            .filter(|(msg, _)| msg.contains("auto-mask-read-warning"))
+            .count();
+        assert_eq!(
+            total_warnings, 8,
+            "expected 8 total warnings, got {recorded:?}"
+        );
     }
 }

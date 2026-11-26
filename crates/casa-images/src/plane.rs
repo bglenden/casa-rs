@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Two-axis views of an image, with the other axes numbered first-fastest.
 
-use casa_types::ArrayD;
+use casa_core::ArrayD;
 use ndarray::{ArrayBase, ArrayView2, ArrayViewMut2, Axis, Data, Ix2, IxDyn};
 
 pub(crate) struct PlaneIndex<'s> {

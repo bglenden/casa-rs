@@ -2,11 +2,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use casa_core::ArrayValue;
+use casa_core::measures::frequency::MFrequency;
+use casa_core::measures::record::frequency_to_record;
+use casa_measures::table_measures::{ArrayMeasColumn, ScalarMeasColumn};
 use casa_ms::{MeasurementSet, MsError, MsResult, MsSource};
-use casa_tables::table_measures::{ArrayMeasColumn, ScalarMeasColumn};
-use casa_types::ArrayValue;
-use casa_types::measures::frequency::MFrequency;
-use casa_types::measures::record::frequency_to_record;
 use pyo3::prelude::*;
 
 use super::PyMsMetadata;

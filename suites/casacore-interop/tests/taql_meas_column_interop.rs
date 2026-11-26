@@ -13,15 +13,15 @@
 
 use tempfile::TempDir;
 
-use casa_measures_data::MeasuresRuntime;
-use casa_tables::table_measures::{MeasureType, TableMeasDesc};
+use casa_core::measures::MeasuresProvider;
+use casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, Value};
+use casa_measures::MeasuresRuntime;
+use casa_measures::table_measures::{MeasureType, TableMeasDesc};
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casa_test_support::table_measures_interop::TableMeasuresOracle;
 use casa_test_support::taql_interop::{
     CppTaqlQueryResult, TaqlOracle, TaqlQueryResult, rust_taql_query,
 };
-use casa_types::measures::MeasuresProvider;
-use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, Value};
 use std::sync::{Arc, OnceLock};
 
 const RUST_EPOCH_QUERY: &str = "SELECT meas.epoch('TAI', TIME[1], 'UTC') AS tai";

@@ -50,15 +50,15 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::{EpochRef, MEpoch, MPosition, MeasFrame, MeasuresProvider};
 use casa_simulation::{
     ApplySpec, ArrayConfig, AtmosphereSpec, BackendRequest, CasaOutcome, CoordinateSystem,
     ExecutionControls, GainSpec, LeakageSpec, NoiseSpec, ObserveManySpec, ObserveSpec, Pointing,
     PredictSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions, SimulatorResult,
     SpectralWindowSpec, StateSpec, TroposphereSpec, TsysParameters, VoltagePatternSpec,
 };
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame, MeasuresProvider};
 use serde_json::Value;
 use tracing_subscriber::filter::Targets;
 use tracing_subscriber::layer::SubscriberExt;

@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_coordinates::CoordinateSystem;
+use casa_core::RecordValue;
 use casa_lattices::{Lattice, LatticeError, TraversalCursorIter, TraversalSpec};
 use casa_tables::LockType;
-use casa_types::RecordValue;
 use ndarray::{ArrayD, Axis, IxDyn, Slice};
 
 use crate::concatenate::ConcatenationPlan;

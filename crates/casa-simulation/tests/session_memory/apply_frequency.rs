@@ -145,7 +145,7 @@ fn run_case(
         .scalar()
         .unwrap()
     {
-        casa_types::ScalarValue::Float64(time) => *time,
+        casa_core::ScalarValue::Float64(time) => *time,
         _ => panic!("TIME"),
     };
     let rows = (0..slots).flat_map(|index| {
@@ -185,8 +185,8 @@ fn run_case(
     )
     .unwrap();
     if matches!(kind, "B" | "B TSYS" | "Jf") {
+        use casa_core::{ArrayValue, ScalarValue, Value};
         use casa_tables::{Table, TableOptions};
-        use casa_types::{ArrayValue, ScalarValue, Value};
         use ndarray::{ArrayD, IxDyn, ShapeBuilder};
         let mut calibration = Table::open(TableOptions::new(&table)).unwrap();
         let count = if kind == "Jf" { 4 } else { 2 };
@@ -241,8 +241,8 @@ fn run_case(
     if channels != reference_channels {
         // The calibration axis, rather than a huge unrelated reference MS,
         // is what this loading law must exercise.
+        use casa_core::{ArrayValue, ScalarValue, Value};
         use casa_tables::{Table, TableOptions};
-        use casa_types::{ArrayValue, ScalarValue, Value};
         use ndarray::{ArrayD, IxDyn};
         let path = table.join("SPECTRAL_WINDOW");
         let mut spectral = Table::open(TableOptions::new(&path)).unwrap();
@@ -320,8 +320,8 @@ fn run_case(
 }
 
 fn real_parameters(path: &std::path::Path) {
+    use casa_core::{ArrayValue, PrimitiveType, ScalarValue, Value};
     use casa_tables::{ColumnSchema, Table, TableOptions};
-    use casa_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
     let mut table = Table::open(TableOptions::new(path)).unwrap();
     table
         .add_column(

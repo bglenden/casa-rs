@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Logical-record decoding helpers for VLA export archives.
 
-use casa_types::Complex32;
+use casa_core::Complex32;
 
 use crate::VlaError;
 use crate::modcomp::{decode_f32, decode_f64, decode_i16, decode_i32, decode_u16, decode_u32};
@@ -1368,7 +1368,7 @@ pub(crate) fn invalid_record(path: &std::path::Path, message: impl Into<String>)
 
 #[cfg(test)]
 mod tests {
-    use casa_types::Complex32;
+    use casa_core::Complex32;
 
     use super::{
         AntennaDataArea, BaselineRecord, CdaId, CircularPolarization, CorrelatorDataArea,

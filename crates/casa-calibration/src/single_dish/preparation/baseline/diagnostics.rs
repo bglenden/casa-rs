@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use casa_types::quanta::MvTime;
+use casa_core::quanta::MvTime;
 use tempfile::NamedTempFile;
 
 use super::ModelBasis;

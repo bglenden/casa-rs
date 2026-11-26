@@ -12,11 +12,11 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
+use casa_core::{ArrayValue, ScalarValue};
 use casa_tables::{
     ColumnOverrides, GeneratedArrayColumn, GeneratedArrayValueRun, GeneratedScalarColumn,
     GeneratedScalarValueRun, TableError,
 };
-use casa_types::{ArrayValue, ScalarValue};
 use ndarray::ArrayD;
 
 use crate::session::observe::PlannedScan;
@@ -242,9 +242,9 @@ mod tests {
 
     use std::path::Path;
 
+    use casa_core::RecordValue;
     use casa_ms::schema::SubtableId;
     use casa_ms::{MeasurementSet, MeasurementSetBuilder, SubtableColumnOverrides};
-    use casa_types::RecordValue;
 
     use super::super::{direction_cell, row, scalar_bool, scalar_f64, scalar_i32, scalar_string};
     use super::*;

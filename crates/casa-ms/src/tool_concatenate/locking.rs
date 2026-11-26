@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, Metadata};
 use std::path::{Path, PathBuf};
 
+use casa_core::{RecordValue, Value};
 use casa_tables::{Table, TableOptions, TableWriteLock, add_directory};
-use casa_types::{RecordValue, Value};
 use rayon::prelude::*;
 
 use super::publication::io;
@@ -46,20 +46,23 @@ impl<'a> WriteGuards<'a> {
     }
 
     pub(super) fn acquire(&mut self, paths: BTreeSet<PathBuf>) -> MsResult<()> {
+        let dispatch = tracing::dispatcher::get_default(Clone::clone);
         let entries = paths
             .into_par_iter()
             .map(|path| {
-                if let Some(held) = self.guards.get(&path) {
-                    if !held.matches_table_path(&path) {
-                        return Err(io(format!(
-                            "{} no longer has its retained lock",
-                            path.display()
-                        )));
+                tracing::dispatcher::with_default(&dispatch, || {
+                    if let Some(held) = self.guards.get(&path) {
+                        if !held.matches_table_path(&path) {
+                            return Err(io(format!(
+                                "{} no longer has its retained lock",
+                                path.display()
+                            )));
+                        }
+                        return Ok(None);
                     }
-                    return Ok(None);
-                }
-                let guard = TableWriteLock::acquire_to_reread(&path, 1)?;
-                Ok(Some((path, guard)))
+                    let guard = TableWriteLock::acquire_to_reread(&path, 1)?;
+                    Ok(Some((path, guard)))
+                })
             })
             .collect::<MsResult<Vec<_>>>()?;
         self.guards.extend(entries.into_iter().flatten());

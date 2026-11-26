@@ -6,6 +6,12 @@
 
 use std::{borrow::Cow, collections::BTreeMap};
 
+use casa_core::ArrayValue;
+use casa_core::measures::{
+    PreparedFrequencyConversion, direction::MDirection, doppler::DopplerRef, epoch::EpochRef,
+    frame::MeasFrame, frequency::FrequencyRef,
+};
+use casa_core::quanta::Quantity;
 use casa_imaging_model::{
     DirectionCoordinateSpec, DopplerConvention, Epoch, FrequencyBands, FrequencyFrame,
     ItrfPosition, ReconstructionBasis, RestFrequency, SourceLsrkGrid, SpectralCoordinateSpec,
@@ -17,12 +23,6 @@ use casa_ms::{
     SubtableId, spectral_selection::CubeSpecMode,
 };
 use casa_observation::{Catalogue, FieldId, WindowId};
-use casa_types::ArrayValue;
-use casa_types::measures::{
-    PreparedFrequencyConversion, direction::MDirection, doppler::DopplerRef, epoch::EpochRef,
-    frame::MeasFrame, frequency::FrequencyRef,
-};
-use casa_types::quanta::Quantity;
 
 use super::PrepareError;
 use super::direction::ImageSpectralCoordinate;
@@ -270,7 +270,7 @@ fn continuum_law<'a>(
             )
             .first()
             .and_then(|record| record.rest_frequencies.as_ref()?.first())
-            .map(casa_types::measures::frequency::MFrequency::hz)
+            .map(casa_core::measures::frequency::MFrequency::hz)
             .filter(|value| *value != 0.0)
             .unwrap_or(recorded.midpoint_hz()),
     };
@@ -323,7 +323,7 @@ fn continuum_rest_frequency_hz(
             .scalar()
             .map_err(casa_ms::MsError::from)?;
         match scalar {
-            casa_types::ScalarValue::Int32(value) => *value,
+            casa_core::ScalarValue::Int32(value) => *value,
             _ => {
                 return Err(
                     casa_ms::MsError::InvalidInput("DOPPLER_ID must be Int32".into()).into(),
@@ -1328,7 +1328,7 @@ fn source_rest_frequency(
                 .rest_frequencies
                 .as_ref()
                 .and_then(|lines| lines.first())
-                .map(casa_types::measures::frequency::MFrequency::hz)
+                .map(casa_core::measures::frequency::MFrequency::hz)
                 .filter(|value| *value > 0.0)
             else {
                 continue;

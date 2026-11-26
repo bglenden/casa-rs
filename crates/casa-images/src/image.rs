@@ -16,6 +16,10 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
+use casa_core::{
+    ArrayD, ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue,
+    Value,
+};
 use casa_lattices::{
     ArrayLattice, Lattice, LatticeElement, LatticeError, LatticeMut, PagedArray, TiledShape,
     TraversalCacheHint, TraversalCacheScope, TraversalCursorIter, TraversalSpec,
@@ -24,10 +28,6 @@ use casa_lattices::{
 use casa_tables::{
     ColumnSchema, DEFAULT_TILED_ARRAY_CACHE_BYTES, DataManagerKind, Table, TableInfo, TableOptions,
     TableSchema, TableWriteLock, TilePixel, TiledArrayStorage, TiledFileIoStats,
-};
-use casa_types::{
-    ArrayD, ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue,
-    Value,
 };
 use ndarray::{ArrayViewD, IxDyn, Slice, SliceInfoElem};
 
@@ -1684,7 +1684,7 @@ impl<T: ImagePixel> PagedImage<T> {
     /// Returns an error if the image has no coordinate record.
     pub fn set_observation_date(
         &mut self,
-        epoch: casa_types::measures::MEpoch,
+        epoch: casa_core::measures::MEpoch,
     ) -> Result<(), ImageError> {
         let Some(Value::Record(mut coords)) = self.table.keywords().get("coords").cloned() else {
             return Err(ImageError::InvalidMetadata(
@@ -1700,7 +1700,7 @@ impl<T: ImagePixel> PagedImage<T> {
         while obs.remove("date").is_some() {}
         obs.upsert(
             "obsdate",
-            Value::Record(casa_types::measures::epoch_to_record(&epoch)),
+            Value::Record(casa_core::measures::epoch_to_record(&epoch)),
         );
         self.table
             .keywords_mut()
@@ -3741,9 +3741,9 @@ mod tests {
             .keywords_mut()
             .upsert("imageinfo", invalid.clone());
         let beam = crate::StoredGaussianBeam::new(
-            casa_types::quanta::Quantity::new(2., "arcsec").unwrap(),
-            casa_types::quanta::Quantity::new(1., "arcsec").unwrap(),
-            casa_types::quanta::Quantity::new(0., "deg").unwrap(),
+            casa_core::quanta::Quantity::new(2., "arcsec").unwrap(),
+            casa_core::quanta::Quantity::new(1., "arcsec").unwrap(),
+            casa_core::quanta::Quantity::new(0., "deg").unwrap(),
         )
         .unwrap();
         assert!(image.stored_restoring_beam().is_err());

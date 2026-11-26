@@ -7,6 +7,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use casa_core::measures::MEpoch;
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::position::MPosition;
+use casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+use casa_measures::table_measures::{MeasureType, TableMeasDesc};
 use casa_ms::observation_io::convert::{ConversionOptions, to_msv2};
 use casa_ms::observation_io::creation::{
     CreationInput, CreationOptions, CreationPlan, Destination, HistoryRow, Loss, LossKind,
@@ -15,12 +20,7 @@ use casa_ms::observation_io::creation::{
 use casa_ms::observation_io::{Msv4Codec, OpenOptions, open};
 use casa_ms::{MeasurementSet, SubtableId};
 use casa_observation::{Catalogue, MergeTolerance, ObservationError, SourceWindow, WindowId};
-use casa_tables::table_measures::{MeasureType, TableMeasDesc};
 use casa_tables::{ColumnSchema, Table};
-use casa_types::measures::MEpoch;
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::position::MPosition;
-use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
 
 use super::convert::rows_and_sigmas;
@@ -1003,7 +1003,7 @@ fn states_combine_and_processors_must_agree() {
     assert_eq!(&states[60..], &[1; 60]);
     let processed = edited(root.path(), "processed", 0..60, |ms| {
         let table = subtable(ms, SubtableId::Processor);
-        let row = casa_types::RecordValue::new(vec![
+        let row = casa_core::RecordValue::new(vec![
             RecordField::new("TYPE", text("CORRELATOR")),
             RecordField::new("SUB_TYPE", text("")),
             RecordField::new("TYPE_ID", int(-1)),

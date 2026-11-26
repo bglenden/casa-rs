@@ -3,8 +3,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use casa_core::{ArrayValue, Value};
 use casa_tables::{PlainReferenceRead, Table};
-use casa_types::{ArrayValue, Value};
 use ndarray::ArrayD;
 use num_complex::Complex32;
 

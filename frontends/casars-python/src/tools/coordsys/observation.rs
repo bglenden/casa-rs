@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_types::measures::{MPosition, PositionRef, epoch_to_record, position_to_record};
-use casa_types::{ScalarValue, Value};
+use casa_core::measures::{MPosition, PositionRef, epoch_to_record, position_to_record};
+use casa_core::{ScalarValue, Value};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::IntoPyObjectExt;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};

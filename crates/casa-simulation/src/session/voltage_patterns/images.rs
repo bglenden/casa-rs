@@ -4,9 +4,9 @@ use super::{Simulator, SimulatorResult, raised, reserve, text};
 use crate::predict::jones::{ImagePlane, JonesImage};
 use casa_components::Polarisation;
 use casa_coordinates::{CoordinateModel, CoordinateType};
+use casa_core::RecordValue;
 use casa_images::{ImagePixel, PagedImage};
 use casa_imaging_runtime::Admitted;
-use casa_types::RecordValue;
 use ndarray::IxDyn;
 use num_complex::Complex32;
 use std::{path::Path, sync::Arc};
@@ -100,8 +100,8 @@ fn read<T: ImagePixel + Copy>(
     };
     let spectral = coords.coordinate(2);
     let frequency_hz =
-        casa_types::quanta::Quantity::new(spectral.reference_value()[0], &spectral.axis_units()[0])
-            .and_then(|value| value.get_value_in(&casa_types::quanta::Unit::new("Hz")?))
+        casa_core::quanta::Quantity::new(spectral.reference_value()[0], &spectral.axis_units()[0])
+            .and_then(|value| value.get_value_in(&casa_core::quanta::Unit::new("Hz")?))
             .map_err(raised)?;
     if !frequency_hz.is_finite() || frequency_hz <= 0. {
         return Err(raised("invalid Jones image frequency"));

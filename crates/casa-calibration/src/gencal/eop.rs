@@ -4,11 +4,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use casa_core::{ArrayValue, RecordField, RecordValue, Value};
 use casa_ms::MeasurementSet;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_tables::RequiredScalarColumnValues::{Float64, Int32};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, RecordField, RecordValue, Value};
 use sofars::{
     erst::era00,
     pnp::{c2i00a, c2tcio, pom00, sp00},
@@ -83,7 +83,7 @@ fn explicit_source(source: Option<&Path>) -> Option<&Path> {
 }
 
 fn installed_source() -> Option<PathBuf> {
-    let runtime = casa_measures_data::MeasuresRuntime::open_discovered(Default::default()).ok()?;
+    let runtime = casa_measures::MeasuresRuntime::open_discovered(Default::default()).ok()?;
     Some(runtime.root().join("geodetic/IERSeop2000"))
 }
 

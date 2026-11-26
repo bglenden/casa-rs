@@ -4,8 +4,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use casa_core::measures::{EpochRef, MjdHighPrec};
 use casa_observation::{AntennaId, FieldId, PointingCandidate, PointingSeries, VisibilityBatch};
-use casa_types::measures::{EpochRef, MjdHighPrec};
 
 use super::{BatchGeometry, BatchGeometryError, GeometryPlan};
 use crate::aw_pointing::{AwPointingEpochs, AwPointingGrouping};

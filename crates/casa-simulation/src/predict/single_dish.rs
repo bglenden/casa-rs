@@ -26,11 +26,11 @@
 //! casa-rs predicts autocorrelations only (`docs/CASA (C++) bugs.md`).
 
 use super::image_beam::ImageBeam;
+use casa_core::Correlation;
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{PolarizationRouting, SpectralAxis};
 use casa_imaging_runtime::Reservation;
 use casa_imaging_singledish::{GridFunction, KernelTable};
-use casa_types::Correlation;
 use num_complex::Complex32;
 
 use super::{BeamPattern, PredictError, SkyModel};

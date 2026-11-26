@@ -7,9 +7,9 @@
 //!
 //! Cf. C++ `MSMainColumns::timeMeas()`.
 
+use casa_core::measures::{EpochRef, MEpoch};
+use casa_measures::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_tables::Table;
-use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
-use casa_types::measures::{EpochRef, MEpoch};
 
 use crate::error::MsResult;
 use crate::subtables::get_f64;
@@ -75,8 +75,8 @@ pub(crate) mod tests {
     use crate::column_def::build_table_schema;
     use crate::schema;
     use crate::test_helpers::{default_value, default_value_for_def};
-    use casa_tables::table_measures::{MeasureType, TableMeasDesc};
-    use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+    use casa_core::{RecordField, RecordValue, ScalarValue, Value};
+    use casa_measures::table_measures::{MeasureType, TableMeasDesc};
 
     #[test]
     fn read_time_as_epoch() {

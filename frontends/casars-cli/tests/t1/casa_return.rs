@@ -13,7 +13,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use casa_contracts::{CasaKey, CasaValue, IntDtype, TaskReply};
-use casa_types::{ScalarValue, Value as CellValue};
+use casa_core::{ScalarValue, Value as CellValue};
 use serde_json::{Value, json};
 
 use super::fixture::{Component, Observation};

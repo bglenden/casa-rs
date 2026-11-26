@@ -85,11 +85,11 @@ impl Plan {
                 || current.correlations.iter().any(|c| {
                     !matches!(
                         c,
-                        casa_types::Correlation::XX
-                            | casa_types::Correlation::YY
-                            | casa_types::Correlation::RR
-                            | casa_types::Correlation::LL
-                            | casa_types::Correlation::I
+                        casa_core::Correlation::XX
+                            | casa_core::Correlation::YY
+                            | casa_core::Correlation::RR
+                            | casa_core::Correlation::LL
+                            | casa_core::Correlation::I
                     )
                 })
             {

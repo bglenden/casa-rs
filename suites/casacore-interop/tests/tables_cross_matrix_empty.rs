@@ -2,10 +2,10 @@
 //! Task 1.7: Empty table cross-matrix tests — schema with columns but zero rows.
 #![cfg(feature = "cpp-interop-tests")]
 
+use casa_core::{PrimitiveType, RecordValue};
 use casa_tables::{ColumnOptions, ColumnSchema, TableSchema};
 use casa_test_support::CppTableFixture;
 use casa_test_support::table_interop::{ManagerKind, TableFixture, run_full_cross_matrix};
-use casa_types::{PrimitiveType, RecordValue};
 
 fn empty_table_fixture(cpp_fixture: CppTableFixture) -> TableFixture {
     let schema = TableSchema::new(vec![

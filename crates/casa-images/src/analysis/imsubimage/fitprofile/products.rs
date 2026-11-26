@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
+use casa_core::{ArrayD, ArrayValue, RecordValue, Value};
 use casa_lattices::TiledShape;
-use casa_types::{ArrayD, ArrayValue, RecordValue, Value};
 use ndarray::{Axis, IxDyn};
 
 use crate::{Image, ImageError, MutableImageInterface};

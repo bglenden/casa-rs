@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::CoordinateType;
-use casa_types::{ArrayD, RecordValue};
+use casa_core::{ArrayD, RecordValue};
 use ndarray::Slice;
 
 use crate::{ImageError, ImageInterface, MutableImageInterface};

@@ -3,6 +3,7 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use casa_core::Correlation;
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding,
@@ -18,7 +19,6 @@ use casa_imaging_runtime::pass::{
     PassError, PassSummary, Residency, RowAddress, SampleContent, SourceError, WeightCache,
     WorkerTeam, run_major_cycle,
 };
-use casa_types::Correlation;
 use ndarray::Array2;
 use num_complex::Complex32;
 

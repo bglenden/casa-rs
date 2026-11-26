@@ -2,9 +2,9 @@
 
 use std::process::Command;
 
-use casa_logging::validate_log_table;
+use casa_core::ScalarValue;
+use casa_tables::log_table::validate_log_table;
 use casa_tables::{Table, TableOptions};
-use casa_types::ScalarValue;
 
 #[path = "../../../crates/casa-ms/tests/common/mod.rs"]
 mod common;

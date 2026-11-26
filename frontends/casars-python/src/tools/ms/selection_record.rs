@@ -2,9 +2,9 @@
 //! Ordered record selection for the public MeasurementSet tool.
 
 use casa_coordinates::display::format_stream_value;
+use casa_core::quanta::format::{YMD, format_time};
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use casa_ms::MsSelection;
-use casa_types::quanta::format::{YMD, format_time};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyComplex, PyDict, PyFloat, PyInt, PyList, PySlice, PyString, PyTuple};

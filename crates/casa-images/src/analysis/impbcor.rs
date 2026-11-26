@@ -9,9 +9,9 @@ use std::ops::{Div, Mul};
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::CoordinateType;
+use casa_core::{ArrayD, RecordValue, Value};
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayD, RecordValue, Value};
 use ndarray::{IxDyn, Zip};
 
 use super::imsubimage::{SubimagePlan, SubimageRegion, region::SubimageSelection};

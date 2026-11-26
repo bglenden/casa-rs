@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Error types for MeasurementSet operations.
 
+use casa_core::measures::MeasureError;
 use casa_tables::TableError;
-use casa_types::measures::MeasureError;
 
 /// Errors produced by MeasurementSet operations.
 ///

@@ -8,10 +8,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use casa_core::measures::EpochRef;
+use casa_core::measures::direction::DirectionRef;
 use casa_observation::{Catalogue, ObservationError, Roles, VisibilityUnits};
 use casa_tables::table_quantum::TableQuantumDesc;
-use casa_types::measures::EpochRef;
-use casa_types::measures::direction::DirectionRef;
 
 use super::combine::{self, Combined};
 use super::inputs::Input;

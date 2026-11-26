@@ -3,10 +3,10 @@
 
 use casa_calibration::{ImagerDefinitionRequest, ImagerPhaseCentre, ImagerSpectralAxis};
 use casa_coordinates::{ProjectionType, StokesType};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::doppler::DopplerRef;
+use casa_core::measures::frequency::FrequencyRef;
 use casa_ms::{CubeAxisConfig, CubeAxisValue};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::doppler::DopplerRef;
-use casa_types::measures::frequency::FrequencyRef;
 use pyo3::prelude::*;
 
 use crate::convert::measures::{direction, frequency, frequency_reference};

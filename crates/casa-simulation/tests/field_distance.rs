@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Finite-distance simulator image predictions against actual CASA DATA.
 mod existing_ms_calculations;
+use casa_core::measures::direction::{DirectionRef, MDirection};
 use casa_simulation::{
     BackendRequest, PredictSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions,
 };
-use casa_types::measures::direction::{DirectionRef, MDirection};
 use existing_ms_calculations::{copy, predict_support as support};
 use flate2::read::GzDecoder;
 use serde_json::Value;
@@ -75,9 +75,9 @@ fn field_and_image_distance_match_casa() {
                     SimulatorOptions {
                         measures: casa_test_support::deterministic_measures_provider(),
                         resources,
-                        now: casa_types::measures::MEpoch::from_mjd(
+                        now: casa_core::measures::MEpoch::from_mjd(
                             support::REFERENCE_MJD,
-                            casa_types::measures::EpochRef::UTC,
+                            casa_core::measures::EpochRef::UTC,
                         ),
                     },
                 )
@@ -93,8 +93,8 @@ fn field_and_image_distance_match_casa() {
                 &[vec![(32, 32, 1.25), (41, 28, 0.75)]],
             );
             if let Some(distance) = spec["metadata_distance"].as_f64() {
+                use casa_core::{RecordField, RecordValue, ScalarValue, Value as Cell};
                 use casa_images::PagedImage;
-                use casa_types::{RecordField, RecordValue, ScalarValue, Value as Cell};
                 let mut image = PagedImage::<f32>::open(&a).unwrap();
                 image
                     .set_misc_info(RecordValue::new(vec![RecordField::new(

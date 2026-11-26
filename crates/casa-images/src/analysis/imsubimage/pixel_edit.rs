@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_types::ArrayD;
+use casa_core::ArrayD;
 use ndarray::{IxDyn, Zip};
 
 use crate::{ImageError, MutableImageInterface};

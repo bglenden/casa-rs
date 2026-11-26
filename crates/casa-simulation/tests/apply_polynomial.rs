@@ -7,8 +7,8 @@ mod predict_support;
 #[allow(dead_code, reason = "reuse the complete MS comparison")]
 mod support;
 
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{ApplySpec, Simulator, SimulatorOptions};
-use casa_types::measures::{EpochRef, MEpoch};
 use flate2::read::GzDecoder;
 use serde_json::Value;
 use std::io::Read;
@@ -51,7 +51,7 @@ fn run(name: &str) {
             start_frequency_hz: 300e9,
             channel_width_hz: predict_support::CHANNEL_HZ,
             resolution_hz: predict_support::CHANNEL_HZ,
-            frame: casa_types::measures::frequency::FrequencyRef::TOPO,
+            frame: casa_core::measures::frequency::FrequencyRef::TOPO,
             channel_count: 4,
             stokes: "XX XY YX YY".into(),
         })

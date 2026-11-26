@@ -6,12 +6,12 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
+use casa_core::{ArrayValue, Value};
 use casa_ms::tool_iteration::{LegacyIterationOptions, LegacyToolIteration};
 use casa_tables::publication::{
     exchange_directories, lock_table_tree_for_replacement_with_held, rename_without_replacing,
 };
 use casa_tables::{Table, TableOptions, TablePartNames, TableWriteLock};
-use casa_types::{ArrayValue, Value};
 use ndarray::Array1;
 use pyo3::prelude::*;
 

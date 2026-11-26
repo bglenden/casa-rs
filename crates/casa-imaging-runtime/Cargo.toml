@@ -17,8 +17,8 @@ casa-imaging-metal = { path = "../casa-imaging-metal" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-operator = { path = "../casa-imaging-operator" }
 casa-imaging-products = { path = "../casa-imaging-products" }
-casa-lattices = { path = "../casa-lattices" }
-casa-tables = { path = "../casa-tables" }
+casa-lattices.workspace = true
+casa-tables.workspace = true
 num-complex.workspace = true
 rayon = "1"
 casa-ms = { path = "../casa-ms" }
@@ -30,5 +30,5 @@ tempfile = "3"
 thiserror.workspace = true
 
 [dev-dependencies]
-casa-types = { path = "../casa-types" }
+casa-core.workspace = true
 ndarray.workspace = true

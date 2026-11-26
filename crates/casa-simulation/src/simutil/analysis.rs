@@ -49,10 +49,10 @@ mod fidelity;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_core::ArrayValue;
 use casa_images::{GaussianBeam, ImageError, ImageInfo, ImageInterface, PagedImage};
 use casa_lattices::LatticeError;
 use casa_ms::MeasurementSet;
-use casa_types::ArrayValue;
 use ndarray::ArrayD;
 use thiserror::Error;
 

@@ -14,9 +14,9 @@ use crate::ImageError;
 use crate::fits_read::{PrimaryHdu, image_info_from_fits_header};
 
 /// Read an unconsumed FITS header field as image miscellaneous metadata.
-pub(super) fn custom_value(path: &Path, key: &str) -> Result<casa_types::Value, ImageError> {
+pub(super) fn custom_value(path: &Path, key: &str) -> Result<casa_core::Value, ImageError> {
     use casa_coordinates::{FitsHeader, FitsValue};
-    use casa_types::{ScalarValue, Value};
+    use casa_core::{ScalarValue, Value};
     let upper = key.to_ascii_uppercase();
     let internal = [
         "SIMPLE", "BITPIX", "NAXIS", "EXTEND", "BLOCKED", "BLANK", "BSCALE", "BZERO", "XTENSION",
@@ -93,13 +93,13 @@ pub(super) fn summary(path: &Path) -> Result<ImageHeaderSummary, ImageError> {
         },
         observer: coords.obs_info().observer.clone(),
         telescope: coords.obs_info().telescope.clone(),
-        observation_date: casa_types::quanta::format::format_time(
+        observation_date: casa_core::quanta::format::format_time(
             coords
                 .obs_info()
                 .date
                 .as_ref()
                 .map_or(0.0, |epoch| epoch.value().as_mjd()),
-            casa_types::quanta::format::YMD,
+            casa_core::quanta::format::YMD,
             12,
         ),
         direction_reference: direction

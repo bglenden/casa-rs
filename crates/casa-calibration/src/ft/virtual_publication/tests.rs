@@ -6,12 +6,12 @@ use std::path::Path;
 use casa_coordinates::{
     CoordinateSystem, DirectionCoordinate, SpectralCoordinate, StokesCoordinate, StokesType,
 };
+use casa_core::measures::{direction::DirectionRef, frequency::FrequencyRef};
+use casa_core::{ArrayValue, PrimitiveType, ScalarValue, Value};
 use casa_images::PagedImage;
 use casa_ms::schema::SubtableId;
 use casa_ms::{MsSelection, VirtualModelEntry, virtual_model};
 use casa_tables::{ColumnSchema, TableOptions};
-use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
-use casa_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
 
 use super::*;
 use crate::ft::image::{TaylorTerm, prepare_image};

@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_types::quanta::Quantity;
+use casa_core::quanta::Quantity;
 
 use super::antennas::Array;
 use super::sky::Sky;

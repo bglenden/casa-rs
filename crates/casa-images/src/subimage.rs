@@ -5,8 +5,8 @@ use std::any::Any;
 use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
+use casa_core::ArrayD;
 use casa_lattices::{Lattice, LatticeError, LatticeMut};
-use casa_types::ArrayD;
 use ndarray::{Dimension, IxDyn};
 
 use crate::error::ImageError;
@@ -183,7 +183,7 @@ impl<'a, T: ImagePixel, I: ImageInterface<T>> ImageInterface<T> for SubImage<'a,
         self.parent.units()
     }
 
-    fn misc_info(&self) -> casa_types::RecordValue {
+    fn misc_info(&self) -> casa_core::RecordValue {
         self.parent.misc_info()
     }
 
@@ -336,7 +336,7 @@ impl<'a, T: ImagePixel, I: ImageInterface<T> + LatticeMut<T>> ImageInterface<T>
         self.parent.units()
     }
 
-    fn misc_info(&self) -> casa_types::RecordValue {
+    fn misc_info(&self) -> casa_core::RecordValue {
         self.parent.misc_info()
     }
 
@@ -354,7 +354,7 @@ mod tests {
     use super::*;
     use crate::temp_image::TempImage;
     use casa_coordinates::CoordinateSystem;
-    use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+    use casa_core::{RecordField, RecordValue, ScalarValue, Value};
 
     #[test]
     fn readonly_subimage_reads_parent_region() {

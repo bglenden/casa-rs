@@ -2,11 +2,11 @@
 //! World coordinates and integration scale of a collapsed image axis.
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
-use casa_types::measures::{
+use casa_core::measures::{
     MeasFrame,
     doppler::{DopplerRef, MDoppler},
 };
-use casa_types::quanta::Unit;
+use casa_core::quanta::Unit;
 
 use super::super::{MomentAxis as MomentAxisParam, SPEED_OF_LIGHT_KM_S};
 use crate::{ImageError, ImageInterface, ImagePixel};

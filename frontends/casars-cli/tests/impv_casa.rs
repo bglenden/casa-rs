@@ -6,8 +6,8 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use casa_core::{ArrayValue, Value};
 use casa_images::PagedImage;
-use casa_types::{ArrayValue, Value};
 use serde_json::{Value as Json, json};
 
 fn copy_inputs(source: &Path, workspace: &Path) {

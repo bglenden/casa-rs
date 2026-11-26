@@ -350,7 +350,7 @@ mod tests {
     use casa_coordinates::{
         DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate, StokesCoordinate,
     };
-    use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
+    use casa_core::measures::{direction::DirectionRef, frequency::FrequencyRef};
     use ndarray::IxDyn;
 
     #[test]

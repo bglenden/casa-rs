@@ -13,9 +13,9 @@ mod writer;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use casa_core::{ArrayValue, ScalarValue};
 use casa_ms::{MeasurementSet, MsError, derived::engine::MsCalEngine, schema::SubtableId};
 use casa_tables::{RequiredScalarColumnValues, Table, TableOptions};
-use casa_types::{ArrayValue, ScalarValue};
 use serde::{Deserialize, Serialize};
 
 use self::data::{Observation, RadiometerIntegration, RadiometerSeries};

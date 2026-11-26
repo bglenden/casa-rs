@@ -57,9 +57,9 @@ pub(crate) use model::PointingGeometry;
 mod single_dish;
 
 pub(crate) fn fixed_direction_frame(
-    reference: casa_types::measures::direction::DirectionRef,
+    reference: casa_core::measures::direction::DirectionRef,
 ) -> bool {
-    use casa_types::measures::direction::DirectionRef;
+    use casa_core::measures::direction::DirectionRef;
     matches!(
         reference,
         DirectionRef::J2000
@@ -83,6 +83,7 @@ pub use single_dish::SingleDishKernel;
 pub(crate) use single_dish::{SingleDishPointings, SingleDishPrediction, SingleDishWindow};
 
 use casa_coordinates::CoordinateError;
+use casa_core::Correlation;
 use casa_images::ImageError;
 use casa_imaging_operator::{
     Boxcar, ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding, GridPrecision,
@@ -92,7 +93,6 @@ use casa_imaging_operator::{
     SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_imaging_runtime::pass::WorkerTeam;
-use casa_types::Correlation;
 use num_complex::Complex32;
 use thiserror::Error;
 
@@ -376,7 +376,7 @@ impl ModelOperator {
         image: &image_beam::ImageBeam,
         pointing: [f64; 2],
         angle: f64,
-        frame: Option<&casa_types::measures::MeasFrame>,
+        frame: Option<&casa_core::measures::MeasFrame>,
         team: &WorkerTeam,
     ) -> Result<PreparedModelGrids, PredictError> {
         let mut grids = self.operator.empty_model_grids(self.planes())?;

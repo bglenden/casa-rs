@@ -19,9 +19,9 @@ use std::{
 use casa_calibration::{
     CalibraterLifecycle, CalibraterLifecycleError, VisibilityFitRequest, VisibilityFitShape,
 };
+use casa_core::quanta::{Quantity, Unit};
 use casa_ms::{MeasurementSet, MsError, MsSelection, SubtableId};
 use casa_tables::{Table, TableOptions};
-use casa_types::quanta::{Quantity, Unit};
 use numpy::{PyArray1, PyUntypedArray};
 use pyo3::{
     exceptions::{PyRuntimeError, PySystemError, PyTypeError},

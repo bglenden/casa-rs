@@ -13,8 +13,8 @@
 
 use casa_test_support::{CppTableFixture, TableOracle, casacore_oracle_available};
 
+use casa_core::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{ColumnSchema, SortOrder, Table, TableOptions, TableSchema};
-use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
 /// Build the same parent table as the C++ `write_sorted_ref_table_impl` fixture:
 /// schema (id: Int32, name: String, value: Float32), 5 rows:

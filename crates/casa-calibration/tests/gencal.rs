@@ -3,8 +3,8 @@
 mod common;
 
 use casa_calibration::{GencalRequest, GencalType, gencal};
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 #[test]
@@ -233,12 +233,12 @@ fn gencal_rejects_invalid_antpos_and_spw_contracts() {
 
 fn write_gaincurve_table(path: &std::path::Path) {
     let schema = TableSchema::new(vec![
-        ColumnSchema::scalar("BFREQ", casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar("EFREQ", casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar("BTIME", casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar("ETIME", casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar("ANTENNA", casa_types::PrimitiveType::String),
-        ColumnSchema::array_variable("GAIN", casa_types::PrimitiveType::Float32, Some(2)),
+        ColumnSchema::scalar("BFREQ", casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar("EFREQ", casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar("BTIME", casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar("ETIME", casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar("ANTENNA", casa_core::PrimitiveType::String),
+        ColumnSchema::array_variable("GAIN", casa_core::PrimitiveType::Float32, Some(2)),
     ])
     .expect("gaincurve schema");
     let mut table = Table::with_schema(schema);

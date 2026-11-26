@@ -2,10 +2,10 @@
 
 use std::ops::{AddAssign, Div, Mul};
 
+use casa_core::ArrayValue;
+use casa_core::quanta::Quantity;
+use casa_core::quanta::casacore::{casacore_unit, get_value};
 use casa_tables::Table;
-use casa_types::ArrayValue;
-use casa_types::quanta::Quantity;
-use casa_types::quanta::casacore::{casacore_unit, get_value};
 use ndarray::ArrayD;
 use num_complex::Complex32;
 

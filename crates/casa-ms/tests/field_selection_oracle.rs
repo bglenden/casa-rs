@@ -4,10 +4,10 @@
 
 use std::{fs::File, path::Path};
 
+use casa_core::{ScalarValue, Value as Cell};
 use casa_ms::{
     MeasurementSet, MsSelection, MsSelectionIoBudget, ResolvedMsSelectionRow, SubtableId,
 };
-use casa_types::{ScalarValue, Value as Cell};
 use flate2::read::GzDecoder;
 use serde_json::Value;
 

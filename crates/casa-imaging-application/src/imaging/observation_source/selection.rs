@@ -3,12 +3,12 @@
 //! observation's partitions, and the per-sample predicate the request
 //! cannot state.
 
+use casa_core::measures::MjdHighPrec;
 use casa_imaging_model::{BaselineSelection, IdSelection, TimeSelection, UvSelection};
 use casa_imaging_runtime::pass::SourceError;
 use casa_observation::{
     Correlation, FieldSelection, OrderedBaseline, PartitionId, VisibilityBatch,
 };
-use casa_types::measures::MjdHighPrec;
 
 /// One partition the selection reads.
 #[derive(Clone, Debug, PartialEq)]

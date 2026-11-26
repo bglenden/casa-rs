@@ -869,7 +869,7 @@ fn observation_with_sources(count: usize) -> casa_imaging_model::ObservationSnap
         vec![PartitionSelection::new(
             PartitionId(0),
             0,
-            vec![CorrelationProduct::new(0, casa_types::Correlation::I)],
+            vec![CorrelationProduct::new(0, casa_core::Correlation::I)],
         )],
         vec![SpectralWindowSelection::new(0, vec![0])],
     );

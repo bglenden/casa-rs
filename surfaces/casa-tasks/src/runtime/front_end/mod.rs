@@ -136,7 +136,7 @@ impl TaskSuccess {
         message: &str,
         fallback_to_text: bool,
     ) -> Self {
-        match casa_logging::replay_info_record(
+        match casa_tables::log_table::replay_info_record(
             time_mjd_seconds,
             location,
             message,
@@ -243,7 +243,12 @@ impl<'a> TaskInvocation<'a> {
         }
     }
 
-    #[cfg(any(feature = "ms", feature = "imaging", feature = "images"))]
+    #[cfg(any(
+        feature = "ms",
+        feature = "imaging",
+        feature = "images",
+        feature = "vla"
+    ))]
     pub(crate) fn native_options(&self) -> Option<&crate::NativeTaskOptions> {
         self.native
     }

@@ -33,12 +33,12 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use casa_core::ArrayValue;
 use casa_ms::MeasurementSet;
 use casa_ms::derived::engine::raw_field_phase_direction;
 use casa_tables::{
     RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, Table, TableOptions,
 };
-use casa_types::ArrayValue;
 
 use super::array::Antenna;
 use super::error::{SimulatorError, SimulatorResult};
@@ -552,9 +552,11 @@ fn read_pointings(
     )
     .map_err(SimulatorError::admission)?;
     let _ = &memory;
-    let frame = casa_tables::table_measures::TableMeasDesc::reconstruct(&pointing, "DIRECTION")
-        .ok_or_else(|| SimulatorError::raised("POINTING.DIRECTION has no measure descriptor"))?;
-    if !matches!(frame.ref_desc(), casa_tables::table_measures::MeasRefDesc::Fixed { refer } if refer == "J2000")
+    let frame = casa_measures::table_measures::TableMeasDesc::reconstruct(&pointing, "DIRECTION")
+        .ok_or_else(|| {
+        SimulatorError::raised("POINTING.DIRECTION has no measure descriptor")
+    })?;
+    if !matches!(frame.ref_desc(), casa_measures::table_measures::MeasRefDesc::Fixed { refer } if refer == "J2000")
         || frame.offset_desc().is_some()
     {
         return Err(SimulatorError::not_yet_implemented(

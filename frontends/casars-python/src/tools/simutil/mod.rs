@@ -247,7 +247,7 @@ impl PySimutil {
         let directions = ops::directions(self.direction.bind(py))?;
         if py
             .detach(|| {
-                casa_types::quanta::registry::global_registry()
+                casa_core::quanta::registry::global_registry()
                     .with_stable_units(|| directions.split())
             })
             .is_err()
@@ -261,8 +261,8 @@ impl PySimutil {
             return Ok(self.direction.clone_ref(py));
         }
         let pointings = py.detach(|| {
-            casa_types::quanta::registry::global_registry().with_locked_units(|| {
-                let registry = casa_types::quanta::registry::global_registry();
+            casa_core::quanta::registry::global_registry().with_locked_units(|| {
+                let registry = casa_core::quanta::registry::global_registry();
                 let refreshed = if registry.unit_state() == size_state {
                     None
                 } else {
@@ -385,7 +385,7 @@ impl PySimutil {
     ) -> PyResult<Py<PyAny>> {
         let directions = ops::directions(direction.as_ref().unwrap_or(self.direction.bind(py)))?;
         let split = py.detach(|| directions.split()).map_err(ops::raised)?;
-        let angle = |value: &casa_types::quanta::Quantity| {
+        let angle = |value: &casa_core::quanta::Quantity| {
             CasaValue::quantity(value.value(), value.unit().name())
         };
         CasaValue::Tuple(vec![
@@ -415,7 +415,7 @@ impl PySimutil {
                 "the direction measure's refer is not a string",
             ));
         };
-        let (longitude, latitude) = casa_types::quanta::registry::global_registry()
+        let (longitude, latitude) = casa_core::quanta::registry::global_registry()
             .with_stable_units(|| {
                 Ok::<_, PyErr>((ops::quantity(field("m0")?)?, ops::quantity(field("m1")?)?))
             })?;
@@ -648,7 +648,7 @@ impl PySimutil {
             vec![s.clone()]
         };
         let mut candidates = vec![None; items.len()];
-        let invalid = casa_types::quanta::registry::global_registry().with_stable_units(|| {
+        let invalid = casa_core::quanta::registry::global_registry().with_stable_units(|| {
             items.iter().enumerate().find_map(|(index, item)| {
                 let candidate =
                     candidates[index].get_or_insert_with(|| ops::quantity_candidate(item));

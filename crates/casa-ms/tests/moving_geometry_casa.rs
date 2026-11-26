@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 use std::f64::consts::{PI, TAU};
 use std::path::PathBuf;
 
+use casa_core::ScalarValue;
 use casa_ms::MeasurementSet;
 use casa_ms::derived::columns::DerivedColumns;
-use casa_types::ScalarValue;
 use serde::Deserialize;
 
 #[derive(Deserialize)]

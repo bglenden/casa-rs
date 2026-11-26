@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use casa_core::{PrimitiveType, Value};
 use casa_tables::{ArrayShapeContract, ColumnSchema, ColumnType, Table};
-use casa_types::{PrimitiveType, Value};
 use pyo3::exceptions::{PyIndexError, PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyList, PySlice};

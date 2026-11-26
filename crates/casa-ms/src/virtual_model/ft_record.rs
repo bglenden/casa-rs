@@ -16,8 +16,8 @@
 
 use std::path::Path;
 
-use casa_types::measures::direction::MDirection;
-use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
+use casa_core::measures::direction::MDirection;
+use casa_core::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
 /// What CASA's machine knew of the first visibility buffer it degridded:
@@ -187,7 +187,7 @@ pub fn set_grid_motion(
     record: &mut RecordValue,
     source: &MDirection,
     anchor: &MDirection,
-    location: &casa_types::measures::position::MPosition,
+    location: &casa_core::measures::position::MPosition,
 ) {
     let measure = |value: &MDirection| {
         let (longitude, latitude) = value.as_angles();

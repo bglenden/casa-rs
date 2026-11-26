@@ -12,8 +12,8 @@ mod table;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use casa_core::quanta::format::{YMD, format_time};
 use casa_tables::{Table, TableOptions};
-use casa_types::quanta::format::{YMD, format_time};
 use serde::Serialize;
 
 pub use atmosphere::AtmosphericOptions;

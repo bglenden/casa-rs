@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Decode the observer table and its MeasComet metadata in the Horizons reply.
 
+use casa_core::quanta::format::{YMD, format_time};
+use casa_core::quanta::{Quantity, Unit};
+use casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{ColumnSchema, Table, TableSchema};
-use casa_types::quanta::format::{YMD, format_time};
-use casa_types::quanta::{Quantity, Unit};
-use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
 const COLUMNS: [(&str, &str, &str); 14] = [
     ("MJD", "d", "Date__(UT)"),

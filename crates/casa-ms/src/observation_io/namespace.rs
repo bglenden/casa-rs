@@ -21,11 +21,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::{ArrayValue, ScalarValue};
 use casa_observation::{Catalogue, ObservationError, PartitionId};
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::{ArrayValue, ScalarValue};
 
 use super::msv2::catalogue::{measure_reference, phase_frames, require_units};
 use super::update::storage;

@@ -8,12 +8,12 @@ use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_calibration::{predict_calibrator_component, predict_solar_component_2012};
 use casa_components::SkyComponent;
 use casa_contracts::{CasaFloat, CasaValue, FloatDtype, RunProductKind, casacore_value_to_casa};
-use casa_measures_data::MeasuresRuntime;
+use casa_core::Value;
+use casa_core::measures::epoch::{EpochRef, MEpoch};
+use casa_core::quanta::{Quantity, Unit};
+use casa_measures::MeasuresRuntime;
 use casa_simulation::predictcomp::{CalibratorBaselines, calibrator_baselines};
 use casa_tables::publication::check_write_access;
-use casa_types::Value;
-use casa_types::measures::epoch::{EpochRef, MEpoch};
-use casa_types::quanta::{Quantity, Unit};
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -210,14 +210,14 @@ fn spectrum_record(
 ) -> Result<CasaValue, TaskFailure> {
     let mut spectrum = component.spectrum().to_record().map_err(failed)?;
     if let Some(flux) = zero_baseline {
-        let mut flux_record = casa_types::RecordValue::new(Vec::new());
+        let mut flux_record = casa_core::RecordValue::new(Vec::new());
         flux_record.upsert(
             "value",
-            Value::Scalar(casa_types::ScalarValue::Float64(flux)),
+            Value::Scalar(casa_core::ScalarValue::Float64(flux)),
         );
         flux_record.upsert(
             "unit",
-            Value::Scalar(casa_types::ScalarValue::String("Jy".into())),
+            Value::Scalar(casa_core::ScalarValue::String("Jy".into())),
         );
         spectrum.upsert("bl0flux", Value::Record(flux_record));
     }
@@ -386,7 +386,7 @@ fn frequency(text: &str) -> Result<f64, String> {
         .unwrap_or_else(|_| quantity.value()))
 }
 
-fn record(value: casa_types::RecordValue) -> Result<CasaValue, TaskFailure> {
+fn record(value: casa_core::RecordValue) -> Result<CasaValue, TaskFailure> {
     casacore_value_to_casa(&Value::Record(value)).map_err(failed)
 }
 

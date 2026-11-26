@@ -4,8 +4,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use casa_core::{RecordValue, ScalarValue, Value};
 use casa_tables::{ColumnType, Table, TableError, TableOptions};
-use casa_types::{RecordValue, ScalarValue, Value};
 
 use crate::selection::array_expr::ArraySelection;
 use crate::selection::parser::parse_state_selector;

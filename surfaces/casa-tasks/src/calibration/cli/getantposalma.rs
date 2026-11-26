@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::{CasaValue, ParameterValue};
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::quanta::{Quantity, Unit};
 use serde_json::{Map, Value, json};
 use tempfile::{Builder, NamedTempFile};
 use time::OffsetDateTime;

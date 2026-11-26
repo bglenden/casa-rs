@@ -6,12 +6,12 @@ use crate::observation_io::{
     Msv2Observation,
     update::{request_error, storage},
 };
+use casa_core::measures::MjdHighPrec;
 use casa_observation::{ObservationError, VisibilityBatch};
 use casa_tables::{
     RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, SelectedArray1DCellsMut,
     SelectedArray2DCellsMut, Table,
 };
-use casa_types::measures::MjdHighPrec;
 
 /// Reused storage for one batch's original acquired rows, without padding.
 #[derive(Default)]

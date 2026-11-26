@@ -3,23 +3,23 @@
 
 use std::process::Command;
 
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::epoch::{EpochRef, MEpoch};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::measures::position::PositionRef;
+use casa_core::measures::{MPosition, MeasFrame, MeasuresProvider};
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_ms::SubTable;
 use casa_ms::ms::MeasurementSet;
 use casa_test_support::measures_interop::MeasuresOracle;
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier, discover_casa_python};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::epoch::{EpochRef, MEpoch};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::measures::position::PositionRef;
-use casa_types::measures::{MPosition, MeasFrame, MeasuresProvider};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use casa_vla::{CdaId, DirectionEpoch, VlaDiskReader};
 use casa_vla::{ImportVlaOptions, import_archive_files_to_measurement_set_from_options};
 use tempfile::TempDir;
 
-fn measures_runtime() -> std::sync::Arc<casa_measures_data::MeasuresRuntime> {
+fn measures_runtime() -> std::sync::Arc<casa_measures::MeasuresRuntime> {
     std::sync::Arc::new(
-        casa_measures_data::MeasuresRuntime::open_discovered(Default::default())
+        casa_measures::MeasuresRuntime::open_discovered(Default::default())
             .expect("test measures runtime"),
     )
 }
@@ -39,35 +39,35 @@ fn direction_ref(epoch: DirectionEpoch) -> DirectionRef {
     }
 }
 
-fn get_f64_scalar(row: &casa_types::RecordValue, column: &str) -> f64 {
+fn get_f64_scalar(row: &casa_core::RecordValue, column: &str) -> f64 {
     match row.get(column).expect("missing scalar column") {
         Value::Scalar(ScalarValue::Float64(value)) => *value,
         other => panic!("{column} had unexpected value {other:?}"),
     }
 }
 
-fn get_i32_scalar(row: &casa_types::RecordValue, column: &str) -> i32 {
+fn get_i32_scalar(row: &casa_core::RecordValue, column: &str) -> i32 {
     match row.get(column).expect("missing scalar column") {
         Value::Scalar(ScalarValue::Int32(value)) => *value,
         other => panic!("{column} had unexpected value {other:?}"),
     }
 }
 
-fn get_string_scalar(row: &casa_types::RecordValue, column: &str) -> String {
+fn get_string_scalar(row: &casa_core::RecordValue, column: &str) -> String {
     match row.get(column).expect("missing scalar column") {
         Value::Scalar(ScalarValue::String(value)) => value.clone(),
         other => panic!("{column} had unexpected value {other:?}"),
     }
 }
 
-fn get_f64_array(row: &casa_types::RecordValue, column: &str) -> Vec<f64> {
+fn get_f64_array(row: &casa_core::RecordValue, column: &str) -> Vec<f64> {
     match row.get(column).expect("missing array column") {
         Value::Array(ArrayValue::Float64(values)) => values.iter().copied().collect(),
         other => panic!("{column} had unexpected value {other:?}"),
     }
 }
 
-fn get_i32_scalar_or(row: &casa_types::RecordValue, column: &str, default: i32) -> i32 {
+fn get_i32_scalar_or(row: &casa_core::RecordValue, column: &str, default: i32) -> i32 {
     match row.get(column) {
         Some(Value::Scalar(ScalarValue::Int32(value))) => *value,
         None => default,

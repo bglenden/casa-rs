@@ -2,13 +2,13 @@
 //! The task adapter reads actual CASA MS data through casa-observation.
 use base64::{Engine, engine::general_purpose::STANDARD};
 use casa_coordinates::{DirectionCoordinate, Projection, ProjectionType};
+use casa_core::measures::direction::DirectionRef;
 use casa_imaging_application::{
     Cancel, RunContext,
     single_dish::{TotalPowerProducts, TotalPowerRequest, image_observation},
 };
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_imaging_singledish::{GridFunction, KernelParameters};
-use casa_types::measures::direction::DirectionRef;
 use flate2::read::GzDecoder;
 use serde_json::Value;
 use std::path::Path;

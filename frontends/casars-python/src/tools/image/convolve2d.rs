@@ -2,6 +2,8 @@
 
 use std::path::Path;
 
+use casa_core::RecordValue;
+use casa_core::quanta::{Quantity, casacore::stream_double};
 use casa_images::{
     BeamComponent, GaussianBeam, ImageInfo, ImageInterface, StoredGaussianBeam,
     analysis::{
@@ -9,8 +11,6 @@ use casa_images::{
         ensure_outfile_does_not_alias_input,
     },
 };
-use casa_types::RecordValue;
-use casa_types::quanta::{Quantity, casacore::stream_double};
 use pyo3::prelude::*;
 
 use crate::convert::{IntList, Variant, quantity};

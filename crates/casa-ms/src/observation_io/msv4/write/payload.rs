@@ -5,8 +5,8 @@
 
 use std::ops::Range;
 
+use casa_core::measures::{EpochView, MjdHighPrec, UvwView};
 use casa_observation::{ObservationError, ScanId, Shared, VisibilityBatch};
-use casa_types::measures::{EpochView, MjdHighPrec, UvwView};
 use ndarray::{ArrayView1, ArrayView3};
 use num_complex::Complex32;
 use zarrs::array::{Array, ArraySubset, CodecOptions, Element};

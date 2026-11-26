@@ -4,8 +4,8 @@
 #[path = "../../../crates/casa-calibration/tests/common/mod.rs"]
 mod common;
 
+use casa_core::{Complex32, ScalarValue};
 use casa_tables::{Table, TableOptions};
-use casa_types::{Complex32, ScalarValue};
 
 #[test]
 fn public_applycal_records_all_parameters_including_trial_history() {

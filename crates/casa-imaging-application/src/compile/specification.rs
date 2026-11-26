@@ -790,7 +790,7 @@ mod tests {
     fn fit_and_output_channels_compile_to_one_union_with_exact_roles() {
         let window = SourceSpectralWindow {
             spw_id: 0,
-            frequency_reference: casa_types::measures::frequency::FrequencyRef::LSRK,
+            frequency_reference: casa_core::measures::frequency::FrequencyRef::LSRK,
             frequencies_hz: vec![100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0],
             channel_widths_hz: vec![1.0; 8],
         };

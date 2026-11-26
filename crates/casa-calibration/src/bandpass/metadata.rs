@@ -2,9 +2,9 @@
 //! Selected B-table channelization, including CASA's persisted width defects.
 use super::{BandpassFrequencyInterval, BandpassSolveError};
 use crate::solve::grouping::SelectedSolveRow;
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_ms::{ChannelSelection, ms::MeasurementSet};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,

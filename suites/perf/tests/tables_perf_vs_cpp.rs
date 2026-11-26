@@ -9,9 +9,9 @@
 
 #![cfg(feature = "performance-tests")]
 
+use casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{ColumnSchema, Slicer, Table, TableOptions, TableSchema};
 use casa_test_support::{CellSliceBenchParams, TableOracle, casacore_oracle_available};
-use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ShapeBuilder;
 
 fn table_cell<'a>(

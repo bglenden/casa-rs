@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's moment calculations over valid samples of an image profile.
 
-use casa_types::ArrayD;
+use casa_core::ArrayD;
 use ndarray::{Axis, IxDyn, ShapeBuilder};
 
 use super::axis::ProfileCoordinates;

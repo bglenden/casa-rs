@@ -2,7 +2,7 @@
 //! Compile compound world regions into crop bounds and pixel membership.
 
 use casa_coordinates::CoordinateSystem;
-use casa_types::{RecordValue, Value};
+use casa_core::{RecordValue, Value};
 
 use crate::ImageError;
 use crate::saved_region::{PolygonPixelPlane, compound_children, native_region_kind};

@@ -6,7 +6,7 @@ use std::{
     ops::{AddAssign, Div, Mul},
 };
 
-use casa_types::ArrayValue;
+use casa_core::ArrayValue;
 use ndarray::{Array2, ArrayD, ArrayView2, Ix2};
 
 use super::{FlaggingError, MeasurementSet};

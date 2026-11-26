@@ -4,6 +4,10 @@
 
 use std::path::Path;
 
+use casa_core::measures::EpochRef;
+use casa_core::measures::direction::DirectionRef;
+use casa_core::{PrimitiveType, ScalarValue, Value};
+use casa_measures::table_measures::{MeasureType, TableMeasDesc, default_direction_ref_map};
 use casa_ms::observation_io::convert::{Loss, LossKind};
 use casa_ms::observation_io::{OpenOptions, open};
 use casa_ms::{MeasurementSet, SubtableId};
@@ -11,10 +15,6 @@ use casa_observation::{
     AntennaId, ObservationError, PartitionId, PointingDirection, PointingRequest,
 };
 use casa_tables::ColumnSchema;
-use casa_tables::table_measures::{MeasureType, TableMeasDesc, default_direction_ref_map};
-use casa_types::measures::EpochRef;
-use casa_types::measures::direction::DirectionRef;
-use casa_types::{PrimitiveType, ScalarValue, Value};
 
 use super::fields::mosaic;
 
@@ -131,7 +131,7 @@ fn pointing_rows(path: &Path) -> Vec<Row> {
     (0..pointing.row_count())
         .map(|row| {
             let direction = match pointing.array(row, "DIRECTION").expect("DIRECTION") {
-                casa_types::ArrayValue::Float64(values) => [values[[0, 0]], values[[1, 0]]],
+                casa_core::ArrayValue::Float64(values) => [values[[0, 0]], values[[1, 0]]],
                 other => panic!("DIRECTION is {other:?}"),
             };
             Row {
@@ -294,14 +294,14 @@ fn rate_terms(path: &Path) {
                 .array(row, "DIRECTION")
                 .expect("DIRECTION")
             {
-                casa_types::ArrayValue::Float64(values) => [values[[0, 0]], values[[1, 0]]],
+                casa_core::ArrayValue::Float64(values) => [values[[0, 0]], values[[1, 0]]],
                 other => panic!("DIRECTION is {other:?}"),
             };
             let terms = ndarray::arr2(&[[ra, 1e-6], [dec, -2e-6]]).into_dyn();
             pointing.set_i32(row, "NUM_POLY", 1).expect("NUM_POLY");
             for column in ["DIRECTION", "TARGET"] {
                 pointing
-                    .set_array(row, column, casa_types::ArrayValue::Float64(terms.clone()))
+                    .set_array(row, column, casa_core::ArrayValue::Float64(terms.clone()))
                     .expect("terms");
             }
         }
@@ -397,7 +397,7 @@ fn pointing_frame(path: &Path) -> String {
     let ms = MeasurementSet::open(path).expect("ms");
     let table = ms.subtable(SubtableId::Pointing).expect("POINTING");
     match TableMeasDesc::reconstruct(table, "DIRECTION").map(|desc| desc.ref_desc().clone()) {
-        Some(casa_tables::table_measures::MeasRefDesc::Fixed { refer }) => refer,
+        Some(casa_measures::table_measures::MeasRefDesc::Fixed { refer }) => refer,
         other => panic!("DIRECTION's reference is {other:?}"),
     }
 }
@@ -565,7 +565,7 @@ fn pointing_polynomials_keep_each_rows_direction_at_its_time_in_msv4() {
                     pointing.f64(row, "TIME").expect("TIME"),
                     pointing.f64(row, "TIME_ORIGIN").expect("TIME_ORIGIN"),
                     match pointing.array(row, "DIRECTION").expect("DIRECTION") {
-                        casa_types::ArrayValue::Float64(values) => values.clone(),
+                        casa_core::ArrayValue::Float64(values) => values.clone(),
                         other => panic!("DIRECTION is {other:?}"),
                     },
                 )
@@ -721,7 +721,7 @@ fn edit_feed(path: &Path, every: Option<i32>, copies: &[(usize, i32, f64, f64)])
         copy.upsert("TIME", Value::Scalar(ScalarValue::Float64(time + later_s)));
         copy.upsert(
             "RECEPTOR_ANGLE",
-            Value::Array(casa_types::ArrayValue::Float64(
+            Value::Array(casa_core::ArrayValue::Float64(
                 ndarray::arr1(&[*angle, *angle]).into_dyn(),
             )),
         );
@@ -978,8 +978,8 @@ fn a_moving_field_at_no_time_is_its_body_at_the_field_time() {
     let sample = series
         .sample(field_time_mjd)
         .expect("the comet at the field's time");
-    let expected = casa_types::measures::ephemeris::offset_true_angle(
-        &casa_types::measures::direction::MDirection::from_cosines(
+    let expected = casa_core::measures::ephemeris::offset_true_angle(
+        &casa_core::measures::direction::MDirection::from_cosines(
             sample.position_m,
             series.frame(),
         ),
@@ -1097,8 +1097,8 @@ fn fields_carry_the_ephemerides_they_follow() {
 
 /// Whether two directions are the same, bit for bit, and in one frame.
 fn same_direction(
-    a: &casa_types::measures::direction::MDirection,
-    b: &casa_types::measures::direction::MDirection,
+    a: &casa_core::measures::direction::MDirection,
+    b: &casa_core::measures::direction::MDirection,
 ) -> bool {
     a.refer() == b.refer()
         && a.cosines()
@@ -1109,8 +1109,8 @@ fn same_direction(
 
 /// The largest angle between two J2000 directions, radians.
 fn separation(
-    a: &casa_types::measures::direction::MDirection,
-    b: &casa_types::measures::direction::MDirection,
+    a: &casa_core::measures::direction::MDirection,
+    b: &casa_core::measures::direction::MDirection,
 ) -> f64 {
     let [a, b] = [a.cosines(), b.cosines()];
     let dot: f64 = a.iter().zip(b).map(|(a, b)| a * b).sum();

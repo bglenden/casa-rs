@@ -87,7 +87,7 @@ fn metal_later_windows_keep_predictions_without_the_original_noise() {
                     resolution_hz: 15.625e6,
                     channel_count: CHANNELS,
                     stokes: "XX XY YX YY".into(),
-                    frame: casa_types::measures::frequency::FrequencyRef::TOPO,
+                    frame: casa_core::measures::frequency::FrequencyRef::TOPO,
                 })
                 .unwrap();
                 sm.observe(&casa_simulation::ObserveSpec {

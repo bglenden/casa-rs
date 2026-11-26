@@ -4,11 +4,11 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_images::PagedImage;
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_simulation::simobserve::{SimobserveParameters, SimobserveRequest, simobserve};
 use casa_simulation::{BackendRequest, SessionResources, SimulatorOptions};
-use casa_types::measures::{EpochRef, MEpoch};
 use flate2::read::GzDecoder;
 use ndarray::{ArrayD, IxDyn};
 use serde_json::Value;

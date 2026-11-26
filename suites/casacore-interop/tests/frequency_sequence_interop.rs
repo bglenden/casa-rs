@@ -8,12 +8,12 @@
 
 use std::sync::{Arc, OnceLock};
 
-use casa_measures_data::MeasuresRuntime;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::{FrequencyRef, MFrequencyConverter};
+use casa_core::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
+use casa_measures::MeasuresRuntime;
 use casa_test_support::FrequencySequence;
 use casa_test_support::measures_interop::MeasuresOracle;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::{FrequencyRef, MFrequencyConverter};
-use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
 
 // A southern target from the VLA, at ALMA band 6.
 const DIRECTION_RAD: [f64; 2] = [1.459_7, -0.087_3];

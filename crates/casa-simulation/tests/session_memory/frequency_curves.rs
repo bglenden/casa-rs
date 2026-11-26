@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Frequency matrices are admitted while preparing grids, then released.
 use super::*;
+use casa_core::{ArrayValue, Value};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, Value};
 
 fn copy_tree(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).unwrap();

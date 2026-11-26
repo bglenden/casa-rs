@@ -2,12 +2,12 @@
 //! Resolve the explicit-geometry, native-channel subset of CASA's task.
 use super::{TotalPowerError, TotalPowerProducts, TotalPowerRequest, failure};
 use casa_coordinates::{DirectionCoordinate, Projection, ProjectionType};
-use casa_imaging_singledish::{GridFunction, KernelParameters};
-use casa_observation::{AntennaId, Catalogue, WindowId};
-use casa_types::{
+use casa_core::{
     measures::direction::DirectionRef,
     quanta::{Quantity, Unit},
 };
+use casa_imaging_singledish::{GridFunction, KernelParameters};
+use casa_observation::{AntennaId, Catalogue, WindowId};
 use serde_json::{Map, Value};
 use std::path::PathBuf;
 

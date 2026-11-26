@@ -3,9 +3,9 @@
 
 use std::path::Path;
 
-use casa_tables::table_measures::MeasureType;
+use casa_core::{ArrayValue, ScalarValue, Value};
+use casa_measures::table_measures::MeasureType;
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use num_complex::Complex64;
 
 use super::measures::{MeasureColumn, array_f64, cell, cell_error, quantity, quantum_units};

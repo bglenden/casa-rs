@@ -9,6 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use casa_core::measures::MjdHighPrec;
 use casa_ms::observation_io::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
 use casa_ms::observation_io::{Msv4Codec, OpenOptions, open, open_update};
 use casa_observation::{
@@ -18,7 +19,6 @@ use casa_observation::{
 use casa_simulation::synthetic::{
     Antenna, Field, ObservationRequest, SpectralSetup, generate_unflagged,
 };
-use casa_types::measures::MjdHighPrec;
 use ndarray::Array3;
 
 use super::{per_times, request, samples};

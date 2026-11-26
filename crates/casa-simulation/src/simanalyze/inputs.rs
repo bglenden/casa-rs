@@ -3,8 +3,8 @@
 use super::{Parameters, failure};
 use crate::simobserve::SimobserveError;
 use crate::simutil::analysis;
+use casa_core::ScalarValue;
 use casa_ms::MeasurementSet;
-use casa_types::ScalarValue;
 use std::path::{Path, PathBuf};
 
 pub(super) struct Inputs {

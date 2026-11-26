@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use casa_core::{ArrayD, Complex32, Complex64, RecordValue};
 use casa_images::analysis::{
     BoundImageToolOperands, ImageToolExpressionInputs, ImageToolPixelExpression,
 };
@@ -16,7 +17,6 @@ use casa_images::{
 };
 use casa_lattices::Lattice;
 use casa_tables::lexical_absolute;
-use casa_types::{ArrayD, Complex32, Complex64, RecordValue};
 use pyo3::prelude::*;
 
 use super::attachment::AttachedImage;

@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::{TaskFailure, TaskInvocation};
-use casa_types::measures::frequency::FrequencyRef;
+use casa_core::measures::frequency::FrequencyRef;
 
 use super::calibration::figure::plot_limits;
 use super::plotms_atmosphere::Curve;

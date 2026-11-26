@@ -18,10 +18,10 @@
 //! | [`ShapeType`], [`SpectralType`] | `ComponentType::Shape`, `ComponentType::SpectralShape` |
 //!
 //! Directions and frequencies are casa-types measures
-//! ([`MDirection`](casa_types::measures::direction::MDirection),
-//! [`MFrequency`](casa_types::measures::frequency::MFrequency)) carrying their
+//! ([`MDirection`](casa_core::measures::direction::MDirection),
+//! [`MFrequency`](casa_core::measures::frequency::MFrequency)) carrying their
 //! frames, and errors that carry units are casa-types
-//! [`Quantity`](casa_types::quanta::Quantity) values.
+//! [`Quantity`](casa_core::quanta::Quantity) values.
 //!
 //! [`ComponentList::read_table`] reads a table as CASA's
 //! `ComponentList::readTable` does, and [`ComponentList::write_table`] writes

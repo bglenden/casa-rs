@@ -6,12 +6,12 @@
 //!
 //! Cf. C++ `MSSpWindowColumns::chanFreqMeas()`.
 
-use casa_tables::Table;
-use casa_tables::table_measures::{
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::{ArrayValue, ScalarValue, Value};
+use casa_measures::table_measures::{
     MeasRefDesc, MeasureType, TableMeasDesc, frequency_ref_for_table_code,
 };
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::{ArrayValue, ScalarValue, Value};
+use casa_tables::Table;
 
 use crate::error::{MsError, MsResult};
 use crate::subtables::{get_array, get_f64, get_i32, get_string};
@@ -203,7 +203,7 @@ mod tests {
     use super::*;
     use crate::column_def::build_table_schema;
     use crate::schema;
-    use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+    use casa_core::{RecordField, RecordValue, ScalarValue, Value};
     use ndarray::ArrayD;
 
     fn make_spw_table(freq_ref: i32, ref_freq: f64, chan_freqs: &[f64]) -> Table {

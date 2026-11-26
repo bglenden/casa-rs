@@ -13,8 +13,8 @@
 
 use casa_test_support::{CppTableFixture, TableOracle, casacore_oracle_available};
 
+use casa_core::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
-use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
 /// Build a 3-row table matching the C++ fixture: (id: Int32, name: String).
 fn build_part_table(ids: &[(i32, &str)]) -> Table {

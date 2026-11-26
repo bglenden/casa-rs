@@ -6,8 +6,8 @@ use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, ObsInfo, StokesCoordinate, StokesType,
     TabularCoordinate, defaults,
 };
-use casa_types::measures::{EpochRef, MEpoch, MPosition, epoch_to_record};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_core::measures::{EpochRef, MEpoch, MPosition, epoch_to_record};
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyString};

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Resolve which scalar and spectral weight columns statwt writes.
 
+use casa_core::{ArrayValue, Value};
 use casa_ms::{MsError, MsResult};
 use casa_tables::{Table, TableWriteLock};
-use casa_types::{ArrayValue, Value};
 use ndarray::{Array1, ArrayD, IxDyn, ShapeBuilder};
 
 use crate::weight_spectra::{NewSpectra, SIGMA_SPECTRUM, WEIGHT_SPECTRUM, has_column};

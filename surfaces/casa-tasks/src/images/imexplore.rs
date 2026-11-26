@@ -305,7 +305,7 @@ fn to_imhead_value(value: &ParameterValue, is_custom: bool) -> Result<ImheadValu
         ParameterValue::Float(number) => Ok(ImheadValue::Float(*number)),
         ParameterValue::Bool(flag) => Ok(ImheadValue::Bool(*flag)),
         ParameterValue::Table(_) => match casa_contracts::parameter_value_to_casacore(value) {
-            Ok(casa_types::Value::Record(record)) => Ok(ImheadValue::Record(record)),
+            Ok(casa_core::Value::Record(record)) => Ok(ImheadValue::Record(record)),
             Ok(_) => Ok(ImheadValue::Unsupported),
             Err(error) if is_custom => Err(ImageError::InvalidMetadata(error.into())),
             Err(_) => Ok(ImheadValue::Unsupported),

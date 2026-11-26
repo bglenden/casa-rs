@@ -6,12 +6,12 @@ use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, OnceLock};
 
+use casa_core::measures::MeasuresProvider;
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{
     PlainReferenceRead, RequiredScalarColumnValues, SelectedArray1DCells, Table, TableColumn,
     TablePartNames,
 };
-use casa_types::measures::MeasuresProvider;
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use num_complex::Complex32;
 
@@ -1367,7 +1367,7 @@ fn read_matrix_cells(
 }
 
 fn empty_array(main: &Table, name: &str) -> MsResult<ArrayValue> {
-    use casa_types::PrimitiveType;
+    use casa_core::PrimitiveType;
     let data_type = main
         .schema()
         .and_then(|schema| schema.column(name))

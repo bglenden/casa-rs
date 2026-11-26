@@ -4,15 +4,15 @@
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
-use casa_tables::table_measures::{MeasRefDesc, MeasureType, TableMeasDesc};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::epoch::{EpochRef, MEpoch};
+use casa_core::measures::position::{MPosition, PositionRef};
+use casa_core::quanta::{Quantity, Unit};
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
+use casa_measures::table_measures::{MeasRefDesc, MeasureType, TableMeasDesc};
 use casa_tables::table_quantum::TableQuantumDesc;
 use casa_tables::taql::TaqlError;
 use casa_tables::{Table, TableColumn, TableError};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::epoch::{EpochRef, MEpoch};
-use casa_types::measures::position::{MPosition, PositionRef};
-use casa_types::quanta::{Quantity, Unit};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::{MsError, MsResult};
 

@@ -7,8 +7,8 @@ use std::io::ErrorKind;
 use std::ops::{Add, Div, Mul};
 use std::path::Path;
 
+use casa_core::{ArrayValue, Correlation, ScalarValue};
 use casa_tables::{ArrayShapeContract, ColumnType, Table, TableError, TableOptions};
-use casa_types::{ArrayValue, Correlation, ScalarValue};
 use ndarray::{Array1, Array2, Array3, ArrayD, Ix2, Ix3};
 
 use super::correlation_metadata::{CorrelationSelection, parallel_hands};

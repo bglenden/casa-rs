@@ -2,6 +2,7 @@
 //! Bounded observation batches, projected pointings and Stokes I spectra.
 use super::{TotalPowerError, TotalPowerRequest, failure, pointing};
 use crate::RunContext;
+use casa_core::measures::MeasuresProvider;
 use casa_imaging_runtime::{
     Demand, Reservation, admit,
     pass::{WORKER_STACK_BYTES, WorkerTeam},
@@ -11,7 +12,6 @@ use casa_observation::{
     AccessRequest, BatchBuffers, CorrelationRequest, FieldSelection, Grouping, Observation,
     PartitionId, ReadEvent, Roles, TimeSelection, WeightRequest,
 };
-use casa_types::measures::MeasuresProvider;
 use ndarray::Array3;
 use std::sync::Arc;
 
@@ -29,7 +29,7 @@ pub(super) fn grid(
     (
         Vec<Pointing>,
         Reservation,
-        Option<casa_types::measures::epoch::MEpoch>,
+        Option<casa_core::measures::epoch::MEpoch>,
     ),
     TotalPowerError,
 > {

@@ -238,7 +238,7 @@ mod tests {
     use casa_coordinates::{
         Coordinate, DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate,
     };
-    use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
+    use casa_core::measures::{direction::DirectionRef, frequency::FrequencyRef};
 
     #[test]
     fn restart_reference_longitudes_only_match_at_whole_turns() {

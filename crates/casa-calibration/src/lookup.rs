@@ -23,8 +23,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use casa_core::Complex32;
 use casa_tables::Table;
-use casa_types::Complex32;
 
 use crate::execute::{
     ApplyExecutionError, CalibrationGrid, CalibrationSolution, DelayGrid, GainGrid,
@@ -728,7 +728,7 @@ pub(crate) fn spectral_window_path(path: &Path) -> Result<Option<PathBuf>, Apply
     Ok(table
         .keywords()
         .get("SPECTRAL_WINDOW")
-        .and_then(casa_types::Value::as_table_ref)
+        .and_then(casa_core::Value::as_table_ref)
         .map(|stored| casa_tables::add_directory(stored, &owner))
         .or_else(|| {
             let child = owner.join("SPECTRAL_WINDOW");

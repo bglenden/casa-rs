@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::Path;
 
-use casa_types::ArrayValue;
+use casa_core::ArrayValue;
 use ndarray::{Array1, Array2, ArrayD, Axis};
 
 use casa_tables::TableError;

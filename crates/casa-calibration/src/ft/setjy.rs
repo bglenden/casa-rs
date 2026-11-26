@@ -4,10 +4,10 @@
 use casa_components::{
     ComponentShape, Flux, SkyComponent, SpectralIndex, SpectralKind, SpectralModel, TabularSpectrum,
 };
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::frame::MeasFrame;
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
 use casa_ms::MsResult;
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::frame::MeasFrame;
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 
 use super::invalid;
 

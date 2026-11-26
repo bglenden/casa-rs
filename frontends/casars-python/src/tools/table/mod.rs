@@ -97,13 +97,13 @@ pub(crate) fn component_keyword_value(
 pub(crate) fn casa_record(
     py: Python<'_>,
     value: Option<&Bound<'_, PyDict>>,
-) -> PyResult<casa_types::RecordValue> {
+) -> PyResult<casa_core::RecordValue> {
     let Some(value) = value else {
-        return Ok(casa_types::RecordValue::default());
+        return Ok(casa_core::RecordValue::default());
     };
     let incoming = component_keyword_incoming(py, Some(value.as_any()))?;
     match incoming.natural()? {
-        casa_types::Value::Record(record) => Ok(record),
+        casa_core::Value::Record(record) => Ok(record),
         _ => unreachable!("a Python dictionary converts to a record"),
     }
 }
@@ -146,7 +146,7 @@ fn component_keyword_incoming(
 
 /// Apply the same typed keyword conversion and replacement rules as `tb`.
 pub(crate) fn define_component_keyword(
-    record: &mut casa_types::RecordValue,
+    record: &mut casa_core::RecordValue,
     name: String,
     value: ComponentKeywordValue,
 ) -> crate::convert::ConvertResult<()> {

@@ -4,7 +4,7 @@
 use std::f64::consts::PI;
 use std::sync::Arc;
 
-use casa_types::Complex32;
+use casa_core::Complex32;
 
 use super::{EpCacheProducts, PreparedEpModel};
 

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Read the embedded component records used by CASA's virtual sky model.
 
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::measures::{direction_from_record, frequency_from_record};
-use casa_types::quanta::{Quantity, Unit};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::measures::{direction_from_record, frequency_from_record};
+use casa_core::quanta::{Quantity, Unit};
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use num_complex::Complex64;
 
 use crate::component::SkyComponent;
@@ -239,7 +239,7 @@ fn spectrum(record: &RecordValue) -> Result<SpectralModel, ComponentError> {
         let hz = number(record, "referenceFreq")?;
         number(record, "minFreq")?;
         number(record, "maxFreq")?;
-        frequency = casa_types::measures::frequency::MFrequency::new(hz, frame);
+        frequency = casa_core::measures::frequency::MFrequency::new(hz, frame);
     }
     let mut model = SpectralModel::new(frequency, kind);
     let unit = string(subrecord(frequency_record, "m0")?, "unit")?;
@@ -305,8 +305,8 @@ fn invalid(field: impl Into<String>) -> ComponentError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use casa_types::measures::direction::{DirectionRef, MDirection};
-    use casa_types::measures::frequency::{FrequencyRef, MFrequency};
+    use casa_core::measures::direction::{DirectionRef, MDirection};
+    use casa_core::measures::frequency::{FrequencyRef, MFrequency};
 
     #[test]
     fn component_record_frequency_honors_its_unit() {
@@ -324,7 +324,7 @@ mod tests {
         assert_eq!(decoded.spectrum().reference_frequency().hz(), 1.5e9);
     }
 
-    use casa_types::RecordField;
+    use casa_core::RecordField;
 
     #[test]
     fn resolves_component_record_offsets_like_casa_6_7_6_14() {
@@ -349,7 +349,7 @@ mod tests {
         };
         direction.push(RecordField::new(
             "offset",
-            Value::Record(casa_types::measures::direction_to_record(
+            Value::Record(casa_core::measures::direction_to_record(
                 &MDirection::from_angles(
                     1_f64.to_radians(),
                     2_f64.to_radians(),
@@ -365,7 +365,7 @@ mod tests {
         };
         frequency.push(RecordField::new(
             "offset",
-            Value::Record(casa_types::measures::frequency_to_record(&MFrequency::new(
+            Value::Record(casa_core::measures::frequency_to_record(&MFrequency::new(
                 1e9,
                 FrequencyRef::LSRK,
             ))),

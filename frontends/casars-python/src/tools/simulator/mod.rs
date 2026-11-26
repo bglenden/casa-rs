@@ -37,11 +37,11 @@ pub(crate) mod surface;
 use std::ffi::CString;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use casa_core::measures::MeasuresProvider;
 use casa_simulation::{
     ApplySpec, CasaOutcome, SessionResources, Simulator, SimulatorError, SimulatorResult,
     TroposphereSpec,
 };
-use casa_types::measures::MeasuresProvider;
 use pyo3::exceptions::{PyNotImplementedError, PyResourceWarning, PyRuntimeError};
 use pyo3::prelude::*;
 use pyo3::sync::MutexExt;
@@ -112,7 +112,7 @@ impl PySimulator {
         work: impl FnOnce(&mut Session, &mut Vec<LogLine>) -> PyResult<T> + Send,
     ) -> PyResult<Option<T>> {
         let (result, lines) = py.detach(|| {
-            casa_types::quanta::registry::global_registry().with_locked_units(|| {
+            casa_core::quanta::registry::global_registry().with_locked_units(|| {
                 let mut lines = Vec::new();
                 let result = match self.lock().as_mut() {
                     Some(session) => work(session, &mut lines).map(Some),

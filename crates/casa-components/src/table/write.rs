@@ -7,12 +7,12 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use casa_tables::table_measures::{MeasureType, TableMeasDesc};
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_measures::table_measures::{MeasureType, TableMeasDesc};
 use casa_tables::table_quantum::TableQuantumDesc;
 use casa_tables::{
     ColumnBinding, DataManagerKind, Table, TableError, TableInfo, TableOptions, TableWriteLock,
 };
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 use super::measures::casacore_angles;
 use super::spectral_record::spectral_record;

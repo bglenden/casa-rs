@@ -2,7 +2,7 @@
 
 use std::ffi::CStr;
 
-use casa_types::ScalarValue;
+use casa_core::ScalarValue;
 use fitsio::sys;
 
 use super::{Reader, Result, fits_status};

@@ -7,12 +7,12 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
+use casa_core::{PrimitiveType, RecordValue};
 use casa_images::ImagePixelType;
 use casa_images::expr_file::{
     ToolExpressionManifest, encode_tool_manifest, read_tool_manifest,
     read_tool_manifest_from_reader,
 };
-use casa_types::{PrimitiveType, RecordValue};
 use pyo3::prelude::*;
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]

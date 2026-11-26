@@ -11,6 +11,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use casa_core::measures::MjdHighPrec;
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_ms::OptionalMainColumn;
 use casa_ms::column_def::build_table_schema;
 use casa_ms::observation_io::{Msv2Observation, OpenOptions, open_update};
@@ -20,8 +22,6 @@ use casa_observation::{
     TimeSelection, UpdateTarget, WeightChannels, WeightRequest, WeightRule, WeightSource,
     WritableRole, inverse_sigma_squared,
 };
-use casa_types::measures::MjdHighPrec;
-use casa_types::{ArrayValue, ScalarValue, Value};
 use ndarray::ArrayD;
 
 use super::{fixture, open_both, per_times, request, samples};
@@ -452,7 +452,7 @@ fn each_partition_reads_weight_spectrum_by_its_first_row() {
             .cell_accessor(row, "OBSERVATION_ID")
             .and_then(|cell| cell.scalar())
         {
-            Ok(casa_types::ScalarValue::Int32(id)) => *id as u32,
+            Ok(casa_core::ScalarValue::Int32(id)) => *id as u32,
             other => panic!("OBSERVATION_ID of row {row}: {other:?}"),
         };
         let rows: Vec<usize> = (0..ms.main_table().row_count())

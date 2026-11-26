@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 use std::ops::{AddAssign, Div, Mul, Range};
 
-use casa_types::{ArrayValue, RecordField, RecordValue, Value};
+use casa_core::{ArrayValue, RecordField, RecordValue, Value};
 use ndarray::ArrayD;
 
 use super::baseline_axis::{element_count, filled};

@@ -9,6 +9,7 @@ mod rest_density;
 #[path = "resample/uniform_cell.rs"]
 mod uniform_cell;
 
+use casa_core::Correlation;
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, DensityCellRule, DensityFieldKeys, DensityGridShape, DensityUv, GridGeometry,
@@ -17,7 +18,6 @@ use casa_imaging_operator::{
     SpectralKernel, SpectralResampler, Spheroidal, Taper, WPlaneCount, WPlanes,
     WeightingGeneration, build_density_grid,
 };
-use casa_types::Correlation;
 use common::{geometry, geometry_of, operator, operator_on};
 use num_complex::Complex32;
 

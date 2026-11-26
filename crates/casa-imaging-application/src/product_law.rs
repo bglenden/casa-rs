@@ -8,9 +8,9 @@
 
 use std::path::Path;
 
+use casa_core::ArrayValue;
 use casa_images::PagedImage;
 use casa_ms::MeasurementSet;
-use casa_types::ArrayValue;
 
 /// The laws' bound on each product's normalized RMS difference.
 pub const TOLERANCE: f64 = 1.0e-6;

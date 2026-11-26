@@ -28,6 +28,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, ObsInfo};
+use casa_core::measures::MeasuresProvider;
+use casa_core::measures::frequency::FrequencyRef;
 use casa_images::PagedImage;
 use casa_imaging_deconvolution::ModelGeneration;
 use casa_imaging_model::{CompiledProblem, ModelSupport, ReconstructionBasis};
@@ -39,8 +41,6 @@ use casa_ms::{
     CubeInterpolation, MeasurementSet, VirtualModelEntry, VirtualModelKind, VirtualModelSelection,
     clear_virtual_model, put_virtual_model, virtual_model_image_path,
 };
-use casa_types::measures::MeasuresProvider;
-use casa_types::measures::frequency::FrequencyRef;
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use num_complex::Complex32;
 
@@ -328,7 +328,7 @@ fn write_machine(
     ),
     (base, image_hz, buffer): (&Path, &[f64], &FirstBuffer),
     ms: &MeasurementSet,
-) -> Result<casa_types::RecordValue, NativeError> {
+) -> Result<casa_core::RecordValue, NativeError> {
     let other = |error: Box<dyn std::error::Error + Send + Sync>| NativeError::Other(error);
     let domain = &problem.geometry().domains()[0];
     let correlations = imaging::selected_correlations(problem)?;
@@ -477,7 +477,7 @@ fn phase_centre(
 /// The image's spectral coordinate's record (`SpectralCoordinate::save`).
 fn spectral_record(
     coordinates: &CoordinateSystem,
-) -> Result<casa_types::RecordValue, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<casa_core::RecordValue, Box<dyn std::error::Error + Send + Sync>> {
     let index = coordinates
         .find_coordinate(CoordinateType::Spectral)
         .ok_or("the image has no spectral axis")?;

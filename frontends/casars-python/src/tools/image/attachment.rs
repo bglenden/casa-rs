@@ -10,10 +10,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem};
+use casa_core::RecordValue;
 use casa_images::fits_read::FitsToolImport;
 use casa_tables::publication::check_write_access;
 use casa_tables::{Table, TableError, TableInfo, TableOptions, TableUseLock, TableWriteLock};
-use casa_types::RecordValue;
 use pyo3::prelude::*;
 
 use crate::tools::coordsys::PyCoordsys;

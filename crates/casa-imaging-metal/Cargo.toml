@@ -12,7 +12,7 @@ workspace = true
 
 [dependencies]
 casa-imaging-operator = { path = "../casa-imaging-operator" }
-casa-numerics = { path = "../casa-numerics" }
+casa-numerics.workspace = true
 num-complex.workspace = true
 
 [target.'cfg(all(target_os = "macos", not(coverage)))'.dependencies]
@@ -36,6 +36,6 @@ objc2-metal = { version = "0.3.2", default-features = false, features = [
 
 [dev-dependencies]
 casa-imaging-model = { path = "../casa-imaging-model" }
-casa-types = { path = "../casa-types" }
+casa-core.workspace = true
 ndarray.workspace = true
 num-complex.workspace = true

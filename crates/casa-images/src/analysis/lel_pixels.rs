@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
+use casa_core::{ArrayD, Complex32, Complex64};
 use casa_lattices::{TiledShape, TraversalCursorIter, TraversalSpec};
-use casa_types::{ArrayD, Complex32, Complex64};
 use ndarray::{IxDyn, Zip};
 
 use crate::image_expr::ImageExprValue;

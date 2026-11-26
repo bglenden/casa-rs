@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_types::measures::MeasFrame;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::FrequencyRef;
+use casa_core::measures::MeasFrame;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::FrequencyRef;
 
 use super::{
     FineGrid, NativeRow, Order, PreparedFrequencyConversion, RowContext, SpectralAxis,

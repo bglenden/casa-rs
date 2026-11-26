@@ -4,8 +4,8 @@
 //! and the strings `qa.formxxx` writes. Also Python's own number formats,
 //! where CASA writes a number into a string it reads back or into a file.
 
-use casa_types::quanta::casacore::{self, mvangle_radians};
-use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim};
+use casa_core::quanta::casacore::{self, mvangle_radians};
+use casa_core::quanta::{Dimension, Quantity, Unit, UnitDim};
 
 use super::SimutilError;
 

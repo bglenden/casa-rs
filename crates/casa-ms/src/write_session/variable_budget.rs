@@ -5,9 +5,9 @@
 //! assembles its bands in memory when its share holds them
 //! ([`StreamingTiledShapeWriter::resident_bytes`]).
 
-use casa_tables::{
+use casa_tables::streamed_scalar_columns_resident_bytes;
+use casa_tables::streamed_tiled::{
     STREAMING_TILED_COLUMN_BUFFER_BYTES, StreamedTiledShapeCubeLayout, StreamingTiledShapeWriter,
-    streamed_scalar_columns_resident_bytes,
 };
 
 use super::{

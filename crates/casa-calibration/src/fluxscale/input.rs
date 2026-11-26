@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
+use casa_core::ArrayValue;
 use casa_tables::{RequiredScalarColumnValues, SelectedArray2DCells, Table};
-use casa_types::ArrayValue;
 
 use super::{FluxScaleError, GainCell, GainSampleRow};
 
@@ -124,7 +124,7 @@ pub(super) fn read(table: &Table, root: &Path) -> Result<Vec<GainSampleRow>, Flu
         .collect()
 }
 
-type PackedGains = (Vec<casa_types::Complex32>, Vec<bool>, usize);
+type PackedGains = (Vec<casa_core::Complex32>, Vec<bool>, usize);
 
 fn packed(
     table: &Table,

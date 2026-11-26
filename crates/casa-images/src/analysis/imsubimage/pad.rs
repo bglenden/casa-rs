@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
-use casa_types::{ArrayD, RecordValue};
+use casa_core::{ArrayD, RecordValue};
 use ndarray::IxDyn;
 
 use crate::{ImageError, ImageInterface, MutableImageInterface};

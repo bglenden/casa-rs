@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Conversion of the attached imager's flux-calibration arguments.
 
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
 use pyo3::{PyResult, exceptions::PyTypeError};
 
 use crate::convert::{Variant, measures::frequency};

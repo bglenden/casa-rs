@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![cfg(all(feature = "cpp-interop-tests", has_casacore_cpp))]
 
+use casa_core::measures::PositionRef;
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::epoch::EpochRef;
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::measures::radial_velocity::{MRadialVelocity, RadialVelocityRef};
 use casa_ms::MeasurementSet;
 use casa_ms::columns::main_ids;
 use casa_ms::columns::time_columns::TimeColumn;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_test_support::measures_interop::MeasuresOracle;
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
-use casa_types::measures::PositionRef;
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::epoch::EpochRef;
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::measures::radial_velocity::{MRadialVelocity, RadialVelocityRef};
 
 fn refim_cband_g37line_ms_path() -> Option<std::path::PathBuf> {
     casatestdata_path_for_tier(

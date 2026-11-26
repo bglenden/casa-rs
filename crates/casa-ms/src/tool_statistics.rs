@@ -3,8 +3,8 @@
 
 use std::collections::BTreeMap;
 
+use casa_core::{RecordField, RecordValue, Value};
 use casa_tables::{Table, TablePartNames};
-use casa_types::{RecordField, RecordValue, Value};
 
 use crate::selection::{ResolvedMsSelection, resolve_casa_selection_with_system_budget};
 use crate::{

@@ -2,8 +2,8 @@
 //! Project reference-relative and image-center-relative saved shapes.
 
 use casa_coordinates::CoordinateSystem;
-use casa_types::quanta::{Quantity, Unit};
-use casa_types::{RecordValue, ScalarValue, Value};
+use casa_core::quanta::{Quantity, Unit};
+use casa_core::{RecordValue, ScalarValue, Value};
 
 use crate::analysis::world_axes_for_plane;
 use crate::saved_region::{

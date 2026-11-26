@@ -6,6 +6,13 @@ use std::sync::{Arc, Mutex};
 
 use casa_components::{ComponentList, Flux, Polarisation, SkyComponent, SpectralKind, stokes_in};
 use casa_coordinates::{Coordinate, DirectionCoordinate};
+use casa_core::measures::ephemeris::offset_true_angle;
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::measures::{
+    MeasFrame,
+    direction::{DirectionRef, MDirection},
+};
+use casa_core::{Correlation, RecordValue, ScalarValue, Value};
 use casa_images::PagedImage;
 use casa_imaging_operator::GridPolarization;
 use casa_imaging_runtime::{Admitted, Demand, HostResources, ResourcePolicy, admit};
@@ -16,13 +23,6 @@ use casa_ms::{
 };
 use casa_numerics::{BeamPattern, PrimaryBeam};
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::ephemeris::offset_true_angle;
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::measures::{
-    MeasFrame,
-    direction::{DirectionRef, MDirection},
-};
-use casa_types::{Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, ArrayD};
 use num_complex::Complex64;
 
@@ -854,7 +854,7 @@ impl PreparedVoltagePattern {
 
     #[cfg(test)]
     pub(super) fn test_pattern() -> Self {
-        use casa_types::measures::direction::DirectionRef;
+        use casa_core::measures::direction::DirectionRef;
 
         Self {
             pattern: Arc::new(Admitted {
@@ -1056,8 +1056,8 @@ fn projected_radius(
 mod tests {
     use super::*;
     use crate::imaging_memory_test::{isolated_test, peak_since, reset_peak};
+    use casa_core::ArrayValue;
     use casa_imaging_runtime::ReservationWindow;
-    use casa_types::ArrayValue;
 
     #[test]
     fn legacy_pattern_table_decode_fits_its_reservation() {
@@ -1111,30 +1111,30 @@ mod tests {
         for i in 1..=16_384 {
             let time = first + f64::from(i);
             let record = RecordValue::new(vec![
-                casa_types::RecordField::new(
+                casa_core::RecordField::new(
                     "ANTENNA_ID",
                     Value::Scalar(ScalarValue::Int32(row.antenna2_id)),
                 ),
-                casa_types::RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time))),
-                casa_types::RecordField::new("INTERVAL", Value::Scalar(ScalarValue::Float64(1.))),
-                casa_types::RecordField::new(
+                casa_core::RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time))),
+                casa_core::RecordField::new("INTERVAL", Value::Scalar(ScalarValue::Float64(1.))),
+                casa_core::RecordField::new(
                     "TIME_ORIGIN",
                     Value::Scalar(ScalarValue::Float64(time)),
                 ),
-                casa_types::RecordField::new(
+                casa_core::RecordField::new(
                     "NAME",
                     Value::Scalar(ScalarValue::String(String::new())),
                 ),
-                casa_types::RecordField::new("NUM_POLY", Value::Scalar(ScalarValue::Int32(0))),
-                casa_types::RecordField::new(
+                casa_core::RecordField::new("NUM_POLY", Value::Scalar(ScalarValue::Int32(0))),
+                casa_core::RecordField::new(
                     "DIRECTION",
                     Value::Array(ArrayValue::Float64(ArrayD::zeros(vec![2, 1]))),
                 ),
-                casa_types::RecordField::new(
+                casa_core::RecordField::new(
                     "TARGET",
                     Value::Array(ArrayValue::Float64(ArrayD::zeros(vec![2, 1]))),
                 ),
-                casa_types::RecordField::new("TRACKING", Value::Scalar(ScalarValue::Bool(true))),
+                casa_core::RecordField::new("TRACKING", Value::Scalar(ScalarValue::Bool(true))),
             ]);
             pointing.table_mut().add_row(record).unwrap();
         }

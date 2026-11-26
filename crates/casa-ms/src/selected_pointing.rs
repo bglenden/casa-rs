@@ -4,7 +4,7 @@
 
 use std::time::Instant;
 
-use casa_types::{ArrayValue, ScalarValue, measures::direction::DirectionRef};
+use casa_core::{ArrayValue, ScalarValue, measures::direction::DirectionRef};
 
 use crate::{
     MeasurementSet, MsError, MsResult, derived::engine::resolve_direction_reference_selected,
@@ -828,7 +828,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn catalog_peak_bytes_bounds_every_budget_check() {
-        use casa_types::{RecordField, RecordValue, Value};
+        use casa_core::{RecordField, RecordValue, Value};
 
         let mut builder = SelectedPointingQueryDomain::builder();
         builder.observe_row(0, 1, 0.0).unwrap();
@@ -894,7 +894,7 @@ mod tests {
 
     #[test]
     fn catalog_requirements_bound_prechecks_and_actual_construction() {
-        use casa_types::{RecordField, RecordValue, Value};
+        use casa_core::{RecordField, RecordValue, Value};
 
         let mut builder = SelectedPointingQueryDomain::builder();
         builder.observe_row(0, 1, 0.0).unwrap();

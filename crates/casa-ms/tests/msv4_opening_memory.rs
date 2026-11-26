@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use casa_core::PrimitiveType;
+use casa_core::{ArrayValue, Value};
 use casa_ms::MeasurementSet;
 use casa_ms::observation_io::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
 use casa_ms::observation_io::{Msv4Codec, Msv4Observation, OpenOptions};
@@ -28,8 +30,6 @@ use casa_simulation::synthetic::{
     Field, ObservationRequest, generate_unflagged, tutorial_vla_a_antennas,
 };
 use casa_tables::ColumnSchema;
-use casa_types::PrimitiveType;
-use casa_types::{ArrayValue, Value};
 use zarrs::array::{Array, ArraySubset};
 use zarrs::filesystem::FilesystemStore;
 

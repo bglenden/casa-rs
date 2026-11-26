@@ -42,8 +42,8 @@ mod xvalue;
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use casa_measures_data::{CometTable, PlanetaryTable};
-use casa_types::measures::MeasuresProvider;
+use casa_core::measures::MeasuresProvider;
+use casa_measures::{CometTable, PlanetaryTable};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
@@ -122,7 +122,7 @@ impl PyMeasures {
     ) -> PyResult<Py<PyAny>> {
         let mut lines = Vec::new();
         let result = py.detach(|| {
-            casa_types::quanta::registry::global_registry().with_locked_units(|| {
+            casa_core::quanta::registry::global_registry().with_locked_units(|| {
                 let mut state = self.lock();
                 work(&mut state, &mut lines)
             })

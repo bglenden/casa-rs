@@ -3,8 +3,8 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_tables::{RequiredScalarColumnValues, Table};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use rayon::prelude::*;
 
 use super::{
@@ -113,7 +113,7 @@ pub(super) fn prepare(
     // Attached scan bounds and donor scalar columns come from separate,
     // already captured and locked inputs.
     let (scalar, bounds) = if let Some(read_bounds) = read_bounds {
-        let (scalar, bounds) = rayon::join(read_scalar, read_bounds);
+        let (scalar, bounds) = super::join_with_tracing(read_scalar, read_bounds);
         (scalar?, Some(bounds?))
     } else {
         (read_scalar()?, None)
@@ -148,10 +148,15 @@ pub(super) fn prepare(
     if columns.contains(&"MODEL_DATA") {
         output.channel_selection = Some(main_rows::model_channel_selection(donor, None)?);
     }
+    let dispatch = tracing::dispatcher::get_default(Clone::clone);
     let transformed = columns
         .into_par_iter()
         .filter(|name| kernels.changes(name))
-        .map(|name| transform_column(table, name, &order, &kernels))
+        .map(|name| {
+            tracing::dispatcher::with_default(&dispatch, || {
+                transform_column(table, name, &order, &kernels)
+            })
+        })
         .collect::<MsResult<Vec<_>>>()?;
     for group in transformed {
         for (name, cells) in group {

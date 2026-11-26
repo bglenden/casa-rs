@@ -168,7 +168,7 @@ def test_multitable_move_restores_inputs_if_writing_output_fails(tmp_path: Path)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-CASA_TABLES_DATA = REPO_ROOT / "crates/casa-tables/tests/data"
+CASA_TABLES_DATA = REPO_ROOT / "libs/casacore/casa-tables/tests/data"
 
 
 def test_create_default_manager_and_dminfo_specs(tmp_path: Path) -> None:

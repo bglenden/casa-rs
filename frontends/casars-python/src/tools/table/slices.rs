@@ -8,8 +8,8 @@
 //! (both inclusive) and step `incr`. For `getcellslice`, `-1` alone
 //! selects the first or last index on every axis for the respective corner.
 
+use casa_core::{ArrayValue, Value};
 use casa_tables::{ColumnType, Slicer, Table};
-use casa_types::{ArrayValue, Value};
 
 use super::keyword_value::Incoming;
 use super::read::rows;

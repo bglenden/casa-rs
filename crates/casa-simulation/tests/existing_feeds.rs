@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Reopened multi-feed simulations preserve stored rows and extend every feed.
 mod existing_ms_calculations;
-use casa_simulation::{ApplySpec, PredictSpec, Simulator, SimulatorOptions};
-use casa_tables::{Table, TableOptions};
-use casa_types::{
+use casa_core::{
     ArrayValue,
     measures::{EpochRef, MEpoch},
 };
+use casa_simulation::{ApplySpec, PredictSpec, Simulator, SimulatorOptions};
+use casa_tables::{Table, TableOptions};
 use existing_ms_calculations::predict_support;
 use flate2::read::GzDecoder;
 use serde_json::Value;

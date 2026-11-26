@@ -6,8 +6,8 @@
 
 #![cfg(all(feature = "performance-tests", has_casacore_cpp))]
 
+use casa_core::quanta::{Quantity, Unit};
 use casa_test_support::quanta_interop::QuantaOracle;
-use casa_types::quanta::{Quantity, Unit};
 use std::time::Instant;
 
 const ITERATIONS: i32 = 10_000;

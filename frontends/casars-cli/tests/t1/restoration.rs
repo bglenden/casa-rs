@@ -15,8 +15,8 @@
 use std::f64::consts::{LN_2, PI};
 
 use casa_coordinates::CoordinateModel;
+use casa_core::measures::frequency::FrequencyRef;
 use casa_images::GaussianBeam;
-use casa_types::measures::frequency::FrequencyRef;
 use serde_json::{Value, json};
 
 use super::fixture::{

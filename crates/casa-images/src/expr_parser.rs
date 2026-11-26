@@ -579,7 +579,7 @@ pub fn referenced_images(expression: &str) -> Result<Vec<String>, ExprParseError
 mod complex;
 mod read_geometry;
 
-use casa_types::Complex64;
+use casa_core::Complex64;
 use complex::{arithmetic_complex, compare_complex, complex_constructor, complex_function};
 use read_geometry::Operator;
 
@@ -2287,7 +2287,7 @@ impl ExprValueConvert for f64 {
     }
 }
 
-impl ExprValueConvert for casa_types::Complex32 {
+impl ExprValueConvert for casa_core::Complex32 {
     fn from_f64(v: f64) -> Self {
         Self::new(v as f32, 0.0)
     }
@@ -2299,7 +2299,7 @@ impl ExprValueConvert for casa_types::Complex32 {
     }
 }
 
-impl ExprValueConvert for casa_types::Complex64 {
+impl ExprValueConvert for casa_core::Complex64 {
     fn from_f64(v: f64) -> Self {
         Self::new(v, 0.0)
     }
@@ -2975,8 +2975,8 @@ mod tests {
             CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate,
             StokesCoordinate, StokesType,
         };
-        use casa_types::measures::direction::DirectionRef;
-        use casa_types::measures::frequency::FrequencyRef;
+        use casa_core::measures::direction::DirectionRef;
+        use casa_core::measures::frequency::FrequencyRef;
 
         // 1. Modulo % and masked sample statistics variance/stddev/avdev
         let mut img = make_test_image(vec![4], 0.0);

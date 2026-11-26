@@ -8,7 +8,7 @@ use crate::plot_document::{
     PlotDocumentPanel, PlotFigure, PlotLayerKind, PlotLayerStyle, PlotLayout, PlotPayloadStrategy,
     PlotTextStyle,
 };
-use casa_types::quanta::format::{YMD, format_time};
+use casa_core::quanta::format::{YMD, format_time};
 use serde::Serialize;
 
 use super::atmosphere::AtmosphericCurve;

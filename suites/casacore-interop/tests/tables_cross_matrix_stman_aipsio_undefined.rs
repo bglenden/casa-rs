@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![cfg(feature = "cpp-interop-tests")]
 
+use casa_core::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{ColumnOptions, ColumnSchema, TableSchema};
 use casa_test_support::CppTableFixture;
 use casa_test_support::table_interop::{ManagerKind, TableFixture, run_full_cross_matrix};
-use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
 fn assert_matrix_results(results: &[casa_test_support::table_interop::MatrixCellResult]) {
     for result in results {
