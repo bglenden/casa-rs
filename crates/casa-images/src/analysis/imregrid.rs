@@ -18,7 +18,6 @@ use crate::{
     AnyPagedImage, ImageBeamSet, ImageError, ImageInfo, ImagePixel, ImageRegridSummary,
     ImregridOutcome, ImregridRequest, ImregridTemplate, PagedImage,
 };
-use casa_contracts::{ParameterValue, casacore_value_to_casa, parameter_value_to_casacore};
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_tables::publication::{
     exchange_directories, lock_table_tree_for_replacement, rename_without_replacing,
@@ -61,9 +60,7 @@ pub fn imregrid(request: &ImregridRequest) -> Result<ImregridOutcome, ImageError
             casa_types::RecordField::new("csys", Value::Record(coordinates)),
             casa_types::RecordField::new("shap", Value::Array(ArrayValue::from_i32_vec(shape))),
         ]));
-        return Ok(ImregridOutcome::Template(
-            casacore_value_to_casa(&template).map_err(invalid)?,
-        ));
+        return Ok(ImregridOutcome::Template(template));
     }
     let template = read_template(&request.template)?;
     match input {
@@ -111,25 +108,11 @@ fn read_template(template: &ImregridTemplate) -> Result<Template, ImageError> {
             let image = AnyPagedImage::open(path)?;
             (image.shape().to_vec(), coordinate_record(&image))
         }
-        ImregridTemplate::Record(fields) => {
-            let Some(value) = fields.get("csys") else {
-                return Err(invalid("template record has no csys field"));
-            };
-            let Value::Record(record) = parameter_value_to_casacore(value).map_err(invalid)? else {
-                return Err(invalid("template csys must be a coordinate record"));
-            };
-            let Some(ParameterValue::Array(values)) = fields.get("shap") else {
-                return Err(invalid("template shap must be an array of axis lengths"));
-            };
-            let shape = values
-                .iter()
-                .map(|value| match value {
-                    ParameterValue::Integer(length) if *length > 0 => usize::try_from(*length).ok(),
-                    _ => None,
-                })
-                .collect::<Option<Vec<_>>>()
-                .ok_or_else(|| invalid("template shape must contain positive integers"))?;
-            (shape, record)
+        ImregridTemplate::Record { csys, shape } => {
+            if shape.contains(&0) {
+                return Err(invalid("template shape must contain positive integers"));
+            }
+            (shape.clone(), csys.clone())
         }
     };
     let coordinates = CoordinateSystem::from_record(&record)?;
@@ -177,7 +160,7 @@ fn write_product<T: RegridPixel>(
     let (regridded, beam_rotation) = match template {
         Template::Grid(grid) => {
             let record_shape;
-            let shape = if matches!(request.template, ImregridTemplate::Record(_)) {
+            let shape = if matches!(request.template, ImregridTemplate::Record { .. }) {
                 record_shape = grid
                     .shape
                     .iter()
@@ -268,7 +251,7 @@ fn write_product<T: RegridPixel>(
         imagename: request.imagename.display().to_string(),
         template: match &request.template {
             ImregridTemplate::Image(path) => path.display().to_string(),
-            ImregridTemplate::Record(_) => "coordinate record".into(),
+            ImregridTemplate::Record { .. } => "coordinate record".into(),
         },
         output: output.display().to_string(),
         shape,

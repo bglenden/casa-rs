@@ -63,7 +63,6 @@
   "casa-atmosphere": "science",
   "casa-tasks": "frontend",
   "casars-cli": "frontend",
-  "casars-imexplore": "frontend",
   "casars-python": "frontend"
  },
  "definitional_packages": [
@@ -180,7 +179,6 @@
     "surfaces/casa-contracts/src",
     "surfaces/casa-tasks/src",
     "frontends/casars-cli/src",
-    "crates/casars-imexplore/src",
     "crates/casars-python/src"
    ],
    "extensions": [
@@ -199,7 +197,6 @@
     "surfaces/casa-contracts/src",
     "surfaces/casa-tasks/src",
     "frontends/casars-cli/src",
-    "crates/casars-imexplore/src",
     "crates/casars-python/src"
    ],
    "extensions": [
@@ -236,8 +233,7 @@
    ],
    "exclude_roots": [
     "crates/casa-ms/src/bin",
-    "crates/casa-tables/src/bin",
-    "crates/casa-images/src/bin"
+    "crates/casa-tables/src/bin"
    ],
    "extensions": [
     ".rs"
@@ -276,8 +272,7 @@
    ],
    "exclude_roots": [
     "crates/casa-ms/src/bin",
-    "crates/casa-tables/src/bin",
-    "crates/casa-images/src/bin"
+    "crates/casa-tables/src/bin"
    ],
    "extensions": [
     ".rs"

@@ -29,7 +29,7 @@ fn every_builtin_provider_validates_through_the_shared_envelope() {
     );
     assert_task_provider(
         "image-analysis",
-        casa_images::analysis::image_analysis_task_schema_bundle(),
+        casa_tasks::images::image_analysis_task_schema_bundle(),
     );
     assert_task_provider("imager", casa_tasks::imaging::imager_task_schema_bundle());
     assert_task_provider(

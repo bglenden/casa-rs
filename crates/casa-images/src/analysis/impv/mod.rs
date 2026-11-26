@@ -7,10 +7,11 @@ mod tool;
 
 pub use tool::{ImagePvProduct, generate_image_pv};
 
+use super::PbcorRegion;
+
 use std::io;
 use std::path::Path;
 
-use casa_contracts::{ParameterValue, parameter_value_to_casacore};
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate,
     LinearCoordinate,
@@ -135,16 +136,8 @@ fn selection<T: ImagePixel>(
     plane: [usize; 2],
 ) -> Result<SubimageSelection, ImageError> {
     let record = match request.region.as_ref() {
-        Some(ParameterValue::Table(fields)) if !fields.is_empty() => {
-            let Value::Record(record) =
-                parameter_value_to_casacore(request.region.as_ref().expect("region is set"))
-                    .map_err(|e| ImageError::CasaSelection(e.into()))?
-            else {
-                unreachable!("a parameter table converts to a record")
-            };
-            Some(record)
-        }
-        Some(ParameterValue::String(name))
+        Some(PbcorRegion::Record(record)) if !record.fields().is_empty() => Some(record.clone()),
+        Some(PbcorRegion::Text(name))
             if !name.contains(['[', ':', '\n']) && !Path::new(name).exists() =>
         {
             image.get_region_record(name.trim()).ok()
@@ -155,7 +148,7 @@ fn selection<T: ImagePixel>(
         Some(SubimageRegion::Record(record))
     } else {
         match request.region.as_ref() {
-            Some(ParameterValue::String(text)) if !text.trim().is_empty() => {
+            Some(PbcorRegion::Text(text)) if !text.trim().is_empty() => {
                 Some(SubimageRegion::Text(text))
             }
             _ => None,

@@ -5,14 +5,13 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use casa_contracts::{ParameterValue, python_repr};
 use casa_coordinates::CoordinateSystem;
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{Table, TableOptions};
 use casa_types::quanta::{Quantity, Unit, casacore::convert};
 use casa_types::{RecordValue, Value};
 
-use super::{FitsImportSummary, ImportFitsRequest};
+use super::{FitsImportSummary, ImportFitsRequest, ImportFitsValue};
 use crate::fits_read::FitsToolImport;
 use crate::{ImageError, ImageInfo, PagedImage, StoredGaussianBeam};
 
@@ -118,14 +117,14 @@ fn check_output(request: &ImportFitsRequest, output: &Path) -> Result<(), ImageE
     Ok(())
 }
 
-fn restoring_beam(values: &[ParameterValue]) -> Result<Option<StoredGaussianBeam>, ImageError> {
+fn restoring_beam(values: &[ImportFitsValue]) -> Result<Option<StoredGaussianBeam>, ImageError> {
     if values.is_empty() {
         return Ok(None);
     }
     let [
-        ParameterValue::String(major),
-        ParameterValue::String(minor),
-        ParameterValue::String(pa),
+        ImportFitsValue::String(major),
+        ImportFitsValue::String(minor),
+        ImportFitsValue::String(pa),
     ] = values
     else {
         return Err(invalid_type(
@@ -205,6 +204,26 @@ fn replace_restoring_beams(info: &mut RecordValue, beam: StoredGaussianBeam) {
     }
 }
 
+fn format_importfits_list(values: &[ImportFitsValue]) -> String {
+    let items: Vec<String> = values
+        .iter()
+        .map(|value| match value {
+            ImportFitsValue::String(text) => {
+                if !text.contains('\'') {
+                    format!("'{text}'")
+                } else {
+                    format!("{text:?}")
+                }
+            }
+            ImportFitsValue::Integer(number) => number.to_string(),
+            ImportFitsValue::Float(number) => format!("{number:?}"),
+            ImportFitsValue::Bool(flag) => if *flag { "True" } else { "False" }.to_string(),
+            ImportFitsValue::Other => "None".to_string(),
+        })
+        .collect();
+    format!("[{}]", items.join(", "))
+}
+
 fn task_history(request: &ImportFitsRequest) -> String {
     let boolean = |flag| if flag { "True" } else { "False" };
     format!(
@@ -216,8 +235,8 @@ fn task_history(request: &ImportFitsRequest) -> String {
         boolean(request.zeroblanks),
         boolean(request.overwrite),
         boolean(request.defaultaxes),
-        python_repr(&ParameterValue::Array(request.defaultaxesvalues.clone())),
-        python_repr(&ParameterValue::Array(request.beam.clone())),
+        format_importfits_list(&request.defaultaxesvalues),
+        format_importfits_list(&request.beam),
     )
 }
 

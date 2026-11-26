@@ -5,7 +5,6 @@ members = [
     "surfaces/casa-tasks",
     "frontends/casars-cli",
     "crates/casa-task-runtime",
-    "crates/casars-imexplore",
     "crates/casars-msconvert",
     "crates/casars-simulation",
     "crates/casars-python",

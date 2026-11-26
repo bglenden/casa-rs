@@ -67,7 +67,7 @@
       "id": "imhead",
       "launch": {
         "executable": "imexplore",
-        "cargo_package": "casars-imexplore",
+        "cargo_package": "casars-cli",
         "override_env": "CASARS_IMEXPLORE_BIN"
       },
       "dataset_kinds": [
@@ -79,7 +79,7 @@
       "id": "imstat",
       "launch": {
         "executable": "imexplore",
-        "cargo_package": "casars-imexplore",
+        "cargo_package": "casars-cli",
         "override_env": "CASARS_IMEXPLORE_BIN"
       },
       "dataset_kinds": [
@@ -91,7 +91,7 @@
       "id": "immoments",
       "launch": {
         "executable": "immoments",
-        "cargo_package": "casa-images",
+        "cargo_package": "casars-cli",
         "override_env": "CASARS_IMMOMENTS_BIN"
       },
       "dataset_kinds": [
@@ -103,7 +103,7 @@
       "id": "exportfits",
       "launch": {
         "executable": "exportfits",
-        "cargo_package": "casa-images",
+        "cargo_package": "casars-cli",
         "override_env": "CASARS_EXPORTFITS_BIN"
       },
       "dataset_kinds": [
@@ -369,7 +369,7 @@
       "id": "impbcor",
       "launch": {
         "executable": "impbcor",
-        "cargo_package": "casa-images",
+        "cargo_package": "casars-cli",
         "override_env": "CASARS_IMPBCOR_BIN"
       },
       "dataset_kinds": [
@@ -381,7 +381,7 @@
       "id": "impv",
       "launch": {
         "executable": "impv",
-        "cargo_package": "casa-images",
+        "cargo_package": "casars-cli",
         "override_env": "CASARS_IMPV_BIN"
       },
       "dataset_kinds": [
@@ -393,7 +393,7 @@
       "id": "imsubimage",
       "launch": {
         "executable": "imsubimage",
-        "cargo_package": "casa-images",
+        "cargo_package": "casars-cli",
         "override_env": "CASARS_IMSUBIMAGE_BIN"
       },
       "dataset_kinds": [
@@ -405,7 +405,7 @@
       "id": "immath",
       "launch": {
         "executable": "immath",
-        "cargo_package": "casa-images",
+        "cargo_package": "casars-cli",
         "override_env": "CASARS_IMMATH_BIN"
       },
       "dataset_kinds": [
@@ -417,7 +417,7 @@
       "id": "imregrid",
       "launch": {
         "executable": "imregrid",
-        "cargo_package": "casa-images",
+        "cargo_package": "casars-cli",
         "override_env": "CASARS_IMREGRID_BIN"
       },
       "dataset_kinds": [
@@ -429,7 +429,7 @@
       "id": "feather",
       "launch": {
         "executable": "feather",
-        "cargo_package": "casa-images",
+        "cargo_package": "casars-cli",
         "override_env": "CASARS_FEATHER_BIN"
       },
       "dataset_kinds": [
@@ -441,7 +441,7 @@
       "id": "importfits",
       "launch": {
         "executable": "importfits",
-        "cargo_package": "casa-images",
+        "cargo_package": "casars-cli",
         "override_env": "CASARS_IMPORTFITS_BIN"
       },
       "dataset_kinds": [

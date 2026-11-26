@@ -29,7 +29,7 @@ casa-contracts = { path = "../../surfaces/casa-contracts" }
 casa-simulation = { path = "../casa-simulation" }
 casa-tables = { path = "../casa-tables" }
 casa-task-runtime = { path = "../casa-task-runtime" }
-casa-tasks = { path = "../../surfaces/casa-tasks", features = ["imaging", "vla"] }
+casa-tasks = { path = "../../surfaces/casa-tasks", features = ["imaging", "images", "vla"] }
 casa-types = { path = "../casa-types" }
 casars-simulation = { path = "../casars-simulation" }
 ndarray.workspace = true

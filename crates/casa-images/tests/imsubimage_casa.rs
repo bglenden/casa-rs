@@ -3,13 +3,13 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_contracts::ParameterValue;
 use casa_coordinates::CoordinateType;
 use casa_images::analysis::{SubimageOptions, SubimagePlan, SubimageRegion};
 use casa_images::image::image_history_entries;
 use casa_images::{
-    AnyPagedImage, GaussianBeam, ImageBeamSet, ImagePixel, ImpvRequest, ImsubimageRequest,
-    PagedImage, PvPosition, TempImage, TempStoragePolicy, imhead, impbcor, impv, imsubimage,
+    AnyPagedImage, GaussianBeam, ImageBeamSet, ImagePixel, ImpbcorRequest, ImpvRequest,
+    ImsubimageRequest, PagedImage, PbcorRegion, PvPosition, TempImage, TempStoragePolicy, imhead,
+    impbcor, impv, imsubimage,
 };
 use casa_types::{ArrayValue, Complex32, Complex64, ScalarValue, Value};
 use serde_json::Value as Json;
@@ -91,15 +91,25 @@ fn compound_regions_still_require_multi_region_task_support() {
     let pv_request = ImpvRequest {
         imagename: input.clone(),
         outfile: pv.clone(),
-        region: Some(ParameterValue::String(region.to_str().unwrap().to_string())),
+        region: Some(PbcorRegion::Text(region.to_str().unwrap().to_string())),
         start: Some(PvPosition::Integral([2, 2])),
         end: Some(PvPosition::Integral([3, 2])),
         ..ImpvRequest::default()
     };
-    let correction_request = serde_json::from_value(serde_json::json!({
-        "imagename": input, "pbimage": input, "outfile": corrected, "region": region
-    }))
-    .unwrap();
+    let correction_request = ImpbcorRequest {
+        imagename: input.clone(),
+        pbimage: input.into(),
+        outfile: corrected.clone(),
+        mode: "divide".into(),
+        cutoff: -1.0,
+        box_selection: None,
+        region: Some(PbcorRegion::Text(region.to_str().unwrap().to_string())),
+        chans: None,
+        stokes: None,
+        mask: None,
+        stretch: false,
+        overwrite: false,
+    };
     for result in [
         impv(&pv_request).unwrap_err(),
         impbcor(&correction_request).unwrap_err(),

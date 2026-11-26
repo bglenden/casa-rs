@@ -4,7 +4,7 @@
 Build both binaries in release mode, then run the benchmark against the
 included small CASA image::
 
-    cargo build --release -p casars-imexplore -p casars-msconvert --bins
+    cargo build --release -p casars-cli --bin imexplore -p casars-msconvert --bins
     python scripts/bench-task-startup.py
 
 The image and the repository's small MSv2 fixture are copied to a temporary
