@@ -220,22 +220,20 @@ fn collect_apply_specs(
 ) -> Result<Vec<ApplyCalibrationTableSpec>, CallibError> {
     // CASA resolves relative table names against the process working
     // directory for both text and file callibraries.
-    let process_dir;
-    let base_dir = if let Some(workspace) = workspace {
-        workspace
-    } else {
-        process_dir = std::env::current_dir().map_err(|source| CallibError::ReadFile {
-            path: source_name.to_owned(),
-            source,
-        })?;
-        &process_dir
-    };
+    let base_dir = match workspace {
+        Some(workspace) => std::path::absolute(workspace),
+        None => std::env::current_dir(),
+    }
+    .map_err(|source| CallibError::ReadFile {
+        path: source_name.to_owned(),
+        source,
+    })?;
     let mut specs = Vec::new();
     let mut calwt_by_table = BTreeMap::<String, bool>::new();
 
     let (entries, _) = parse_entries(source_name, contents, allow_empty_maps)?;
     for entry in entries {
-        let mut spec = parse_callib_entry(entry.values, base_dir)
+        let mut spec = parse_callib_entry(entry.values, &base_dir)
             .map_err(|reason| line_error(source_name, contents, entry.line, reason))?;
         let literal = spec
             .callibrary
