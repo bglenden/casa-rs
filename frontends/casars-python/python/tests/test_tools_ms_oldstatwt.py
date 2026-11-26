@@ -138,3 +138,38 @@ def test_oldstatwt_saves_only_the_reference_rows(baseline_fixture, native_datase
             np.testing.assert_allclose(persisted[name], wanted, strict=True, rtol=2e-6, atol=0)
         for name in ("DATA", "FLAG", "FLAG_ROW"):
             np.testing.assert_array_equal(persisted[name], original[name], strict=True)
+
+
+def test_oldstatwt_combines_simultaneous_rows_from_multi_ms_members(
+    baseline_fixture, native_dataset, tmp_path,
+):
+    casa, _, initial = baseline_fixture
+    options = {"datacolumn": "data", "fitspw": "0:1~3", "minsamp": 2}
+    snapshots = []
+    for api, engine in ((casa, "reference"), (tools, "native")):
+        members = [tmp_path / f"{engine}-{index}.ms" for index in range(2)]
+        for member in members:
+            copytree(native_dataset, member)
+        with closing(casa.table()) as table:
+            assert table.open(str(members[1]), nomodify=False)
+            assert table.putcol("DATA", (2 - 3j) * initial["data"])
+        output = tmp_path / f"{engine}.mms"
+        with closing(casa.ms()) as tool:
+            assert tool.createmultims(str(output), list(map(str, members)),
+                                      ["ANTENNA", "DATA_DESCRIPTION", "FEED"])
+        with closing(api.ms()) as tool:
+            assert tool.open(str(output), nomodify=False)
+            assert tool.oldstatwt(**options)
+            assert tool.ismultims()
+            physical = tool.getreferencedtables()
+        snapshots.append([read_columns(casa, member) for member in physical])
+        for index, member in enumerate(physical):
+            other = read_columns(tools, member)
+            for name, values in snapshots[-1][index].items():
+                np.testing.assert_array_equal(values, other[name], strict=True)
+    for index in range(2):
+        for name in ("WEIGHT", "SIGMA", "FLAG_ROW", "DATA"):
+            np.testing.assert_allclose(snapshots[1][index][name], snapshots[0][index][name],
+                                       strict=True, rtol=2e-6, atol=0)
+    np.testing.assert_array_equal(snapshots[1][0]["FLAG"], initial["flag"], strict=True)
+    np.testing.assert_array_equal(snapshots[1][1]["FLAG"], initial["flag"], strict=True)
