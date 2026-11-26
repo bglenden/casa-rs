@@ -80,30 +80,4 @@ impl PyMsTool {
     ) -> PyResult<Py<PyAny>> {
         stub("fromfitsidi")
     }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (dorms = None, byantenna = None, sepacs = None, fitspw = None, fitcorr = None, combine = None, timebin = None, minsamp = None, field = None, spw = None, antenna = None, timerange = None, scan = None, intent = None, array = None, correlation = None, obs = None, datacolumn = None), text_signature = "($self, dorms=False, byantenna=True, sepacs=True, fitspw=[], fitcorr=[], combine='', timebin=[], minsamp=3, field=[], spw=[], antenna='', timerange='', scan=[], intent='', array=[], correlation='', obs='', datacolumn='corrected_data')")]
-    fn oldstatwt(
-        &self,
-        dorms: Option<&Bound<'_, PyAny>>,
-        byantenna: Option<&Bound<'_, PyAny>>,
-        sepacs: Option<&Bound<'_, PyAny>>,
-        fitspw: Option<&Bound<'_, PyAny>>,
-        fitcorr: Option<&Bound<'_, PyAny>>,
-        combine: Option<&Bound<'_, PyAny>>,
-        timebin: Option<&Bound<'_, PyAny>>,
-        minsamp: Option<&Bound<'_, PyAny>>,
-        field: Option<&Bound<'_, PyAny>>,
-        spw: Option<&Bound<'_, PyAny>>,
-        antenna: Option<&Bound<'_, PyAny>>,
-        timerange: Option<&Bound<'_, PyAny>>,
-        scan: Option<&Bound<'_, PyAny>>,
-        intent: Option<&Bound<'_, PyAny>>,
-        array: Option<&Bound<'_, PyAny>>,
-        correlation: Option<&Bound<'_, PyAny>>,
-        obs: Option<&Bound<'_, PyAny>>,
-        datacolumn: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("oldstatwt")
-    }
 }
