@@ -2315,6 +2315,19 @@ impl ExprValueConvert for casa_core::Complex64 {
 // Tests
 // ---------------------------------------------------------------------------
 
+/// The parser's own wording, as CASA reports a refused mask expression.
+pub fn mask_error_wording(error: ExprParseError) -> String {
+    if error.message.starts_with("unknown image") {
+        // The resolver's miss: CASA's ImageExprParse wording.
+        error
+            .message
+            .replace("unknown image: ", "ImageExprParse: '")
+            + "' is an unknown lattice or image or it is an unqualified region"
+    } else {
+        format!("Image Expression: {error}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3115,18 +3128,5 @@ mod tests {
         let expected_pa = (0.5 * (1.0f64).atan2(2.0)).to_degrees() as f32;
         assert!((pa.get_at(&[0, 0, 0, 0]).unwrap() - expected_pa).abs() < 1e-4);
         assert_eq!(pa.units(), "deg");
-    }
-}
-
-/// The parser's own wording, as CASA reports a refused mask expression.
-pub fn mask_error_wording(error: ExprParseError) -> String {
-    if error.message.starts_with("unknown image") {
-        // The resolver's miss: CASA's ImageExprParse wording.
-        error
-            .message
-            .replace("unknown image: ", "ImageExprParse: '")
-            + "' is an unknown lattice or image or it is an unqualified region"
-    } else {
-        format!("Image Expression: {error}")
     }
 }

@@ -324,53 +324,6 @@ fn io(error: std::io::Error) -> ImageError {
     ImageError::Io(error.to_string())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn failed_mask_metadata_save_restores_the_original_directory() {
-        let root = tempfile::tempdir().unwrap();
-        let original = root.path().join("default");
-        std::fs::create_dir(&original).unwrap();
-        std::fs::write(original.join("data"), "mask").unwrap();
-        let stage = tempfile::tempdir_in(root.path()).unwrap();
-        let moved = stage.path().join("mask");
-        let change =
-            MaskChange::move_directory(original.clone(), moved.clone(), Some(stage), Vec::new())
-                .unwrap();
-        let error = change.rollback(ImageError::Io("metadata save failed".into()));
-        assert!(error.to_string().contains("metadata save failed"));
-        assert_eq!(
-            std::fs::read_to_string(original.join("data")).unwrap(),
-            "mask"
-        );
-        assert!(!moved.exists());
-    }
-
-    #[test]
-    fn rollback_keeps_a_mask_when_its_original_name_is_occupied() {
-        let root = tempfile::tempdir().unwrap();
-        let original = root.path().join("default");
-        std::fs::create_dir(&original).unwrap();
-        std::fs::write(original.join("data"), "mask").unwrap();
-        let stage = tempfile::tempdir_in(root.path()).unwrap();
-        let moved = stage.path().join("mask");
-        let change =
-            MaskChange::move_directory(original.clone(), moved.clone(), Some(stage), Vec::new())
-                .unwrap();
-        std::fs::create_dir(&original).unwrap();
-        std::fs::write(original.join("data"), "replacement").unwrap();
-        let error = change.rollback(ImageError::Io("metadata save failed".into()));
-        assert!(error.to_string().contains("Could not restore mask table"));
-        assert_eq!(std::fs::read_to_string(moved.join("data")).unwrap(), "mask");
-        assert_eq!(
-            std::fs::read_to_string(original.join("data")).unwrap(),
-            "replacement",
-        );
-    }
-}
-
 impl casa_images::StoredImageMasks for ComponentTable {
     fn define_mask(
         &self,
@@ -494,5 +447,52 @@ impl casa_images::StoredImageMasks for ComponentTable {
             }
             Ok(change)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_mask_metadata_save_restores_the_original_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let original = root.path().join("default");
+        std::fs::create_dir(&original).unwrap();
+        std::fs::write(original.join("data"), "mask").unwrap();
+        let stage = tempfile::tempdir_in(root.path()).unwrap();
+        let moved = stage.path().join("mask");
+        let change =
+            MaskChange::move_directory(original.clone(), moved.clone(), Some(stage), Vec::new())
+                .unwrap();
+        let error = change.rollback(ImageError::Io("metadata save failed".into()));
+        assert!(error.to_string().contains("metadata save failed"));
+        assert_eq!(
+            std::fs::read_to_string(original.join("data")).unwrap(),
+            "mask"
+        );
+        assert!(!moved.exists());
+    }
+
+    #[test]
+    fn rollback_keeps_a_mask_when_its_original_name_is_occupied() {
+        let root = tempfile::tempdir().unwrap();
+        let original = root.path().join("default");
+        std::fs::create_dir(&original).unwrap();
+        std::fs::write(original.join("data"), "mask").unwrap();
+        let stage = tempfile::tempdir_in(root.path()).unwrap();
+        let moved = stage.path().join("mask");
+        let change =
+            MaskChange::move_directory(original.clone(), moved.clone(), Some(stage), Vec::new())
+                .unwrap();
+        std::fs::create_dir(&original).unwrap();
+        std::fs::write(original.join("data"), "replacement").unwrap();
+        let error = change.rollback(ImageError::Io("metadata save failed".into()));
+        assert!(error.to_string().contains("Could not restore mask table"));
+        assert_eq!(std::fs::read_to_string(moved.join("data")).unwrap(), "mask");
+        assert_eq!(
+            std::fs::read_to_string(original.join("data")).unwrap(),
+            "replacement",
+        );
     }
 }
