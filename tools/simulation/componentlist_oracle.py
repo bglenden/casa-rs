@@ -37,7 +37,7 @@ Four subcommands:
     `shapetype` and `spectrumtype`; and the outcomes of the edge cases in
     `TOOL_EDGES`. Complex arguments are recorded as `{"complex": [re, im]}`.
     `casars.tools.componentlist`'s tests replay the same script
-    (`crates/casars-python/python/tests/data/casa_componentlist_tool.json`).
+    (`frontends/casars-python/python/tests/data/casa_componentlist_tool.json`).
 
 A JSON record holds `components` (each `getcomponent(i)`), `cells` (column
 name to a list with one entry per row: the cell, or null when it is

@@ -70,7 +70,7 @@ jobs:
           before-script-linux: |
             bash scripts/build-fftw.sh "$(pwd)/.native/fftw-manylinux"
             export PKG_CONFIG_PATH="$(pwd)/.native/fftw-manylinux/lib/pkgconfig"
-          args: --release --manifest-path crates/casars-python/Cargo.toml --interpreter 3.10 3.11 3.12 --out dist
+          args: --release --manifest-path frontends/casars-python/Cargo.toml --interpreter 3.10 3.11 3.12 --out dist
 
       - name: Build suite binaries
         shell: bash
@@ -153,7 +153,7 @@ jobs:
         with:
           command: sdist
           rust-toolchain: stable
-          args: --manifest-path crates/casars-python/Cargo.toml --out dist
+          args: --manifest-path frontends/casars-python/Cargo.toml --out dist
 
       - name: Build task binaries for smoke test
         shell: bash

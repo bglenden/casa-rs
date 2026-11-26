@@ -31,7 +31,7 @@ if args.backend == "casars":
     from casars.tools import measures
 
 root = Path(__file__).resolve().parents[2]
-fixture = root / "crates/casars-python/python/tests/data/casa_measures_shift.json"
+fixture = root / "frontends/casars-python/python/tests/data/casa_measures_shift.json"
 cases = {case["name"]: case for case in json.loads(fixture.read_text())["cases"]}
 names = [
     "upstream_north", "upstream_east", "upstream_south", "galactic",

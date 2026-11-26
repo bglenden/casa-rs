@@ -14,7 +14,7 @@ from test_image_workflow import _assert_value
 def test_native_mapped_image_write_and_read_in_both_implementations(tmp_path, fixture):
     casa = pytest.importorskip("casatools")
     assert casa.version_string().replace("-", ".") == "6.7.6.14"
-    data_dir = Path(__file__).resolve().parents[3] / "casa-images/tests/data/casa-6.7.6/axis_maps"
+    data_dir = Path(__file__).resolve().parents[4] / "crates" / "casa-images/tests/data/casa-6.7.6/axis_maps"
     source_path = tmp_path / "source.image"
     shutil.copytree(data_dir / f"{fixture}.image", source_path)
     source = casa.image()

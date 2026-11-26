@@ -5,7 +5,7 @@
 A task's file (`resources/casa-compat/semantics/<task>.json`) reviews each
 CASA parameter; a tool's (`semantics/tools/<tool>.json`) reviews each method
 of the CASA class, against the signatures recorded from CASA in
-`crates/casars-python/python/tests/data/casa_<tool>_signatures.json`. Both
+`frontends/casars-python/python/tests/data/casa_<tool>_signatures.json`. Both
 carry the same behaviors, decisions and evidence.
 
 Signature, defaults, domains and runtime refusal conditions remain generated

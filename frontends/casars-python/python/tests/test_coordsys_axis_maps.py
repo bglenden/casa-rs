@@ -10,7 +10,7 @@ from casars import tools
 from test_image_workflow import _assert_value
 
 
-FIXTURES = Path(__file__).resolve().parents[3] / "casa-images/tests/data/casa-6.7.6/axis_maps"
+FIXTURES = Path(__file__).resolve().parents[4] / "crates" / "casa-images/tests/data/casa-6.7.6/axis_maps"
 
 
 def independent_world_order(record):

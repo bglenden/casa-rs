@@ -23,8 +23,8 @@ python_bin="$("$repo_root/scripts/resolve-python.sh" 3.10)"
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/casars-python.XXXXXXXX")"
 cleanup() {
   rm -rf "$tmp_root"
-  rm -rf crates/casars-python/.pytest_cache crates/casars-python/python/casars/__pycache__
-  find crates/casars-python/python/casars -maxdepth 1 \( -name '_core*.so' -o -name '_core*.pyd' \) -delete
+  rm -rf frontends/casars-python/.pytest_cache frontends/casars-python/python/casars/__pycache__
+  find frontends/casars-python/python/casars -maxdepth 1 \( -name '_core*.so' -o -name '_core*.pyd' \) -delete
 }
 trap cleanup EXIT
 
@@ -50,8 +50,8 @@ editable_venv="$tmp_root/editable-venv"
 echo "==> Installing editable casars package and running Python tests"
 "$python_bin" -m venv "$editable_venv"
 source "$editable_venv/bin/activate"
-python -m pip install -e "crates/casars-python[$extras]"
-pytest crates/casars-python/python/tests -q
+python -m pip install -e "frontends/casars-python[$extras]"
+pytest frontends/casars-python/python/tests -q
 deactivate
 if [[ "$editable_only" == true ]]; then
   exit 0
@@ -60,7 +60,7 @@ fi
 # The built wheel and sdist are tested too: an editable checkout can import
 # files a packaged install lacks. Their tests run from outside the source tree
 # and first prove that `casars` and `casars._core` come from the install.
-tests_dir="$repo_root/crates/casars-python/python/tests"
+tests_dir="$repo_root/frontends/casars-python/python/tests"
 test_installed() {
   local venv="$1"
   shift
@@ -111,6 +111,11 @@ echo "==> Installing from the sdist and running the binding tests"
 MATURIN_PEP517_ARGS="--profile dev" \
   CARGO_TARGET_DIR="$tmp_root/sdist-target" \
   "$sdist_venv/bin/python" -m pip install "${sdists[0]}[$extras]"
+# The sdist builds in a temporary source tree which is gone by test time.
+# Give its live binding cases the CLI hosts built above.
+task_bin_dir="$(cd "${CARGO_TARGET_DIR:-target}/debug" && pwd -P)"
+CASARS_CALIBRATE_BIN="$task_bin_dir/calibrate" \
+  CASARS_MSEXPLORE_BIN="$task_bin_dir/msexplore" \
 test_installed "$sdist_venv" \
   "$tests_dir/test_binding_snapshots.py" \
   "$tests_dir/test_parameters.py" \

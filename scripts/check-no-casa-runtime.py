@@ -181,12 +181,7 @@ def shipped_sources() -> list[tuple[Path, list[tuple[int, str]], str]]:
             if not is_test_path(path):
                 sources.append((path, production_lines(path), "//"))
     script_roots = [crate / "src" for crate in shipped_crates if (crate / "src").is_dir()]
-    for py_dir in (
-        REPO_ROOT / "crates" / "casars-python" / "python" / "casars",
-        REPO_ROOT / "frontends" / "casars-python" / "python" / "casars",
-    ):
-        if py_dir.is_dir():
-            script_roots.append(py_dir)
+    script_roots.append(REPO_ROOT / "frontends" / "casars-python" / "python" / "casars")
     for root in script_roots:
         for path in sorted(root.rglob("*")):
             prefix = SCRIPT_COMMENT_PREFIX.get(path.suffix)

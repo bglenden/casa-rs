@@ -35,7 +35,7 @@ if args.backend == "casars":
     from casars.tools import measures
 
 ROOT = Path(__file__).resolve().parents[2]
-FIXTURE = ROOT / "crates/casars-python/python/tests/data/casa_measures_comet.json"
+FIXTURE = ROOT / "frontends/casars-python/python/tests/data/casa_measures_comet.json"
 GANYMEDE = "JPL-Horizons/Ganymede_55437-56293dUTC.tab"
 ABSOLUTE = str(args.measures_data.resolve() / "ephemerides" / GANYMEDE)
 

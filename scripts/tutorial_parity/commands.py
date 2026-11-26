@@ -81,7 +81,7 @@ def _timeout_text(value: str | bytes | None) -> str:
 
 def environment_with_pythonpath(repo_root: Path, base: dict[str, str] | None = None) -> dict[str, str]:
     env = dict(base or os.environ)
-    python_path = str(repo_root / "crates" / "casars-python" / "python")
+    python_path = str(repo_root / "frontends" / "casars-python" / "python")
     previous = env.get("PYTHONPATH")
     env["PYTHONPATH"] = python_path if not previous else python_path + os.pathsep + previous
     return env
