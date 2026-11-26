@@ -47,6 +47,9 @@ def test_ms_visibility_and_writes_in_a_saved_multi_ms_view(
     assert table.open(str(second), nomodify=False)
     assert table.putcol("DATA", other)
     assert table.done()
+    oracle_parts = (tmp_path / "oracle-first.ms", tmp_path / "oracle-second.ms")
+    for original, copy in zip((first, second), oracle_parts):
+        shutil.copytree(original, copy)
 
     multi = make_multi_ms(casa, tmp_path / "parent.mms", (first, second))
     parent = casa.ms()
@@ -84,17 +87,40 @@ def test_ms_visibility_and_writes_in_a_saved_multi_ms_view(
         assert reader.done()
     same_visibility(*results[::-1])
 
-    writer = tools.ms()
-    assert writer.open(view, nomodify=False, lock=permanent, check=True)
+    oracle = make_multi_ms(casa, tmp_path / "oracle.mms", oracle_parts)
+    oracle_view = str(tmp_path / "oracle.ms")
+    assert parent.open(oracle)
+    oracle_members = parent.getreferencedtables()
+    assert parent.done()
+    assert table.open(oracle)
+    reference = table.selectrows(rows, oracle_view)
+    assert reference.done() and table.done()
     updates = wanted + np.arange(len(rows)) * (3.5 - 2j)
-    assert writer.putdata({"DATA": updates})
-    assert writer.done()
+    for api, saved in ((casa, oracle_view), (tools, view)):
+        writer = api.ms()
+        assert writer.open(saved, nomodify=False, lock=permanent, check=True)
+        np.testing.assert_array_equal(writer.getdata("data")["data"], wanted, strict=True)
+        assert writer.putdata({"DATA": updates})
+        assert writer.done()
     expected = [raw["data"].copy(), other.astype(np.complex128)]
     for position, row in enumerate(rows):
         member, physical = divmod(row, rows_per_member)
         expected[member][..., physical] = updates[..., position]
-    for index, path in enumerate(members):
-        assert_main_columns(casa, path, {"DATA": expected[index], "FLAG": raw["flag"]})
+    oracle_values = []
+    for index, (actual, control) in enumerate(zip(members, oracle_members)):
+        assert table.open(control)
+        values = table.getcol("DATA")
+        assert table.done()
+        oracle_values.append(values)
+        assert_main_columns(casa, actual, {"DATA": expected[index], "FLAG": raw["flag"]})
+    if monotone:
+        for wanted_member, oracle_member in zip(expected, oracle_values):
+            np.testing.assert_array_equal(oracle_member, wanted_member, strict=True)
+    else:
+        # CASA slices the input cube in its iterator order. It writes the
+        # third and first logical inputs to physical rows 1 and 2 here.
+        np.testing.assert_array_equal(oracle_values[0][..., 1:3], updates[..., [2, 0]], strict=True)
+        assert not np.array_equal(oracle_values[0][..., 1:3], expected[0][..., 1:3])
     for api in (casa, tools):
         reader = api.ms()
         assert reader.open(view)

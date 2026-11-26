@@ -143,29 +143,39 @@ pub(super) fn concatenate_arrays(
         ($variant:ident, $first:ident) => {{
             let mut shape = $first.shape().to_vec();
             let axis = shape.len() - 1;
+            if shape[axis] != initial_member.rows.len() {
+                return Err(input(
+                    "concatenated array row count does not match its selection",
+                ));
+            }
             let initial = mem_order(&$first)?;
             let elements = shape[..axis].iter().product();
             let expected = (shape[axis] + total_rows)
                 .checked_mul(elements)
                 .ok_or_else(|| input("concatenated visibility array is too large"))?;
-            let mut values = Vec::with_capacity(expected);
-            values.extend_from_slice(initial);
+            let mut values = if initial_member.output_positions.is_empty() || initial.is_empty() {
+                Vec::with_capacity(expected)
+            } else {
+                vec![initial[0]; expected]
+            };
+            append_cells(&mut values, initial, initial_member, elements);
+            drop($first);
             for part in remaining {
                 let ArrayValue::$variant(block) = read(part.table, &part.rows)? else {
                     return Err(input("concatenated array columns have different types"));
                 };
-                if block.ndim() != shape.len() || block.shape()[..axis] != shape[..axis] {
+                if block.ndim() != shape.len()
+                    || block.shape()[..axis] != shape[..axis]
+                    || block.shape()[axis] != part.rows.len()
+                {
                     return Err(input(
                         "concatenated array columns have different cell shapes",
                     ));
                 }
                 shape[axis] += block.shape()[axis];
-                values.extend_from_slice(mem_order(&block)?);
+                append_cells(&mut values, mem_order(&block)?, part, elements);
             }
-            Ok(ArrayValue::$variant(shaped(
-                &shape,
-                restore_order(values, members, elements),
-            )?))
+            Ok(ArrayValue::$variant(shaped(&shape, values)?))
         }};
     }
     match first {
@@ -175,6 +185,22 @@ pub(super) fn concatenate_arrays(
         ArrayValue::Complex32(values) => concatenate!(Complex32, values),
         ArrayValue::Complex64(values) => concatenate!(Complex64, values),
         _ => Err(input("unsupported concatenated array column type")),
+    }
+}
+
+fn append_cells<T: Copy>(
+    output: &mut Vec<T>,
+    cells: &[T],
+    member: &MemberRows<'_>,
+    elements: usize,
+) {
+    if member.output_positions.is_empty() {
+        output.extend_from_slice(cells);
+    } else if elements != 0 {
+        for (cell, &position) in cells.chunks_exact(elements).zip(&member.output_positions) {
+            let first = position * elements;
+            output[first..first + elements].copy_from_slice(cell);
+        }
     }
 }
 

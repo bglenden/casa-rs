@@ -501,6 +501,7 @@ impl TiledVariant {
 struct TiledReadHeader {
     variant: TiledVariant,
     header: TiledStManHeader,
+    packed_read_seen: std::sync::OnceLock<()>,
 }
 
 /// Immutable tiled-manager metadata retained for the lifetime of one open table.
@@ -533,7 +534,14 @@ impl TiledReadMetadata {
         {
             let header_path = table_path.join(format!("table.f{}", manager.seq_nr));
             let (variant, header) = read_tiled_header(&header_path)?;
-            headers.insert(manager.seq_nr, TiledReadHeader { variant, header });
+            headers.insert(
+                manager.seq_nr,
+                TiledReadHeader {
+                    variant,
+                    header,
+                    packed_read_seen: std::sync::OnceLock::new(),
+                },
+            );
         }
         Ok(Self { headers })
     }
@@ -2027,7 +2035,9 @@ pub(crate) fn load_tiled_column_rows_2d_channel_range_typed(
     channel_start: usize,
     channel_count: usize,
 ) -> Result<Option<SelectedArray2DCells>, StorageError> {
-    let TiledReadHeader { variant, header } = read_metadata.header(dm.seq_nr)?;
+    let TiledReadHeader {
+        variant, header, ..
+    } = read_metadata.header(dm.seq_nr)?;
     let (tile_header, target_col_idx) = tile_target(
         variant,
         Cow::Borrowed(header),
@@ -2092,7 +2102,9 @@ pub(crate) fn fill_tiled_column_rows_2d_channel_range_typed(
     channel_count: usize,
     destination: SelectedArray2DCellsMut<'_>,
 ) -> Result<Option<SelectedArray2DShape>, StorageError> {
-    let TiledReadHeader { variant, header } = read_metadata.header(dm.seq_nr)?;
+    let TiledReadHeader {
+        variant, header, ..
+    } = read_metadata.header(dm.seq_nr)?;
     let (tile_header, target_col_idx) = tile_target(
         variant,
         Cow::Borrowed(header),
@@ -2156,7 +2168,9 @@ pub(crate) fn load_tiled_column_rows_1d_typed(
     target_desc_idx: usize,
     selected_rows: &[usize],
 ) -> Result<SelectedArray1DCells, StorageError> {
-    let TiledReadHeader { variant, header } = read_metadata.header(dm.seq_nr)?;
+    let TiledReadHeader {
+        variant, header, ..
+    } = read_metadata.header(dm.seq_nr)?;
     let (tile_header, target_col_idx) = tile_target(
         variant,
         Cow::Borrowed(header),
@@ -2248,7 +2262,9 @@ pub(crate) fn fill_tiled_column_rows_1d_typed(
     selected_rows: &[usize],
     destination: SelectedArray1DCellsMut<'_>,
 ) -> Result<SelectedArray1DShape, StorageError> {
-    let TiledReadHeader { variant, header } = read_metadata.header(dm.seq_nr)?;
+    let TiledReadHeader {
+        variant, header, ..
+    } = read_metadata.header(dm.seq_nr)?;
     let (tile_header, target_col_idx) = tile_target(
         variant,
         Cow::Borrowed(header),
@@ -13635,12 +13651,14 @@ mod tests {
         };
         assert_eq!(first.shape(), &[2, 4, 12]);
         assert!(first[[1, 2, 0]] && !first[[1, 2, 1]]);
-        assert_eq!(shared_tile_cache_entry_count_for_table(&path), 12);
-        assert_eq!(
-            flags.packed_2d_cells_uncached(&sparse).unwrap(),
-            Some(ArrayValue::Bool(first))
-        );
-        assert_eq!(shared_tile_cache_entry_count_for_table(&path), 12);
+        assert_eq!(shared_tile_cache_entry_count_for_table(&path), 0);
+        for _ in 0..2 {
+            assert_eq!(
+                flags.packed_2d_cells_uncached(&sparse).unwrap(),
+                Some(ArrayValue::Bool(first.clone()))
+            );
+            assert_eq!(shared_tile_cache_entry_count_for_table(&path), 12);
+        }
 
         invalidate_shared_tile_cache_for_table(&path);
         let dense = (0..96).collect::<Vec<_>>();

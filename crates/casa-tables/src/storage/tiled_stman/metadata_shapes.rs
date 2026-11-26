@@ -58,6 +58,9 @@ impl TiledReadMetadata {
         let dt = header.col_data_types[target];
         let col_desc = bound[bound_index];
         let shape = [axis0, channels, rows.len()];
+        // The first read benefits from coalesced streaming. A later sparse
+        // read can warm the shared tiles when the caller revisits this manager.
+        let reuse_sparse_tiles = read.packed_read_seen.set(()).is_err();
         macro_rules! read_column {
             ($dest:ident, $value:ident) => {{
                 let mut values = Vec::new();
@@ -75,7 +78,7 @@ impl TiledReadMetadata {
                     channels,
                     SelectedArray2DCellsMut::$dest(&mut values),
                     widen_complex,
-                    true,
+                    reuse_sparse_tiles,
                 )?;
                 if filled.is_none() {
                     return Ok(None);

@@ -230,18 +230,20 @@ impl VisibilityMain {
         .map_err(runtime_error)?;
         let parts = Table::immediate_part_names(path, path).map_err(runtime_error)?;
         let plain = matches!(&parts, TablePartNames::Plain(_));
-        let (members, reference) = match parts {
-            TablePartNames::Plain(_) => (Vec::new(), None),
-            TablePartNames::Reference(_) => (
-                Vec::new(),
-                Table::open_plain_reference(path).map_err(runtime_error)?,
-            ),
-            TablePartNames::Concatenation { parts, .. } => (Self::open_plain_members(parts)?, None),
-        };
-        let concatenated_reference = if !plain && members.is_empty() && reference.is_none() {
-            ConcatenatedReference::open(&table)?
-        } else {
-            None
+        let (members, reference, concatenated_reference) = match parts {
+            TablePartNames::Plain(_) => (Vec::new(), None, None),
+            TablePartNames::Reference(_) => {
+                let reference = Table::open_plain_reference(path).map_err(runtime_error)?;
+                let concatenated = if reference.is_none() {
+                    ConcatenatedReference::open(&table)?
+                } else {
+                    None
+                };
+                (Vec::new(), reference, concatenated)
+            }
+            TablePartNames::Concatenation { parts, .. } => {
+                (Self::open_plain_members(parts)?, None, None)
+            }
         };
         Ok(Self {
             table,
