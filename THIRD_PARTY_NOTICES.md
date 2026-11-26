@@ -43,7 +43,7 @@ kept in each ported file. The ATM sources are part of CASA, available from
 
 ## CFITSIO
 
-`libs/casacore/casa-images` reads and writes FITS through the `fitsio` crate with
+`libs/casacore/casa-images` and `libs/casa/casa-imageanalysis` read and write FITS through the `fitsio` crate with
 its `fitsio-src` feature, which compiles the CFITSIO 3.49 sources bundled
 in `fitsio-sys` (with that crate's three build patches) into casa-rs
 binaries and Python extensions. CFITSIO is from NASA's HEASARC

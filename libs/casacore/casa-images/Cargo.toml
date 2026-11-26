@@ -20,13 +20,7 @@ casa-core.workspace = true
 fitsio = { version = "0.21", features = ["fitsio-src", "src-cmake"] }
 ndarray.workspace = true
 num-complex.workspace = true
-schemars = { version = "0.8", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 tempfile = "3"
 thiserror.workspace = true
-
-[dev-dependencies]
-casa-test-support = { path = "../../../dev/casa-test-support" }
-serde_json = { version = "1", features = ["preserve_order"] }
-tempfile = "3"

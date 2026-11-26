@@ -12,7 +12,7 @@ coordinates, measures, and related workflows.
 
 ## Major modules / crates / packages
 
-The nine foundation libraries live in `libs/casacore/` and have versioned, publishable dependencies.
+The casacore foundation libraries live in `libs/casacore/`. CASA component models and image analysis live in `libs/casa/`. Both use versioned workspace dependencies.
 
 | Module | Responsibility | May depend on |
 |---|---|---|
@@ -26,7 +26,9 @@ The nine foundation libraries live in `libs/casacore/` and have versioned, publi
 | single-dish imaging (`casa-imaging-singledish`) | CASA's `SDGrid` as its own operator family (ADR-0016 decision 13) | execution layer of the ADR-0016 layering |
 | imaging application (`casa-imaging-application`) | Sole production composition of observation, reconstruction, products, resources and execution | native imaging owners, `casa-ms`, `casa-observation` |
 | simulation (`casa-simulation`) | CASA's `sm` tool, `simutil`, `simobserve`, multi-array/TP `simanalyze`, `simalma`, and native developer fixtures | an application of the ADR-0016 layering |
-| domain libraries (`casa-ms`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-calibration`, `casa-vla`, `casa-components`) | Astronomy data models and algorithms over table and image persistence | foundation crates, `casa-tables`, documented peer domain crates |
+| image persistence (`casa-images`) | Typed images, expression evaluation, image I/O and sampling pixel planes | casacore foundations |
+| CASA image analysis (`casa-imageanalysis`) | Component-backed virtual images, convolution, mosaics, high-level regridding and analysis tasks | `casa-components` and casacore foundations including `casa-images` |
+| domain libraries (`casa-ms`, `casa-lattices`, `casa-coordinates`, `casa-calibration`, `casa-vla`, `casa-components`) | Astronomy data models and algorithms over table and image persistence | foundation crates, `casa-tables`, documented peer domain crates |
 | boundary contracts (`casa-contracts`) | Task-provider envelope, task surfaces, parameter catalog and CLI inventory | domain libraries and foundation crates; never a second source of truth |
 | parameter and task runtime (`casa-task-runtime`) | Parameter resolution, current sparse TOML profiles, Last/Last Successful, the shared task front end and its `--json-run` invocation | boundary contracts, `casa-core`, `casa-tables::log_table`; no provider science |
 | apps and runtimes (`casars-imager`, `casars-imexplore`, `casars-msconvert`, `casars-simulation`, `casars-python`) | Task executables that are not binaries of a domain crate, each on the shared task front end, and the Python package with its PyO3 extension `casars._core` | boundary contracts, domain libraries, foundation crates |

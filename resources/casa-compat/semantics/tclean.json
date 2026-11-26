@@ -1906,7 +1906,7 @@
       "links": [
         "resources/casa-compat/evidence/tclean-start-model-20261103.json",
         "resources/casa-compat/tclean-start-model-cases.json",
-        "libs/casa/casa-imageanalysis/src/regrid/spectral.rs",
+        "crates/casa-images/src/regrid/spectral.rs",
         "crates/casa-imaging-application/src/compile/start_model.rs",
         "crates/casars-imager/tests/t1/start_model.rs"
       ]
@@ -2023,7 +2023,7 @@
         "resources/casa-compat/evidence/tclean-blank-mask-beam-1140-20261105.json",
         "crates/casa-imaging-deconvolution/src/mask/auto_planes.rs",
         "crates/casa-numerics/src/elliptical_gaussian.rs",
-        "libs/casacore/casa-images/src/beam.rs",
+        "crates/casa-images/src/beam.rs",
         "crates/casa-imaging-deconvolution/tests/auto_mask_memory.rs"
       ]
     },

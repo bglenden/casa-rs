@@ -6,7 +6,7 @@
 //! `/Applications/CASA.app` install) and skips when neither exists.
 //!
 //! ```text
-//! cargo test -p casa-components --test casa_oracle -- --ignored --nocapture
+//! cargo test -p casa-parity --test api component_oracle -- --ignored --nocapture
 //! ```
 //!
 //! For three lists (the CASA fixture as casa-rs reads it, one built through

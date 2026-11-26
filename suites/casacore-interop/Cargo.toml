@@ -17,7 +17,6 @@ cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
 workspace = true
 
 [dependencies]
-casa-components.workspace = true
 casa-aipsio.workspace = true
 casa-coordinates.workspace = true
 casa-images.workspace = true
@@ -253,5 +252,6 @@ path = "tests/component_list.rs"
 required-features = ["cpp-interop-tests"]
 
 [dev-dependencies]
+casa-components.workspace = true
 num-complex.workspace = true
 serde_json = { version = "1", features = ["float_roundtrip"] }

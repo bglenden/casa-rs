@@ -10,7 +10,7 @@
 //! `casa_oracle.rs`.)
 //!
 //! ```text
-//! cargo test -p casa-components --features cpp-interop-tests --test casacore_cpp_interop
+//! cargo test -p casacore-interop --features cpp-interop-tests --test component_list
 //! ```
 
 #![cfg(feature = "cpp-interop-tests")]

@@ -290,18 +290,6 @@ impl<T: ImagePixel> ConcatImage<T> {
         Ok(())
     }
 
-    pub(crate) fn write_image_info(
-        &self,
-        info: &ImageInfo,
-        record: &RecordValue,
-    ) -> Result<(), ImageError> {
-        self.check_image_info_write()?;
-        for (member, &offset) in self.members.iter().zip(&self.boundaries) {
-            member.write_image_info(info, record, self.axis, offset)?;
-        }
-        Ok(())
-    }
-
     /// Preflight the member metadata writes before updating any image.
     ///
     /// # Errors
@@ -311,16 +299,6 @@ impl<T: ImagePixel> ConcatImage<T> {
         self.members
             .iter()
             .try_for_each(|member| member.check_image_info_write())
-    }
-
-    pub(crate) fn write_misc_info(&self, misc: &RecordValue) -> Result<(), ImageError> {
-        self.check_directory()?;
-        if self.temp_close && !self.members[0].lock(LockType::Read, 0)? {
-            return Err(ImageError::CasaSelection(
-                "Could not acquire the image Read lock".into(),
-            ));
-        }
-        crate::concat_file::update_misc_info(&self.path, misc)
     }
 
     /// Verify that the attached manifest directory still occupies its path.
@@ -498,6 +476,34 @@ impl<T: ImagePixel> Lattice<T> for ConcatImage<T> {
 }
 
 impl<T: ImagePixel> ImageInterface<T> for ConcatImage<T> {
+    fn store_image_info(
+        &self,
+        info: &ImageInfo,
+        record: Option<&RecordValue>,
+    ) -> Result<(), ImageError> {
+        self.check_image_info_write()?;
+        let generated;
+        let record = match record {
+            Some(record) => record,
+            None => {
+                generated = info.to_record();
+                &generated
+            }
+        };
+        for (member, &offset) in self.members.iter().zip(&self.boundaries) {
+            member.write_image_info(info, record, self.axis, offset)?;
+        }
+        Ok(())
+    }
+    fn store_misc_info(&self, misc: &RecordValue) -> Result<(), ImageError> {
+        self.check_directory()?;
+        if self.temp_close && !self.members[0].lock(LockType::Read, 0)? {
+            return Err(ImageError::CasaSelection(
+                "Could not acquire the image Read lock".into(),
+            ));
+        }
+        crate::concat_file::update_misc_info(&self.path, misc)
+    }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }

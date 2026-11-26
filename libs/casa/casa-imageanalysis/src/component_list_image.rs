@@ -499,7 +499,11 @@ impl ImageInterface<f32> for ComponentListImage {
         Ok(())
     }
 
-    fn store_image_info(&self, info: &ImageInfo, record: &RecordValue) -> Result<(), ImageError> {
+    fn store_image_info(
+        &self,
+        info: &ImageInfo,
+        record: Option<&RecordValue>,
+    ) -> Result<(), ImageError> {
         if !info.beam_set.is_empty() {
             return Err(invalid("A ComponentListImage may not have a beam(s)"));
         }
@@ -507,7 +511,7 @@ impl ImageInterface<f32> for ComponentListImage {
             native::write_component_keyword(
                 path,
                 "imageinfo",
-                casa_core::Value::Record(record.clone()),
+                casa_core::Value::Record(record.cloned().unwrap_or_else(|| info.to_record())),
             )?;
         }
         Ok(())

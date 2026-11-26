@@ -441,7 +441,11 @@ pub trait ImageInterface<T: ImagePixel>: Lattice<T> {
     }
 
     /// Validate and persist an attached view's beam and image type metadata.
-    fn store_image_info(&self, _info: &ImageInfo, _record: &RecordValue) -> Result<(), ImageError> {
+    fn store_image_info(
+        &self,
+        _info: &ImageInfo,
+        _record: Option<&RecordValue>,
+    ) -> Result<(), ImageError> {
         Ok(())
     }
 

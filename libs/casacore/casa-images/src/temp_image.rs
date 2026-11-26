@@ -284,10 +284,7 @@ impl<T: ImagePixel> TempImage<T> {
     /// Replaces the image info.
     pub fn set_image_info(&mut self, info: &ImageInfo) -> Result<(), ImageError> {
         if let Some(source) = &self.read_only {
-            source.source.store_image_info(info, &info.to_record())?;
-        }
-        if let Some(source) = self.concat_source() {
-            source.write_image_info(info, &info.to_record())?;
+            source.source.store_image_info(info, None)?;
         }
         self.image_info = info.clone();
         self.image_info_record = None;
@@ -306,10 +303,7 @@ impl<T: ImagePixel> TempImage<T> {
     pub fn set_image_info_record(&mut self, record: RecordValue) -> Result<(), ImageError> {
         let info = ImageInfo::from_record(&record)?;
         if let Some(source) = &self.read_only {
-            source.source.store_image_info(&info, &record)?;
-        }
-        if let Some(source) = self.concat_source() {
-            source.write_image_info(&info, &record)?;
+            source.source.store_image_info(&info, Some(&record))?;
         }
         self.image_info = info;
         self.image_info_record = Some(record);
@@ -333,9 +327,6 @@ impl<T: ImagePixel> TempImage<T> {
 
     /// Replaces the misc-info record.
     pub fn set_misc_info(&mut self, rec: RecordValue) -> Result<(), ImageError> {
-        if let Some(source) = self.concat_source() {
-            source.write_misc_info(&rec)?;
-        }
         if let Some(source) = &self.read_only {
             source.source.store_misc_info(&rec)?;
         }
