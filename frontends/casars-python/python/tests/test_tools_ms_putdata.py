@@ -33,8 +33,9 @@ def make_multi_ms(casa, path, members):
 
 
 @pytest.mark.parametrize("permanent", [False, True], ids=["automatic", "permanent"])
+@pytest.mark.parametrize("monotone", [False, True], ids=["arbitrary-order", "monotone"])
 def test_ms_visibility_and_writes_in_a_saved_multi_ms_view(
-    baseline_fixture, native_dataset, tmp_path, permanent,
+    baseline_fixture, native_dataset, tmp_path, permanent, monotone,
 ):
     casa, _, raw = baseline_fixture
     first = native_dataset
@@ -54,6 +55,8 @@ def test_ms_visibility_and_writes_in_a_saved_multi_ms_view(
     assert len(members) == 2 and parent.done()
     view = str(tmp_path / "saved.ms")
     rows = np.array([rows_per_member + 13, 2, rows_per_member, 1, rows_per_member + 13])
+    if monotone:
+        rows.sort()
     assert table.open(multi)
     reference = table.selectrows(rows, view)
     assert reference.done() and table.done()
@@ -74,7 +77,10 @@ def test_ms_visibility_and_writes_in_a_saved_multi_ms_view(
                                       np.sort(wanted[1:2, 1::2, :], axis=-1), strict=True)
         results.append(result)
         assert reader.reset()
-        np.testing.assert_array_equal(reader.getdata("data")["data"], wanted, strict=True)
+        unfiltered = reader.getdata(["data", "flag", "time"])
+        original = wanted, raw["flag"][..., rows % rows_per_member], raw["time"][rows % rows_per_member]
+        for name, expected in zip(("data", "flag", "time"), original):
+            np.testing.assert_array_equal(unfiltered[name], expected, strict=True)
         assert reader.done()
     same_visibility(*results[::-1])
 
