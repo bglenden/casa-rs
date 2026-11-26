@@ -189,3 +189,28 @@ def test_spectral_writers_preserve_read_only_and_selected_attachments(native_dat
     for column, value in read_cells(tools, window, spw_columns).items():
         np.testing.assert_array_equal(value, grid[column], strict=True)
     assert read_cells(tools, history, ("MESSAGE",)) == history_before
+
+
+
+def test_cvel_converts_at_the_earliest_integration_without_reordering_rows(native_dataset, tmp_path):
+    casa = pinned_casa()
+    reference = tmp_path / "reference.ms"
+    native = tmp_path / "native.ms"
+    with closing(casa.table()) as table:
+        assert table.open(str(native_dataset), nomodify=False)
+        original = table.getcol("TIME")
+        times = original.min() + 10 * np.arange(len(original) - 1, -1, -1, dtype=np.float64)
+        assert table.putcol("TIME", times)
+    for path in (reference, native):
+        copytree(native_dataset, path)
+    for api, path in ((casa, reference), (tools, native)):
+        with closing(api.ms()) as ms:
+            assert ms.open(str(path), nomodify=False)
+            assert ms.cvel(outframe="BARY", width=2, hanning=False)
+            assert ms.nrow() == len(times)
+        np.testing.assert_array_equal(read_cells(casa, path, ("TIME",))["TIME"], times)
+    axis = ("CHAN_FREQ", "CHAN_WIDTH")
+    expected = read_cells(casa, reference / "SPECTRAL_WINDOW", axis)
+    actual = read_cells(casa, native / "SPECTRAL_WINDOW", axis)
+    for column in axis:
+        np.testing.assert_allclose(actual[column], expected[column], atol=1e-5, rtol=0)

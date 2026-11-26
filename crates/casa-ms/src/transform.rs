@@ -967,7 +967,7 @@ fn mstransform_staged(
                 &mut channel_bins,
                 (
                     first_selected_row,
-                    (legacy_direct_band
+                    ((legacy_direct_band
                         && matches!(
                             legacy_grid,
                             Some(
@@ -976,7 +976,9 @@ fn mstransform_staged(
                             )
                         )
                         && options.nspw == 1)
-                        .then_some(selected_rows.as_slice()),
+                        || (matches!(legacy_grid, Some(LegacySpectralGrid::Cvel))
+                            && !options.outframe.trim().is_empty()))
+                    .then_some(selected_rows.as_slice()),
                 ),
                 budget.available_bytes / budget.maximum_live_blocks,
             )

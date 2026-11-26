@@ -19,7 +19,7 @@ pub use tool_grid::{
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use casa_tables::{Table, TableError, TableOptions};
+use casa_tables::{RequiredScalarColumnValues, Table, TableError, TableOptions};
 use casa_types::measures::MeasFrame;
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
 use casa_types::measures::frequency::FrequencyRef;
@@ -97,7 +97,9 @@ impl Plan {
                 options.interpolation
             ))
         })?;
+        let cvel = matches!(legacy, Some(LegacySpectralGrid::Cvel));
         if let Some(rows) = legacy_rows
+            && !cvel
             && let Some(layout) = frame_only::Layout::new(input, options, rows)?
         {
             return Self::with_field_layout(
@@ -109,7 +111,11 @@ impl Plan {
                 budget_bytes,
             );
         }
-        let frame = Frame::new(input, options, first_selected_row)?.map(Arc::new);
+        let first_integration = match legacy_rows {
+            Some(rows) if cvel => earliest_integration(input.main_table(), rows)?,
+            _ => first_selected_row,
+        };
+        let frame = Frame::new(input, options, first_integration)?.map(Arc::new);
         let mut budget = GridBudget::new(budget_bytes, frame.is_some());
         let table = input.spectral_window().map_err(ms_error)?;
         let is_combined = combined.is_some();
@@ -384,6 +390,23 @@ impl Plan {
             .save(TableOptions::new(&path))
             .map_err(error)
     }
+}
+
+fn earliest_integration(main: &Table, rows: &[usize]) -> Result<usize, MsTransformError> {
+    let mut columns = main
+        .required_scalar_columns_owned_for_rows(&["TIME"], rows)
+        .map_err(ms_error)?;
+    let Some(RequiredScalarColumnValues::Float64(times)) = columns.remove("TIME") else {
+        return Err(invalid(
+            "Invalid TIME column for cvel frame conversion.".into(),
+        ));
+    };
+    rows.iter()
+        .copied()
+        .zip(times)
+        .min_by(|(left, a), (right, b)| a.total_cmp(b).then_with(|| left.cmp(right)))
+        .map(|(row, _)| row)
+        .ok_or_else(|| invalid("No integration for cvel frame conversion.".into()))
 }
 
 struct GridBudget {
