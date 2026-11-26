@@ -11,6 +11,8 @@ use num_complex::{Complex32, Complex64};
 
 use super::{FitsTableError, Reader, Result, cards::Header, fits_status};
 
+mod listing;
+
 pub(super) struct Column {
     pub name: String,
     number: i32,
@@ -55,6 +57,15 @@ impl Column {
     }
 
     fn describe(fits: &mut Reader, header: &Header, number: i32) -> Result<Self> {
+        Self::describe_for(fits, header, number, false)
+    }
+
+    fn describe_for(
+        fits: &mut Reader,
+        header: &Header,
+        number: i32,
+        listing: bool,
+    ) -> Result<Self> {
         let (mut code, mut repeat, mut width, mut status) = (0, 0, 0, 0);
         // SAFETY: Ptr has exclusive use and all outputs are writable.
         unsafe {
@@ -88,7 +99,7 @@ impl Column {
             .text(&format!("TTYPE{number}"))
             .unwrap_or("")
             .to_owned();
-        let repeat = usize::try_from(if code == sys::TSTRING {
+        let repeat = usize::try_from(if code == sys::TSTRING && !(listing && heap) {
             width.max(repeat)
         } else {
             repeat
@@ -100,6 +111,7 @@ impl Column {
             sys::TBYTE => UInt8,
             sys::TSHORT => Int16,
             sys::TLONG | sys::TINT => Int32,
+            sys::TLONGLONG if listing => Int64,
             sys::TFLOAT => Float32,
             sys::TDOUBLE => Float64,
             sys::TCOMPLEX => Complex32,
@@ -112,13 +124,14 @@ impl Column {
                 ));
             }
         };
-        let promoted = matches!(primitive, UInt8 | Int16 | Int32)
+        let promoted = !listing
+            && matches!(primitive, UInt8 | Int16 | Int32)
             && (header.number(&format!("TSCAL{number}")).unwrap_or(1.0) != 1.0
                 || header.number(&format!("TZERO{number}")).unwrap_or(0.0) != 0.0);
         if promoted {
             primitive = Float64;
         }
-        let shape = if heap || primitive == String {
+        let shape = if listing || heap || primitive == String {
             None
         } else if let Some(spec) = header.text(&format!("TDIM{number}")) {
             let shape = parse_shape(spec)?;
@@ -268,6 +281,10 @@ impl Column {
         if !self.heap {
             return Ok(self.repeat);
         }
+        self.descriptor(fits, row).map(|(len, _)| len)
+    }
+
+    fn descriptor(&self, fits: &mut Reader, row: i64) -> Result<(usize, i64)> {
         let (mut len, mut offset, mut status) = (0, 0, 0);
         // SAFETY: The cursor is on this binary table and the outputs are writable.
         unsafe {
@@ -282,6 +299,7 @@ impl Column {
         };
         fits_status(status)?;
         usize::try_from(len)
+            .map(|len| (len, offset))
             .map_err(|_| invalid_column(&self.name, "invalid heap descriptor length"))
     }
 
@@ -319,6 +337,14 @@ impl Column {
     }
 
     fn logical(&self, fits: &mut Reader, row: i64, len: usize) -> Result<Vec<bool>> {
+        Ok(self
+            .logical_bytes(fits, row, len)?
+            .into_iter()
+            .map(|value| value == 1)
+            .collect())
+    }
+
+    fn logical_bytes(&self, fits: &mut Reader, row: i64, len: usize) -> Result<Vec<c_char>> {
         let mut data: Vec<c_char> = vec![0; len];
         let mut status = 0;
         if len > 0 {
@@ -349,7 +375,7 @@ impl Column {
             }
             fits_status(status)?;
         }
-        Ok(data.into_iter().map(|value| value == 1).collect())
+        Ok(data)
     }
 
     fn text(&self, fits: &mut Reader, row: i64) -> Result<String> {

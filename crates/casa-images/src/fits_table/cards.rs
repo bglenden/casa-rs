@@ -33,6 +33,21 @@ pub(super) struct Header(Vec<Card>);
 
 impl Header {
     pub fn read(fits: &mut Reader) -> Result<Self> {
+        Self::visit(fits, false, |_, _| {})
+    }
+
+    pub fn visit_listing(
+        fits: &mut Reader,
+        visit: impl FnMut(&str, Option<&Card>),
+    ) -> Result<Self> {
+        Self::visit(fits, true, visit)
+    }
+
+    fn visit(
+        fits: &mut Reader,
+        listing: bool,
+        mut visit: impl FnMut(&str, Option<&Card>),
+    ) -> Result<Self> {
         let (mut count, mut more, mut status) = (0, 0, 0);
         // SAFETY: live selected HDU, with valid output pointers.
         unsafe { sys::ffghsp(fits.ptr, &mut count, &mut more, &mut status) };
@@ -45,7 +60,9 @@ impl Header {
             fits_status(status)?;
             // SAFETY: ffgrec NUL-terminates a successfully read card.
             let raw = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_string_lossy();
-            if let Some(card) = parse_card(&raw) {
+            let card = parse_card(&raw, listing);
+            visit(&raw, card.as_ref());
+            if let Some(card) = card {
                 cards.push(card);
             }
         }
@@ -104,7 +121,7 @@ fn structural_keyword(name: &str) -> bool {
     )
 }
 
-fn parse_card(card: &str) -> Option<Card> {
+fn parse_card(card: &str, listing: bool) -> Option<Card> {
     let name = card.get(..8)?.trim().to_owned();
     let body = card.get(8..)?.strip_prefix("= ")?.trim_start();
     let (scalar, comment) = if let Some(string) = body.strip_prefix('\'') {
@@ -129,7 +146,7 @@ fn parse_card(card: &str) -> Option<Card> {
         )
     } else {
         let (value, comment) = body.split_once('/').unwrap_or((body, ""));
-        (numeric_or_bool(value.trim()), comment)
+        (numeric_or_bool(value.trim(), listing), comment)
     };
     Some(Card {
         name,
@@ -138,7 +155,7 @@ fn parse_card(card: &str) -> Option<Card> {
     })
 }
 
-fn numeric_or_bool(value: &str) -> Option<ScalarValue> {
+fn numeric_or_bool(value: &str, listing: bool) -> Option<ScalarValue> {
     match value {
         "T" => return Some(ScalarValue::Bool(true)),
         "F" => return Some(ScalarValue::Bool(false)),
@@ -147,14 +164,24 @@ fn numeric_or_bool(value: &str) -> Option<ScalarValue> {
     if let Ok(number) = value.parse::<i32>() {
         return Some(ScalarValue::Int32(number));
     }
+    let mantissa = value
+        .trim_start_matches(['-', '+'])
+        .split(['e', 'E'])
+        .next()?;
+    // FITSReader keeps up to five digits in a Float. If the mantissa
+    // starts with a decimal point, zeros before the first digit do not count.
+    let (mantissa, float_digits) = if listing {
+        (
+            mantissa
+                .strip_prefix('.')
+                .map_or(mantissa, |fraction| fraction.trim_start_matches('0')),
+            5,
+        )
+    } else {
+        (mantissa, 7)
+    };
     let double = value.contains(['D', 'd'])
-        || value
-            .split(['e', 'E'])
-            .next()?
-            .bytes()
-            .filter(u8::is_ascii_digit)
-            .count()
-            > 7;
+        || mantissa.bytes().filter(u8::is_ascii_digit).count() > float_digits;
     let value: f64 = value.replace(['D', 'd'], "E").parse().ok()?;
     Some(if double {
         ScalarValue::Float64(value)

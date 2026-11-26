@@ -12290,6 +12290,24 @@ Casa-rs requires a private writable payload for the replacement and refuses
 this linked layout before changing the original MeasurementSet or its external
 file (#1030).
 
+## MS listfits can read beyond a short FITS random group
+
+In CASA 6.7.6.14, `FITSReader::showPrimaryGroup` always accesses 18 values
+in each displayed group. The casacore `PrimaryArray` element accessor has
+no bounds check, and a valid random group can store fewer than 18 values.
+Casa-rs displays up to 18 values from each of the first two groups, bounded
+by the group's actual dimensions. A three-value group has three displayed
+values (#1030).
+
+## MS listfits can report an extra Primary Table HDU at end of file
+
+CASA 6.7.6.14 lists two Primary Table HDUs for a file containing only
+the legacy primary-table marker (`NAXIS1=777777701` and `NAXIS2=0`).
+The second listing has an empty header after the file's only `END` card.
+Casa-rs emits one listing for the stored HDU, then reports end of file
+(#1030).
+
+
 ## `oldstatwt()` can crash, bypass read-only access and overwrite correlation flags
 
 In CASA 6.7.6.14, `ms.oldstatwt()` defaults to `corrected_data` and requests
