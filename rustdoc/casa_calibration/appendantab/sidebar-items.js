@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AppendantabError"],"fn":["run_appendantab"],"struct":["AppendantabRequest","AppendantabSummary"]};

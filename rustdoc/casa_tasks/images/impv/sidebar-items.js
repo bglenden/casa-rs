@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["impv_front_end"]};

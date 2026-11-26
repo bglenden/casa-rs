@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PlotArrayDtype","PlotAspect","PlotLayerData"],"struct":["PlotArrayError","PlotBinaryArray","PlotFigure","PlotLayerStyle","PlotLayout","PlotTextStyle"]};

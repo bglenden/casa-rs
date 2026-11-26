@@ -183,130 +183,131 @@
 <a href=#183 id=183 data-nosnippet>183</a>}
 <a href=#184 id=184 data-nosnippet>184</a>
 <a href=#185 id=185 data-nosnippet>185</a><span class="kw">impl </span>MsPointing&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#186 id=186 data-nosnippet>186</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>plotms_samples(<span class="kw-2">&amp;</span><span class="self">self</span>, antennas: <span class="kw-2">&amp;</span>[i32]) -&gt; MsResult&lt;Vec&lt;(i32, f64, MDirection)&gt;&gt; {
-<a href=#187 id=187 data-nosnippet>187</a>        <span class="kw">let </span><span class="kw-2">mut </span>samples = Vec::new();
-<a href=#188 id=188 data-nosnippet>188</a>        PointingRows(<span class="self">self</span>.table()).visit(<span class="number">0</span>..<span class="self">self</span>.row_count(), antennas, |id, sample, <span class="kw">_</span>, <span class="kw">_</span>| {
-<a href=#189 id=189 data-nosnippet>189</a>            <span class="kw">if </span>!sample.time.is_finite() {
-<a href=#190 id=190 data-nosnippet>190</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(MsError::InvalidInput(<span class="string">"Nonfinite POINTING time"</span>.into()));
-<a href=#191 id=191 data-nosnippet>191</a>            }
-<a href=#192 id=192 data-nosnippet>192</a>            samples.push((id, sample.time, sample.row));
-<a href=#193 id=193 data-nosnippet>193</a>            <span class="prelude-val">Ok</span>(<span class="bool-val">false</span>)
-<a href=#194 id=194 data-nosnippet>194</a>        })<span class="question-mark">?</span>;
-<a href=#195 id=195 data-nosnippet>195</a>        samples.sort_by(|a, b| a.<span class="number">0</span>.cmp(<span class="kw-2">&amp;</span>b.<span class="number">0</span>).then_with(|| a.<span class="number">1</span>.total_cmp(<span class="kw-2">&amp;</span>b.<span class="number">1</span>)));
-<a href=#196 id=196 data-nosnippet>196</a>        samples.dedup_by(|a, b| a.<span class="number">0 </span>== b.<span class="number">0 </span>&amp;&amp; a.<span class="number">1 </span>== b.<span class="number">1</span>);
-<a href=#197 id=197 data-nosnippet>197</a>        <span class="kw">let </span>rows = samples.iter().map(|<span class="kw-2">&amp;</span>(<span class="kw">_</span>, <span class="kw">_</span>, row)| row).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#198 id=198 data-nosnippet>198</a>        <span class="kw">let </span>directions = <span class="self">self</span>.read_metadata_directions(<span class="kw-2">&amp;</span>rows)<span class="question-mark">?</span>;
-<a href=#199 id=199 data-nosnippet>199</a>        <span class="prelude-val">Ok</span>(samples
-<a href=#200 id=200 data-nosnippet>200</a>            .into_iter()
-<a href=#201 id=201 data-nosnippet>201</a>            .zip(directions)
-<a href=#202 id=202 data-nosnippet>202</a>            .map(|((id, time, <span class="kw">_</span>), direction)| (id, time, direction.direction))
-<a href=#203 id=203 data-nosnippet>203</a>            .collect())
-<a href=#204 id=204 data-nosnippet>204</a>    }
-<a href=#205 id=205 data-nosnippet>205</a>
-<a href=#206 id=206 data-nosnippet>206</a>    <span class="doccomment">/// Read the pointing directions of the antennas associated with one MAIN
-<a href=#207 id=207 data-nosnippet>207</a>    /// row. Start at the requested POINTING row and wrap through the subtable.
-<a href=#208 id=208 data-nosnippet>208</a>    /// Interpolate only when requested and the integration interval is shorter
-<a href=#209 id=209 data-nosnippet>209</a>    /// than the matched POINTING interval.
-<a href=#210 id=210 data-nosnippet>210</a>    ///
-<a href=#211 id=211 data-nosnippet>211</a>    /// # Errors
-<a href=#212 id=212 data-nosnippet>212</a>    ///
-<a href=#213 id=213 data-nosnippet>213</a>    /// A required column or pointing sample is missing or malformed, or an
-<a href=#214 id=214 data-nosnippet>214</a>    /// adjacent sample is unavailable when interpolation is requested.
-<a href=#215 id=215 data-nosnippet>215</a>    </span><span class="kw">pub fn </span>metadata_baseline_directions(
-<a href=#216 id=216 data-nosnippet>216</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#217 id=217 data-nosnippet>217</a>        antennas: [i32; <span class="number">2</span>],
-<a href=#218 id=218 data-nosnippet>218</a>        time: f64,
-<a href=#219 id=219 data-nosnippet>219</a>        main_interval: f64,
-<a href=#220 id=220 data-nosnippet>220</a>        initial_row: usize,
-<a href=#221 id=221 data-nosnippet>221</a>        interpolate: bool,
-<a href=#222 id=222 data-nosnippet>222</a>    ) -&gt; MsResult&lt;[MetadataDirection; <span class="number">2</span>]&gt; {
-<a href=#223 id=223 data-nosnippet>223</a>        <span class="kw">let </span>rows = PointingRows(<span class="self">self</span>.table());
-<a href=#224 id=224 data-nosnippet>224</a>        <span class="kw">let </span>[first, second] = rows.lookup(antennas, time, initial_row)<span class="question-mark">?</span>;
-<a href=#225 id=225 data-nosnippet>225</a>        <span class="kw">let </span>require_sample = |antenna, sample: <span class="prelude-ty">Option</span>&lt;Sample&gt;| {
-<a href=#226 id=226 data-nosnippet>226</a>            sample.ok_or_else(|| {
-<a href=#227 id=227 data-nosnippet>227</a>                MsError::InvalidInput(<span class="macro">format!</span>(
-<a href=#228 id=228 data-nosnippet>228</a>                    <span class="string">"No POINTING direction for antenna {antenna} at time {time}"
-<a href=#229 id=229 data-nosnippet>229</a>                </span>))
-<a href=#230 id=230 data-nosnippet>230</a>            })
-<a href=#231 id=231 data-nosnippet>231</a>        };
-<a href=#232 id=232 data-nosnippet>232</a>        <span class="kw">let </span>first_sample = require_sample(antennas[<span class="number">0</span>], first)<span class="question-mark">?</span>;
-<a href=#233 id=233 data-nosnippet>233</a>        <span class="kw">let </span>second_sample = require_sample(antennas[<span class="number">1</span>], second)<span class="question-mark">?</span>;
-<a href=#234 id=234 data-nosnippet>234</a>        <span class="kw">let </span>selected = [first_sample.row, second_sample.row];
-<a href=#235 id=235 data-nosnippet>235</a>        <span class="kw">let </span>autocorrelation = antennas[<span class="number">0</span>] == antennas[<span class="number">1</span>];
-<a href=#236 id=236 data-nosnippet>236</a>        <span class="kw">let </span><span class="kw-2">mut </span>directions = <span class="self">self
-<a href=#237 id=237 data-nosnippet>237</a>            </span>.read_metadata_directions(<span class="kw-2">&amp;</span>selected[..<span class="kw">if </span>autocorrelation { <span class="number">1 </span>} <span class="kw">else </span>{ <span class="number">2 </span>}])<span class="question-mark">?
-<a href=#238 id=238 data-nosnippet>238</a>            </span>.into_iter();
-<a href=#239 id=239 data-nosnippet>239</a>        <span class="kw">let </span>direction = |antenna, sample: Sample, <span class="kw-2">mut </span>left: MetadataDirection| {
-<a href=#240 id=240 data-nosnippet>240</a>            <span class="kw">if </span>!interpolate || main_interval &gt;= sample.interval {
-<a href=#241 id=241 data-nosnippet>241</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(left);
-<a href=#242 id=242 data-nosnippet>242</a>            }
-<a href=#243 id=243 data-nosnippet>243</a>            <span class="kw">let </span>after = (sample.row + <span class="number">1</span>, sample.time + sample.interval);
-<a href=#244 id=244 data-nosnippet>244</a>            <span class="kw">let </span>before = (<span class="number">0</span>, sample.time - sample.interval);
-<a href=#245 id=245 data-nosnippet>245</a>            <span class="kw">let </span>[preferred, alternate] = <span class="kw">if </span>time &gt;= sample.time {
-<a href=#246 id=246 data-nosnippet>246</a>                [after, before]
-<a href=#247 id=247 data-nosnippet>247</a>            } <span class="kw">else </span>{
-<a href=#248 id=248 data-nosnippet>248</a>                [before, after]
-<a href=#249 id=249 data-nosnippet>249</a>            };
-<a href=#250 id=250 data-nosnippet>250</a>            <span class="kw">let </span>distinct = |(guess, time)| -&gt; MsResult&lt;<span class="prelude-ty">Option</span>&lt;Sample&gt;&gt; {
-<a href=#251 id=251 data-nosnippet>251</a>                <span class="prelude-val">Ok</span>(rows.lookup([antenna; <span class="number">2</span>], time, guess)<span class="question-mark">?</span>[<span class="number">0</span>]
-<a href=#252 id=252 data-nosnippet>252</a>                    .filter(|other| other.row != sample.row))
-<a href=#253 id=253 data-nosnippet>253</a>            };
-<a href=#254 id=254 data-nosnippet>254</a>            <span class="kw">let </span>neighbor = <span class="kw">match </span>distinct(preferred)<span class="question-mark">? </span>{
-<a href=#255 id=255 data-nosnippet>255</a>                <span class="prelude-val">Some</span>(neighbor) =&gt; <span class="prelude-val">Some</span>(neighbor),
-<a href=#256 id=256 data-nosnippet>256</a>                <span class="prelude-val">None </span>=&gt; distinct(alternate)<span class="question-mark">?</span>,
-<a href=#257 id=257 data-nosnippet>257</a>            }
-<a href=#258 id=258 data-nosnippet>258</a>            .ok_or_else(|| {
-<a href=#259 id=259 data-nosnippet>259</a>                MsError::InvalidInput(
-<a href=#260 id=260 data-nosnippet>260</a>                    <span class="string">"Failed to find pointing index to interpolate direction"</span>.into(),
-<a href=#261 id=261 data-nosnippet>261</a>                )
-<a href=#262 id=262 data-nosnippet>262</a>            })<span class="question-mark">?</span>;
-<a href=#263 id=263 data-nosnippet>263</a>            <span class="kw">if </span>neighbor.time == sample.time {
-<a href=#264 id=264 data-nosnippet>264</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(MsError::InvalidInput(
-<a href=#265 id=265 data-nosnippet>265</a>                    <span class="string">"Pointing interpolation needs distinct times"</span>.into(),
-<a href=#266 id=266 data-nosnippet>266</a>                ));
-<a href=#267 id=267 data-nosnippet>267</a>            }
-<a href=#268 id=268 data-nosnippet>268</a>            <span class="kw">let </span>a = signed_angles(<span class="kw-2">&amp;</span>left.direction);
-<a href=#269 id=269 data-nosnippet>269</a>            <span class="kw">let </span>right = <span class="self">self</span>.read_metadata_directions(<span class="kw-2">&amp;</span>[neighbor.row])<span class="question-mark">?</span>;
-<a href=#270 id=270 data-nosnippet>270</a>            <span class="kw">let </span>b = signed_angles(<span class="kw-2">&amp;</span>right[<span class="number">0</span>].direction);
-<a href=#271 id=271 data-nosnippet>271</a>            <span class="kw">let </span>delta = (time - sample.time) / (neighbor.time - sample.time);
-<a href=#272 id=272 data-nosnippet>272</a>            left.direction = MDirection::from_angles(
-<a href=#273 id=273 data-nosnippet>273</a>                a[<span class="number">0</span>] + (b[<span class="number">0</span>] - a[<span class="number">0</span>]) * delta,
-<a href=#274 id=274 data-nosnippet>274</a>                a[<span class="number">1</span>] + (b[<span class="number">1</span>] - a[<span class="number">1</span>]) * delta,
-<a href=#275 id=275 data-nosnippet>275</a>                left.direction.refer(),
-<a href=#276 id=276 data-nosnippet>276</a>            );
-<a href=#277 id=277 data-nosnippet>277</a>            <span class="prelude-val">Ok</span>(left)
-<a href=#278 id=278 data-nosnippet>278</a>        };
-<a href=#279 id=279 data-nosnippet>279</a>        <span class="kw">let </span>first = direction(
-<a href=#280 id=280 data-nosnippet>280</a>            antennas[<span class="number">0</span>],
-<a href=#281 id=281 data-nosnippet>281</a>            first_sample,
-<a href=#282 id=282 data-nosnippet>282</a>            directions.next().expect(<span class="string">"first requested direction"</span>),
-<a href=#283 id=283 data-nosnippet>283</a>        )<span class="question-mark">?</span>;
-<a href=#284 id=284 data-nosnippet>284</a>        <span class="kw">let </span>last = <span class="kw">if </span>autocorrelation {
-<a href=#285 id=285 data-nosnippet>285</a>            first.clone()
-<a href=#286 id=286 data-nosnippet>286</a>        } <span class="kw">else </span>{
-<a href=#287 id=287 data-nosnippet>287</a>            direction(
-<a href=#288 id=288 data-nosnippet>288</a>                antennas[<span class="number">1</span>],
-<a href=#289 id=289 data-nosnippet>289</a>                second_sample,
-<a href=#290 id=290 data-nosnippet>290</a>                directions.next().expect(<span class="string">"second requested direction"</span>),
-<a href=#291 id=291 data-nosnippet>291</a>            )<span class="question-mark">?
-<a href=#292 id=292 data-nosnippet>292</a>        </span>};
-<a href=#293 id=293 data-nosnippet>293</a>        <span class="prelude-val">Ok</span>([first, last])
-<a href=#294 id=294 data-nosnippet>294</a>    }
-<a href=#295 id=295 data-nosnippet>295</a>
-<a href=#296 id=296 data-nosnippet>296</a>    <span class="kw">fn </span>read_metadata_directions(<span class="kw-2">&amp;</span><span class="self">self</span>, rows: <span class="kw-2">&amp;</span>[usize]) -&gt; MsResult&lt;Vec&lt;MetadataDirection&gt;&gt; {
-<a href=#297 id=297 data-nosnippet>297</a>        <span class="kw">let </span>table = <span class="self">self</span>.table();
-<a href=#298 id=298 data-nosnippet>298</a>        <span class="kw">let </span>values = table
-<a href=#299 id=299 data-nosnippet>299</a>            .column_accessor(<span class="string">"DIRECTION"</span>)<span class="question-mark">?
-<a href=#300 id=300 data-nosnippet>300</a>            </span>.array_cells_owned_uncached(rows)<span class="question-mark">?</span>;
-<a href=#301 id=301 data-nosnippet>301</a>        rows.iter()
-<a href=#302 id=302 data-nosnippet>302</a>            .zip(values)
-<a href=#303 id=303 data-nosnippet>303</a>            .map(|(<span class="kw-2">&amp;</span>row, values)| {
-<a href=#304 id=304 data-nosnippet>304</a>                <span class="kw">let </span>values = values
-<a href=#305 id=305 data-nosnippet>305</a>                    .ok_or_else(|| MsError::InvalidInput(<span class="string">"Missing POINTING direction"</span>.into()))<span class="question-mark">?</span>;
-<a href=#306 id=306 data-nosnippet>306</a>                <span class="kw">let </span>angles = direction_components(table, <span class="string">"DIRECTION"</span>, <span class="kw-2">&amp;</span>values, <span class="number">0</span>)<span class="question-mark">?</span>;
-<a href=#307 id=307 data-nosnippet>307</a>                direction_with_reference(table, <span class="string">"DIRECTION"</span>, row, <span class="number">0</span>, angles)
-<a href=#308 id=308 data-nosnippet>308</a>            })
-<a href=#309 id=309 data-nosnippet>309</a>            .collect()
-<a href=#310 id=310 data-nosnippet>310</a>    }
-<a href=#311 id=311 data-nosnippet>311</a>}
+<a href=#186 id=186 data-nosnippet>186</a>    <span class="doccomment">/// Read unique `(ANTENNA_ID, TIME, DIRECTION)` samples sorted for PlotMS.
+<a href=#187 id=187 data-nosnippet>187</a>    </span><span class="kw">pub fn </span>plotms_samples(<span class="kw-2">&amp;</span><span class="self">self</span>, antennas: <span class="kw-2">&amp;</span>[i32]) -&gt; MsResult&lt;Vec&lt;(i32, f64, MDirection)&gt;&gt; {
+<a href=#188 id=188 data-nosnippet>188</a>        <span class="kw">let </span><span class="kw-2">mut </span>samples = Vec::new();
+<a href=#189 id=189 data-nosnippet>189</a>        PointingRows(<span class="self">self</span>.table()).visit(<span class="number">0</span>..<span class="self">self</span>.row_count(), antennas, |id, sample, <span class="kw">_</span>, <span class="kw">_</span>| {
+<a href=#190 id=190 data-nosnippet>190</a>            <span class="kw">if </span>!sample.time.is_finite() {
+<a href=#191 id=191 data-nosnippet>191</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(MsError::InvalidInput(<span class="string">"Nonfinite POINTING time"</span>.into()));
+<a href=#192 id=192 data-nosnippet>192</a>            }
+<a href=#193 id=193 data-nosnippet>193</a>            samples.push((id, sample.time, sample.row));
+<a href=#194 id=194 data-nosnippet>194</a>            <span class="prelude-val">Ok</span>(<span class="bool-val">false</span>)
+<a href=#195 id=195 data-nosnippet>195</a>        })<span class="question-mark">?</span>;
+<a href=#196 id=196 data-nosnippet>196</a>        samples.sort_by(|a, b| a.<span class="number">0</span>.cmp(<span class="kw-2">&amp;</span>b.<span class="number">0</span>).then_with(|| a.<span class="number">1</span>.total_cmp(<span class="kw-2">&amp;</span>b.<span class="number">1</span>)));
+<a href=#197 id=197 data-nosnippet>197</a>        samples.dedup_by(|a, b| a.<span class="number">0 </span>== b.<span class="number">0 </span>&amp;&amp; a.<span class="number">1 </span>== b.<span class="number">1</span>);
+<a href=#198 id=198 data-nosnippet>198</a>        <span class="kw">let </span>rows = samples.iter().map(|<span class="kw-2">&amp;</span>(<span class="kw">_</span>, <span class="kw">_</span>, row)| row).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#199 id=199 data-nosnippet>199</a>        <span class="kw">let </span>directions = <span class="self">self</span>.read_metadata_directions(<span class="kw-2">&amp;</span>rows)<span class="question-mark">?</span>;
+<a href=#200 id=200 data-nosnippet>200</a>        <span class="prelude-val">Ok</span>(samples
+<a href=#201 id=201 data-nosnippet>201</a>            .into_iter()
+<a href=#202 id=202 data-nosnippet>202</a>            .zip(directions)
+<a href=#203 id=203 data-nosnippet>203</a>            .map(|((id, time, <span class="kw">_</span>), direction)| (id, time, direction.direction))
+<a href=#204 id=204 data-nosnippet>204</a>            .collect())
+<a href=#205 id=205 data-nosnippet>205</a>    }
+<a href=#206 id=206 data-nosnippet>206</a>
+<a href=#207 id=207 data-nosnippet>207</a>    <span class="doccomment">/// Read the pointing directions of the antennas associated with one MAIN
+<a href=#208 id=208 data-nosnippet>208</a>    /// row. Start at the requested POINTING row and wrap through the subtable.
+<a href=#209 id=209 data-nosnippet>209</a>    /// Interpolate only when requested and the integration interval is shorter
+<a href=#210 id=210 data-nosnippet>210</a>    /// than the matched POINTING interval.
+<a href=#211 id=211 data-nosnippet>211</a>    ///
+<a href=#212 id=212 data-nosnippet>212</a>    /// # Errors
+<a href=#213 id=213 data-nosnippet>213</a>    ///
+<a href=#214 id=214 data-nosnippet>214</a>    /// A required column or pointing sample is missing or malformed, or an
+<a href=#215 id=215 data-nosnippet>215</a>    /// adjacent sample is unavailable when interpolation is requested.
+<a href=#216 id=216 data-nosnippet>216</a>    </span><span class="kw">pub fn </span>metadata_baseline_directions(
+<a href=#217 id=217 data-nosnippet>217</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#218 id=218 data-nosnippet>218</a>        antennas: [i32; <span class="number">2</span>],
+<a href=#219 id=219 data-nosnippet>219</a>        time: f64,
+<a href=#220 id=220 data-nosnippet>220</a>        main_interval: f64,
+<a href=#221 id=221 data-nosnippet>221</a>        initial_row: usize,
+<a href=#222 id=222 data-nosnippet>222</a>        interpolate: bool,
+<a href=#223 id=223 data-nosnippet>223</a>    ) -&gt; MsResult&lt;[MetadataDirection; <span class="number">2</span>]&gt; {
+<a href=#224 id=224 data-nosnippet>224</a>        <span class="kw">let </span>rows = PointingRows(<span class="self">self</span>.table());
+<a href=#225 id=225 data-nosnippet>225</a>        <span class="kw">let </span>[first, second] = rows.lookup(antennas, time, initial_row)<span class="question-mark">?</span>;
+<a href=#226 id=226 data-nosnippet>226</a>        <span class="kw">let </span>require_sample = |antenna, sample: <span class="prelude-ty">Option</span>&lt;Sample&gt;| {
+<a href=#227 id=227 data-nosnippet>227</a>            sample.ok_or_else(|| {
+<a href=#228 id=228 data-nosnippet>228</a>                MsError::InvalidInput(<span class="macro">format!</span>(
+<a href=#229 id=229 data-nosnippet>229</a>                    <span class="string">"No POINTING direction for antenna {antenna} at time {time}"
+<a href=#230 id=230 data-nosnippet>230</a>                </span>))
+<a href=#231 id=231 data-nosnippet>231</a>            })
+<a href=#232 id=232 data-nosnippet>232</a>        };
+<a href=#233 id=233 data-nosnippet>233</a>        <span class="kw">let </span>first_sample = require_sample(antennas[<span class="number">0</span>], first)<span class="question-mark">?</span>;
+<a href=#234 id=234 data-nosnippet>234</a>        <span class="kw">let </span>second_sample = require_sample(antennas[<span class="number">1</span>], second)<span class="question-mark">?</span>;
+<a href=#235 id=235 data-nosnippet>235</a>        <span class="kw">let </span>selected = [first_sample.row, second_sample.row];
+<a href=#236 id=236 data-nosnippet>236</a>        <span class="kw">let </span>autocorrelation = antennas[<span class="number">0</span>] == antennas[<span class="number">1</span>];
+<a href=#237 id=237 data-nosnippet>237</a>        <span class="kw">let </span><span class="kw-2">mut </span>directions = <span class="self">self
+<a href=#238 id=238 data-nosnippet>238</a>            </span>.read_metadata_directions(<span class="kw-2">&amp;</span>selected[..<span class="kw">if </span>autocorrelation { <span class="number">1 </span>} <span class="kw">else </span>{ <span class="number">2 </span>}])<span class="question-mark">?
+<a href=#239 id=239 data-nosnippet>239</a>            </span>.into_iter();
+<a href=#240 id=240 data-nosnippet>240</a>        <span class="kw">let </span>direction = |antenna, sample: Sample, <span class="kw-2">mut </span>left: MetadataDirection| {
+<a href=#241 id=241 data-nosnippet>241</a>            <span class="kw">if </span>!interpolate || main_interval &gt;= sample.interval {
+<a href=#242 id=242 data-nosnippet>242</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(left);
+<a href=#243 id=243 data-nosnippet>243</a>            }
+<a href=#244 id=244 data-nosnippet>244</a>            <span class="kw">let </span>after = (sample.row + <span class="number">1</span>, sample.time + sample.interval);
+<a href=#245 id=245 data-nosnippet>245</a>            <span class="kw">let </span>before = (<span class="number">0</span>, sample.time - sample.interval);
+<a href=#246 id=246 data-nosnippet>246</a>            <span class="kw">let </span>[preferred, alternate] = <span class="kw">if </span>time &gt;= sample.time {
+<a href=#247 id=247 data-nosnippet>247</a>                [after, before]
+<a href=#248 id=248 data-nosnippet>248</a>            } <span class="kw">else </span>{
+<a href=#249 id=249 data-nosnippet>249</a>                [before, after]
+<a href=#250 id=250 data-nosnippet>250</a>            };
+<a href=#251 id=251 data-nosnippet>251</a>            <span class="kw">let </span>distinct = |(guess, time)| -&gt; MsResult&lt;<span class="prelude-ty">Option</span>&lt;Sample&gt;&gt; {
+<a href=#252 id=252 data-nosnippet>252</a>                <span class="prelude-val">Ok</span>(rows.lookup([antenna; <span class="number">2</span>], time, guess)<span class="question-mark">?</span>[<span class="number">0</span>]
+<a href=#253 id=253 data-nosnippet>253</a>                    .filter(|other| other.row != sample.row))
+<a href=#254 id=254 data-nosnippet>254</a>            };
+<a href=#255 id=255 data-nosnippet>255</a>            <span class="kw">let </span>neighbor = <span class="kw">match </span>distinct(preferred)<span class="question-mark">? </span>{
+<a href=#256 id=256 data-nosnippet>256</a>                <span class="prelude-val">Some</span>(neighbor) =&gt; <span class="prelude-val">Some</span>(neighbor),
+<a href=#257 id=257 data-nosnippet>257</a>                <span class="prelude-val">None </span>=&gt; distinct(alternate)<span class="question-mark">?</span>,
+<a href=#258 id=258 data-nosnippet>258</a>            }
+<a href=#259 id=259 data-nosnippet>259</a>            .ok_or_else(|| {
+<a href=#260 id=260 data-nosnippet>260</a>                MsError::InvalidInput(
+<a href=#261 id=261 data-nosnippet>261</a>                    <span class="string">"Failed to find pointing index to interpolate direction"</span>.into(),
+<a href=#262 id=262 data-nosnippet>262</a>                )
+<a href=#263 id=263 data-nosnippet>263</a>            })<span class="question-mark">?</span>;
+<a href=#264 id=264 data-nosnippet>264</a>            <span class="kw">if </span>neighbor.time == sample.time {
+<a href=#265 id=265 data-nosnippet>265</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(MsError::InvalidInput(
+<a href=#266 id=266 data-nosnippet>266</a>                    <span class="string">"Pointing interpolation needs distinct times"</span>.into(),
+<a href=#267 id=267 data-nosnippet>267</a>                ));
+<a href=#268 id=268 data-nosnippet>268</a>            }
+<a href=#269 id=269 data-nosnippet>269</a>            <span class="kw">let </span>a = signed_angles(<span class="kw-2">&amp;</span>left.direction);
+<a href=#270 id=270 data-nosnippet>270</a>            <span class="kw">let </span>right = <span class="self">self</span>.read_metadata_directions(<span class="kw-2">&amp;</span>[neighbor.row])<span class="question-mark">?</span>;
+<a href=#271 id=271 data-nosnippet>271</a>            <span class="kw">let </span>b = signed_angles(<span class="kw-2">&amp;</span>right[<span class="number">0</span>].direction);
+<a href=#272 id=272 data-nosnippet>272</a>            <span class="kw">let </span>delta = (time - sample.time) / (neighbor.time - sample.time);
+<a href=#273 id=273 data-nosnippet>273</a>            left.direction = MDirection::from_angles(
+<a href=#274 id=274 data-nosnippet>274</a>                a[<span class="number">0</span>] + (b[<span class="number">0</span>] - a[<span class="number">0</span>]) * delta,
+<a href=#275 id=275 data-nosnippet>275</a>                a[<span class="number">1</span>] + (b[<span class="number">1</span>] - a[<span class="number">1</span>]) * delta,
+<a href=#276 id=276 data-nosnippet>276</a>                left.direction.refer(),
+<a href=#277 id=277 data-nosnippet>277</a>            );
+<a href=#278 id=278 data-nosnippet>278</a>            <span class="prelude-val">Ok</span>(left)
+<a href=#279 id=279 data-nosnippet>279</a>        };
+<a href=#280 id=280 data-nosnippet>280</a>        <span class="kw">let </span>first = direction(
+<a href=#281 id=281 data-nosnippet>281</a>            antennas[<span class="number">0</span>],
+<a href=#282 id=282 data-nosnippet>282</a>            first_sample,
+<a href=#283 id=283 data-nosnippet>283</a>            directions.next().expect(<span class="string">"first requested direction"</span>),
+<a href=#284 id=284 data-nosnippet>284</a>        )<span class="question-mark">?</span>;
+<a href=#285 id=285 data-nosnippet>285</a>        <span class="kw">let </span>last = <span class="kw">if </span>autocorrelation {
+<a href=#286 id=286 data-nosnippet>286</a>            first.clone()
+<a href=#287 id=287 data-nosnippet>287</a>        } <span class="kw">else </span>{
+<a href=#288 id=288 data-nosnippet>288</a>            direction(
+<a href=#289 id=289 data-nosnippet>289</a>                antennas[<span class="number">1</span>],
+<a href=#290 id=290 data-nosnippet>290</a>                second_sample,
+<a href=#291 id=291 data-nosnippet>291</a>                directions.next().expect(<span class="string">"second requested direction"</span>),
+<a href=#292 id=292 data-nosnippet>292</a>            )<span class="question-mark">?
+<a href=#293 id=293 data-nosnippet>293</a>        </span>};
+<a href=#294 id=294 data-nosnippet>294</a>        <span class="prelude-val">Ok</span>([first, last])
+<a href=#295 id=295 data-nosnippet>295</a>    }
+<a href=#296 id=296 data-nosnippet>296</a>
+<a href=#297 id=297 data-nosnippet>297</a>    <span class="kw">fn </span>read_metadata_directions(<span class="kw-2">&amp;</span><span class="self">self</span>, rows: <span class="kw-2">&amp;</span>[usize]) -&gt; MsResult&lt;Vec&lt;MetadataDirection&gt;&gt; {
+<a href=#298 id=298 data-nosnippet>298</a>        <span class="kw">let </span>table = <span class="self">self</span>.table();
+<a href=#299 id=299 data-nosnippet>299</a>        <span class="kw">let </span>values = table
+<a href=#300 id=300 data-nosnippet>300</a>            .column_accessor(<span class="string">"DIRECTION"</span>)<span class="question-mark">?
+<a href=#301 id=301 data-nosnippet>301</a>            </span>.array_cells_owned_uncached(rows)<span class="question-mark">?</span>;
+<a href=#302 id=302 data-nosnippet>302</a>        rows.iter()
+<a href=#303 id=303 data-nosnippet>303</a>            .zip(values)
+<a href=#304 id=304 data-nosnippet>304</a>            .map(|(<span class="kw-2">&amp;</span>row, values)| {
+<a href=#305 id=305 data-nosnippet>305</a>                <span class="kw">let </span>values = values
+<a href=#306 id=306 data-nosnippet>306</a>                    .ok_or_else(|| MsError::InvalidInput(<span class="string">"Missing POINTING direction"</span>.into()))<span class="question-mark">?</span>;
+<a href=#307 id=307 data-nosnippet>307</a>                <span class="kw">let </span>angles = direction_components(table, <span class="string">"DIRECTION"</span>, <span class="kw-2">&amp;</span>values, <span class="number">0</span>)<span class="question-mark">?</span>;
+<a href=#308 id=308 data-nosnippet>308</a>                direction_with_reference(table, <span class="string">"DIRECTION"</span>, row, <span class="number">0</span>, angles)
+<a href=#309 id=309 data-nosnippet>309</a>            })
+<a href=#310 id=310 data-nosnippet>310</a>            .collect()
+<a href=#311 id=311 data-nosnippet>311</a>    }
+<a href=#312 id=312 data-nosnippet>312</a>}
 </code></pre></div></section></main></body></html>

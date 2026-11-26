@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["LeakageSolveKind"],"fn":["solve_polarization"],"struct":["LeakageSolveRequest","PolarizationSolveOutcome"]};

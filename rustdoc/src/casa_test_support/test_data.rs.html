@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-test-support/src/test_data.rs`."><title>test_data.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_test_support" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_test_support/</div>test_data.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `dev/casa-test-support/src/test_data.rs`."><title>test_data.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_test_support" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_test_support/</div>test_data.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Shared CASA test-data and reference-environment discovery.
 <a href=#3 id=3 data-nosnippet>3</a>
 <a href=#4 id=4 data-nosnippet>4</a></span><span class="kw">use </span>std::path::{Path, PathBuf};
@@ -528,46 +528,48 @@
 <a href=#528 id=528 data-nosnippet>528</a>
 <a href=#529 id=529 data-nosnippet>529</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>python_can_import(program: <span class="kw-2">&amp;</span>Path, module: <span class="kw-2">&amp;</span>str) -&gt; bool {
 <a href=#530 id=530 data-nosnippet>530</a>    Command::new(program)
-<a href=#531 id=531 data-nosnippet>531</a>        .arg(<span class="string">"-c"</span>)
-<a href=#532 id=532 data-nosnippet>532</a>        .arg(<span class="macro">format!</span>(<span class="string">"import {module}"</span>))
-<a href=#533 id=533 data-nosnippet>533</a>        .output()
-<a href=#534 id=534 data-nosnippet>534</a>        .is_ok_and(|output| output.status.success())
-<a href=#535 id=535 data-nosnippet>535</a>}
-<a href=#536 id=536 data-nosnippet>536</a>
-<a href=#537 id=537 data-nosnippet>537</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>python_has_callable(program: <span class="kw-2">&amp;</span>Path, attribute: <span class="kw-2">&amp;</span>str) -&gt; bool {
-<a href=#538 id=538 data-nosnippet>538</a>    <span class="kw">let </span>script = <span class="kw">if </span>attribute == <span class="string">"plotms" </span>{
-<a href=#539 id=539 data-nosnippet>539</a>        <span class="string">"import importlib.util\nimport casatasks\nok = hasattr(casatasks, 'plotms') or importlib.util.find_spec('casaplotms') is not None\nprint('1' if ok else '0')\n"</span>.to_string()
-<a href=#540 id=540 data-nosnippet>540</a>    } <span class="kw">else </span>{
-<a href=#541 id=541 data-nosnippet>541</a>        <span class="macro">format!</span>(
-<a href=#542 id=542 data-nosnippet>542</a>            <span class="string">"import casatasks\nok = hasattr(casatasks, {attribute:?})\nprint('1' if ok else '0')\n"
-<a href=#543 id=543 data-nosnippet>543</a>        </span>)
-<a href=#544 id=544 data-nosnippet>544</a>    };
-<a href=#545 id=545 data-nosnippet>545</a>    Command::new(program)
-<a href=#546 id=546 data-nosnippet>546</a>        .arg(<span class="string">"-c"</span>)
-<a href=#547 id=547 data-nosnippet>547</a>        .arg(script)
-<a href=#548 id=548 data-nosnippet>548</a>        .output()
-<a href=#549 id=549 data-nosnippet>549</a>        .ok()
-<a href=#550 id=550 data-nosnippet>550</a>        .filter(|output| output.status.success())
-<a href=#551 id=551 data-nosnippet>551</a>        .is_some_and(|output| String::from_utf8_lossy(<span class="kw-2">&amp;</span>output.stdout).trim() == <span class="string">"1"</span>)
-<a href=#552 id=552 data-nosnippet>552</a>}
-<a href=#553 id=553 data-nosnippet>553</a>
-<a href=#554 id=554 data-nosnippet>554</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>existing_path_from_candidates&lt;<span class="kw">const </span>N: usize&gt;(
-<a href=#555 id=555 data-nosnippet>555</a>    candidates: [<span class="prelude-ty">Option</span>&lt;PathBuf&gt;; N],
-<a href=#556 id=556 data-nosnippet>556</a>) -&gt; <span class="prelude-ty">Option</span>&lt;PathBuf&gt; {
-<a href=#557 id=557 data-nosnippet>557</a>    candidates
-<a href=#558 id=558 data-nosnippet>558</a>        .into_iter()
-<a href=#559 id=559 data-nosnippet>559</a>        .flatten()
-<a href=#560 id=560 data-nosnippet>560</a>        .find(|path| path.exists())
-<a href=#561 id=561 data-nosnippet>561</a>        .map(|path| normalize_existing_path(<span class="kw-2">&amp;</span>path))
-<a href=#562 id=562 data-nosnippet>562</a>}
-<a href=#563 id=563 data-nosnippet>563</a>
-<a href=#564 id=564 data-nosnippet>564</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>dedup_paths(paths: Vec&lt;PathBuf&gt;) -&gt; Vec&lt;PathBuf&gt; {
-<a href=#565 id=565 data-nosnippet>565</a>    <span class="kw">let </span><span class="kw-2">mut </span>unique = Vec::new();
-<a href=#566 id=566 data-nosnippet>566</a>    <span class="kw">for </span>path <span class="kw">in </span>paths {
-<a href=#567 id=567 data-nosnippet>567</a>        <span class="kw">if </span>!unique.iter().any(|candidate| candidate == <span class="kw-2">&amp;</span>path) {
-<a href=#568 id=568 data-nosnippet>568</a>            unique.push(path);
-<a href=#569 id=569 data-nosnippet>569</a>        }
-<a href=#570 id=570 data-nosnippet>570</a>    }
-<a href=#571 id=571 data-nosnippet>571</a>    unique
-<a href=#572 id=572 data-nosnippet>572</a>}
+<a href=#531 id=531 data-nosnippet>531</a>        .current_dir(<span class="kw">crate</span>::test_log_dir())
+<a href=#532 id=532 data-nosnippet>532</a>        .arg(<span class="string">"-c"</span>)
+<a href=#533 id=533 data-nosnippet>533</a>        .arg(<span class="macro">format!</span>(<span class="string">"import {module}"</span>))
+<a href=#534 id=534 data-nosnippet>534</a>        .output()
+<a href=#535 id=535 data-nosnippet>535</a>        .is_ok_and(|output| output.status.success())
+<a href=#536 id=536 data-nosnippet>536</a>}
+<a href=#537 id=537 data-nosnippet>537</a>
+<a href=#538 id=538 data-nosnippet>538</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>python_has_callable(program: <span class="kw-2">&amp;</span>Path, attribute: <span class="kw-2">&amp;</span>str) -&gt; bool {
+<a href=#539 id=539 data-nosnippet>539</a>    <span class="kw">let </span>script = <span class="kw">if </span>attribute == <span class="string">"plotms" </span>{
+<a href=#540 id=540 data-nosnippet>540</a>        <span class="string">"import importlib.util\nimport casatasks\nok = hasattr(casatasks, 'plotms') or importlib.util.find_spec('casaplotms') is not None\nprint('1' if ok else '0')\n"</span>.to_string()
+<a href=#541 id=541 data-nosnippet>541</a>    } <span class="kw">else </span>{
+<a href=#542 id=542 data-nosnippet>542</a>        <span class="macro">format!</span>(
+<a href=#543 id=543 data-nosnippet>543</a>            <span class="string">"import casatasks\nok = hasattr(casatasks, {attribute:?})\nprint('1' if ok else '0')\n"
+<a href=#544 id=544 data-nosnippet>544</a>        </span>)
+<a href=#545 id=545 data-nosnippet>545</a>    };
+<a href=#546 id=546 data-nosnippet>546</a>    Command::new(program)
+<a href=#547 id=547 data-nosnippet>547</a>        .current_dir(<span class="kw">crate</span>::test_log_dir())
+<a href=#548 id=548 data-nosnippet>548</a>        .arg(<span class="string">"-c"</span>)
+<a href=#549 id=549 data-nosnippet>549</a>        .arg(script)
+<a href=#550 id=550 data-nosnippet>550</a>        .output()
+<a href=#551 id=551 data-nosnippet>551</a>        .ok()
+<a href=#552 id=552 data-nosnippet>552</a>        .filter(|output| output.status.success())
+<a href=#553 id=553 data-nosnippet>553</a>        .is_some_and(|output| String::from_utf8_lossy(<span class="kw-2">&amp;</span>output.stdout).trim() == <span class="string">"1"</span>)
+<a href=#554 id=554 data-nosnippet>554</a>}
+<a href=#555 id=555 data-nosnippet>555</a>
+<a href=#556 id=556 data-nosnippet>556</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>existing_path_from_candidates&lt;<span class="kw">const </span>N: usize&gt;(
+<a href=#557 id=557 data-nosnippet>557</a>    candidates: [<span class="prelude-ty">Option</span>&lt;PathBuf&gt;; N],
+<a href=#558 id=558 data-nosnippet>558</a>) -&gt; <span class="prelude-ty">Option</span>&lt;PathBuf&gt; {
+<a href=#559 id=559 data-nosnippet>559</a>    candidates
+<a href=#560 id=560 data-nosnippet>560</a>        .into_iter()
+<a href=#561 id=561 data-nosnippet>561</a>        .flatten()
+<a href=#562 id=562 data-nosnippet>562</a>        .find(|path| path.exists())
+<a href=#563 id=563 data-nosnippet>563</a>        .map(|path| normalize_existing_path(<span class="kw-2">&amp;</span>path))
+<a href=#564 id=564 data-nosnippet>564</a>}
+<a href=#565 id=565 data-nosnippet>565</a>
+<a href=#566 id=566 data-nosnippet>566</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>dedup_paths(paths: Vec&lt;PathBuf&gt;) -&gt; Vec&lt;PathBuf&gt; {
+<a href=#567 id=567 data-nosnippet>567</a>    <span class="kw">let </span><span class="kw-2">mut </span>unique = Vec::new();
+<a href=#568 id=568 data-nosnippet>568</a>    <span class="kw">for </span>path <span class="kw">in </span>paths {
+<a href=#569 id=569 data-nosnippet>569</a>        <span class="kw">if </span>!unique.iter().any(|candidate| candidate == <span class="kw-2">&amp;</span>path) {
+<a href=#570 id=570 data-nosnippet>570</a>            unique.push(path);
+<a href=#571 id=571 data-nosnippet>571</a>        }
+<a href=#572 id=572 data-nosnippet>572</a>    }
+<a href=#573 id=573 data-nosnippet>573</a>    unique
+<a href=#574 id=574 data-nosnippet>574</a>}
 </code></pre></div></section></main></body></html>

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["MS_VERSION"],"struct":["MeasurementSet"]};
+window.SIDEBAR_ITEMS = {"constant":["MS_VERSION"],"fn":["subtable_path_from_main"],"struct":["MeasurementSet"]};

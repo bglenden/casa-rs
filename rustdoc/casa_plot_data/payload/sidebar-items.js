@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["plot_array_view"],"struct":["PlotPayloadWriter"]};

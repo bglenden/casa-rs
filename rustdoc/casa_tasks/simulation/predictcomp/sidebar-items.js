@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["predictcomp_front_end","predictcomp_task_schema_bundle"]};

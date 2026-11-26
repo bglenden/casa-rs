@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SingleDishBaselineBasis","SingleDishBaselineMode"],"mod":["sinusoid","table","variable"],"struct":["SingleDishBaseline","SingleDishBaselineDiagnostics","SingleDishLineFinder"]};

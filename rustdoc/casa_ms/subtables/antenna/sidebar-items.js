@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["MsAntenna","MsAntennaMut"]};
+window.SIDEBAR_ITEMS = {"fn":["antenna_observatory_offsets"],"struct":["MsAntenna","MsAntennaMut"]};

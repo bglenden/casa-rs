@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["command_line","command_line_without_reason","error","pad_timerange","padding","read","read_lines","render_command_line","strings","tbuff_active","valid_value"]};

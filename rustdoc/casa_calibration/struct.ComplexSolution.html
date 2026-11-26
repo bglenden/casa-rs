@@ -16,7 +16,7 @@ frequency.</p>
     input_hz: &amp;[<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.f64.html">f64</a>],
     output_hz: &amp;[<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.f64.html">f64</a>],
     mode: <a class="enum" href="enum.FrequencyInterpolation.html" title="enum casa_calibration::FrequencyInterpolation">FrequencyInterpolation</a>,
-) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.100.0/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Self, <a class="enum" href="enum.ApplyExecutionError.html" title="enum casa_calibration::ApplyExecutionError">ApplyExecutionError</a>&gt;</h4></section></summary><div class="docblock"><p>Resample each receptor to the requested data frequencies.</p>
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.100.0/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Self, <a class="enum" href="execute/enum.ApplyExecutionError.html" title="enum casa_calibration::execute::ApplyExecutionError">ApplyExecutionError</a>&gt;</h4></section></summary><div class="docblock"><p>Resample each receptor to the requested data frequencies.</p>
 <p>CASA’s <code>CTPatchedInterp::resampleInFreq</code> first removes flagged
 input channels, unwraps phase and interpolates amplitude/phase
 separately. Without a valid input the output remains flagged.
@@ -33,7 +33,7 @@ cubic/spline axes to linear before compressing flagged samples.</p>
     input_hz: &amp;[<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.f64.html">f64</a>],
     output_hz: &amp;[<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.f64.html">f64</a>],
     mode: <a class="enum" href="enum.FrequencyInterpolation.html" title="enum casa_calibration::FrequencyInterpolation">FrequencyInterpolation</a>,
-) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.100.0/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Self, <a class="enum" href="enum.ApplyExecutionError.html" title="enum casa_calibration::ApplyExecutionError">ApplyExecutionError</a>&gt;</h4></section></summary><div class="docblock"><p>Resample signed FPARAM values directly, before evaluating physical
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.100.0/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Self, <a class="enum" href="execute/enum.ApplyExecutionError.html" title="enum casa_calibration::execute::ApplyExecutionError">ApplyExecutionError</a>&gt;</h4></section></summary><div class="docblock"><p>Resample signed FPARAM values directly, before evaluating physical
 Jones factors. Flags and short-axis rules match complex resampling.</p>
 <h5 id="errors-1"><a class="doc-anchor" href="#errors-1">§</a>Errors</h5>
 <p>As <a href="struct.ComplexSolution.html#method.resample_frequency" title="method casa_calibration::ComplexSolution::resample_frequency"><code>Self::resample_frequency</code></a>.</p>

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["main","moment_numbers","pixel_range","run"]};
+window.SIDEBAR_ITEMS = {"fn":["main"]};

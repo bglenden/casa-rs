@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FLAGDATA_SUMMARY_NAME"],"fn":["flagdata_empty_record","flagdata_named_summary_record","flagdata_summary_record","flagmanager_list_record"]};

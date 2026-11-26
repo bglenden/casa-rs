@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["imregrid_front_end"]};

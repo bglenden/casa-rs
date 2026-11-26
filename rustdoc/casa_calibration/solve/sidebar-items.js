@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["GainNormalization","GainSolveError","GainSolveInterval","GainSolveMode","GainSolveModelSource","GainType","RefAntSelector"],"fn":["point_model_stokes"],"mod":["grouping"],"struct":["GainSolveCombine","GainSolveReport","GainSolveRequest","GainSolveRobustness","GainSplineControls"]};

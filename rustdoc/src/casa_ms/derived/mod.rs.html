@@ -17,7 +17,7 @@
 <a href=#17 id=17 data-nosnippet>17</a>
 <a href=#18 id=18 data-nosnippet>18</a><span class="doccomment">/// Parse two angular quantities with an optional direction frame, as CASA
 <a href=#19 id=19 data-nosnippet>19</a>/// tasks accept for an explicit phase center.
-<a href=#20 id=20 data-nosnippet>20</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>parse_phase_direction(value: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;MDirection&gt; {
+<a href=#20 id=20 data-nosnippet>20</a></span><span class="kw">pub fn </span>parse_phase_direction(value: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;MDirection&gt; {
 <a href=#21 id=21 data-nosnippet>21</a>    <span class="kw">let </span><span class="kw-2">mut </span>parts = value.split_whitespace();
 <a href=#22 id=22 data-nosnippet>22</a>    <span class="kw">let </span>(frame, longitude, latitude) =
 <a href=#23 id=23 data-nosnippet>23</a>        <span class="kw">match </span>(parts.next(), parts.next(), parts.next(), parts.next()) {

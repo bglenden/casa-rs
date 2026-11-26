@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["importfits_front_end"]};

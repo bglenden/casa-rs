@@ -119,7 +119,7 @@
 <a href=#119 id=119 data-nosnippet>119</a>    /// descriptor lacks a reference. CASA's visibility iterator reads the
 <a href=#120 id=120 data-nosnippet>120</a>    /// measurement-frame column in that case, while the measure accessor's
 <a href=#121 id=121 data-nosnippet>121</a>    /// default remains REST.
-<a href=#122 id=122 data-nosnippet>122</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>visibility_frequency_reference(<span class="kw-2">&amp;</span><span class="self">self</span>, row: usize) -&gt; MsResult&lt;FrequencyRef&gt; {
+<a href=#122 id=122 data-nosnippet>122</a>    </span><span class="kw">pub fn </span>visibility_frequency_reference(<span class="kw-2">&amp;</span><span class="self">self</span>, row: usize) -&gt; MsResult&lt;FrequencyRef&gt; {
 <a href=#123 id=123 data-nosnippet>123</a>        <span class="kw">if </span><span class="macro">matches!</span>(
 <a href=#124 id=124 data-nosnippet>124</a>            <span class="self">self</span>.channels_reference.or(<span class="kw-2">&amp;</span><span class="self">self</span>.centre_reference),
 <a href=#125 id=125 data-nosnippet>125</a>            FrequencyReference::Incomplete

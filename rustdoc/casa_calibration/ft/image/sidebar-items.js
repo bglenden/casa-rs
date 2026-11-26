@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["prepare_image","reference_frequency"],"struct":["ImageModel","TaylorTerm"]};

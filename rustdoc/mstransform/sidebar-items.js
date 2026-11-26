@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["absolute_time_range","callibrary","channel_integer","channel_parameter","channel_width","continuum_options","data_column","flag_command_widths","main","multi_ms_options","regrid_options","run","selection","task_history","tile_layout","time_average_options","transform_request","variant_selector","variant_selector_text"]};
+window.SIDEBAR_ITEMS = {"fn":["main"]};

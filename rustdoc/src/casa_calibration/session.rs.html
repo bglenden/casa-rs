@@ -390,14 +390,15 @@
 <a href=#390 id=390 data-nosnippet>390</a>    measurement_set.resolve_selection(selection, calibration_selection_budget()<span class="question-mark">?</span>)
 <a href=#391 id=391 data-nosnippet>391</a>}
 <a href=#392 id=392 data-nosnippet>392</a>
-<a href=#393 id=393 data-nosnippet>393</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>resolve_casa_calibration_selection(
-<a href=#394 id=394 data-nosnippet>394</a>    measurement_set: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#395 id=395 data-nosnippet>395</a>    selection: <span class="kw-2">&amp;</span>MsSelection,
-<a href=#396 id=396 data-nosnippet>396</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ResolvedMsSelection, MsSelectionError&gt; {
-<a href=#397 id=397 data-nosnippet>397</a>    measurement_set.resolve_casa_selection(selection, calibration_selection_budget()<span class="question-mark">?</span>)
-<a href=#398 id=398 data-nosnippet>398</a>}
-<a href=#399 id=399 data-nosnippet>399</a>
-<a href=#400 id=400 data-nosnippet>400</a><span class="kw">fn </span>calibration_selection_budget() -&gt; <span class="prelude-ty">Result</span>&lt;MsSelectionIoBudget, MsSelectionError&gt; {
-<a href=#401 id=401 data-nosnippet>401</a>    MsSelectionIoBudget::from_system_memory(<span class="number">2</span>, std::mem::size_of::&lt;ResolvedMsSelectionRow&gt;(), <span class="prelude-val">None</span>)
-<a href=#402 id=402 data-nosnippet>402</a>}
+<a href=#393 id=393 data-nosnippet>393</a><span class="doccomment">/// Resolve MS selection with calibration's CASA-grammar memory budget.
+<a href=#394 id=394 data-nosnippet>394</a></span><span class="kw">pub fn </span>resolve_casa_calibration_selection(
+<a href=#395 id=395 data-nosnippet>395</a>    measurement_set: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#396 id=396 data-nosnippet>396</a>    selection: <span class="kw-2">&amp;</span>MsSelection,
+<a href=#397 id=397 data-nosnippet>397</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ResolvedMsSelection, MsSelectionError&gt; {
+<a href=#398 id=398 data-nosnippet>398</a>    measurement_set.resolve_casa_selection(selection, calibration_selection_budget()<span class="question-mark">?</span>)
+<a href=#399 id=399 data-nosnippet>399</a>}
+<a href=#400 id=400 data-nosnippet>400</a>
+<a href=#401 id=401 data-nosnippet>401</a><span class="kw">fn </span>calibration_selection_budget() -&gt; <span class="prelude-ty">Result</span>&lt;MsSelectionIoBudget, MsSelectionError&gt; {
+<a href=#402 id=402 data-nosnippet>402</a>    MsSelectionIoBudget::from_system_memory(<span class="number">2</span>, std::mem::size_of::&lt;ResolvedMsSelectionRow&gt;(), <span class="prelude-val">None</span>)
+<a href=#403 id=403 data-nosnippet>403</a>}
 </code></pre></div></section></main></body></html>

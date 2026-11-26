@@ -147,7 +147,7 @@
 <a href=#147 id=147 data-nosnippet>147</a>                controls,
 <a href=#148 id=148 data-nosnippet>148</a>                <span class="prelude-val">Some</span>(activity),
 <a href=#149 id=149 data-nosnippet>149</a>            )
-<a href=#150 id=150 data-nosnippet>150</a>            .map_err(|error| error.message)<span class="question-mark">?</span>;
+<a href=#150 id=150 data-nosnippet>150</a>            .map_err(|error| error.into_message())<span class="question-mark">?</span>;
 <a href=#151 id=151 data-nosnippet>151</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(stats);
 <a href=#152 id=152 data-nosnippet>152</a>        }
 <a href=#153 id=153 data-nosnippet>153</a>        <span class="kw">let </span>rows = selection.row_indices().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();

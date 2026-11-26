@@ -708,7 +708,10 @@
 <h1 id="adr-0011-continuum-line-coupling">ADR-0011: Continuum-line coupling<a class="headerlink" href="#adr-0011-continuum-line-coupling" title="Permanent link">&para;</a></h1>
 <p>Status: retired
 Date: 2026-08-31
-Truth class: normative
+Amended: 2026-11-25, clean-sheet module reorganization: share numerical
+<code>uvcontsub</code> row fitter in <code>casa-numerics</code> with caller policy in
+<code>casa-imaging-operator</code> and <code>casa-mstransform</code>.
+Truth class: historical
 Supersedes:
 Superseded by: ADR-0016 decision 11</p>
 <p>ADR-0016 decision 11 removed the joint continuum-plus-line solver this ADR
@@ -726,8 +729,11 @@ subtraction, composed before independent channel-local line imaging. It fits
 each row and correlation over the fit channels with CASA's min/max frequency
 basis, subtracts the fit on the application channels, keeps the input flags
 and weights, and claims no propagated fit covariance. It is a visibility
-transform, not a joint reconstruction, and is never described as one. It
-lives in <code>casa-imaging-operator</code> (<code>fit_and_subtract_continuum</code>).</p>
+transform, not a joint reconstruction, and is never described as one. Its
+shared numerical polynomial row fitter targets <code>casa-numerics</code>, while
+imaging channel-selection policy lives in <code>casa-imaging-operator</code>
+(<code>fit_and_subtract_continuum</code>) and MS transform policy lives in
+<code>casa-mstransform</code>.</p>
 <p>A joint continuum-plus-line solver would be a new capability with its own
 scientific contract and a new ADR (ADR-0016 decision 11).</p>
 <h2 id="enforcement">Enforcement<a class="headerlink" href="#enforcement" title="Permanent link">&para;</a></h2>

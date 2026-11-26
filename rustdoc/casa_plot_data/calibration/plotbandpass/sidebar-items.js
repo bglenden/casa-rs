@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ChannelRange","PlatformingTime"],"fn":["pages","prepare_bandpass"],"mod":["spectrum"],"struct":["AtmosphericOptions","BandpassCurve","BandpassPage","BandpassPanel","BandpassPlots","BandpassSeries","DerivativeStatistics","DisplayOptions","Overlay","PlotRequest","Selectors","StatisticsGrid"]};

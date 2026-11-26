@@ -295,17 +295,35 @@
 <a href=#295 id=295 data-nosnippet>295</a>};
 <a href=#296 id=296 data-nosnippet>296</a><span class="kw">pub use </span>table::{
 <a href=#297 id=297 data-nosnippet>297</a>    ColumnAddition, ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, ColumnOverride,
-<a href=#298 id=298 data-nosnippet>298</a>    ColumnOverrides, CompressedComplexArray, DataManagerKind, EndianFormat, GeneratedArrayColumn,
-<a href=#299 id=299 data-nosnippet>299</a>    GeneratedArrayValueRun, GeneratedScalarColumn, GeneratedScalarValueRun, IncrementalCorruption,
-<a href=#300 id=300 data-nosnippet>300</a>    IncrementalLayoutCheck, ManagerAddition, PlainReferenceRead, PreparedRowAppender,
-<a href=#301 id=301 data-nosnippet>301</a>    PreparedTableRow, PreparedTableRowMut, QueryResult, RecordColumnCell, RecordColumnIter,
-<a href=#302 id=302 data-nosnippet>302</a>    RequiredScalarColumnDestination, RequiredScalarColumnValues, RequiredScalarColumnValuesMut,
-<a href=#303 id=303 data-nosnippet>303</a>    RowRange, STREAMING_SCALAR_COLUMN_BUFFER_BYTES, SelectedArray1DCells, SelectedArray1DCellsMut,
-<a href=#304 id=304 data-nosnippet>304</a>    SelectedArray1DShape, SelectedArray2D, SelectedArray2DCells, SelectedArray2DCellsMut,
-<a href=#305 id=305 data-nosnippet>305</a>    SelectedArray2DShape, SelectedReadFootprint, Slicer, SortOrder, StoredTableDescription,
-<a href=#306 id=306 data-nosnippet>306</a>    StreamedScalarColumn, StreamedScalarType, StreamedScalarValues, StreamingScalarColumnWriter,
-<a href=#307 id=307 data-nosnippet>307</a>    Table, TableCell, TableCellMut, TableColumn, TableColumnMut, TableError, TableKind,
-<a href=#308 id=308 data-nosnippet>308</a>    TableOptions, TablePartNames, TableRow, TableRowMut, TableWritePlan, table_cache_name,
-<a href=#309 id=309 data-nosnippet>309</a>};
-<a href=#310 id=310 data-nosnippet>310</a><span class="kw">pub use </span>table_path::{add_directory, lexical_absolute, strip_directory};
+<a href=#298 id=298 data-nosnippet>298</a>    ColumnOverrides, CompressedComplexArray, DataManagerKind, EncodedArrayAppend, EndianFormat,
+<a href=#299 id=299 data-nosnippet>299</a>    GeneratedArrayColumn, GeneratedArrayValueRun, GeneratedScalarColumn, GeneratedScalarValueRun,
+<a href=#300 id=300 data-nosnippet>300</a>    IncrementalCorruption, IncrementalLayoutCheck, ManagerAddition, PlainReferenceRead,
+<a href=#301 id=301 data-nosnippet>301</a>    PreparedRowAppender, PreparedTableEdit, PreparedTableRow, PreparedTableRowMut, QueryResult,
+<a href=#302 id=302 data-nosnippet>302</a>    RecordAppendOptions, RecordColumnCell, RecordColumnIter, RequiredScalarColumnDestination,
+<a href=#303 id=303 data-nosnippet>303</a>    RequiredScalarColumnValues, RequiredScalarColumnValuesMut, RowRange,
+<a href=#304 id=304 data-nosnippet>304</a>    STREAMING_SCALAR_COLUMN_BUFFER_BYTES, SelectedArray1DCells, SelectedArray1DCellsMut,
+<a href=#305 id=305 data-nosnippet>305</a>    SelectedArray1DShape, SelectedArray2D, SelectedArray2DCells, SelectedArray2DCellsMut,
+<a href=#306 id=306 data-nosnippet>306</a>    SelectedArray2DShape, SelectedReadFootprint, Slicer, SortOrder, StoredTableDescription,
+<a href=#307 id=307 data-nosnippet>307</a>    StreamedScalarColumn, StreamedScalarType, StreamedScalarValues, StreamingScalarColumnWriter,
+<a href=#308 id=308 data-nosnippet>308</a>    Table, TableCell, TableCellMut, TableColumn, TableColumnMut, TableError, TableKind,
+<a href=#309 id=309 data-nosnippet>309</a>    TableOptions, TablePartNames, TableRow, TableRowMut, TableWritePlan, table_cache_name,
+<a href=#310 id=310 data-nosnippet>310</a>};
+<a href=#311 id=311 data-nosnippet>311</a><span class="kw">pub use </span>table_path::{add_directory, lexical_absolute, strip_directory};
+<a href=#312 id=312 data-nosnippet>312</a>
+<a href=#313 id=313 data-nosnippet>313</a><span class="doccomment">/// Read the outer object type tag from a table directory's `table.dat`.
+<a href=#314 id=314 data-nosnippet>314</a>///
+<a href=#315 id=315 data-nosnippet>315</a>/// A casacore table has the tag `"Table"` regardless of its storage manager
+<a href=#316 id=316 data-nosnippet>316</a>/// or whether it is a plain, reference, or concatenated table. This probe
+<a href=#317 id=317 data-nosnippet>317</a>/// reads only the tag and does not open the table or validate its contents.
+<a href=#318 id=318 data-nosnippet>318</a>///
+<a href=#319 id=319 data-nosnippet>319</a>/// # Errors
+<a href=#320 id=320 data-nosnippet>320</a>///
+<a href=#321 id=321 data-nosnippet>321</a>/// Returns a storage error if the control file is unavailable or its tag
+<a href=#322 id=322 data-nosnippet>322</a>/// cannot be read.
+<a href=#323 id=323 data-nosnippet>323</a></span><span class="kw">pub fn </span>table_type_tag(path: <span class="kw-2">&amp;</span>std::path::Path) -&gt; <span class="prelude-ty">Result</span>&lt;String, StorageError&gt; {
+<a href=#324 id=324 data-nosnippet>324</a>    <span class="kw">use </span>casa_aipsio::{AipsIo, AipsOpenOption};
+<a href=#325 id=325 data-nosnippet>325</a>
+<a href=#326 id=326 data-nosnippet>326</a>    <span class="kw">let </span><span class="kw-2">mut </span>control = AipsIo::open(path.join(storage::TABLE_CONTROL_FILE), AipsOpenOption::Old)<span class="question-mark">?</span>;
+<a href=#327 id=327 data-nosnippet>327</a>    <span class="prelude-val">Ok</span>(control.get_next_type()<span class="question-mark">?</span>)
+<a href=#328 id=328 data-nosnippet>328</a>}
 </code></pre></div></section></main></body></html>

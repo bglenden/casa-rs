@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["FluxScaleError"],"fn":["fluxscale","fluxscale_with_output_mode"],"mod":["history"],"struct":["FluxScaleFieldResult","FluxScaleOptions","FluxScaleReport","FluxScaleRequest","FluxScaleSpwResult"]};

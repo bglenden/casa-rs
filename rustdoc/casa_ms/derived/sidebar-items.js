@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["columns","engine"]};
+window.SIDEBAR_ITEMS = {"fn":["parse_phase_direction"],"mod":["columns","engine"]};

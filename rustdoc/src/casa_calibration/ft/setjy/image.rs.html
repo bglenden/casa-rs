@@ -17,14 +17,14 @@
 <a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span><span class="kw">crate</span>::ft::image::{ImageModel, prepare_image};
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span><span class="kw">crate</span>::ft::{invalid, spectral_with_runtime};
 <a href=#19 id=19 data-nosnippet>19</a>
-<a href=#20 id=20 data-nosnippet>20</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ImageFrequencies {
-<a href=#21 id=21 data-nosnippet>21</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) samples: Vec&lt;f64&gt;,
+<a href=#20 id=20 data-nosnippet>20</a><span class="kw">pub struct </span>ImageFrequencies {
+<a href=#21 id=21 data-nosnippet>21</a>    <span class="kw">pub </span>samples: Vec&lt;f64&gt;,
 <a href=#22 id=22 data-nosnippet>22</a>    span: f64,
-<a href=#23 id=23 data-nosnippet>23</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) first_window_reference: FrequencyRef,
+<a href=#23 id=23 data-nosnippet>23</a>    <span class="kw">pub </span>first_window_reference: FrequencyRef,
 <a href=#24 id=24 data-nosnippet>24</a>}
 <a href=#25 id=25 data-nosnippet>25</a>
 <a href=#26 id=26 data-nosnippet>26</a><span class="kw">impl </span>ImageFrequencies {
-<a href=#27 id=27 data-nosnippet>27</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(
+<a href=#27 id=27 data-nosnippet>27</a>    <span class="kw">pub fn </span>new(
 <a href=#28 id=28 data-nosnippet>28</a>        min: f64,
 <a href=#29 id=29 data-nosnippet>29</a>        max: f64,
 <a href=#30 id=30 data-nosnippet>30</a>        step: f64,
@@ -56,7 +56,7 @@
 <a href=#56 id=56 data-nosnippet>56</a>        })
 <a href=#57 id=57 data-nosnippet>57</a>    }
 <a href=#58 id=58 data-nosnippet>58</a>
-<a href=#59 id=59 data-nosnippet>59</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>center(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+<a href=#59 id=59 data-nosnippet>59</a>    <span class="kw">pub fn </span>center(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
 <a href=#60 id=60 data-nosnippet>60</a>        <span class="kw">let </span>count = <span class="self">self</span>.samples.len();
 <a href=#61 id=61 data-nosnippet>61</a>        <span class="kw">let </span>lower = <span class="self">self</span>.samples[(count - <span class="number">1</span>) / <span class="number">2</span>];
 <a href=#62 id=62 data-nosnippet>62</a>        <span class="kw">if </span>count.is_multiple_of(<span class="number">2</span>) &amp;&amp; count &lt;= <span class="number">100 </span>{
@@ -82,12 +82,12 @@
 <a href=#82 id=82 data-nosnippet>82</a>    }
 <a href=#83 id=83 data-nosnippet>83</a>}
 <a href=#84 id=84 data-nosnippet>84</a>
-<a href=#85 id=85 data-nosnippet>85</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>ImageFlux {
+<a href=#85 id=85 data-nosnippet>85</a><span class="kw">pub enum </span>ImageFlux {
 <a href=#86 id=86 data-nosnippet>86</a>    Constant(<span class="prelude-ty">Option</span>&lt;f64&gt;),
 <a href=#87 id=87 data-nosnippet>87</a>    PerChannel(<span class="prelude-ty">Option</span>&lt;Vec&lt;f64&gt;&gt;),
 <a href=#88 id=88 data-nosnippet>88</a>}
 <a href=#89 id=89 data-nosnippet>89</a>
-<a href=#90 id=90 data-nosnippet>90</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>calibrator_images(
+<a href=#90 id=90 data-nosnippet>90</a><span class="kw">pub fn </span>calibrator_images(
 <a href=#91 id=91 data-nosnippet>91</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
 <a href=#92 id=92 data-nosnippet>92</a>    selections: <span class="kw-2">&amp;</span>[ResolvedMsSelection],
 <a href=#93 id=93 data-nosnippet>93</a>    path: <span class="kw-2">&amp;</span>Path,

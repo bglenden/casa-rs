@@ -667,9 +667,12 @@
 <h1 id="adr-0017-rust-computation-and-casa-shaped-python-interfaces">ADR-0017: Rust computation and CASA-shaped Python interfaces<a class="headerlink" href="#adr-0017-rust-computation-and-casa-shaped-python-interfaces" title="Permanent link">&para;</a></h1>
 <p>Status: accepted
 Date: 2026-11-12
+Amended: 2026-11-25, clean-sheet module reorganization: <code>casars.tasks</code> runs
+in-process via PyO3 over <code>surfaces/casa-tasks</code>; <code>casars-cli</code> stays standalone;
+legacy <code>casars.data</code> compatibility note removed per ADR-0020.
 Truth class: normative
 Supersedes: ADR-0018 and ADR-0019; their original text is in Git history.</p>
-<p>The product is the <code>casars</code> Python package and the cataloged headless task
+<p>The product is the <code>casars</code> Python package and the standalone <code>casars-cli</code> task
 executables. Use existing Python tools for notebooks, interactive inspection,
 and plot rendering. Rust produces typed plot data. casa-rs ships no separate
 GUI, terminal UI, session provider, or launcher.</p>
@@ -677,8 +680,12 @@ GUI, terminal UI, session provider, or launcher.</p>
 <li>Rust owns computation, persistence, and parallelism, including the
   orchestration CASA implements in Python. Keep Rust APIs idiomatic.</li>
 <li><code>casars.tasks</code> presents CASA's names, signatures, and return shapes.
-  Python converts arguments and results, maps errors, and starts each
-  task's executable directly. The shared task runtime owns defaults,
+  Python converts arguments and results, maps errors, and runs tasks
+  <strong>in-process</strong> through PyO3 over <code>surfaces/casa-tasks</code> (with owner-aware
+  table lock handoff, per-invocation <code>Cancel</code> token and <code>SIGINT</code> cleanup, and
+  Python <code>Last</code>-file isolation) rather than mandatory subprocess spawning of
+  external binaries. Standalone <code>casars-cli</code> executables expose the same
+  surfaces on the command line. The shared task adapter owns defaults,
   normalization, and validation (ADR-0006). Ordinary Python task calls do
   not load or write managed Last state.</li>
 <li><code>casars.tools</code> exposes CASA-named PyO3 classes through <code>casars._core</code>,
@@ -686,8 +693,7 @@ GUI, terminal UI, session provider, or launcher.</p>
   Rust and compare with the installed CASA binding. Share conversions.
   CASA-independent resource controls are keyword-only constructor
   arguments, with no environment lookup. Tool state is <code>Send</code>; release the
-  GIL during disk access, array copies, and long calls. Legacy
-  <code>casars.data.Image</code> and <code>Table</code> are tracked separately in #839.</li>
+  GIL during disk access, array copies, and long calls.</li>
 <li>Do not ship <code>casatasks</code> or <code>casatools</code> alias packages; they would shadow
   CASA. CASA itself is used only for tests and evidence.</li>
 </ul>

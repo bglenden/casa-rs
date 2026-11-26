@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["supports_ordinary_time_axes","uses_antenna_visibility_average","uses_channel_derived","uses_channel_ordinate_masks","uses_ordinary_time_averaging","uses_scalar_visibility_average","uses_spectral_window_average","uses_vector_baseline_average"],"struct":["PlotMsWeightKinds"]};

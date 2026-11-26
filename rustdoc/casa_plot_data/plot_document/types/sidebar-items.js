@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PlotAxisScale","PlotLayerKind","PlotPayloadStrategy"],"struct":["PlotAxisMetadata","PlotDocument","PlotDocumentAnnotation","PlotDocumentAxis","PlotDocumentLayer","PlotDocumentPanel","PlotPointProvenance","PlotSamplingDiagnostics","PlotSeriesMetadata"]};

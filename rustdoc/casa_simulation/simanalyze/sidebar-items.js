@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["simanalyze","simanalyze_with_plots"],"struct":["SimanalyzeOutcome","SimanalyzeRequest"]};
+window.SIDEBAR_ITEMS = {"fn":["default_parameters","simanalyze","simanalyze_with_plot_sink"],"struct":["SimanalyzeOutcome","SimanalyzeRequest"]};

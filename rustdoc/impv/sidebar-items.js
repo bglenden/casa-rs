@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["amount","main","optional","run"]};
+window.SIDEBAR_ITEMS = {"fn":["main"]};

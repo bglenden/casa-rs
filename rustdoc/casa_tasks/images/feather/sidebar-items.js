@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["feather_front_end"]};

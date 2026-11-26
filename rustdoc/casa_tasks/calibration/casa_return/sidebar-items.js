@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["fluxscale_record","solve_record"]};

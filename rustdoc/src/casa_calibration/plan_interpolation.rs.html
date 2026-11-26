@@ -33,7 +33,7 @@
 <a href=#33 id=33 data-nosnippet>33</a>}
 <a href=#34 id=34 data-nosnippet>34</a>
 <a href=#35 id=35 data-nosnippet>35</a><span class="kw">impl </span>ApplyInterpolationMode {
-<a href=#36 id=36 data-nosnippet>36</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>parse_casa(value: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, String&gt; {
+<a href=#36 id=36 data-nosnippet>36</a>    <span class="kw">pub fn </span>parse_casa(value: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, String&gt; {
 <a href=#37 id=37 data-nosnippet>37</a>        <span class="kw">use crate</span>::{FrequencyInterpolation <span class="kw">as </span>F, TimeInterpolation <span class="kw">as </span>T};
 <a href=#38 id=38 data-nosnippet>38</a>        <span class="kw">let </span>(time, frequency) = value.split_once(<span class="string">','</span>).unwrap_or((value, <span class="string">""</span>));
 <a href=#39 id=39 data-nosnippet>39</a>        <span class="kw">let </span>time = <span class="kw">if </span>time.is_empty() { <span class="string">"linear" </span>} <span class="kw">else </span>{ time };

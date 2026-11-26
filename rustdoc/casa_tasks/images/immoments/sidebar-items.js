@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["immoments_front_end"]};

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["concat","concat_front_end","concat_task_schema_bundle","concat_with_memory"],"struct":["ConcatReport","ConcatRequest"]};
+window.SIDEBAR_ITEMS = {"fn":["concat","concat_with_memory"],"struct":["ConcatReport","ConcatRequest"]};

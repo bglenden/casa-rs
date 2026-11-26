@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["ToolIteration"]};
+window.SIDEBAR_ITEMS = {"struct":["LegacyIterationOptions","LegacyToolIteration","ToolIteration","Vi1ToolIteration"]};

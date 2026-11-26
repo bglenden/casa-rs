@@ -40,8 +40,8 @@
 <a href=#40 id=40 data-nosnippet>40</a>
 <a href=#41 id=41 data-nosnippet>41</a><span class="doccomment">/// An uncommitted Fourier image. The scratch path uses it until the write
 <a href=#42 id=42 data-nosnippet>42</a>/// finishes. The virtual model can keep it once its on-disk record is filed.
-<a href=#43 id=43 data-nosnippet>43</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ImageModel {
-<a href=#44 id=44 data-nosnippet>44</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) entry: VirtualModelEntry,
+<a href=#43 id=43 data-nosnippet>43</a></span><span class="kw">pub struct </span>ImageModel {
+<a href=#44 id=44 data-nosnippet>44</a>    <span class="kw">pub </span>entry: VirtualModelEntry,
 <a href=#45 id=45 data-nosnippet>45</a>    <span class="kw">pub</span>(<span class="kw">super</span>) nonzero: bool,
 <a href=#46 id=46 data-nosnippet>46</a>    backing: GridLifetime,
 <a href=#47 id=47 data-nosnippet>47</a>}
@@ -98,7 +98,7 @@
 <a href=#98 id=98 data-nosnippet>98</a>        <span class="prelude-val">Ok</span>(())
 <a href=#99 id=99 data-nosnippet>99</a>    }
 <a href=#100 id=100 data-nosnippet>100</a>
-<a href=#101 id=101 data-nosnippet>101</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>copy_to(<span class="kw-2">&amp;</span><span class="self">self</span>, target: <span class="kw-2">&amp;</span>MeasurementSet) -&gt; MsResult&lt;<span class="self">Self</span>&gt; {
+<a href=#101 id=101 data-nosnippet>101</a>    <span class="kw">pub fn </span>copy_to(<span class="kw-2">&amp;</span><span class="self">self</span>, target: <span class="kw-2">&amp;</span>MeasurementSet) -&gt; MsResult&lt;<span class="self">Self</span>&gt; {
 <a href=#102 id=102 data-nosnippet>102</a>        <span class="kw">let </span>backing = GridLifetime {
 <a href=#103 id=103 data-nosnippet>103</a>            path: virtual_model_image_path(target)<span class="question-mark">?</span>,
 <a href=#104 id=104 data-nosnippet>104</a>            retained: <span class="bool-val">false</span>,
@@ -127,7 +127,7 @@
 <a href=#127 id=127 data-nosnippet>127</a>        })
 <a href=#128 id=128 data-nosnippet>128</a>    }
 <a href=#129 id=129 data-nosnippet>129</a>
-<a href=#130 id=130 data-nosnippet>130</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>retain(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+<a href=#130 id=130 data-nosnippet>130</a>    <span class="kw">pub fn </span>retain(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
 <a href=#131 id=131 data-nosnippet>131</a>        <span class="self">self</span>.backing.retained = <span class="bool-val">true</span>;
 <a href=#132 id=132 data-nosnippet>132</a>    }
 <a href=#133 id=133 data-nosnippet>133</a>}
@@ -146,14 +146,14 @@
 <a href=#146 id=146 data-nosnippet>146</a>}
 <a href=#147 id=147 data-nosnippet>147</a>
 <a href=#148 id=148 data-nosnippet>148</a><span class="attr">#[derive(Clone, Copy)]
-<a href=#149 id=149 data-nosnippet>149</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>TaylorTerm {
-<a href=#150 id=150 data-nosnippet>150</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) count: i32,
-<a href=#151 id=151 data-nosnippet>151</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) index: i32,
-<a href=#152 id=152 data-nosnippet>152</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) reference_hz: f64,
+<a href=#149 id=149 data-nosnippet>149</a></span><span class="kw">pub struct </span>TaylorTerm {
+<a href=#150 id=150 data-nosnippet>150</a>    <span class="kw">pub </span>count: i32,
+<a href=#151 id=151 data-nosnippet>151</a>    <span class="kw">pub </span>index: i32,
+<a href=#152 id=152 data-nosnippet>152</a>    <span class="kw">pub </span>reference_hz: f64,
 <a href=#153 id=153 data-nosnippet>153</a>}
 <a href=#154 id=154 data-nosnippet>154</a>
 <a href=#155 id=155 data-nosnippet>155</a><span class="doccomment">/// The image spectral coordinate determines the default Taylor frequency.
-<a href=#156 id=156 data-nosnippet>156</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>reference_frequency(path: <span class="kw-2">&amp;</span>Path) -&gt; MsResult&lt;f64&gt; {
+<a href=#156 id=156 data-nosnippet>156</a></span><span class="kw">pub fn </span>reference_frequency(path: <span class="kw-2">&amp;</span>Path) -&gt; MsResult&lt;f64&gt; {
 <a href=#157 id=157 data-nosnippet>157</a>    <span class="kw">if </span>path.is_file() {
 <a href=#158 id=158 data-nosnippet>158</a>        <span class="kw">let </span>fits = casa_images::fits_read::FitsToolImport::open(path, <span class="number">0</span>, -<span class="number">1</span>).map_err(invalid)<span class="question-mark">?</span>;
 <a href=#159 id=159 data-nosnippet>159</a>        <span class="kw">return </span>spectral_reference_frequency(fits.coordinates());
@@ -175,7 +175,7 @@
 <a href=#175 id=175 data-nosnippet>175</a>    spectral.world_frequency_hz(pixel).map_err(invalid)
 <a href=#176 id=176 data-nosnippet>176</a>}
 <a href=#177 id=177 data-nosnippet>177</a>
-<a href=#178 id=178 data-nosnippet>178</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>prepare_image(
+<a href=#178 id=178 data-nosnippet>178</a><span class="kw">pub fn </span>prepare_image(
 <a href=#179 id=179 data-nosnippet>179</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
 <a href=#180 id=180 data-nosnippet>180</a>    selected: <span class="kw-2">&amp;</span>ResolvedMsSelection,
 <a href=#181 id=181 data-nosnippet>181</a>    path: <span class="kw-2">&amp;</span>Path,

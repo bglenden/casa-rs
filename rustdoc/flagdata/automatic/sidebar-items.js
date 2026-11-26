@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["average_switch","controls","table_kind"]};

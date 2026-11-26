@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["cutoff","main","run"]};
+window.SIDEBAR_ITEMS = {"fn":["main"]};

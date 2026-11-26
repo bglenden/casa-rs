@@ -11,12 +11,12 @@
 <a href=#11 id=11 data-nosnippet>11</a>
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span><span class="kw">super</span>::invalid;
 <a href=#13 id=13 data-nosnippet>13</a>
-<a href=#14 id=14 data-nosnippet>14</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>image;
-<a href=#15 id=15 data-nosnippet>15</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>solar2010;
-<a href=#16 id=16 data-nosnippet>16</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>solar2012;
-<a href=#17 id=17 data-nosnippet>17</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>standards;
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">pub mod </span>image;
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">pub mod </span>solar2010;
+<a href=#16 id=16 data-nosnippet>16</a><span class="kw">pub mod </span>solar2012;
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">pub mod </span>standards;
 <a href=#18 id=18 data-nosnippet>18</a>
-<a href=#19 id=19 data-nosnippet>19</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ManualFlux {
+<a href=#19 id=19 data-nosnippet>19</a><span class="kw">pub struct </span>ManualFlux {
 <a href=#20 id=20 data-nosnippet>20</a>    flux_jy: [f64; <span class="number">4</span>],
 <a href=#21 id=21 data-nosnippet>21</a>    reference: MFrequency,
 <a href=#22 id=22 data-nosnippet>22</a>    spectral_index: Vec&lt;f64&gt;,
@@ -27,7 +27,7 @@
 <a href=#27 id=27 data-nosnippet>27</a>}
 <a href=#28 id=28 data-nosnippet>28</a>
 <a href=#29 id=29 data-nosnippet>29</a><span class="kw">impl </span>ManualFlux {
-<a href=#30 id=30 data-nosnippet>30</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(
+<a href=#30 id=30 data-nosnippet>30</a>    <span class="kw">pub fn </span>new(
 <a href=#31 id=31 data-nosnippet>31</a>        flux_jy: [f64; <span class="number">4</span>],
 <a href=#32 id=32 data-nosnippet>32</a>        reference: MFrequency,
 <a href=#33 id=33 data-nosnippet>33</a>        spectral_index: Vec&lt;f64&gt;,
@@ -74,7 +74,7 @@
 <a href=#74 id=74 data-nosnippet>74</a>
 <a href=#75 id=75 data-nosnippet>75</a>    <span class="doccomment">/// Form the point model and the flux at the first reported frequency in
 <a href=#76 id=76 data-nosnippet>76</a>    /// the spectral window. The caller chooses the channel list or median.
-<a href=#77 id=77 data-nosnippet>77</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>component(
+<a href=#77 id=77 data-nosnippet>77</a>    </span><span class="kw">pub fn </span>component(
 <a href=#78 id=78 data-nosnippet>78</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#79 id=79 data-nosnippet>79</a>        direction: MDirection,
 <a href=#80 id=80 data-nosnippet>80</a>        frequencies: <span class="kw-2">&amp;</span>[MFrequency],
@@ -119,21 +119,21 @@
 <a href=#119 id=119 data-nosnippet>119</a>        ))
 <a href=#120 id=120 data-nosnippet>120</a>    }
 <a href=#121 id=121 data-nosnippet>121</a>
-<a href=#122 id=122 data-nosnippet>122</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>intensity_jy(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+<a href=#122 id=122 data-nosnippet>122</a>    <span class="kw">pub fn </span>intensity_jy(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
 <a href=#123 id=123 data-nosnippet>123</a>        <span class="self">self</span>.flux_jy[<span class="number">0</span>]
 <a href=#124 id=124 data-nosnippet>124</a>    }
 <a href=#125 id=125 data-nosnippet>125</a>
-<a href=#126 id=126 data-nosnippet>126</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>reports_spectral_index(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#126 id=126 data-nosnippet>126</a>    <span class="kw">pub fn </span>reports_spectral_index(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
 <a href=#127 id=127 data-nosnippet>127</a>        <span class="self">self</span>.spectral_index
 <a href=#128 id=128 data-nosnippet>128</a>            .first()
 <a href=#129 id=129 data-nosnippet>129</a>            .is_some_and(|<span class="kw-2">&amp;</span>index| index != <span class="number">0.0</span>)
 <a href=#130 id=130 data-nosnippet>130</a>    }
 <a href=#131 id=131 data-nosnippet>131</a>
-<a href=#132 id=132 data-nosnippet>132</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>has_spectral_dependence(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#132 id=132 data-nosnippet>132</a>    <span class="kw">pub fn </span>has_spectral_dependence(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
 <a href=#133 id=133 data-nosnippet>133</a>        <span class="self">self</span>.spectral_index.iter().any(|<span class="kw-2">&amp;</span>index| index != <span class="number">0.0</span>)
 <a href=#134 id=134 data-nosnippet>134</a>    }
 <a href=#135 id=135 data-nosnippet>135</a>
-<a href=#136 id=136 data-nosnippet>136</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>intensity_at(<span class="kw-2">&amp;</span><span class="self">self</span>, frequency: <span class="kw-2">&amp;</span>MFrequency, frame: <span class="kw-2">&amp;</span>MeasFrame) -&gt; MsResult&lt;f64&gt; {
+<a href=#136 id=136 data-nosnippet>136</a>    <span class="kw">pub fn </span>intensity_at(<span class="kw-2">&amp;</span><span class="self">self</span>, frequency: <span class="kw-2">&amp;</span>MFrequency, frame: <span class="kw-2">&amp;</span>MeasFrame) -&gt; MsResult&lt;f64&gt; {
 <a href=#137 id=137 data-nosnippet>137</a>        <span class="kw">let </span>i = <span class="self">self</span>.intensity_jy();
 <a href=#138 id=138 data-nosnippet>138</a>        <span class="kw">let </span>f = frequency.hz();
 <a href=#139 id=139 data-nosnippet>139</a>        <span class="kw">let </span>f0 = <span class="self">self</span>.reference.hz();
@@ -181,7 +181,7 @@
 <a href=#181 id=181 data-nosnippet>181</a>    }
 <a href=#182 id=182 data-nosnippet>182</a>}
 <a href=#183 id=183 data-nosnippet>183</a>
-<a href=#184 id=184 data-nosnippet>184</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>sampled_point(
+<a href=#184 id=184 data-nosnippet>184</a><span class="kw">pub fn </span>sampled_point(
 <a href=#185 id=185 data-nosnippet>185</a>    direction: MDirection,
 <a href=#186 id=186 data-nosnippet>186</a>    frequencies: <span class="kw-2">&amp;</span>[MFrequency],
 <a href=#187 id=187 data-nosnippet>187</a>    stokes: Vec&lt;[f64; <span class="number">4</span>]&gt;,

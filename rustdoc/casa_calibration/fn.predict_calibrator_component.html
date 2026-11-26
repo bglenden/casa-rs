@@ -2,7 +2,7 @@
     workspace: &amp;<a class="struct" href="https://doc.rust-lang.org/1.100.0/std/path/struct.Path.html" title="struct std::path::Path">Path</a>,
     object: &amp;<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.str.html">str</a>,
     standard: &amp;<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.str.html">str</a>,
-    epoch: &amp;<a class="struct" href="../casa_types/measures/epoch/struct.MEpoch.html" title="struct casa_types::measures::epoch::MEpoch">MEpoch</a>,
+    epoch: &amp;MEpoch,
     frequency_hz: &amp;[<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.f64.html">f64</a>],
     prefix: &amp;<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.str.html">str</a>,
 ) -&gt; <a class="type" href="../casa_ms/error/type.MsResult.html" title="type casa_ms::error::MsResult">MsResult</a>&lt;<a class="enum" href="https://doc.rust-lang.org/1.100.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="struct.PredictedComponent.html" title="struct casa_calibration::PredictedComponent">PredictedComponent</a>&gt;&gt;</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Evaluate a point or disk flux calibrator for the standalone legacy imager.</p>

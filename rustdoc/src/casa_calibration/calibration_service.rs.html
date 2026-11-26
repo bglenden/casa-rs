@@ -5,7 +5,7 @@
 <a href=#5 id=5 data-nosnippet>5</a>
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>ureq::tls::{PemItem, RootCerts, TlsConfig, parse_pem};
 <a href=#7 id=7 data-nosnippet>7</a>
-<a href=#8 id=8 data-nosnippet>8</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>agent(timeout: Duration) -&gt; io::Result&lt;ureq::Agent&gt; {
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">pub fn </span>agent(timeout: Duration) -&gt; io::Result&lt;ureq::Agent&gt; {
 <a href=#9 id=9 data-nosnippet>9</a>    <span class="kw">let </span><span class="kw-2">mut </span>config = ureq::Agent::config_builder().timeout_global(<span class="prelude-val">Some</span>(timeout));
 <a href=#10 id=10 data-nosnippet>10</a>    <span class="comment">// Honor an explicitly configured trust bundle used by institutional HTTP
 <a href=#11 id=11 data-nosnippet>11</a>    // proxies. The standard public roots remain the default otherwise.

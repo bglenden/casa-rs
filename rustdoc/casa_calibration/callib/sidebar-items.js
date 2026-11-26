@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CallibError","CallibraryContextMap"],"fn":["load_apply_specs_from_callib","load_callibrary_record","parse_apply_specs","save_apply_specs_to_callib","validate_callibrary_record"],"struct":["CallibraryOptions"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["sampled_point"],"mod":["image","solar2010","solar2012","standards"],"struct":["ManualFlux"]};

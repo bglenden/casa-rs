@@ -7,7 +7,7 @@
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_tables::table_measures::{MeasRefDesc, MeasureType, TableMeasDesc};
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>casa_tables::table_quantum::TableQuantumDesc;
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>casa_tables::taql::TaqlError;
-<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>casa_tables::{Table, TableColumn};
+<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>casa_tables::{Table, TableColumn, TableError};
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>casa_types::measures::direction::{DirectionRef, MDirection};
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>casa_types::measures::epoch::{EpochRef, MEpoch};
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>casa_types::measures::position::{MPosition, PositionRef};
@@ -89,158 +89,185 @@
 <a href=#89 id=89 data-nosnippet>89</a>    PositionColumn::read(table)<span class="question-mark">?</span>.position(index)
 <a href=#90 id=90 data-nosnippet>90</a>}
 <a href=#91 id=91 data-nosnippet>91</a>
-<a href=#92 id=92 data-nosnippet>92</a><span class="kw">struct </span>PositionColumn&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#93 id=93 data-nosnippet>93</a>    table: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Table,
-<a href=#94 id=94 data-nosnippet>94</a>    values: TableColumn&lt;<span class="lifetime">'a</span>&gt;,
-<a href=#95 id=95 data-nosnippet>95</a>    reference: Reference&lt;PositionRef&gt;,
-<a href=#96 id=96 data-nosnippet>96</a>    metric: MsResult&lt;[f64; <span class="number">3</span>]&gt;,
-<a href=#97 id=97 data-nosnippet>97</a>    spherical: MsResult&lt;[f64; <span class="number">3</span>]&gt;,
-<a href=#98 id=98 data-nosnippet>98</a>}
-<a href=#99 id=99 data-nosnippet>99</a>
-<a href=#100 id=100 data-nosnippet>100</a><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; PositionColumn&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#101 id=101 data-nosnippet>101</a>    <span class="kw">fn </span>read(table: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Table) -&gt; MsResult&lt;<span class="self">Self</span>&gt; {
-<a href=#102 id=102 data-nosnippet>102</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-<a href=#103 id=103 data-nosnippet>103</a>            table,
-<a href=#104 id=104 data-nosnippet>104</a>            values: table.column_accessor(<span class="string">"POSITION"</span>)<span class="question-mark">?</span>,
-<a href=#105 id=105 data-nosnippet>105</a>            reference: Reference::read(table, <span class="string">"POSITION"</span>, MeasureType::Position)<span class="question-mark">?</span>,
-<a href=#106 id=106 data-nosnippet>106</a>            metric: unit_scales(table, <span class="string">"POSITION"</span>, [<span class="string">"m"</span>; <span class="number">3</span>]),
-<a href=#107 id=107 data-nosnippet>107</a>            spherical: unit_scales(table, <span class="string">"POSITION"</span>, [<span class="string">"m"</span>, <span class="string">"rad"</span>, <span class="string">"rad"</span>]),
-<a href=#108 id=108 data-nosnippet>108</a>        })
-<a href=#109 id=109 data-nosnippet>109</a>    }
-<a href=#110 id=110 data-nosnippet>110</a>
-<a href=#111 id=111 data-nosnippet>111</a>    <span class="kw">fn </span>position(<span class="kw-2">&amp;</span><span class="self">self</span>, index: usize) -&gt; MsResult&lt;MPosition&gt; {
-<a href=#112 id=112 data-nosnippet>112</a>        <span class="kw">let </span>ArrayValue::Float64(coords) = <span class="self">self</span>.values.array_cell(index)<span class="question-mark">? </span><span class="kw">else </span>{
-<a href=#113 id=113 data-nosnippet>113</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(invalid(<span class="string">"ANTENNA POSITION requires a double array"</span>));
-<a href=#114 id=114 data-nosnippet>114</a>        };
-<a href=#115 id=115 data-nosnippet>115</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>[x, y, z]) = coords.as_slice() <span class="kw">else </span>{
-<a href=#116 id=116 data-nosnippet>116</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(invalid(<span class="string">"ANTENNA POSITION requires three coordinates"</span>));
-<a href=#117 id=117 data-nosnippet>117</a>        };
-<a href=#118 id=118 data-nosnippet>118</a>        <span class="kw">let </span>frame = <span class="self">self</span>.reference.at_table_row(<span class="self">self</span>.table, index)<span class="question-mark">?</span>;
-<a href=#119 id=119 data-nosnippet>119</a>        <span class="kw">let </span>scaled = |scales: <span class="kw-2">&amp;</span>MsResult&lt;[f64; <span class="number">3</span>]&gt;| {
-<a href=#120 id=120 data-nosnippet>120</a>            scales
-<a href=#121 id=121 data-nosnippet>121</a>                .as_ref()
-<a href=#122 id=122 data-nosnippet>122</a>                .map(|<span class="kw-2">&amp;</span>[sx, sy, sz]| [x * sx, y * sy, z * sz])
-<a href=#123 id=123 data-nosnippet>123</a>                .map_err(|err| invalid(err.to_string()))
-<a href=#124 id=124 data-nosnippet>124</a>        };
-<a href=#125 id=125 data-nosnippet>125</a>        <span class="kw">match </span>frame {
-<a href=#126 id=126 data-nosnippet>126</a>            PositionRef::ITRF =&gt; {
-<a href=#127 id=127 data-nosnippet>127</a>                <span class="kw">let </span>[x, y, z] = scaled(<span class="kw-2">&amp;</span><span class="self">self</span>.metric)<span class="question-mark">?</span>;
-<a href=#128 id=128 data-nosnippet>128</a>                <span class="prelude-val">Ok</span>(MPosition::new_itrf(x, y, z))
-<a href=#129 id=129 data-nosnippet>129</a>            }
-<a href=#130 id=130 data-nosnippet>130</a>            PositionRef::WGS84 <span class="kw">if </span><span class="self">self</span>.metric.is_err() =&gt; {
-<a href=#131 id=131 data-nosnippet>131</a>                <span class="kw">let </span>[height, lon, lat] = scaled(<span class="kw-2">&amp;</span><span class="self">self</span>.spherical)<span class="question-mark">?</span>;
-<a href=#132 id=132 data-nosnippet>132</a>                <span class="prelude-val">Ok</span>(MPosition::new_wgs84(lon, lat, height))
-<a href=#133 id=133 data-nosnippet>133</a>            }
-<a href=#134 id=134 data-nosnippet>134</a>            PositionRef::WGS84 =&gt; {
-<a href=#135 id=135 data-nosnippet>135</a>                <span class="kw">let </span>[x, y, z] = scaled(<span class="kw-2">&amp;</span><span class="self">self</span>.metric)<span class="question-mark">?</span>;
-<a href=#136 id=136 data-nosnippet>136</a>                <span class="kw">let </span>radial = x.hypot(y);
-<a href=#137 id=137 data-nosnippet>137</a>                <span class="prelude-val">Ok</span>(MPosition::new_wgs84(
-<a href=#138 id=138 data-nosnippet>138</a>                    y.atan2(x),
-<a href=#139 id=139 data-nosnippet>139</a>                    z.atan2(radial),
-<a href=#140 id=140 data-nosnippet>140</a>                    radial.hypot(z),
-<a href=#141 id=141 data-nosnippet>141</a>                ))
-<a href=#142 id=142 data-nosnippet>142</a>            }
-<a href=#143 id=143 data-nosnippet>143</a>        }
-<a href=#144 id=144 data-nosnippet>144</a>    }
-<a href=#145 id=145 data-nosnippet>145</a>}
-<a href=#146 id=146 data-nosnippet>146</a>
-<a href=#147 id=147 data-nosnippet>147</a><span class="kw">enum </span>Reference&lt;T&gt; {
-<a href=#148 id=148 data-nosnippet>148</a>    Fixed(T),
-<a href=#149 id=149 data-nosnippet>149</a>    Integer {
-<a href=#150 id=150 data-nosnippet>150</a>        column: String,
-<a href=#151 id=151 data-nosnippet>151</a>        refs: BTreeMap&lt;i64, T&gt;,
-<a href=#152 id=152 data-nosnippet>152</a>    },
-<a href=#153 id=153 data-nosnippet>153</a>    Text(String),
-<a href=#154 id=154 data-nosnippet>154</a>}
-<a href=#155 id=155 data-nosnippet>155</a>
-<a href=#156 id=156 data-nosnippet>156</a><span class="kw">impl</span>&lt;T: FromStr + Copy&gt; Reference&lt;T&gt; {
-<a href=#157 id=157 data-nosnippet>157</a>    <span class="kw">fn </span>read(table: <span class="kw-2">&amp;</span>Table, column: <span class="kw-2">&amp;</span>str, measure: MeasureType) -&gt; MsResult&lt;<span class="self">Self</span>&gt; {
-<a href=#158 id=158 data-nosnippet>158</a>        <span class="kw">let </span>invalid_measure = || {
-<a href=#159 id=159 data-nosnippet>159</a>            invalid(<span class="macro">format!</span>(
-<a href=#160 id=160 data-nosnippet>160</a>                <span class="string">"MSCAL requires valid {measure:?} MEASINFO on {column}"
-<a href=#161 id=161 data-nosnippet>161</a>            </span>))
-<a href=#162 id=162 data-nosnippet>162</a>        };
-<a href=#163 id=163 data-nosnippet>163</a>        <span class="kw">let </span>desc = TableMeasDesc::reconstruct(table, column).ok_or_else(invalid_measure)<span class="question-mark">?</span>;
-<a href=#164 id=164 data-nosnippet>164</a>        <span class="kw">if </span>desc.measure_type() != measure {
-<a href=#165 id=165 data-nosnippet>165</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(invalid_measure());
-<a href=#166 id=166 data-nosnippet>166</a>        }
-<a href=#167 id=167 data-nosnippet>167</a>        <span class="kw">let </span>parse = |value: <span class="kw-2">&amp;</span>str| value.parse().map_err(|<span class="kw">_</span>| invalid_measure());
-<a href=#168 id=168 data-nosnippet>168</a>        <span class="prelude-val">Ok</span>(<span class="kw">match </span>desc.ref_desc() {
-<a href=#169 id=169 data-nosnippet>169</a>            MeasRefDesc::Fixed { refer } =&gt; <span class="self">Self</span>::Fixed(parse(refer)<span class="question-mark">?</span>),
-<a href=#170 id=170 data-nosnippet>170</a>            MeasRefDesc::VariableString { ref_column } =&gt; <span class="self">Self</span>::Text(ref_column.clone()),
-<a href=#171 id=171 data-nosnippet>171</a>            MeasRefDesc::VariableInt {
-<a href=#172 id=172 data-nosnippet>172</a>                ref_column,
-<a href=#173 id=173 data-nosnippet>173</a>                tab_ref_types,
-<a href=#174 id=174 data-nosnippet>174</a>                tab_ref_codes,
-<a href=#175 id=175 data-nosnippet>175</a>            } =&gt; {
-<a href=#176 id=176 data-nosnippet>176</a>                <span class="kw">let </span>refs = tab_ref_codes
-<a href=#177 id=177 data-nosnippet>177</a>                    .iter()
-<a href=#178 id=178 data-nosnippet>178</a>                    .zip(tab_ref_types)
-<a href=#179 id=179 data-nosnippet>179</a>                    .map(|(<span class="kw-2">&amp;</span>code, name)| <span class="prelude-val">Ok</span>((i64::from(code), parse(name)<span class="question-mark">?</span>)))
-<a href=#180 id=180 data-nosnippet>180</a>                    .collect::&lt;MsResult&lt;<span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#181 id=181 data-nosnippet>181</a>                <span class="self">Self</span>::Integer {
-<a href=#182 id=182 data-nosnippet>182</a>                    column: ref_column.clone(),
-<a href=#183 id=183 data-nosnippet>183</a>                    refs,
-<a href=#184 id=184 data-nosnippet>184</a>                }
-<a href=#185 id=185 data-nosnippet>185</a>            }
-<a href=#186 id=186 data-nosnippet>186</a>        })
-<a href=#187 id=187 data-nosnippet>187</a>    }
-<a href=#188 id=188 data-nosnippet>188</a>
-<a href=#189 id=189 data-nosnippet>189</a>    <span class="kw">fn </span>at_table_row(<span class="kw-2">&amp;</span><span class="self">self</span>, table: <span class="kw-2">&amp;</span>Table, index: usize) -&gt; MsResult&lt;T&gt; {
-<a href=#190 id=190 data-nosnippet>190</a>        <span class="kw">if let </span><span class="self">Self</span>::Fixed(frame) = <span class="self">self </span>{
-<a href=#191 id=191 data-nosnippet>191</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="kw-2">*</span>frame);
-<a href=#192 id=192 data-nosnippet>192</a>        }
-<a href=#193 id=193 data-nosnippet>193</a>        <span class="self">self</span>.at(table.row_accessor().row(index)<span class="question-mark">?</span>)
-<a href=#194 id=194 data-nosnippet>194</a>            .map_err(|error| invalid(error.to_string()))
-<a href=#195 id=195 data-nosnippet>195</a>    }
-<a href=#196 id=196 data-nosnippet>196</a>
-<a href=#197 id=197 data-nosnippet>197</a>    <span class="kw">fn </span>at(<span class="kw-2">&amp;</span><span class="self">self</span>, row: <span class="kw-2">&amp;</span>RecordValue) -&gt; <span class="prelude-ty">Result</span>&lt;T, TaqlError&gt; {
-<a href=#198 id=198 data-nosnippet>198</a>        <span class="kw">let </span>bad =
-<a href=#199 id=199 data-nosnippet>199</a>            |column: <span class="kw-2">&amp;</span>str| TaqlError::Table(<span class="macro">format!</span>(<span class="string">"invalid MSCAL measure reference in {column}"</span>));
-<a href=#200 id=200 data-nosnippet>200</a>        <span class="kw">match </span><span class="self">self </span>{
-<a href=#201 id=201 data-nosnippet>201</a>            <span class="self">Self</span>::Fixed(frame) =&gt; <span class="prelude-val">Ok</span>(<span class="kw-2">*</span>frame),
-<a href=#202 id=202 data-nosnippet>202</a>            <span class="self">Self</span>::Text(column) =&gt; <span class="kw">match </span>row.get(column) {
-<a href=#203 id=203 data-nosnippet>203</a>                <span class="prelude-val">Some</span>(Value::Scalar(ScalarValue::String(name))) =&gt; {
-<a href=#204 id=204 data-nosnippet>204</a>                    name.parse().map_err(|<span class="kw">_</span>| bad(column))
-<a href=#205 id=205 data-nosnippet>205</a>                }
-<a href=#206 id=206 data-nosnippet>206</a>                <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(bad(column)),
-<a href=#207 id=207 data-nosnippet>207</a>            },
-<a href=#208 id=208 data-nosnippet>208</a>            <span class="self">Self</span>::Integer { column, refs } =&gt; {
-<a href=#209 id=209 data-nosnippet>209</a>                <span class="kw">let </span>code = <span class="kw">match </span>row.get(column) {
-<a href=#210 id=210 data-nosnippet>210</a>                    <span class="prelude-val">Some</span>(Value::Scalar(ScalarValue::Int32(code))) =&gt; i64::from(<span class="kw-2">*</span>code),
-<a href=#211 id=211 data-nosnippet>211</a>                    <span class="prelude-val">Some</span>(Value::Scalar(ScalarValue::UInt32(code))) =&gt; i64::from(<span class="kw-2">*</span>code),
-<a href=#212 id=212 data-nosnippet>212</a>                    <span class="prelude-val">Some</span>(Value::Scalar(ScalarValue::Int64(code))) =&gt; <span class="kw-2">*</span>code,
-<a href=#213 id=213 data-nosnippet>213</a>                    <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(bad(column)),
-<a href=#214 id=214 data-nosnippet>214</a>                };
-<a href=#215 id=215 data-nosnippet>215</a>                refs.get(<span class="kw-2">&amp;</span>code).copied().ok_or_else(|| bad(column))
-<a href=#216 id=216 data-nosnippet>216</a>            }
-<a href=#217 id=217 data-nosnippet>217</a>        }
-<a href=#218 id=218 data-nosnippet>218</a>    }
-<a href=#219 id=219 data-nosnippet>219</a>}
-<a href=#220 id=220 data-nosnippet>220</a>
-<a href=#221 id=221 data-nosnippet>221</a><span class="kw">fn </span>unit_scales&lt;<span class="kw">const </span>N: usize&gt;(
-<a href=#222 id=222 data-nosnippet>222</a>    table: <span class="kw-2">&amp;</span>Table,
-<a href=#223 id=223 data-nosnippet>223</a>    column: <span class="kw-2">&amp;</span>str,
-<a href=#224 id=224 data-nosnippet>224</a>    expected: [<span class="kw-2">&amp;</span>str; N],
-<a href=#225 id=225 data-nosnippet>225</a>) -&gt; MsResult&lt;[f64; N]&gt; {
-<a href=#226 id=226 data-nosnippet>226</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(desc) = TableQuantumDesc::reconstruct(table, column) <span class="kw">else </span>{
-<a href=#227 id=227 data-nosnippet>227</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>([<span class="number">1.0</span>; N]);
-<a href=#228 id=228 data-nosnippet>228</a>    };
-<a href=#229 id=229 data-nosnippet>229</a>    <span class="kw">let </span><span class="kw-2">mut </span>scales = [<span class="number">1.0</span>; N];
-<a href=#230 id=230 data-nosnippet>230</a>    <span class="kw">for </span>(axis, expected) <span class="kw">in </span>expected.into_iter().enumerate() {
-<a href=#231 id=231 data-nosnippet>231</a>        <span class="kw">let </span>source = desc
-<a href=#232 id=232 data-nosnippet>232</a>            .units()
-<a href=#233 id=233 data-nosnippet>233</a>            .get(axis)
-<a href=#234 id=234 data-nosnippet>234</a>            .or_else(|| desc.units().first())
-<a href=#235 id=235 data-nosnippet>235</a>            .ok_or_else(|| invalid(<span class="macro">format!</span>(<span class="string">"missing MSCAL QuantumUnits for {column}"</span>)))<span class="question-mark">?</span>;
-<a href=#236 id=236 data-nosnippet>236</a>        scales[axis] = Quantity::new(<span class="number">1.0</span>, source)
-<a href=#237 id=237 data-nosnippet>237</a>            .and_then(|one| one.get_value_in(<span class="kw-2">&amp;</span>Unit::new(expected)<span class="question-mark">?</span>))
-<a href=#238 id=238 data-nosnippet>238</a>            .map_err(|err| invalid(<span class="macro">format!</span>(<span class="string">"invalid MSCAL QuantumUnits on {column}: {err}"</span>)))<span class="question-mark">?</span>;
-<a href=#239 id=239 data-nosnippet>239</a>    }
-<a href=#240 id=240 data-nosnippet>240</a>    <span class="prelude-val">Ok</span>(scales)
-<a href=#241 id=241 data-nosnippet>241</a>}
-<a href=#242 id=242 data-nosnippet>242</a>
-<a href=#243 id=243 data-nosnippet>243</a><span class="kw">fn </span>invalid(message: <span class="kw">impl </span>Into&lt;String&gt;) -&gt; MsError {
-<a href=#244 id=244 data-nosnippet>244</a>    MsError::InvalidInput(message.into())
-<a href=#245 id=245 data-nosnippet>245</a>}
+<a href=#92 id=92 data-nosnippet>92</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>selected_antenna_positions(
+<a href=#93 id=93 data-nosnippet>93</a>    table: <span class="kw-2">&amp;</span>Table,
+<a href=#94 id=94 data-nosnippet>94</a>    rows: <span class="kw-2">&amp;</span>[usize],
+<a href=#95 id=95 data-nosnippet>95</a>) -&gt; MsResult&lt;Vec&lt;MPosition&gt;&gt; {
+<a href=#96 id=96 data-nosnippet>96</a>    <span class="kw">if </span>rows.is_empty() {
+<a href=#97 id=97 data-nosnippet>97</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(Vec::new());
+<a href=#98 id=98 data-nosnippet>98</a>    }
+<a href=#99 id=99 data-nosnippet>99</a>    <span class="kw">let </span>column = PositionColumn::read(table)<span class="question-mark">?</span>;
+<a href=#100 id=100 data-nosnippet>100</a>    column
+<a href=#101 id=101 data-nosnippet>101</a>        .values
+<a href=#102 id=102 data-nosnippet>102</a>        .array_cells_owned(rows)<span class="question-mark">?
+<a href=#103 id=103 data-nosnippet>103</a>        </span>.into_iter()
+<a href=#104 id=104 data-nosnippet>104</a>        .zip(rows)
+<a href=#105 id=105 data-nosnippet>105</a>        .map(|(value, <span class="kw-2">&amp;</span>row)| {
+<a href=#106 id=106 data-nosnippet>106</a>            <span class="kw">let </span>value = value.ok_or_else(|| TableError::ColumnNotFound {
+<a href=#107 id=107 data-nosnippet>107</a>                row_index: row,
+<a href=#108 id=108 data-nosnippet>108</a>                column: <span class="string">"POSITION"</span>.to_string(),
+<a href=#109 id=109 data-nosnippet>109</a>            })<span class="question-mark">?</span>;
+<a href=#110 id=110 data-nosnippet>110</a>            column.position_from_cell(row, <span class="kw-2">&amp;</span>value)
+<a href=#111 id=111 data-nosnippet>111</a>        })
+<a href=#112 id=112 data-nosnippet>112</a>        .collect()
+<a href=#113 id=113 data-nosnippet>113</a>}
+<a href=#114 id=114 data-nosnippet>114</a>
+<a href=#115 id=115 data-nosnippet>115</a><span class="kw">struct </span>PositionColumn&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#116 id=116 data-nosnippet>116</a>    table: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Table,
+<a href=#117 id=117 data-nosnippet>117</a>    values: TableColumn&lt;<span class="lifetime">'a</span>&gt;,
+<a href=#118 id=118 data-nosnippet>118</a>    reference: Reference&lt;PositionRef&gt;,
+<a href=#119 id=119 data-nosnippet>119</a>    metric: MsResult&lt;[f64; <span class="number">3</span>]&gt;,
+<a href=#120 id=120 data-nosnippet>120</a>    spherical: MsResult&lt;[f64; <span class="number">3</span>]&gt;,
+<a href=#121 id=121 data-nosnippet>121</a>}
+<a href=#122 id=122 data-nosnippet>122</a>
+<a href=#123 id=123 data-nosnippet>123</a><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; PositionColumn&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#124 id=124 data-nosnippet>124</a>    <span class="kw">fn </span>read(table: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Table) -&gt; MsResult&lt;<span class="self">Self</span>&gt; {
+<a href=#125 id=125 data-nosnippet>125</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+<a href=#126 id=126 data-nosnippet>126</a>            table,
+<a href=#127 id=127 data-nosnippet>127</a>            values: table.column_accessor(<span class="string">"POSITION"</span>)<span class="question-mark">?</span>,
+<a href=#128 id=128 data-nosnippet>128</a>            reference: Reference::read(table, <span class="string">"POSITION"</span>, MeasureType::Position)<span class="question-mark">?</span>,
+<a href=#129 id=129 data-nosnippet>129</a>            metric: unit_scales(table, <span class="string">"POSITION"</span>, [<span class="string">"m"</span>; <span class="number">3</span>]),
+<a href=#130 id=130 data-nosnippet>130</a>            spherical: unit_scales(table, <span class="string">"POSITION"</span>, [<span class="string">"m"</span>, <span class="string">"rad"</span>, <span class="string">"rad"</span>]),
+<a href=#131 id=131 data-nosnippet>131</a>        })
+<a href=#132 id=132 data-nosnippet>132</a>    }
+<a href=#133 id=133 data-nosnippet>133</a>
+<a href=#134 id=134 data-nosnippet>134</a>    <span class="kw">fn </span>position(<span class="kw-2">&amp;</span><span class="self">self</span>, index: usize) -&gt; MsResult&lt;MPosition&gt; {
+<a href=#135 id=135 data-nosnippet>135</a>        <span class="self">self</span>.position_from_cell(index, <span class="self">self</span>.values.array_cell(index)<span class="question-mark">?</span>)
+<a href=#136 id=136 data-nosnippet>136</a>    }
+<a href=#137 id=137 data-nosnippet>137</a>
+<a href=#138 id=138 data-nosnippet>138</a>    <span class="kw">fn </span>position_from_cell(<span class="kw-2">&amp;</span><span class="self">self</span>, index: usize, value: <span class="kw-2">&amp;</span>ArrayValue) -&gt; MsResult&lt;MPosition&gt; {
+<a href=#139 id=139 data-nosnippet>139</a>        <span class="kw">let </span>ArrayValue::Float64(coords) = value <span class="kw">else </span>{
+<a href=#140 id=140 data-nosnippet>140</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(invalid(<span class="string">"ANTENNA POSITION requires a double array"</span>));
+<a href=#141 id=141 data-nosnippet>141</a>        };
+<a href=#142 id=142 data-nosnippet>142</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>[x, y, z]) = coords.as_slice() <span class="kw">else </span>{
+<a href=#143 id=143 data-nosnippet>143</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(invalid(<span class="string">"ANTENNA POSITION requires three coordinates"</span>));
+<a href=#144 id=144 data-nosnippet>144</a>        };
+<a href=#145 id=145 data-nosnippet>145</a>        <span class="kw">let </span>frame = <span class="self">self</span>.reference.at_table_row(<span class="self">self</span>.table, index)<span class="question-mark">?</span>;
+<a href=#146 id=146 data-nosnippet>146</a>        <span class="kw">let </span>scaled = |scales: <span class="kw-2">&amp;</span>MsResult&lt;[f64; <span class="number">3</span>]&gt;| {
+<a href=#147 id=147 data-nosnippet>147</a>            scales
+<a href=#148 id=148 data-nosnippet>148</a>                .as_ref()
+<a href=#149 id=149 data-nosnippet>149</a>                .map(|<span class="kw-2">&amp;</span>[sx, sy, sz]| [x * sx, y * sy, z * sz])
+<a href=#150 id=150 data-nosnippet>150</a>                .map_err(|err| invalid(err.to_string()))
+<a href=#151 id=151 data-nosnippet>151</a>        };
+<a href=#152 id=152 data-nosnippet>152</a>        <span class="kw">match </span>frame {
+<a href=#153 id=153 data-nosnippet>153</a>            PositionRef::ITRF =&gt; {
+<a href=#154 id=154 data-nosnippet>154</a>                <span class="kw">let </span>[x, y, z] = scaled(<span class="kw-2">&amp;</span><span class="self">self</span>.metric)<span class="question-mark">?</span>;
+<a href=#155 id=155 data-nosnippet>155</a>                <span class="prelude-val">Ok</span>(MPosition::new_itrf(x, y, z))
+<a href=#156 id=156 data-nosnippet>156</a>            }
+<a href=#157 id=157 data-nosnippet>157</a>            PositionRef::WGS84 <span class="kw">if </span><span class="self">self</span>.metric.is_err() =&gt; {
+<a href=#158 id=158 data-nosnippet>158</a>                <span class="kw">let </span>[height, lon, lat] = scaled(<span class="kw-2">&amp;</span><span class="self">self</span>.spherical)<span class="question-mark">?</span>;
+<a href=#159 id=159 data-nosnippet>159</a>                <span class="prelude-val">Ok</span>(MPosition::new_wgs84(lon, lat, height))
+<a href=#160 id=160 data-nosnippet>160</a>            }
+<a href=#161 id=161 data-nosnippet>161</a>            PositionRef::WGS84 =&gt; {
+<a href=#162 id=162 data-nosnippet>162</a>                <span class="kw">let </span>[x, y, z] = scaled(<span class="kw-2">&amp;</span><span class="self">self</span>.metric)<span class="question-mark">?</span>;
+<a href=#163 id=163 data-nosnippet>163</a>                <span class="kw">let </span>radial = x.hypot(y);
+<a href=#164 id=164 data-nosnippet>164</a>                <span class="prelude-val">Ok</span>(MPosition::new_wgs84(
+<a href=#165 id=165 data-nosnippet>165</a>                    y.atan2(x),
+<a href=#166 id=166 data-nosnippet>166</a>                    z.atan2(radial),
+<a href=#167 id=167 data-nosnippet>167</a>                    radial.hypot(z),
+<a href=#168 id=168 data-nosnippet>168</a>                ))
+<a href=#169 id=169 data-nosnippet>169</a>            }
+<a href=#170 id=170 data-nosnippet>170</a>        }
+<a href=#171 id=171 data-nosnippet>171</a>    }
+<a href=#172 id=172 data-nosnippet>172</a>}
+<a href=#173 id=173 data-nosnippet>173</a>
+<a href=#174 id=174 data-nosnippet>174</a><span class="kw">enum </span>Reference&lt;T&gt; {
+<a href=#175 id=175 data-nosnippet>175</a>    Fixed(T),
+<a href=#176 id=176 data-nosnippet>176</a>    Integer {
+<a href=#177 id=177 data-nosnippet>177</a>        column: String,
+<a href=#178 id=178 data-nosnippet>178</a>        refs: BTreeMap&lt;i64, T&gt;,
+<a href=#179 id=179 data-nosnippet>179</a>    },
+<a href=#180 id=180 data-nosnippet>180</a>    Text(String),
+<a href=#181 id=181 data-nosnippet>181</a>}
+<a href=#182 id=182 data-nosnippet>182</a>
+<a href=#183 id=183 data-nosnippet>183</a><span class="kw">impl</span>&lt;T: FromStr + Copy&gt; Reference&lt;T&gt; {
+<a href=#184 id=184 data-nosnippet>184</a>    <span class="kw">fn </span>read(table: <span class="kw-2">&amp;</span>Table, column: <span class="kw-2">&amp;</span>str, measure: MeasureType) -&gt; MsResult&lt;<span class="self">Self</span>&gt; {
+<a href=#185 id=185 data-nosnippet>185</a>        <span class="kw">let </span>invalid_measure = || {
+<a href=#186 id=186 data-nosnippet>186</a>            invalid(<span class="macro">format!</span>(
+<a href=#187 id=187 data-nosnippet>187</a>                <span class="string">"MSCAL requires valid {measure:?} MEASINFO on {column}"
+<a href=#188 id=188 data-nosnippet>188</a>            </span>))
+<a href=#189 id=189 data-nosnippet>189</a>        };
+<a href=#190 id=190 data-nosnippet>190</a>        <span class="kw">let </span>desc = TableMeasDesc::reconstruct(table, column).ok_or_else(invalid_measure)<span class="question-mark">?</span>;
+<a href=#191 id=191 data-nosnippet>191</a>        <span class="kw">if </span>desc.measure_type() != measure {
+<a href=#192 id=192 data-nosnippet>192</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(invalid_measure());
+<a href=#193 id=193 data-nosnippet>193</a>        }
+<a href=#194 id=194 data-nosnippet>194</a>        <span class="kw">let </span>parse = |value: <span class="kw-2">&amp;</span>str| value.parse().map_err(|<span class="kw">_</span>| invalid_measure());
+<a href=#195 id=195 data-nosnippet>195</a>        <span class="prelude-val">Ok</span>(<span class="kw">match </span>desc.ref_desc() {
+<a href=#196 id=196 data-nosnippet>196</a>            MeasRefDesc::Fixed { refer } =&gt; <span class="self">Self</span>::Fixed(parse(refer)<span class="question-mark">?</span>),
+<a href=#197 id=197 data-nosnippet>197</a>            MeasRefDesc::VariableString { ref_column } =&gt; <span class="self">Self</span>::Text(ref_column.clone()),
+<a href=#198 id=198 data-nosnippet>198</a>            MeasRefDesc::VariableInt {
+<a href=#199 id=199 data-nosnippet>199</a>                ref_column,
+<a href=#200 id=200 data-nosnippet>200</a>                tab_ref_types,
+<a href=#201 id=201 data-nosnippet>201</a>                tab_ref_codes,
+<a href=#202 id=202 data-nosnippet>202</a>            } =&gt; {
+<a href=#203 id=203 data-nosnippet>203</a>                <span class="kw">let </span>refs = tab_ref_codes
+<a href=#204 id=204 data-nosnippet>204</a>                    .iter()
+<a href=#205 id=205 data-nosnippet>205</a>                    .zip(tab_ref_types)
+<a href=#206 id=206 data-nosnippet>206</a>                    .map(|(<span class="kw-2">&amp;</span>code, name)| <span class="prelude-val">Ok</span>((i64::from(code), parse(name)<span class="question-mark">?</span>)))
+<a href=#207 id=207 data-nosnippet>207</a>                    .collect::&lt;MsResult&lt;<span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#208 id=208 data-nosnippet>208</a>                <span class="self">Self</span>::Integer {
+<a href=#209 id=209 data-nosnippet>209</a>                    column: ref_column.clone(),
+<a href=#210 id=210 data-nosnippet>210</a>                    refs,
+<a href=#211 id=211 data-nosnippet>211</a>                }
+<a href=#212 id=212 data-nosnippet>212</a>            }
+<a href=#213 id=213 data-nosnippet>213</a>        })
+<a href=#214 id=214 data-nosnippet>214</a>    }
+<a href=#215 id=215 data-nosnippet>215</a>
+<a href=#216 id=216 data-nosnippet>216</a>    <span class="kw">fn </span>at_table_row(<span class="kw-2">&amp;</span><span class="self">self</span>, table: <span class="kw-2">&amp;</span>Table, index: usize) -&gt; MsResult&lt;T&gt; {
+<a href=#217 id=217 data-nosnippet>217</a>        <span class="kw">if let </span><span class="self">Self</span>::Fixed(frame) = <span class="self">self </span>{
+<a href=#218 id=218 data-nosnippet>218</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="kw-2">*</span>frame);
+<a href=#219 id=219 data-nosnippet>219</a>        }
+<a href=#220 id=220 data-nosnippet>220</a>        <span class="self">self</span>.at(table.row_accessor().row(index)<span class="question-mark">?</span>)
+<a href=#221 id=221 data-nosnippet>221</a>            .map_err(|error| invalid(error.to_string()))
+<a href=#222 id=222 data-nosnippet>222</a>    }
+<a href=#223 id=223 data-nosnippet>223</a>
+<a href=#224 id=224 data-nosnippet>224</a>    <span class="kw">fn </span>at(<span class="kw-2">&amp;</span><span class="self">self</span>, row: <span class="kw-2">&amp;</span>RecordValue) -&gt; <span class="prelude-ty">Result</span>&lt;T, TaqlError&gt; {
+<a href=#225 id=225 data-nosnippet>225</a>        <span class="kw">let </span>bad =
+<a href=#226 id=226 data-nosnippet>226</a>            |column: <span class="kw-2">&amp;</span>str| TaqlError::Table(<span class="macro">format!</span>(<span class="string">"invalid MSCAL measure reference in {column}"</span>));
+<a href=#227 id=227 data-nosnippet>227</a>        <span class="kw">match </span><span class="self">self </span>{
+<a href=#228 id=228 data-nosnippet>228</a>            <span class="self">Self</span>::Fixed(frame) =&gt; <span class="prelude-val">Ok</span>(<span class="kw-2">*</span>frame),
+<a href=#229 id=229 data-nosnippet>229</a>            <span class="self">Self</span>::Text(column) =&gt; <span class="kw">match </span>row.get(column) {
+<a href=#230 id=230 data-nosnippet>230</a>                <span class="prelude-val">Some</span>(Value::Scalar(ScalarValue::String(name))) =&gt; {
+<a href=#231 id=231 data-nosnippet>231</a>                    name.parse().map_err(|<span class="kw">_</span>| bad(column))
+<a href=#232 id=232 data-nosnippet>232</a>                }
+<a href=#233 id=233 data-nosnippet>233</a>                <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(bad(column)),
+<a href=#234 id=234 data-nosnippet>234</a>            },
+<a href=#235 id=235 data-nosnippet>235</a>            <span class="self">Self</span>::Integer { column, refs } =&gt; {
+<a href=#236 id=236 data-nosnippet>236</a>                <span class="kw">let </span>code = <span class="kw">match </span>row.get(column) {
+<a href=#237 id=237 data-nosnippet>237</a>                    <span class="prelude-val">Some</span>(Value::Scalar(ScalarValue::Int32(code))) =&gt; i64::from(<span class="kw-2">*</span>code),
+<a href=#238 id=238 data-nosnippet>238</a>                    <span class="prelude-val">Some</span>(Value::Scalar(ScalarValue::UInt32(code))) =&gt; i64::from(<span class="kw-2">*</span>code),
+<a href=#239 id=239 data-nosnippet>239</a>                    <span class="prelude-val">Some</span>(Value::Scalar(ScalarValue::Int64(code))) =&gt; <span class="kw-2">*</span>code,
+<a href=#240 id=240 data-nosnippet>240</a>                    <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(bad(column)),
+<a href=#241 id=241 data-nosnippet>241</a>                };
+<a href=#242 id=242 data-nosnippet>242</a>                refs.get(<span class="kw-2">&amp;</span>code).copied().ok_or_else(|| bad(column))
+<a href=#243 id=243 data-nosnippet>243</a>            }
+<a href=#244 id=244 data-nosnippet>244</a>        }
+<a href=#245 id=245 data-nosnippet>245</a>    }
+<a href=#246 id=246 data-nosnippet>246</a>}
+<a href=#247 id=247 data-nosnippet>247</a>
+<a href=#248 id=248 data-nosnippet>248</a><span class="kw">fn </span>unit_scales&lt;<span class="kw">const </span>N: usize&gt;(
+<a href=#249 id=249 data-nosnippet>249</a>    table: <span class="kw-2">&amp;</span>Table,
+<a href=#250 id=250 data-nosnippet>250</a>    column: <span class="kw-2">&amp;</span>str,
+<a href=#251 id=251 data-nosnippet>251</a>    expected: [<span class="kw-2">&amp;</span>str; N],
+<a href=#252 id=252 data-nosnippet>252</a>) -&gt; MsResult&lt;[f64; N]&gt; {
+<a href=#253 id=253 data-nosnippet>253</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(desc) = TableQuantumDesc::reconstruct(table, column) <span class="kw">else </span>{
+<a href=#254 id=254 data-nosnippet>254</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>([<span class="number">1.0</span>; N]);
+<a href=#255 id=255 data-nosnippet>255</a>    };
+<a href=#256 id=256 data-nosnippet>256</a>    <span class="kw">let </span><span class="kw-2">mut </span>scales = [<span class="number">1.0</span>; N];
+<a href=#257 id=257 data-nosnippet>257</a>    <span class="kw">for </span>(axis, expected) <span class="kw">in </span>expected.into_iter().enumerate() {
+<a href=#258 id=258 data-nosnippet>258</a>        <span class="kw">let </span>source = desc
+<a href=#259 id=259 data-nosnippet>259</a>            .units()
+<a href=#260 id=260 data-nosnippet>260</a>            .get(axis)
+<a href=#261 id=261 data-nosnippet>261</a>            .or_else(|| desc.units().first())
+<a href=#262 id=262 data-nosnippet>262</a>            .ok_or_else(|| invalid(<span class="macro">format!</span>(<span class="string">"missing MSCAL QuantumUnits for {column}"</span>)))<span class="question-mark">?</span>;
+<a href=#263 id=263 data-nosnippet>263</a>        scales[axis] = Quantity::new(<span class="number">1.0</span>, source)
+<a href=#264 id=264 data-nosnippet>264</a>            .and_then(|one| one.get_value_in(<span class="kw-2">&amp;</span>Unit::new(expected)<span class="question-mark">?</span>))
+<a href=#265 id=265 data-nosnippet>265</a>            .map_err(|err| invalid(<span class="macro">format!</span>(<span class="string">"invalid MSCAL QuantumUnits on {column}: {err}"</span>)))<span class="question-mark">?</span>;
+<a href=#266 id=266 data-nosnippet>266</a>    }
+<a href=#267 id=267 data-nosnippet>267</a>    <span class="prelude-val">Ok</span>(scales)
+<a href=#268 id=268 data-nosnippet>268</a>}
+<a href=#269 id=269 data-nosnippet>269</a>
+<a href=#270 id=270 data-nosnippet>270</a><span class="kw">fn </span>invalid(message: <span class="kw">impl </span>Into&lt;String&gt;) -&gt; MsError {
+<a href=#271 id=271 data-nosnippet>271</a>    MsError::InvalidInput(message.into())
+<a href=#272 id=272 data-nosnippet>272</a>}
 </code></pre></div></section></main></body></html>

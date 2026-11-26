@@ -269,166 +269,164 @@
 <a href=#269 id=269 data-nosnippet>269</a>            .expect(<span class="string">"two cells"</span>)
 <a href=#270 id=270 data-nosnippet>270</a>    };
 <a href=#271 id=271 data-nosnippet>271</a>    <span class="kw">let </span>cell = positive_cells(cell)<span class="question-mark">?</span>;
-<a href=#272 id=272 data-nosnippet>272</a>    <span class="kw">let </span><span class="kw-2">mut </span>size: Vec&lt;<span class="kw">_</span>&gt; = p.<span class="number">0</span>[<span class="string">"imsize"</span>]
-<a href=#273 id=273 data-nosnippet>273</a>        .as_array()
-<a href=#274 id=274 data-nosnippet>274</a>        .expect(<span class="string">"resolved imsize"</span>)
-<a href=#275 id=275 data-nosnippet>275</a>        .iter()
-<a href=#276 id=276 data-nosnippet>276</a>        .map(|v| v.as_i64().expect(<span class="string">"integer"</span>))
-<a href=#277 id=277 data-nosnippet>277</a>        .collect();
-<a href=#278 id=278 data-nosnippet>278</a>    <span class="kw">if </span>size.is_empty() {
-<a href=#279 id=279 data-nosnippet>279</a>        size.push(<span class="number">0</span>);
-<a href=#280 id=280 data-nosnippet>280</a>    }
-<a href=#281 id=281 data-nosnippet>281</a>    <span class="kw">if </span>size.len() == <span class="number">1 </span>{
-<a href=#282 id=282 data-nosnippet>282</a>        size.push(size[<span class="number">0</span>]);
-<a href=#283 id=283 data-nosnippet>283</a>    }
-<a href=#284 id=284 data-nosnippet>284</a>    <span class="kw">let </span>frequency = model.coordinates().coordinate(<span class="number">2</span>).reference_value()[<span class="number">0</span>];
-<a href=#285 id=285 data-nosnippet>285</a>    <span class="kw">let </span>minimum = inputs
-<a href=#286 id=286 data-nosnippet>286</a>        .synthesis
-<a href=#287 id=287 data-nosnippet>287</a>        .iter()
-<a href=#288 id=288 data-nosnippet>288</a>        .map(|path| minimum_size(path, cell[<span class="number">0</span>], frequency, resources))
-<a href=#289 id=289 data-nosnippet>289</a>        .try_fold(<span class="prelude-val">None</span>::&lt;f64&gt;, |value, next| {
-<a href=#290 id=290 data-nosnippet>290</a>            next.map(|next| <span class="prelude-val">Some</span>(value.map_or(next, |old| old.min(next))))
-<a href=#291 id=291 data-nosnippet>291</a>        })<span class="question-mark">?
-<a href=#292 id=292 data-nosnippet>292</a>        </span>.unwrap_or(<span class="number">0.</span>);
-<a href=#293 id=293 data-nosnippet>293</a>    <span class="kw">let </span>size = planned_sizes(<span class="kw-2">&amp;</span>size, model.shape(), model_cell, cell, minimum, resources)<span class="question-mark">?</span>;
-<a href=#294 id=294 data-nosnippet>294</a>    <span class="kw">let </span>size = <span class="kw">if </span>inputs.synthesis.is_empty() {
-<a href=#295 id=295 data-nosnippet>295</a>        size
-<a href=#296 id=296 data-nosnippet>296</a>    } <span class="kw">else </span>{
-<a href=#297 id=297 data-nosnippet>297</a>        size.map(casa_imaging_model::optimum_image_size)
-<a href=#298 id=298 data-nosnippet>298</a>    };
-<a href=#299 id=299 data-nosnippet>299</a>    <span class="kw">let </span>input = inputs
-<a href=#300 id=300 data-nosnippet>300</a>        .synthesis
-<a href=#301 id=301 data-nosnippet>301</a>        .first()
-<a href=#302 id=302 data-nosnippet>302</a>        .or(inputs.total_power.as_ref())
-<a href=#303 id=303 data-nosnippet>303</a>        .expect(<span class="string">"image input"</span>);
-<a href=#304 id=304 data-nosnippet>304</a>    <span class="kw">let </span>ms = MeasurementSet::open(input).map_err(failure)<span class="question-mark">?</span>;
-<a href=#305 id=305 data-nosnippet>305</a>    <span class="kw">let </span>source = ms
-<a href=#306 id=306 data-nosnippet>306</a>        .subtable(SubtableId::Source)
-<a href=#307 id=307 data-nosnippet>307</a>        .ok_or_else(|| failure(<span class="string">"MS has no SOURCE table"</span>))<span class="question-mark">?</span>;
-<a href=#308 id=308 data-nosnippet>308</a>    <span class="kw">let </span>codes = source.column_accessor(<span class="string">"CODE"</span>).map_err(failure)<span class="question-mark">?</span>;
-<a href=#309 id=309 data-nosnippet>309</a>    <span class="kw">let </span>fields = (<span class="number">0</span>..source.row_count())
-<a href=#310 id=310 data-nosnippet>310</a>        .filter(|<span class="kw-2">&amp;</span>row| <span class="macro">matches!</span>(codes.scalar_cell(row), <span class="prelude-val">Ok</span>(ScalarValue::String(v)) <span class="kw">if </span>v==<span class="string">"OBJ"</span>))
-<a href=#311 id=311 data-nosnippet>311</a>        .count();
-<a href=#312 id=312 data-nosnippet>312</a>    <span class="kw">let </span>startmodel = expand_project(directory, p.text(<span class="string">"modelimage"</span>));
-<a href=#313 id=313 data-nosnippet>313</a>    <span class="kw">let </span>startmodel = locate(directory, <span class="kw-2">&amp;</span>startmodel);
-<a href=#314 id=314 data-nosnippet>314</a>    <span class="kw">let </span>nchan = ms
-<a href=#315 id=315 data-nosnippet>315</a>        .spectral_window()
-<a href=#316 id=316 data-nosnippet>316</a>        .map_err(failure)<span class="question-mark">?
-<a href=#317 id=317 data-nosnippet>317</a>        </span>.num_chan(<span class="number">0</span>)
-<a href=#318 id=318 data-nosnippet>318</a>        .map_err(failure)<span class="question-mark">?</span>;
-<a href=#319 id=319 data-nosnippet>319</a>    <span class="prelude-val">Ok</span>(<span class="macro">json!</span>({ <span class="string">"vis"</span>: ms_path, <span class="string">"selectdata"</span>: <span class="bool-val">false</span>, <span class="string">"imagename"</span>: root,
-<a href=#320 id=320 data-nosnippet>320</a>        <span class="string">"cell"</span>: cell.map(|v|<span class="macro">format!</span>(<span class="string">"{v}rad"</span>)), <span class="string">"imsize"</span>: size,
-<a href=#321 id=321 data-nosnippet>321</a>        <span class="string">"phasecenter"</span>: <span class="kw">if </span>p.text(<span class="string">"imdirection"</span>).is_empty() {refdir.as_str()} <span class="kw">else </span>{p.text(<span class="string">"imdirection"</span>)},
-<a href=#322 id=322 data-nosnippet>322</a>        <span class="string">"stokes"</span>: p.text(<span class="string">"stokes"</span>), <span class="string">"startmodel"</span>: <span class="kw">if </span>startmodel.exists() &amp;&amp; !p.text(<span class="string">"modelimage"</span>).is_empty() {startmodel.to_string_lossy().into_owned()} <span class="kw">else </span>{String::new()},
-<a href=#323 id=323 data-nosnippet>323</a>        <span class="string">"specmode"</span>: <span class="kw">if </span>nchan==<span class="number">1 </span>{<span class="string">"mfs"</span>} <span class="kw">else </span>{<span class="string">"cube"</span>}, <span class="string">"gridder"</span>: <span class="kw">if </span>fields==<span class="number">1 </span>{<span class="string">"standard"</span>} <span class="kw">else </span>{<span class="string">"mosaic"</span>},
-<a href=#324 id=324 data-nosnippet>324</a>        <span class="string">"deconvolver"</span>: <span class="string">"clark"</span>, <span class="string">"weighting"</span>: p.text(<span class="string">"weighting"</span>), <span class="string">"niter"</span>: p.<span class="number">0</span>[<span class="string">"niter"</span>],
-<a href=#325 id=325 data-nosnippet>325</a>        <span class="string">"threshold"</span>: <span class="kw">if </span>p.<span class="number">0</span>[<span class="string">"niter"</span>].as_i64().unwrap_or(<span class="number">0</span>)&gt;<span class="number">0 </span>{p.text(<span class="string">"threshold"</span>)} <span class="kw">else </span>{<span class="string">"0Jy"</span>},
-<a href=#326 id=326 data-nosnippet>326</a>        <span class="string">"interactive"</span>: p.flag(<span class="string">"interactive"</span>), <span class="string">"usemask"</span>: <span class="string">"user"</span>, <span class="string">"mask"</span>: p.<span class="number">0</span>[<span class="string">"mask"</span>],
-<a href=#327 id=327 data-nosnippet>327</a>        <span class="string">"uvtaper"</span>: p.<span class="number">0</span>[<span class="string">"outertaper"</span>], <span class="string">"pbcor"</span>: p.flag(<span class="string">"pbcor"</span>), <span class="string">"pbmask"</span>: <span class="number">0.</span>,
-<a href=#328 id=328 data-nosnippet>328</a>        <span class="string">"restoringbeam"</span>: <span class="string">"common"</span>, <span class="string">"savemodel"</span>: <span class="string">"none"</span>, <span class="string">"calcres"</span>: <span class="bool-val">true</span>, <span class="string">"calcpsf"</span>: <span class="bool-val">true</span>,
-<a href=#329 id=329 data-nosnippet>329</a>        <span class="string">"restoration"</span>: <span class="bool-val">true</span>, <span class="string">"restart"</span>: <span class="bool-val">true</span>, <span class="string">"fastnoise"</span>: <span class="bool-val">true</span>, <span class="string">"parallel"</span>: <span class="bool-val">false
-<a href=#330 id=330 data-nosnippet>330</a>    </span>}).as_object().unwrap().clone())
-<a href=#331 id=331 data-nosnippet>331</a>}
-<a href=#332 id=332 data-nosnippet>332</a>
-<a href=#333 id=333 data-nosnippet>333</a><span class="kw">fn </span>minimum_size(
-<a href=#334 id=334 data-nosnippet>334</a>    path: <span class="kw-2">&amp;</span>Path,
-<a href=#335 id=335 data-nosnippet>335</a>    cell: f64,
-<a href=#336 id=336 data-nosnippet>336</a>    frequency: f64,
-<a href=#337 id=337 data-nosnippet>337</a>    resources: SessionResources,
-<a href=#338 id=338 data-nosnippet>338</a>) -&gt; <span class="prelude-ty">Result</span>&lt;f64, SimobserveError&gt; {
-<a href=#339 id=339 data-nosnippet>339</a>    casa_imaging_runtime::charge_process_caches(resources.host(), resources.policy())
-<a href=#340 id=340 data-nosnippet>340</a>        .map_err(failure)<span class="question-mark">?</span>;
-<a href=#341 id=341 data-nosnippet>341</a>    <span class="kw">let </span>ms = MeasurementSet::open(path).map_err(failure)<span class="question-mark">?</span>;
-<a href=#342 id=342 data-nosnippet>342</a>    <span class="kw">let </span>uvw = UvwColumn::new(ms.main_table());
-<a href=#343 id=343 data-nosnippet>343</a>    <span class="kw">let </span><span class="kw-2">mut </span>maximum = <span class="number">0f64</span>;
-<a href=#344 id=344 data-nosnippet>344</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..ms.main_table().row_count() {
-<a href=#345 id=345 data-nosnippet>345</a>        <span class="kw">let </span>[u, v, <span class="kw">_</span>] = uvw.get(row).map_err(failure)<span class="question-mark">?</span>;
-<a href=#346 id=346 data-nosnippet>346</a>        maximum = maximum.max(u).max(v);
-<a href=#347 id=347 data-nosnippet>347</a>    }
-<a href=#348 id=348 data-nosnippet>348</a>    <span class="kw">if </span>maximum &lt;= <span class="number">0. </span>{
-<a href=#349 id=349 data-nosnippet>349</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(failure(<span class="string">"an interferometric image needs positive u or v"</span>));
-<a href=#350 id=350 data-nosnippet>350</a>    }
-<a href=#351 id=351 data-nosnippet>351</a>    <span class="prelude-val">Ok</span>(<span class="number">8. </span>* (<span class="number">300_000_000. </span>/ frequency / maximum / cell).floor())
-<a href=#352 id=352 data-nosnippet>352</a>}
-<a href=#353 id=353 data-nosnippet>353</a>
-<a href=#354 id=354 data-nosnippet>354</a><span class="kw">fn </span>positive_cells(cell: [f64; <span class="number">2</span>]) -&gt; <span class="prelude-ty">Result</span>&lt;[f64; <span class="number">2</span>], SimobserveError&gt; {
-<a href=#355 id=355 data-nosnippet>355</a>    <span class="kw">if </span>cell.iter().any(|value| !value.is_finite() || <span class="kw-2">*</span>value == <span class="number">0.</span>) {
-<a href=#356 id=356 data-nosnippet>356</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(failure(<span class="string">"cell sizes must be finite and nonzero"</span>));
-<a href=#357 id=357 data-nosnippet>357</a>    }
-<a href=#358 id=358 data-nosnippet>358</a>    <span class="prelude-val">Ok</span>(cell.map(f64::abs))
-<a href=#359 id=359 data-nosnippet>359</a>}
-<a href=#360 id=360 data-nosnippet>360</a>
-<a href=#361 id=361 data-nosnippet>361</a><span class="kw">fn </span>planned_sizes(
-<a href=#362 id=362 data-nosnippet>362</a>    requested: <span class="kw-2">&amp;</span>[i64],
-<a href=#363 id=363 data-nosnippet>363</a>    shape: <span class="kw-2">&amp;</span>[usize],
-<a href=#364 id=364 data-nosnippet>364</a>    model_cell: [f64; <span class="number">2</span>],
-<a href=#365 id=365 data-nosnippet>365</a>    cell: [f64; <span class="number">2</span>],
-<a href=#366 id=366 data-nosnippet>366</a>    minimum: f64,
-<a href=#367 id=367 data-nosnippet>367</a>    resources: SessionResources,
-<a href=#368 id=368 data-nosnippet>368</a>) -&gt; <span class="prelude-ty">Result</span>&lt;[usize; <span class="number">2</span>], SimobserveError&gt; {
-<a href=#369 id=369 data-nosnippet>369</a>    <span class="kw">if </span>!minimum.is_finite() {
-<a href=#370 id=370 data-nosnippet>370</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(failure(<span class="string">"cell implies an unrepresentable image size"</span>));
-<a href=#371 id=371 data-nosnippet>371</a>    }
-<a href=#372 id=372 data-nosnippet>372</a>    <span class="kw">let </span><span class="kw-2">mut </span>size = [<span class="number">0usize</span>; <span class="number">2</span>];
-<a href=#373 id=373 data-nosnippet>373</a>    <span class="kw">for </span>axis <span class="kw">in </span><span class="number">0</span>..<span class="number">2 </span>{
-<a href=#374 id=374 data-nosnippet>374</a>        <span class="kw">let </span>extent = <span class="kw">if </span>requested[axis] &lt;= <span class="number">0 </span>{
-<a href=#375 id=375 data-nosnippet>375</a>            (shape[axis] <span class="kw">as </span>f64 * model_cell[axis].abs() / cell[axis]).ceil()
-<a href=#376 id=376 data-nosnippet>376</a>        } <span class="kw">else </span>{
-<a href=#377 id=377 data-nosnippet>377</a>            requested[axis] <span class="kw">as </span>f64
-<a href=#378 id=378 data-nosnippet>378</a>        };
-<a href=#379 id=379 data-nosnippet>379</a>        <span class="kw">let </span>extent = extent.max(minimum);
-<a href=#380 id=380 data-nosnippet>380</a>        <span class="comment">// CASA's image extents are Int32, and a float image must fit within
-<a href=#381 id=381 data-nosnippet>381</a>        // the run's memory even before its FFT/statistic working buffers.
-<a href=#382 id=382 data-nosnippet>382</a>        </span><span class="kw">if </span>!extent.is_finite() || !(<span class="number">0. </span>..=f64::from(i32::MAX)).contains(<span class="kw-2">&amp;</span>extent) {
-<a href=#383 id=383 data-nosnippet>383</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(failure(<span class="string">"cell/imsize implies an unrepresentable image size"</span>));
-<a href=#384 id=384 data-nosnippet>384</a>        }
-<a href=#385 id=385 data-nosnippet>385</a>        size[axis] = extent <span class="kw">as </span>usize;
-<a href=#386 id=386 data-nosnippet>386</a>    }
-<a href=#387 id=387 data-nosnippet>387</a>    <span class="kw">let </span>bytes = (size[<span class="number">0</span>] <span class="kw">as </span>u64)
-<a href=#388 id=388 data-nosnippet>388</a>        .checked_mul(size[<span class="number">1</span>] <span class="kw">as </span>u64)
-<a href=#389 id=389 data-nosnippet>389</a>        .and_then(|cells| cells.checked_mul(<span class="number">4</span>));
-<a href=#390 id=390 data-nosnippet>390</a>    <span class="kw">if </span>bytes.is_none_or(|bytes| bytes &gt; resources.policy().memory(resources.host())) {
-<a href=#391 id=391 data-nosnippet>391</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(failure(<span class="string">"image dimensions exceed the run's memory budget"</span>));
-<a href=#392 id=392 data-nosnippet>392</a>    }
-<a href=#393 id=393 data-nosnippet>393</a>    <span class="prelude-val">Ok</span>(size)
-<a href=#394 id=394 data-nosnippet>394</a>}
-<a href=#395 id=395 data-nosnippet>395</a>
-<a href=#396 id=396 data-nosnippet>396</a><span class="attr">#[cfg(test)]
-<a href=#397 id=397 data-nosnippet>397</a></span><span class="kw">mod </span>tests {
-<a href=#398 id=398 data-nosnippet>398</a>    <span class="kw">use super</span>::{analysis_memory, planned_sizes, positive_cells};
-<a href=#399 id=399 data-nosnippet>399</a>
-<a href=#400 id=400 data-nosnippet>400</a>    <span class="attr">#[test]
-<a href=#401 id=401 data-nosnippet>401</a>    </span><span class="kw">fn </span>analysis_counting_law_scales_with_both_image_grids_and_refuses_overflow() {
-<a href=#402 id=402 data-nosnippet>402</a>        <span class="kw">let </span>base = analysis_memory(<span class="number">0</span>, <span class="number">0</span>).unwrap();
-<a href=#403 id=403 data-nosnippet>403</a>        <span class="kw">for </span>cells <span class="kw">in </span>[<span class="number">1</span>, <span class="number">65_536</span>, <span class="number">16_777_216</span>] {
-<a href=#404 id=404 data-nosnippet>404</a>            <span class="macro">assert_eq!</span>(analysis_memory(cells, <span class="number">0</span>).unwrap() - base, cells * <span class="number">48</span>);
-<a href=#405 id=405 data-nosnippet>405</a>            <span class="macro">assert_eq!</span>(analysis_memory(<span class="number">0</span>, cells).unwrap() - base, cells * <span class="number">96</span>);
-<a href=#406 id=406 data-nosnippet>406</a>            <span class="macro">assert_eq!</span>(analysis_memory(cells, cells).unwrap() - base, cells * <span class="number">144</span>);
-<a href=#407 id=407 data-nosnippet>407</a>        }
-<a href=#408 id=408 data-nosnippet>408</a>        <span class="macro">assert!</span>(analysis_memory(u64::MAX, <span class="number">1</span>).is_err());
-<a href=#409 id=409 data-nosnippet>409</a>        <span class="macro">assert!</span>(analysis_memory(<span class="number">1</span>, u64::MAX).is_err());
-<a href=#410 id=410 data-nosnippet>410</a>    }
-<a href=#411 id=411 data-nosnippet>411</a>
-<a href=#412 id=412 data-nosnippet>412</a>    <span class="attr">#[test]
-<a href=#413 id=413 data-nosnippet>413</a>    </span><span class="kw">fn </span>invalid_cells_and_unrepresentable_dimensions_are_refused_before_fft_sizing() {
-<a href=#414 id=414 data-nosnippet>414</a>        <span class="kw">for </span>value <span class="kw">in </span>[<span class="number">0.</span>, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-<a href=#415 id=415 data-nosnippet>415</a>            <span class="macro">assert!</span>(positive_cells([value, <span class="number">1.</span>]).is_err());
-<a href=#416 id=416 data-nosnippet>416</a>        }
-<a href=#417 id=417 data-nosnippet>417</a>        <span class="macro">assert_eq!</span>(positive_cells([-<span class="number">2e-6</span>, <span class="number">2e-6</span>]).unwrap(), [<span class="number">2e-6</span>, <span class="number">2e-6</span>]);
-<a href=#418 id=418 data-nosnippet>418</a>        <span class="kw">let </span>resources =
-<a href=#419 id=419 data-nosnippet>419</a>            <span class="kw">crate</span>::SessionResources::from_controls(<span class="kw-2">&amp;</span><span class="kw">crate</span>::ExecutionControls::default()).unwrap();
-<a href=#420 id=420 data-nosnippet>420</a>        <span class="macro">assert!</span>(
-<a href=#421 id=421 data-nosnippet>421</a>            planned_sizes(
-<a href=#422 id=422 data-nosnippet>422</a>                <span class="kw-2">&amp;</span>[i64::MAX, <span class="number">64</span>],
-<a href=#423 id=423 data-nosnippet>423</a>                <span class="kw-2">&amp;</span>[<span class="number">64</span>, <span class="number">64</span>],
-<a href=#424 id=424 data-nosnippet>424</a>                [<span class="number">2e-6</span>; <span class="number">2</span>],
-<a href=#425 id=425 data-nosnippet>425</a>                [<span class="number">2e-6</span>; <span class="number">2</span>],
-<a href=#426 id=426 data-nosnippet>426</a>                <span class="number">0.</span>,
-<a href=#427 id=427 data-nosnippet>427</a>                resources
-<a href=#428 id=428 data-nosnippet>428</a>            )
-<a href=#429 id=429 data-nosnippet>429</a>            .is_err()
-<a href=#430 id=430 data-nosnippet>430</a>        );
-<a href=#431 id=431 data-nosnippet>431</a>        <span class="macro">assert!</span>(planned_sizes(<span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>], <span class="kw-2">&amp;</span>[<span class="number">64</span>, <span class="number">64</span>], [<span class="number">2e-6</span>; <span class="number">2</span>], [<span class="number">1e-300</span>; <span class="number">2</span>], <span class="number">0.</span>, resources).is_err());
-<a href=#432 id=432 data-nosnippet>432</a>    }
-<a href=#433 id=433 data-nosnippet>433</a>}
+<a href=#272 id=272 data-nosnippet>272</a>    <span class="kw">let </span><span class="kw-2">mut </span>size: Vec&lt;<span class="kw">_</span>&gt; = <span class="kw">match </span><span class="kw-2">&amp;</span>p.<span class="number">0</span>[<span class="string">"imsize"</span>] {
+<a href=#273 id=273 data-nosnippet>273</a>        Value::Array(items) =&gt; items.iter().map(|v| v.as_i64().expect(<span class="string">"integer"</span>)).collect(),
+<a href=#274 id=274 data-nosnippet>274</a>        single =&gt; <span class="macro">vec!</span>[single.as_i64().expect(<span class="string">"integer"</span>)],
+<a href=#275 id=275 data-nosnippet>275</a>    };
+<a href=#276 id=276 data-nosnippet>276</a>    <span class="kw">if </span>size.is_empty() {
+<a href=#277 id=277 data-nosnippet>277</a>        size.push(<span class="number">0</span>);
+<a href=#278 id=278 data-nosnippet>278</a>    }
+<a href=#279 id=279 data-nosnippet>279</a>    <span class="kw">if </span>size.len() == <span class="number">1 </span>{
+<a href=#280 id=280 data-nosnippet>280</a>        size.push(size[<span class="number">0</span>]);
+<a href=#281 id=281 data-nosnippet>281</a>    }
+<a href=#282 id=282 data-nosnippet>282</a>    <span class="kw">let </span>frequency = model.coordinates().coordinate(<span class="number">2</span>).reference_value()[<span class="number">0</span>];
+<a href=#283 id=283 data-nosnippet>283</a>    <span class="kw">let </span>minimum = inputs
+<a href=#284 id=284 data-nosnippet>284</a>        .synthesis
+<a href=#285 id=285 data-nosnippet>285</a>        .iter()
+<a href=#286 id=286 data-nosnippet>286</a>        .map(|path| minimum_size(path, cell[<span class="number">0</span>], frequency, resources))
+<a href=#287 id=287 data-nosnippet>287</a>        .try_fold(<span class="prelude-val">None</span>::&lt;f64&gt;, |value, next| {
+<a href=#288 id=288 data-nosnippet>288</a>            next.map(|next| <span class="prelude-val">Some</span>(value.map_or(next, |old| old.min(next))))
+<a href=#289 id=289 data-nosnippet>289</a>        })<span class="question-mark">?
+<a href=#290 id=290 data-nosnippet>290</a>        </span>.unwrap_or(<span class="number">0.</span>);
+<a href=#291 id=291 data-nosnippet>291</a>    <span class="kw">let </span>size = planned_sizes(<span class="kw-2">&amp;</span>size, model.shape(), model_cell, cell, minimum, resources)<span class="question-mark">?</span>;
+<a href=#292 id=292 data-nosnippet>292</a>    <span class="kw">let </span>size = <span class="kw">if </span>inputs.synthesis.is_empty() {
+<a href=#293 id=293 data-nosnippet>293</a>        size
+<a href=#294 id=294 data-nosnippet>294</a>    } <span class="kw">else </span>{
+<a href=#295 id=295 data-nosnippet>295</a>        size.map(casa_imaging_model::optimum_image_size)
+<a href=#296 id=296 data-nosnippet>296</a>    };
+<a href=#297 id=297 data-nosnippet>297</a>    <span class="kw">let </span>input = inputs
+<a href=#298 id=298 data-nosnippet>298</a>        .synthesis
+<a href=#299 id=299 data-nosnippet>299</a>        .first()
+<a href=#300 id=300 data-nosnippet>300</a>        .or(inputs.total_power.as_ref())
+<a href=#301 id=301 data-nosnippet>301</a>        .expect(<span class="string">"image input"</span>);
+<a href=#302 id=302 data-nosnippet>302</a>    <span class="kw">let </span>ms = MeasurementSet::open(input).map_err(failure)<span class="question-mark">?</span>;
+<a href=#303 id=303 data-nosnippet>303</a>    <span class="kw">let </span>source = ms
+<a href=#304 id=304 data-nosnippet>304</a>        .subtable(SubtableId::Source)
+<a href=#305 id=305 data-nosnippet>305</a>        .ok_or_else(|| failure(<span class="string">"MS has no SOURCE table"</span>))<span class="question-mark">?</span>;
+<a href=#306 id=306 data-nosnippet>306</a>    <span class="kw">let </span>codes = source.column_accessor(<span class="string">"CODE"</span>).map_err(failure)<span class="question-mark">?</span>;
+<a href=#307 id=307 data-nosnippet>307</a>    <span class="kw">let </span>fields = (<span class="number">0</span>..source.row_count())
+<a href=#308 id=308 data-nosnippet>308</a>        .filter(|<span class="kw-2">&amp;</span>row| <span class="macro">matches!</span>(codes.scalar_cell(row), <span class="prelude-val">Ok</span>(ScalarValue::String(v)) <span class="kw">if </span>v==<span class="string">"OBJ"</span>))
+<a href=#309 id=309 data-nosnippet>309</a>        .count();
+<a href=#310 id=310 data-nosnippet>310</a>    <span class="kw">let </span>startmodel = expand_project(directory, p.text(<span class="string">"modelimage"</span>));
+<a href=#311 id=311 data-nosnippet>311</a>    <span class="kw">let </span>startmodel = locate(directory, <span class="kw-2">&amp;</span>startmodel);
+<a href=#312 id=312 data-nosnippet>312</a>    <span class="kw">let </span>nchan = ms
+<a href=#313 id=313 data-nosnippet>313</a>        .spectral_window()
+<a href=#314 id=314 data-nosnippet>314</a>        .map_err(failure)<span class="question-mark">?
+<a href=#315 id=315 data-nosnippet>315</a>        </span>.num_chan(<span class="number">0</span>)
+<a href=#316 id=316 data-nosnippet>316</a>        .map_err(failure)<span class="question-mark">?</span>;
+<a href=#317 id=317 data-nosnippet>317</a>    <span class="prelude-val">Ok</span>(<span class="macro">json!</span>({ <span class="string">"vis"</span>: ms_path, <span class="string">"selectdata"</span>: <span class="bool-val">false</span>, <span class="string">"imagename"</span>: root,
+<a href=#318 id=318 data-nosnippet>318</a>        <span class="string">"cell"</span>: cell.map(|v|<span class="macro">format!</span>(<span class="string">"{v}rad"</span>)), <span class="string">"imsize"</span>: size,
+<a href=#319 id=319 data-nosnippet>319</a>        <span class="string">"phasecenter"</span>: <span class="kw">if </span>p.text(<span class="string">"imdirection"</span>).is_empty() {refdir.as_str()} <span class="kw">else </span>{p.text(<span class="string">"imdirection"</span>)},
+<a href=#320 id=320 data-nosnippet>320</a>        <span class="string">"stokes"</span>: p.text(<span class="string">"stokes"</span>), <span class="string">"startmodel"</span>: <span class="kw">if </span>startmodel.exists() &amp;&amp; !p.text(<span class="string">"modelimage"</span>).is_empty() {startmodel.to_string_lossy().into_owned()} <span class="kw">else </span>{String::new()},
+<a href=#321 id=321 data-nosnippet>321</a>        <span class="string">"specmode"</span>: <span class="kw">if </span>nchan==<span class="number">1 </span>{<span class="string">"mfs"</span>} <span class="kw">else </span>{<span class="string">"cube"</span>}, <span class="string">"gridder"</span>: <span class="kw">if </span>fields==<span class="number">1 </span>{<span class="string">"standard"</span>} <span class="kw">else </span>{<span class="string">"mosaic"</span>},
+<a href=#322 id=322 data-nosnippet>322</a>        <span class="string">"deconvolver"</span>: <span class="string">"clark"</span>, <span class="string">"weighting"</span>: p.text(<span class="string">"weighting"</span>), <span class="string">"niter"</span>: p.<span class="number">0</span>[<span class="string">"niter"</span>],
+<a href=#323 id=323 data-nosnippet>323</a>        <span class="string">"threshold"</span>: <span class="kw">if </span>p.<span class="number">0</span>[<span class="string">"niter"</span>].as_i64().unwrap_or(<span class="number">0</span>)&gt;<span class="number">0 </span>{p.text(<span class="string">"threshold"</span>)} <span class="kw">else </span>{<span class="string">"0Jy"</span>},
+<a href=#324 id=324 data-nosnippet>324</a>        <span class="string">"interactive"</span>: p.flag(<span class="string">"interactive"</span>), <span class="string">"usemask"</span>: <span class="string">"user"</span>, <span class="string">"mask"</span>: p.<span class="number">0</span>[<span class="string">"mask"</span>],
+<a href=#325 id=325 data-nosnippet>325</a>        <span class="string">"uvtaper"</span>: p.<span class="number">0</span>[<span class="string">"outertaper"</span>], <span class="string">"pbcor"</span>: p.flag(<span class="string">"pbcor"</span>), <span class="string">"pbmask"</span>: <span class="number">0.</span>,
+<a href=#326 id=326 data-nosnippet>326</a>        <span class="string">"restoringbeam"</span>: <span class="string">"common"</span>, <span class="string">"savemodel"</span>: <span class="string">"none"</span>, <span class="string">"calcres"</span>: <span class="bool-val">true</span>, <span class="string">"calcpsf"</span>: <span class="bool-val">true</span>,
+<a href=#327 id=327 data-nosnippet>327</a>        <span class="string">"restoration"</span>: <span class="bool-val">true</span>, <span class="string">"restart"</span>: <span class="bool-val">true</span>, <span class="string">"fastnoise"</span>: <span class="bool-val">true</span>, <span class="string">"parallel"</span>: <span class="bool-val">false
+<a href=#328 id=328 data-nosnippet>328</a>    </span>}).as_object().unwrap().clone())
+<a href=#329 id=329 data-nosnippet>329</a>}
+<a href=#330 id=330 data-nosnippet>330</a>
+<a href=#331 id=331 data-nosnippet>331</a><span class="kw">fn </span>minimum_size(
+<a href=#332 id=332 data-nosnippet>332</a>    path: <span class="kw-2">&amp;</span>Path,
+<a href=#333 id=333 data-nosnippet>333</a>    cell: f64,
+<a href=#334 id=334 data-nosnippet>334</a>    frequency: f64,
+<a href=#335 id=335 data-nosnippet>335</a>    resources: SessionResources,
+<a href=#336 id=336 data-nosnippet>336</a>) -&gt; <span class="prelude-ty">Result</span>&lt;f64, SimobserveError&gt; {
+<a href=#337 id=337 data-nosnippet>337</a>    casa_imaging_runtime::charge_process_caches(resources.host(), resources.policy())
+<a href=#338 id=338 data-nosnippet>338</a>        .map_err(failure)<span class="question-mark">?</span>;
+<a href=#339 id=339 data-nosnippet>339</a>    <span class="kw">let </span>ms = MeasurementSet::open(path).map_err(failure)<span class="question-mark">?</span>;
+<a href=#340 id=340 data-nosnippet>340</a>    <span class="kw">let </span>uvw = UvwColumn::new(ms.main_table());
+<a href=#341 id=341 data-nosnippet>341</a>    <span class="kw">let </span><span class="kw-2">mut </span>maximum = <span class="number">0f64</span>;
+<a href=#342 id=342 data-nosnippet>342</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..ms.main_table().row_count() {
+<a href=#343 id=343 data-nosnippet>343</a>        <span class="kw">let </span>[u, v, <span class="kw">_</span>] = uvw.get(row).map_err(failure)<span class="question-mark">?</span>;
+<a href=#344 id=344 data-nosnippet>344</a>        maximum = maximum.max(u).max(v);
+<a href=#345 id=345 data-nosnippet>345</a>    }
+<a href=#346 id=346 data-nosnippet>346</a>    <span class="kw">if </span>maximum &lt;= <span class="number">0. </span>{
+<a href=#347 id=347 data-nosnippet>347</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(failure(<span class="string">"an interferometric image needs positive u or v"</span>));
+<a href=#348 id=348 data-nosnippet>348</a>    }
+<a href=#349 id=349 data-nosnippet>349</a>    <span class="prelude-val">Ok</span>(<span class="number">8. </span>* (<span class="number">300_000_000. </span>/ frequency / maximum / cell).floor())
+<a href=#350 id=350 data-nosnippet>350</a>}
+<a href=#351 id=351 data-nosnippet>351</a>
+<a href=#352 id=352 data-nosnippet>352</a><span class="kw">fn </span>positive_cells(cell: [f64; <span class="number">2</span>]) -&gt; <span class="prelude-ty">Result</span>&lt;[f64; <span class="number">2</span>], SimobserveError&gt; {
+<a href=#353 id=353 data-nosnippet>353</a>    <span class="kw">if </span>cell.iter().any(|value| !value.is_finite() || <span class="kw-2">*</span>value == <span class="number">0.</span>) {
+<a href=#354 id=354 data-nosnippet>354</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(failure(<span class="string">"cell sizes must be finite and nonzero"</span>));
+<a href=#355 id=355 data-nosnippet>355</a>    }
+<a href=#356 id=356 data-nosnippet>356</a>    <span class="prelude-val">Ok</span>(cell.map(f64::abs))
+<a href=#357 id=357 data-nosnippet>357</a>}
+<a href=#358 id=358 data-nosnippet>358</a>
+<a href=#359 id=359 data-nosnippet>359</a><span class="kw">fn </span>planned_sizes(
+<a href=#360 id=360 data-nosnippet>360</a>    requested: <span class="kw-2">&amp;</span>[i64],
+<a href=#361 id=361 data-nosnippet>361</a>    shape: <span class="kw-2">&amp;</span>[usize],
+<a href=#362 id=362 data-nosnippet>362</a>    model_cell: [f64; <span class="number">2</span>],
+<a href=#363 id=363 data-nosnippet>363</a>    cell: [f64; <span class="number">2</span>],
+<a href=#364 id=364 data-nosnippet>364</a>    minimum: f64,
+<a href=#365 id=365 data-nosnippet>365</a>    resources: SessionResources,
+<a href=#366 id=366 data-nosnippet>366</a>) -&gt; <span class="prelude-ty">Result</span>&lt;[usize; <span class="number">2</span>], SimobserveError&gt; {
+<a href=#367 id=367 data-nosnippet>367</a>    <span class="kw">if </span>!minimum.is_finite() {
+<a href=#368 id=368 data-nosnippet>368</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(failure(<span class="string">"cell implies an unrepresentable image size"</span>));
+<a href=#369 id=369 data-nosnippet>369</a>    }
+<a href=#370 id=370 data-nosnippet>370</a>    <span class="kw">let </span><span class="kw-2">mut </span>size = [<span class="number">0usize</span>; <span class="number">2</span>];
+<a href=#371 id=371 data-nosnippet>371</a>    <span class="kw">for </span>axis <span class="kw">in </span><span class="number">0</span>..<span class="number">2 </span>{
+<a href=#372 id=372 data-nosnippet>372</a>        <span class="kw">let </span>extent = <span class="kw">if </span>requested[axis] &lt;= <span class="number">0 </span>{
+<a href=#373 id=373 data-nosnippet>373</a>            (shape[axis] <span class="kw">as </span>f64 * model_cell[axis].abs() / cell[axis]).ceil()
+<a href=#374 id=374 data-nosnippet>374</a>        } <span class="kw">else </span>{
+<a href=#375 id=375 data-nosnippet>375</a>            requested[axis] <span class="kw">as </span>f64
+<a href=#376 id=376 data-nosnippet>376</a>        };
+<a href=#377 id=377 data-nosnippet>377</a>        <span class="kw">let </span>extent = extent.max(minimum);
+<a href=#378 id=378 data-nosnippet>378</a>        <span class="comment">// CASA's image extents are Int32, and a float image must fit within
+<a href=#379 id=379 data-nosnippet>379</a>        // the run's memory even before its FFT/statistic working buffers.
+<a href=#380 id=380 data-nosnippet>380</a>        </span><span class="kw">if </span>!extent.is_finite() || !(<span class="number">0. </span>..=f64::from(i32::MAX)).contains(<span class="kw-2">&amp;</span>extent) {
+<a href=#381 id=381 data-nosnippet>381</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(failure(<span class="string">"cell/imsize implies an unrepresentable image size"</span>));
+<a href=#382 id=382 data-nosnippet>382</a>        }
+<a href=#383 id=383 data-nosnippet>383</a>        size[axis] = extent <span class="kw">as </span>usize;
+<a href=#384 id=384 data-nosnippet>384</a>    }
+<a href=#385 id=385 data-nosnippet>385</a>    <span class="kw">let </span>bytes = (size[<span class="number">0</span>] <span class="kw">as </span>u64)
+<a href=#386 id=386 data-nosnippet>386</a>        .checked_mul(size[<span class="number">1</span>] <span class="kw">as </span>u64)
+<a href=#387 id=387 data-nosnippet>387</a>        .and_then(|cells| cells.checked_mul(<span class="number">4</span>));
+<a href=#388 id=388 data-nosnippet>388</a>    <span class="kw">if </span>bytes.is_none_or(|bytes| bytes &gt; resources.policy().memory(resources.host())) {
+<a href=#389 id=389 data-nosnippet>389</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(failure(<span class="string">"image dimensions exceed the run's memory budget"</span>));
+<a href=#390 id=390 data-nosnippet>390</a>    }
+<a href=#391 id=391 data-nosnippet>391</a>    <span class="prelude-val">Ok</span>(size)
+<a href=#392 id=392 data-nosnippet>392</a>}
+<a href=#393 id=393 data-nosnippet>393</a>
+<a href=#394 id=394 data-nosnippet>394</a><span class="attr">#[cfg(test)]
+<a href=#395 id=395 data-nosnippet>395</a></span><span class="kw">mod </span>tests {
+<a href=#396 id=396 data-nosnippet>396</a>    <span class="kw">use super</span>::{analysis_memory, planned_sizes, positive_cells};
+<a href=#397 id=397 data-nosnippet>397</a>
+<a href=#398 id=398 data-nosnippet>398</a>    <span class="attr">#[test]
+<a href=#399 id=399 data-nosnippet>399</a>    </span><span class="kw">fn </span>analysis_counting_law_scales_with_both_image_grids_and_refuses_overflow() {
+<a href=#400 id=400 data-nosnippet>400</a>        <span class="kw">let </span>base = analysis_memory(<span class="number">0</span>, <span class="number">0</span>).unwrap();
+<a href=#401 id=401 data-nosnippet>401</a>        <span class="kw">for </span>cells <span class="kw">in </span>[<span class="number">1</span>, <span class="number">65_536</span>, <span class="number">16_777_216</span>] {
+<a href=#402 id=402 data-nosnippet>402</a>            <span class="macro">assert_eq!</span>(analysis_memory(cells, <span class="number">0</span>).unwrap() - base, cells * <span class="number">48</span>);
+<a href=#403 id=403 data-nosnippet>403</a>            <span class="macro">assert_eq!</span>(analysis_memory(<span class="number">0</span>, cells).unwrap() - base, cells * <span class="number">96</span>);
+<a href=#404 id=404 data-nosnippet>404</a>            <span class="macro">assert_eq!</span>(analysis_memory(cells, cells).unwrap() - base, cells * <span class="number">144</span>);
+<a href=#405 id=405 data-nosnippet>405</a>        }
+<a href=#406 id=406 data-nosnippet>406</a>        <span class="macro">assert!</span>(analysis_memory(u64::MAX, <span class="number">1</span>).is_err());
+<a href=#407 id=407 data-nosnippet>407</a>        <span class="macro">assert!</span>(analysis_memory(<span class="number">1</span>, u64::MAX).is_err());
+<a href=#408 id=408 data-nosnippet>408</a>    }
+<a href=#409 id=409 data-nosnippet>409</a>
+<a href=#410 id=410 data-nosnippet>410</a>    <span class="attr">#[test]
+<a href=#411 id=411 data-nosnippet>411</a>    </span><span class="kw">fn </span>invalid_cells_and_unrepresentable_dimensions_are_refused_before_fft_sizing() {
+<a href=#412 id=412 data-nosnippet>412</a>        <span class="kw">for </span>value <span class="kw">in </span>[<span class="number">0.</span>, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+<a href=#413 id=413 data-nosnippet>413</a>            <span class="macro">assert!</span>(positive_cells([value, <span class="number">1.</span>]).is_err());
+<a href=#414 id=414 data-nosnippet>414</a>        }
+<a href=#415 id=415 data-nosnippet>415</a>        <span class="macro">assert_eq!</span>(positive_cells([-<span class="number">2e-6</span>, <span class="number">2e-6</span>]).unwrap(), [<span class="number">2e-6</span>, <span class="number">2e-6</span>]);
+<a href=#416 id=416 data-nosnippet>416</a>        <span class="kw">let </span>resources =
+<a href=#417 id=417 data-nosnippet>417</a>            <span class="kw">crate</span>::SessionResources::from_controls(<span class="kw-2">&amp;</span><span class="kw">crate</span>::ExecutionControls::default()).unwrap();
+<a href=#418 id=418 data-nosnippet>418</a>        <span class="macro">assert!</span>(
+<a href=#419 id=419 data-nosnippet>419</a>            planned_sizes(
+<a href=#420 id=420 data-nosnippet>420</a>                <span class="kw-2">&amp;</span>[i64::MAX, <span class="number">64</span>],
+<a href=#421 id=421 data-nosnippet>421</a>                <span class="kw-2">&amp;</span>[<span class="number">64</span>, <span class="number">64</span>],
+<a href=#422 id=422 data-nosnippet>422</a>                [<span class="number">2e-6</span>; <span class="number">2</span>],
+<a href=#423 id=423 data-nosnippet>423</a>                [<span class="number">2e-6</span>; <span class="number">2</span>],
+<a href=#424 id=424 data-nosnippet>424</a>                <span class="number">0.</span>,
+<a href=#425 id=425 data-nosnippet>425</a>                resources
+<a href=#426 id=426 data-nosnippet>426</a>            )
+<a href=#427 id=427 data-nosnippet>427</a>            .is_err()
+<a href=#428 id=428 data-nosnippet>428</a>        );
+<a href=#429 id=429 data-nosnippet>429</a>        <span class="macro">assert!</span>(planned_sizes(<span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>], <span class="kw-2">&amp;</span>[<span class="number">64</span>, <span class="number">64</span>], [<span class="number">2e-6</span>; <span class="number">2</span>], [<span class="number">1e-300</span>; <span class="number">2</span>], <span class="number">0.</span>, resources).is_err());
+<a href=#430 id=430 data-nosnippet>430</a>    }
+<a href=#431 id=431 data-nosnippet>431</a>}
 </code></pre></div></section></main></body></html>

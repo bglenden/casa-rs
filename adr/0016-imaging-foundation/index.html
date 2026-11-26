@@ -683,6 +683,10 @@ image-plane gridding is its own operator family (decision 13).</p>
 was deleted; its references now point to <code>ARCHITECTURE.md</code>, <code>TESTING.md</code> or
 git history, and the ticket and review-gate process (decision 12) is reduced
 to what still holds.</p>
+<p>Amended: 2026-11-25, on clean-sheet module reorganization: update Decision 10
+crate names (<code>casa-core</code>, <code>casa-imaging</code> for <code>casa-imaging-application</code>), remove
+<code>casa-imaging-reconstruction</code> reference, and document unconditional cross-platform
+<code>casa-imaging-runtime -&gt; casa-imaging-metal</code>.</p>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
 <p>Programme #486 delivered cube, MFS, Clark, multi-worker and Metal imaging as
 several parallel routes: four CPU gridding drivers, two Metal drivers, closed
@@ -750,18 +754,22 @@ kept in git at the location above as a record, not a binding document.</p>
    gate. Capabilities that are rejected are not in the catalog.</li>
 <li><strong>Diagnostics.</strong> Library crates read no environment variables and emit no
    <code>eprintln!</code>; diagnostic switches are request fields; emission is <code>tracing</code>.</li>
-<li><strong>Crates.</strong> <code>casa-imaging-model</code>, <code>casa-imaging-operator</code>,
+<li><strong>Crates.</strong> Eight compiler-enforced imaging crates live under
+    <code>libs/imaging/</code>: <code>casa-imaging-model</code>, <code>casa-imaging-operator</code>,
     <code>casa-imaging-deconvolution</code>, <code>casa-imaging-products</code>,
-    <code>casa-imaging-runtime</code>, <code>casa-imaging-metal</code> (macOS), and
-    <code>casa-imaging-application</code>. <code>casa-imaging-reconstruction</code> is deleted when
-    empty. Dependency direction is enforced by
-    <code>scripts/check-imaging-dependencies.py</code> over <code>cargo metadata</code>.
+    <code>casa-imaging-runtime</code>, <code>casa-imaging-singledish</code>, <code>casa-imaging-metal</code>,
+    and <code>casa-imaging</code> (renamed from <code>casa-imaging-application</code>).
+    <code>casa-imaging-runtime</code> depends unconditionally across platforms on
+    <code>casa-imaging-metal</code>, and only <code>objc2-metal</code> inside <code>casa-imaging-metal</code>
+    is gated under <code>cfg(target_os = "macos")</code>. Dependency direction is
+    enforced by <code>scripts/check-imaging-dependencies.py</code> over <code>cargo metadata</code>.
     Every crate the policy covers, the model included, may depend on the
     <strong>definitional crates</strong>: crates that define values, units, quanta,
     measures and coordinate systems and the pure functions on them, do no
     file, network, process or environment I/O, start no threads, use no
-    device, and depend on no workspace crate but one another. They are
-    <code>casa-values</code>, <code>casa-types</code> and <code>casa-coordinates</code>; beyond them the model
+    device, and depend on no workspace crate but one another. In the target
+    layout they are <code>casa-core</code> (consolidated from <code>casa-values</code> and
+    <code>casa-types</code>) and <code>casa-coordinates</code>; beyond them the model
     depends only on <code>casa-observation</code>, the observation boundary, whose
     catalogue, batches and pointing samples its batch geometry reads
     (amended 2026-10-28 on owner approval; imaging port decision 1 of

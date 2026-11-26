@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["polarization_from_gain"],"type":["FractionalPolarization"]};

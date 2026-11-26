@@ -3,7 +3,7 @@
 <a href=#3 id=3 data-nosnippet>3</a>
 <a href=#4 id=4 data-nosnippet>4</a></span><span class="kw">use </span>std::ops::Range;
 <a href=#5 id=5 data-nosnippet>5</a>
-<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_provider_contracts::CasaValue;
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_types::{RecordField, RecordValue, ScalarValue, Value};
 <a href=#7 id=7 data-nosnippet>7</a>
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span><span class="kw">super</span>::ApplyPlan;
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span><span class="kw">super</span>::chain::viscal_order;
@@ -130,7 +130,7 @@
 <a href=#130 id=130 data-nosnippet>130</a>        }
 <a href=#131 id=131 data-nosnippet>131</a>    }
 <a href=#132 id=132 data-nosnippet>132</a>
-<a href=#133 id=133 data-nosnippet>133</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>into_record(<span class="kw-2">mut </span><span class="self">self</span>, origin: <span class="kw-2">&amp;</span>str) -&gt; CasaValue {
+<a href=#133 id=133 data-nosnippet>133</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>into_record(<span class="kw-2">mut </span><span class="self">self</span>, origin: <span class="kw-2">&amp;</span>str) -&gt; RecordValue {
 <a href=#134 id=134 data-nosnippet>134</a>        <span class="self">self</span>.terms
 <a href=#135 id=135 data-nosnippet>135</a>            .sort_by_key(|term| (viscal_order(<span class="kw-2">&amp;</span>term.subtype), term.position));
 <a href=#136 id=136 data-nosnippet>136</a>        <span class="kw">let </span><span class="kw-2">mut </span>entries = <span class="self">self
@@ -140,43 +140,47 @@
 <a href=#140 id=140 data-nosnippet>140</a>            .map(|(index, term)| {
 <a href=#141 id=141 data-nosnippet>141</a>                <span class="kw">let </span>counts = term.counts;
 <a href=#142 id=142 data-nosnippet>142</a>                <span class="kw">let </span><span class="kw-2">mut </span>fields = <span class="macro">vec!</span>[
-<a href=#143 id=143 data-nosnippet>143</a>                    (
+<a href=#143 id=143 data-nosnippet>143</a>                    RecordField::new(
 <a href=#144 id=144 data-nosnippet>144</a>                        <span class="string">"ndata"</span>,
-<a href=#145 id=145 data-nosnippet>145</a>                        CasaValue::Int {
-<a href=#146 id=146 data-nosnippet>146</a>                            value: counts.data <span class="kw">as </span>i64,
-<a href=#147 id=147 data-nosnippet>147</a>                        },
-<a href=#148 id=148 data-nosnippet>148</a>                    ),
-<a href=#149 id=149 data-nosnippet>149</a>                    (
-<a href=#150 id=150 data-nosnippet>150</a>                        <span class="string">"nflagIn"</span>,
-<a href=#151 id=151 data-nosnippet>151</a>                        CasaValue::Int {
-<a href=#152 id=152 data-nosnippet>152</a>                            value: counts.flags_in <span class="kw">as </span>i64,
-<a href=#153 id=153 data-nosnippet>153</a>                        },
+<a href=#145 id=145 data-nosnippet>145</a>                        Value::Scalar(ScalarValue::Int64(counts.data <span class="kw">as </span>i64)),
+<a href=#146 id=146 data-nosnippet>146</a>                    ),
+<a href=#147 id=147 data-nosnippet>147</a>                    RecordField::new(
+<a href=#148 id=148 data-nosnippet>148</a>                        <span class="string">"nflagIn"</span>,
+<a href=#149 id=149 data-nosnippet>149</a>                        Value::Scalar(ScalarValue::Int64(counts.flags_in <span class="kw">as </span>i64)),
+<a href=#150 id=150 data-nosnippet>150</a>                    ),
+<a href=#151 id=151 data-nosnippet>151</a>                    RecordField::new(
+<a href=#152 id=152 data-nosnippet>152</a>                        <span class="string">"nflagOut"</span>,
+<a href=#153 id=153 data-nosnippet>153</a>                        Value::Scalar(ScalarValue::Int64(counts.flags_out <span class="kw">as </span>i64)),
 <a href=#154 id=154 data-nosnippet>154</a>                    ),
-<a href=#155 id=155 data-nosnippet>155</a>                    (
-<a href=#156 id=156 data-nosnippet>156</a>                        <span class="string">"nflagOut"</span>,
-<a href=#157 id=157 data-nosnippet>157</a>                        CasaValue::Int {
-<a href=#158 id=158 data-nosnippet>158</a>                            value: counts.flags_out <span class="kw">as </span>i64,
-<a href=#159 id=159 data-nosnippet>159</a>                        },
-<a href=#160 id=160 data-nosnippet>160</a>                    ),
-<a href=#161 id=161 data-nosnippet>161</a>                ];
-<a href=#162 id=162 data-nosnippet>162</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(table) = term.name {
-<a href=#163 id=163 data-nosnippet>163</a>                    fields.push((<span class="string">"table"</span>, CasaValue::string(table)));
-<a href=#164 id=164 data-nosnippet>164</a>                }
-<a href=#165 id=165 data-nosnippet>165</a>                fields.push((<span class="string">"type"</span>, CasaValue::string(term.subtype)));
-<a href=#166 id=166 data-nosnippet>166</a>                (<span class="macro">format!</span>(<span class="string">"*{}"</span>, index + <span class="number">1</span>), CasaValue::dict(fields))
-<a href=#167 id=167 data-nosnippet>167</a>            })
-<a href=#168 id=168 data-nosnippet>168</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#169 id=169 data-nosnippet>169</a>        entries.sort_by(|left, right| left.<span class="number">0</span>.cmp(<span class="kw-2">&amp;</span>right.<span class="number">0</span>));
-<a href=#170 id=170 data-nosnippet>170</a>        entries.push((
-<a href=#171 id=171 data-nosnippet>171</a>            <span class="string">"nVisTotal"</span>.into(),
-<a href=#172 id=172 data-nosnippet>172</a>            CasaValue::Int {
-<a href=#173 id=173 data-nosnippet>173</a>                value: <span class="self">self</span>.visibility_count <span class="kw">as </span>i64,
-<a href=#174 id=174 data-nosnippet>174</a>            },
-<a href=#175 id=175 data-nosnippet>175</a>        ));
-<a href=#176 id=176 data-nosnippet>176</a>        CasaValue::dict([
-<a href=#177 id=177 data-nosnippet>177</a>            (<span class="string">"VisEquation"</span>, CasaValue::dict(entries)),
-<a href=#178 id=178 data-nosnippet>178</a>            (<span class="string">"origin"</span>, CasaValue::string(origin)),
-<a href=#179 id=179 data-nosnippet>179</a>        ])
-<a href=#180 id=180 data-nosnippet>180</a>    }
-<a href=#181 id=181 data-nosnippet>181</a>}
+<a href=#155 id=155 data-nosnippet>155</a>                ];
+<a href=#156 id=156 data-nosnippet>156</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(table) = term.name {
+<a href=#157 id=157 data-nosnippet>157</a>                    fields.push(RecordField::new(
+<a href=#158 id=158 data-nosnippet>158</a>                        <span class="string">"table"</span>,
+<a href=#159 id=159 data-nosnippet>159</a>                        Value::Scalar(ScalarValue::String(table)),
+<a href=#160 id=160 data-nosnippet>160</a>                    ));
+<a href=#161 id=161 data-nosnippet>161</a>                }
+<a href=#162 id=162 data-nosnippet>162</a>                fields.push(RecordField::new(
+<a href=#163 id=163 data-nosnippet>163</a>                    <span class="string">"type"</span>,
+<a href=#164 id=164 data-nosnippet>164</a>                    Value::Scalar(ScalarValue::String(term.subtype)),
+<a href=#165 id=165 data-nosnippet>165</a>                ));
+<a href=#166 id=166 data-nosnippet>166</a>                RecordField::new(
+<a href=#167 id=167 data-nosnippet>167</a>                    <span class="macro">format!</span>(<span class="string">"*{}"</span>, index + <span class="number">1</span>),
+<a href=#168 id=168 data-nosnippet>168</a>                    Value::Record(RecordValue::new(fields)),
+<a href=#169 id=169 data-nosnippet>169</a>                )
+<a href=#170 id=170 data-nosnippet>170</a>            })
+<a href=#171 id=171 data-nosnippet>171</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#172 id=172 data-nosnippet>172</a>        entries.sort_by(|left, right| left.name.cmp(<span class="kw-2">&amp;</span>right.name));
+<a href=#173 id=173 data-nosnippet>173</a>        entries.push(RecordField::new(
+<a href=#174 id=174 data-nosnippet>174</a>            <span class="string">"nVisTotal"</span>,
+<a href=#175 id=175 data-nosnippet>175</a>            Value::Scalar(ScalarValue::Int64(<span class="self">self</span>.visibility_count <span class="kw">as </span>i64)),
+<a href=#176 id=176 data-nosnippet>176</a>        ));
+<a href=#177 id=177 data-nosnippet>177</a>        RecordValue::new(<span class="macro">vec!</span>[
+<a href=#178 id=178 data-nosnippet>178</a>            RecordField::new(<span class="string">"VisEquation"</span>, Value::Record(RecordValue::new(entries))),
+<a href=#179 id=179 data-nosnippet>179</a>            RecordField::new(
+<a href=#180 id=180 data-nosnippet>180</a>                <span class="string">"origin"</span>,
+<a href=#181 id=181 data-nosnippet>181</a>                Value::Scalar(ScalarValue::String(origin.to_string())),
+<a href=#182 id=182 data-nosnippet>182</a>            ),
+<a href=#183 id=183 data-nosnippet>183</a>        ])
+<a href=#184 id=184 data-nosnippet>184</a>    }
+<a href=#185 id=185 data-nosnippet>185</a>}
 </code></pre></div></section></main></body></html>

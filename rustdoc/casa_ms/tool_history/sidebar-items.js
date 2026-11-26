@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["append_tool_history","plain_history_path","read_tool_history"],"struct":["ToolHistoryEntry"]};

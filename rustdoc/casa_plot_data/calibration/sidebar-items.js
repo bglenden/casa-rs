@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["plotbandpass","plots","weather_figure"]};

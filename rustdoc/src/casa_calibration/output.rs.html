@@ -22,9 +22,9 @@
 <a href=#22 id=22 data-nosnippet>22</a><span class="doccomment">/// Owns only this operation's staging directory. An interrupted predecessor
 <a href=#23 id=23 data-nosnippet>23</a>/// is refused; errors clean up our own stage and leave the destination intact.
 <a href=#24 id=24 data-nosnippet>24</a></span><span class="attr">#[derive(Debug)]
-<a href=#25 id=25 data-nosnippet>25</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>CalibrationOutput {
+<a href=#25 id=25 data-nosnippet>25</a></span><span class="kw">pub struct </span>CalibrationOutput {
 <a href=#26 id=26 data-nosnippet>26</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) destination: PathBuf,
-<a href=#27 id=27 data-nosnippet>27</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) staging: PathBuf,
+<a href=#27 id=27 data-nosnippet>27</a>    <span class="kw">pub </span>staging: PathBuf,
 <a href=#28 id=28 data-nosnippet>28</a>    mode: CalibrationOutputMode,
 <a href=#29 id=29 data-nosnippet>29</a>    table_type: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt;,
 <a href=#30 id=30 data-nosnippet>30</a>    table_subtype: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt;,
@@ -155,7 +155,7 @@
 <a href=#155 id=155 data-nosnippet>155</a>        )
 <a href=#156 id=156 data-nosnippet>156</a>    }
 <a href=#157 id=157 data-nosnippet>157</a>
-<a href=#158 id=158 data-nosnippet>158</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>prepare_ephemeris_table(
+<a href=#158 id=158 data-nosnippet>158</a>    <span class="kw">pub fn </span>prepare_ephemeris_table(
 <a href=#159 id=159 data-nosnippet>159</a>        path: <span class="kw-2">&amp;</span>Path,
 <a href=#160 id=160 data-nosnippet>160</a>        overwrite: bool,
 <a href=#161 id=161 data-nosnippet>161</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, CalibrationTableWriteError&gt; {
@@ -243,7 +243,7 @@
 <a href=#243 id=243 data-nosnippet>243</a>        })
 <a href=#244 id=244 data-nosnippet>244</a>    }
 <a href=#245 id=245 data-nosnippet>245</a>
-<a href=#246 id=246 data-nosnippet>246</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>commit(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), CalibrationTableWriteError&gt; {
+<a href=#246 id=246 data-nosnippet>246</a>    <span class="kw">pub fn </span>commit(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), CalibrationTableWriteError&gt; {
 <a href=#247 id=247 data-nosnippet>247</a>        <span class="kw">let </span>fail = |reason| CalibrationTableWriteError::Publish {
 <a href=#248 id=248 data-nosnippet>248</a>            staging: <span class="self">self</span>.staging.display().to_string(),
 <a href=#249 id=249 data-nosnippet>249</a>            output: <span class="self">self</span>.destination.display().to_string(),

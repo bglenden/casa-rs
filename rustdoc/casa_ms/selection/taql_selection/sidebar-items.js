@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["select_legacy_rows","select_projected_scalar_rows"],"struct":["LegacyTaqlSelection"]};

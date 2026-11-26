@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ImagerPhaseCentre","ImagerSpectralAxis"],"fn":["model_entry","write_model_scratch"],"mod":["image","setjy","virtual_publication"],"struct":["ImagerDefinitionRequest","ImagerImageDefinition","ImagerPrediction","ImagerPredictionModel","ImagerVoltagePattern"]};

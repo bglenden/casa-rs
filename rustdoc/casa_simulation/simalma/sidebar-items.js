@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["simalma","simalma_with_plots"],"struct":["SimalmaRequest"]};
+window.SIDEBAR_ITEMS = {"fn":["default_parameters","simalma","simalma_with_plot_sink"],"struct":["SimalmaRequest"]};

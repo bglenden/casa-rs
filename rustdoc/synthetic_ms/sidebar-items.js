@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["USAGE"],"fn":["main","run"]};
+window.SIDEBAR_ITEMS = {"constant":["USAGE"],"fn":["init_logging","main","run"]};

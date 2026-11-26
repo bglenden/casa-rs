@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["tsdimaging_front_end","tsdimaging_task_schema_bundle"],"struct":["TotalPowerRun","TotalPowerTaskResult"]};

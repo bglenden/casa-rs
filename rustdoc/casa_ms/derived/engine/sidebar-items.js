@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["raw_field_phase_direction","raw_field_reference_direction"],"struct":["MsCalEngine"]};
+window.SIDEBAR_ITEMS = {"fn":["detect_epoch_reference","raw_field_phase_direction","raw_field_reference_direction","resolve_direction_reference","resolve_direction_reference_selected"],"struct":["MsCalEngine","UvwRotation"]};

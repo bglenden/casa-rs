@@ -446,12 +446,12 @@
 <a href=#446 id=446 data-nosnippet>446</a>
 <a href=#447 id=447 data-nosnippet>447</a><span class="doccomment">/// Every `FEED` row's receptors, by (antenna, feed, spectral window), the
 <a href=#448 id=448 data-nosnippet>448</a>/// window -1 standing for every window, in table order.
-<a href=#449 id=449 data-nosnippet>449</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Feeds {
+<a href=#449 id=449 data-nosnippet>449</a></span><span class="kw">pub struct </span>Feeds {
 <a href=#450 id=450 data-nosnippet>450</a>    rows: BTreeMap&lt;(i32, i32, i32), Vec&lt;Receptors&gt;&gt;,
 <a href=#451 id=451 data-nosnippet>451</a>}
 <a href=#452 id=452 data-nosnippet>452</a>
 <a href=#453 id=453 data-nosnippet>453</a><span class="doccomment">/// The `FEED` rows.
-<a href=#454 id=454 data-nosnippet>454</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>read_feeds(ms: <span class="kw-2">&amp;</span>MeasurementSet) -&gt; <span class="prelude-ty">Result</span>&lt;Feeds, ObservationError&gt; {
+<a href=#454 id=454 data-nosnippet>454</a></span><span class="kw">pub fn </span>read_feeds(ms: <span class="kw-2">&amp;</span>MeasurementSet) -&gt; <span class="prelude-ty">Result</span>&lt;Feeds, ObservationError&gt; {
 <a href=#455 id=455 data-nosnippet>455</a>    <span class="kw">let </span>feed = ms.feed().map_err(storage)<span class="question-mark">?</span>;
 <a href=#456 id=456 data-nosnippet>456</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(feed_table) = ms.subtable(SubtableId::Feed) {
 <a href=#457 id=457 data-nosnippet>457</a>        require_units(feed_table, <span class="string">"RECEPTOR_ANGLE"</span>, <span class="string">"rad"</span>)<span class="question-mark">?</span>;
@@ -511,8 +511,8 @@
 <a href=#511 id=511 data-nosnippet>511</a>    /// `FEED` stating receptors per time, the last row in table order is
 <a href=#512 id=512 data-nosnippet>512</a>    /// taken, as casacore's `MSIter` takes it (with a warning); XRADIO's
 <a href=#513 id=513 data-nosnippet>513</a>    /// converter refuses such rows, and a conversion reports them as a
-<a href=#514 id=514 data-nosnippet>514</a>    /// loss ([`Self::varying`]).
-<a href=#515 id=515 data-nosnippet>515</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>receptors(<span class="kw-2">&amp;</span><span class="self">self</span>, antenna: i32, feed: i32, window: i32) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Receptors&gt; {
+<a href=#514 id=514 data-nosnippet>514</a>    /// loss.
+<a href=#515 id=515 data-nosnippet>515</a>    </span><span class="kw">pub fn </span>receptors(<span class="kw-2">&amp;</span><span class="self">self</span>, antenna: i32, feed: i32, window: i32) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Receptors&gt; {
 <a href=#516 id=516 data-nosnippet>516</a>        <span class="self">self</span>.rows
 <a href=#517 id=517 data-nosnippet>517</a>            .get(<span class="kw-2">&amp;</span>(antenna, feed, window))
 <a href=#518 id=518 data-nosnippet>518</a>            .or_else(|| <span class="self">self</span>.rows.get(<span class="kw-2">&amp;</span>(antenna, feed, -<span class="number">1</span>)))

@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["task_front_end","task_front_end_with_plot_payload","task_front_end_with_plot_sources"],"type":["PlotMsCalibrationLoader","PlotMsModelLoader"]};

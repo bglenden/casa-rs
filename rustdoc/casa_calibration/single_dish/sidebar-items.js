@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["is_sky_subtype","lock_solve_output"],"mod":["edges","gain","map_geometry","position_switch","preparation","spectrum","tool"]};

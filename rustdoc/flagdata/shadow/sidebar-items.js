@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["additional_antennas","empty_list","number","parameters","parse_float","position","read_list"],"struct":["AntennaList","ShadowParameters"]};

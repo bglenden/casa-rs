@@ -667,15 +667,23 @@
 <h1 id="adr-0006-one-parameter-model-and-current-sparse-profiles">ADR-0006: One parameter model and current sparse profiles<a class="headerlink" href="#adr-0006-one-parameter-model-and-current-sparse-profiles" title="Permanent link">&para;</a></h1>
 <p>Status: accepted
 Date: 2026-11-12
+Amended: 2026-11-25, clean-sheet module reorganization: retire
+<code>ProviderContractEnvelope</code>, <code>build.rs</code> JSON-fingerprinting, and the mandatory
+24-binary <code>ApplicationCatalog</code> launcher once Python completes in-process cutover.
 Truth class: normative</p>
-<p>The CLI, Python, and task providers share Rust definitions for parameter
-names, types, defaults, normalization, and validation. Share concepts by
-meaning; each task supplies its own bindings and defaults. Runtime controls
-such as executable selection and telemetry stay out of saved parameters.</p>
+<p>The CLI (<code>casars-cli</code>), Python (<code>casars.tasks</code>), and task adapters share one
+Rust parameter model (<code>ParameterCatalog</code>, typed <code>SurfaceDefinition</code>) for
+parameter names, types, defaults, normalization, and validation. Share concepts
+by meaning; each task supplies its own bindings and defaults. Runtime controls
+such as telemetry stay out of saved parameters.</p>
 <p>Profiles are sparse TOML. They store required values and explicit differences
-from defaults. Provider JSON is a machine transport. The common task runtime
-owns resolution and any managed Last state; ordinary Python task calls leave
-Last alone.</p>
+from defaults. Provider JSON is a machine transport. <code>surfaces/casa-tasks</code>
+owns resolution and any managed Last state; ordinary Python task calls isolate
+Last state from CLI runs.</p>
+<p><code>ProviderContractEnvelope</code>, <code>build.rs</code> JSON-fingerprinting probes (such as
+<code>IMAGE_PROVIDER_PROBES</code>), and the mandatory 24-binary <code>ApplicationCatalog</code>
+subprocess launcher are retired (the executable resolver is deleted once
+<code>casars.tasks</code> cuts over to in-process execution per ADR-0017).</p>
 <p>A profile must name the current task and use the current file format and task
 profile version. Refuse stale files and tell the user to recreate them. Bump
 the marker only when an existing profile can no longer be interpreted as

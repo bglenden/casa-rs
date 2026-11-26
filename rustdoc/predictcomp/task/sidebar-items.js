@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["artifact","baseline_record","data_roots","epoch_record","failed","filename_argument","frequency","frequency_grid","make_plot","output_prefix","parse_epoch","quantity","record","run","save_path","spectrum_record"],"struct":["Plot","PlotRequest","PredictcompReport"]};

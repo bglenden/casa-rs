@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["IMPORTVLA_TASK_PROTOCOL_NAME","IMPORTVLA_TASK_PROTOCOL_VERSION"],"enum":["ImportVlaTaskRequest","ImportVlaTaskResult"],"fn":["importvla_protocol_descriptor","importvla_task_schema_bundle"],"struct":["ImportVlaImportTaskRequest","ImportVlaScanTaskRequest"]};

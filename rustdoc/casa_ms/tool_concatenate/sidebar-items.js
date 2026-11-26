@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["concatenate","test_concatenate","virtual_concatenate"],"struct":["PhysicalConcatenation","TestConcatenation","VirtualConcatenation"]};

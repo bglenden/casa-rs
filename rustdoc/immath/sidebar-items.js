@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["effective_varnames","main","run","validate_input_paths"]};
+window.SIDEBAR_ITEMS = {"fn":["main"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CalibratorSpectrum","CatalogMatch","CatalogScale","FluxScale"],"fn":["canonical_tool_standard","source_direction"],"mod":["fixed"],"struct":["FluxCatalog","TabulatedSpectrum"]};
