@@ -79,6 +79,11 @@ struct Frame {
     source_velocity: Option<f64>,
 }
 
+enum ReferenceIntegration {
+    Row(usize),
+    Coordinates { time: f64, field: usize },
+}
+
 const MIN_SOURCE_VELOCITY_M_PER_S: f64 = 1e-6;
 
 impl Plan {
@@ -115,7 +120,13 @@ impl Plan {
             Some(rows) if cvel => earliest_integration(input.main_table(), rows)?,
             _ => first_selected_row,
         };
-        let frame = Frame::new(input, options, first_integration, None)?.map(Arc::new);
+        let frame = Frame::new(
+            input,
+            options,
+            ReferenceIntegration::Row(first_integration),
+            None,
+        )?
+        .map(Arc::new);
         let mut budget = GridBudget::new(budget_bytes, frame.is_some());
         let table = input.spectral_window().map_err(ms_error)?;
         let is_combined = combined.is_some();
@@ -704,7 +715,7 @@ impl Frame {
     fn new(
         input: &MeasurementSet,
         options: &MsRegridOptions,
-        first_row: usize,
+        integration: ReferenceIntegration,
         engine: Option<&Arc<MsCalEngine>>,
     ) -> Result<Option<Self>, MsTransformError> {
         if options.outframe.trim().is_empty() {
@@ -730,11 +741,15 @@ impl Frame {
             || Self::open_engine(input, options),
             |existing| Ok(Arc::clone(existing)),
         )?;
-        let table = input.main_table();
-        let reference_time =
-            crate::subtables::get_f64(table, first_row, "TIME").map_err(ms_error)?;
-        let reference_field =
-            crate::subtables::get_i32(table, first_row, "FIELD_ID").map_err(ms_error)? as usize;
+        let (reference_time, reference_field) = match integration {
+            ReferenceIntegration::Row(row) => {
+                let table = input.main_table();
+                let time = crate::subtables::get_f64(table, row, "TIME").map_err(ms_error)?;
+                let field = crate::subtables::get_i32(table, row, "FIELD_ID").map_err(ms_error)?;
+                (time, field as usize)
+            }
+            ReferenceIntegration::Coordinates { time, field } => (time, field),
+        };
         let phasecenter = options.phasecenter.trim();
         let field = if phasecenter.is_empty() {
             Some(reference_field)

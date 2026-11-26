@@ -7,7 +7,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use casa_tables::publication::{copy_locked_table_tree_with_shared_files, exchange_directories};
-use casa_tables::{RequiredScalarColumnValues, Table, TableOptions, TablePartNames};
+use casa_tables::{
+    RequiredScalarColumnValues, Table, TableOptions, TablePartNames, TableWriteLock,
+};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Array1;
@@ -17,7 +19,7 @@ use crate::subtables::{MsDataDescription, MsSpectralWindow, get_i32};
 use crate::{MeasurementSet, SubtableId};
 
 use super::super::{MsRegridOptions, MsTransformError, maybe_log_transform_progress};
-use super::{Frame, invalid, ms_error, radial_shift};
+use super::{Frame, ReferenceIntegration, invalid, ms_error, radial_shift};
 
 const DDID: &str = "DATA_DESC_ID";
 const SPW_ID: &str = "SPECTRAL_WINDOW_ID";
@@ -143,6 +145,30 @@ fn write_main_descriptions(
     original: &[i32],
     ddids: &[i32],
 ) -> Result<(), MsTransformError> {
+    if original == ddids {
+        return Ok(());
+    }
+    if main.data_manager_info().iter().any(|manager| {
+        manager.dm_type == "StandardStMan" && manager.columns.iter().any(|column| column == DDID)
+    }) {
+        let replacements = BTreeMap::from([(
+            DDID.to_owned(),
+            ddids
+                .iter()
+                .map(|&value| Some(Value::Scalar(ScalarValue::Int32(value))))
+                .collect(),
+        )]);
+        let mut lock = TableWriteLock::acquire_to_reread(
+            main.path().expect("a staged MAIN has a table path"),
+            1,
+        )
+        .map_err(ms_error)?;
+        let mut edit = main
+            .prepare_column_replacement(&replacements, None, &mut lock)
+            .map_err(ms_error)?;
+        edit.publish().map_err(ms_error)?;
+        return edit.synchronize().map_err(ms_error);
+    }
     let mut changed = Vec::new();
     {
         let mut writer = main.row_accessor_mut().prepare(&[DDID]).map_err(ms_error)?;
@@ -217,7 +243,7 @@ pub(super) struct WindowOrigin {
     pub(super) spw: i32,
     pub(super) reference: FrequencyRef,
     field: Option<i32>,
-    first_integration: usize,
+    reference_time: f64,
 }
 
 impl WindowOrigin {
@@ -232,7 +258,15 @@ impl WindowOrigin {
         };
         let mut options = options.clone();
         options.phasecenter = field.to_string();
-        Frame::new(ms, &options, self.first_integration, Some(engine))
+        Frame::new(
+            ms,
+            &options,
+            ReferenceIntegration::Coordinates {
+                time: self.reference_time,
+                field: field as usize,
+            },
+            Some(engine),
+        )
     }
 }
 
@@ -329,7 +363,7 @@ impl Layout {
                         spw: window as i32,
                         reference,
                         field: key.1,
-                        first_integration: row,
+                        reference_time: times[slot],
                     });
                     *entry.insert(output)
                 }
