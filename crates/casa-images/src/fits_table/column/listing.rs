@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::fmt::{Display, Write};
+use std::ops::Range;
 
 use fitsio::sys;
 
@@ -64,29 +65,45 @@ impl Column {
         &self,
         fits: &mut Reader,
         row: i64,
-        heap_bytes: u64,
+        row_offset: i64,
+        heap: &Range<i64>,
         out: &mut String,
     ) -> Result<()> {
-        let len = if self.heap {
+        let (len, value_offset) = if self.heap {
             let (len, offset) = self.descriptor(fits, row)?;
-            self.check_heap_extent(len, offset, heap_bytes)?;
+            let value_offset = heap.start.saturating_add(offset);
+            if offset < 0 || value_offset.saturating_add(self.value_bytes(len)?) > heap.end {
+                return Err(invalid_column(
+                    &self.name,
+                    "descriptor extends beyond the FITS heap",
+                ));
+            }
             let _ = write!(out, "[{len},{offset}]  VA: ");
-            len
+            (len, value_offset)
         } else {
-            self.repeat
+            (self.repeat, row_offset)
         };
         if len == 0 {
             return Ok(());
         }
         match self.code {
-            sys::TSTRING if fits.ascii_table => {
-                let value = self.text(fits, row)?;
-                let _ = write!(out, "{value:<len$}");
-            }
             sys::TSTRING => {
-                // A binary field can be terminated by NULs or padded with
-                // spaces. Read the actual bytes to preserve that distinction.
-                let bytes = self.numbers::<u8>(fits, row, len, sys::TBYTE)?;
+                // The string readers trim spaces. The listing shows the
+                // stored bytes up to the first NUL, as casacore does.
+                let mut bytes = vec![0u8; len];
+                let mut status = 0;
+                // SAFETY: This HDU-relative offset is within the table row or
+                // its validated heap, and bytes holds the requested length.
+                unsafe {
+                    sys::ffgextn(
+                        fits.ptr,
+                        value_offset,
+                        len as i64,
+                        bytes.as_mut_ptr().cast(),
+                        &mut status,
+                    );
+                }
+                fits_status(status)?;
                 let visible = bytes.split(|&byte| byte == 0).next().unwrap_or_default();
                 out.push_str(&String::from_utf8_lossy(visible));
             }
@@ -126,23 +143,42 @@ impl Column {
         Ok(())
     }
 
-    fn check_heap_extent(&self, len: usize, offset: i64, heap_bytes: u64) -> Result<()> {
-        let length = match self.code {
-            sys::TBIT => len.div_ceil(8) as u64,
-            sys::TLOGICAL | sys::TSTRING | sys::TBYTE => len as u64,
-            sys::TSHORT => (len as u64).saturating_mul(2),
-            sys::TLONG | sys::TINT | sys::TFLOAT => (len as u64).saturating_mul(4),
-            sys::TLONGLONG | sys::TDOUBLE | sys::TCOMPLEX => (len as u64).saturating_mul(8),
-            sys::TDBLCOMPLEX => (len as u64).saturating_mul(16),
-            _ => return Err(invalid_column(&self.name, "field type cannot be listed")),
-        };
-        if offset < 0 || (offset as u64).saturating_add(length) > heap_bytes {
-            return Err(invalid_column(
-                &self.name,
-                "descriptor extends beyond the FITS heap",
-            ));
+    pub(in crate::fits_table) fn listing_row_bytes(
+        &self,
+        header: &Header,
+        ascii: bool,
+    ) -> Result<i64> {
+        let format = header.text(&format!("TFORM{}", self.number)).unwrap_or("");
+        if ascii {
+            let format_width = format
+                .get(1..)
+                .unwrap_or("")
+                .split('.')
+                .next()
+                .unwrap_or("");
+            return format_width
+                .parse::<i64>()
+                .map_err(|_| invalid_column(&self.name, "invalid ASCII field width"));
         }
-        Ok(())
+        if self.heap {
+            let descriptor_bytes = if format.contains('Q') { 16 } else { 8 };
+            Ok((self.repeat as i64).saturating_mul(descriptor_bytes))
+        } else {
+            self.value_bytes(self.repeat)
+        }
+    }
+
+    fn value_bytes(&self, len: usize) -> Result<i64> {
+        let length = i64::try_from(len).unwrap_or(i64::MAX);
+        Ok(match self.code {
+            sys::TBIT => len.div_ceil(8) as i64,
+            sys::TLOGICAL | sys::TSTRING | sys::TBYTE => length,
+            sys::TSHORT => length.saturating_mul(2),
+            sys::TLONG | sys::TINT | sys::TFLOAT => length.saturating_mul(4),
+            sys::TLONGLONG | sys::TDOUBLE | sys::TCOMPLEX => length.saturating_mul(8),
+            sys::TDBLCOMPLEX => length.saturating_mul(16),
+            _ => return Err(invalid_column(&self.name, "field type cannot be listed")),
+        })
     }
 
     fn listing_bits(

@@ -6,7 +6,9 @@ use std::fmt::Write;
 use fitsio::sys;
 
 use super::{Debug, FitsListingMessage, Info, integer, real};
-use crate::fits_table::{Reader, Result, cards::Header, column::Column, fits_status};
+use crate::fits_table::{
+    FitsTableError, Reader, Result, cards::Header, column::Column, fits_status,
+};
 
 pub(super) fn image(
     reader: &mut Reader,
@@ -140,21 +142,38 @@ pub(super) fn table(
 ) -> Result<()> {
     let rows = axes.get(1).copied().unwrap_or(0);
     let columns = integer(header, "TFIELDS");
-    let main_bytes = axes.first().copied().unwrap_or(0).saturating_mul(rows);
-    let heap_offset = header
+    let row_size = axes.first().copied().unwrap_or(0);
+    let main_bytes = row_size.saturating_mul(rows);
+    let heap_start = header
         .number("THEAP")
-        .map_or(main_bytes, |offset| offset as i64);
-    let heap_bytes = bytes.saturating_sub(heap_offset.max(main_bytes) as u64);
+        .map_or(main_bytes, |offset| offset as i64)
+        .max(main_bytes);
+    let end =
+        i64::try_from(bytes).map_err(|_| FitsTableError::Fits("FITS table is too large".into()))?;
+    let heap = heap_start..end;
     messages.push(Info(format!(
         "{rows} rows, {columns} cols, {bytes} bytes total\n"
     )));
     let mut description = String::from("\nTable Data\n");
     let mut displayed = Vec::new();
+    let mut next_offset = 0i64;
     for index in 1..=columns as i32 {
         let column = Column::describe_listing(reader, header, index)?;
         column.listing_description(header, &mut description);
         if index <= 20 {
-            displayed.push(column);
+            let offset = if reader.ascii_table {
+                integer(header, &format!("TBCOL{index}")).saturating_sub(1)
+            } else {
+                next_offset
+            };
+            next_offset =
+                offset.saturating_add(column.listing_row_bytes(header, reader.ascii_table)?);
+            if offset < 0 || next_offset > row_size {
+                return Err(FitsTableError::Fits(
+                    "FITS column extends beyond the table row".into(),
+                ));
+            }
+            displayed.push((column, offset));
         }
     }
     messages.push(Debug(description));
@@ -162,11 +181,12 @@ pub(super) fn table(
     let mut preview = String::new();
     for row in 1..=rows.min(5) {
         let _ = write!(preview, "{}: | ", row - 1);
-        for (index, column) in displayed.iter().enumerate() {
+        for (index, (column, offset)) in displayed.iter().enumerate() {
             if index > 0 {
                 preview.push_str("| ");
             }
-            column.listing_cell(reader, row, heap_bytes, &mut preview)?;
+            let data_offset = (row - 1) * row_size + offset;
+            column.listing_cell(reader, row, data_offset, &heap, &mut preview)?;
         }
         preview.push_str(if columns > 20 { "| ...\n" } else { "|\n" });
     }
