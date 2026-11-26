@@ -14309,3 +14309,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod append_stock_probe;

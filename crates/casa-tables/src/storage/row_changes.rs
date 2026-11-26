@@ -92,6 +92,7 @@ impl<'a> StagedEdit<'a> {
                 .filter(|(_, entry)| entry.dm_seq_nr == manager.seq_nr)
                 .map(|(column, _)| column.clone())
                 .collect();
+            let manager_start = std::time::Instant::now();
             edit.stage_manager(
                 manager,
                 &columns,
@@ -100,6 +101,18 @@ impl<'a> StagedEdit<'a> {
                 new_rows,
                 (order, private_keywords),
             )?;
+            if std::env::var_os("CONCAT_STOCK_TRACE").is_some() {
+                eprintln!(
+                    "stage_manager {} {} {:?} {:.2} ms",
+                    manager.seq_nr,
+                    manager.type_name,
+                    columns
+                        .iter()
+                        .map(|column| column.col_name.as_str())
+                        .collect::<Vec<_>>(),
+                    manager_start.elapsed().as_secs_f64() * 1000.
+                );
+            }
         }
         dat.nrrow = new_rows;
         dat.column_set.nrrow = new_rows;
@@ -197,6 +210,25 @@ impl<'a> StagedEdit<'a> {
                 )? {
                     self.extensions.push(Extension::Payload { path, len });
                 }
+            }
+            "IncrementalStMan"
+                if old_rows > 0
+                    && columns
+                        .iter()
+                        .all(|column| !column.is_array && !column.is_record())
+                    && matches!(rows, Rows::AppendRecords { .. }) =>
+            {
+                let Rows::AppendRecords { records, .. } = rows else {
+                    unreachable!()
+                };
+                incremental_stman::stage_scalar_append(
+                    &original,
+                    &destination,
+                    columns,
+                    &manager.data,
+                    records,
+                    old_rows,
+                )?;
             }
             "IncrementalStMan" if append => {
                 let values = self.manager_rows(columns, rows, old_rows, true)?;
