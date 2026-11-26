@@ -7,10 +7,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use casa_tables::publication::copy_locked_table_tree_with_shared_files;
-use casa_tables::{
-    RequiredScalarColumnValues, Table, TableOptions, TablePartNames, TableWriteLock,
+use casa_tables::publication::{
+    copy_locked_table_tree_with_shared_files, replace_private_int32_column,
 };
+use casa_tables::{RequiredScalarColumnValues, Table, TableOptions, TablePartNames};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Array1;
@@ -152,26 +152,9 @@ fn write_main_descriptions(
     if original == ddids {
         return Ok(());
     }
-    if main.data_manager_info().iter().any(|manager| {
-        manager.dm_type == "StandardStMan" && manager.columns.iter().any(|column| column == DDID)
-    }) {
-        let replacements = BTreeMap::from([(
-            DDID.to_owned(),
-            ddids
-                .iter()
-                .map(|&value| Some(Value::Scalar(ScalarValue::Int32(value))))
-                .collect(),
-        )]);
-        let mut lock = TableWriteLock::acquire_to_reread(
-            main.path().expect("a staged MAIN has a table path"),
-            1,
-        )
-        .map_err(ms_error)?;
-        let mut edit = main
-            .prepare_column_replacement(&replacements, None, &mut lock)
-            .map_err(ms_error)?;
-        edit.publish().map_err(ms_error)?;
-        return edit.synchronize().map_err(ms_error);
+    let path = main.path().expect("a staged MAIN has a table path");
+    if replace_private_int32_column(path, DDID, ddids).map_err(ms_error)? {
+        return Ok(());
     }
     let mut changed = Vec::new();
     {
