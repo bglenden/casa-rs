@@ -525,8 +525,10 @@ mod legacy_tests {
     use super::*;
 
     use casa_ms::MeasurementSetBuilder;
+    use casa_ms::column_def::ColumnKind;
+    use casa_ms::schema::main_table::REQUIRED_COLUMNS;
     use casa_tables::{TableInfo, TableOptions};
-    use casa_types::{RecordField, RecordValue, Value};
+    use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
     use ndarray::{ArrayD, IxDyn};
 
     #[test]
@@ -536,10 +538,34 @@ mod legacy_tests {
         let cell = |value| ArrayValue::Float32(ArrayD::from_elem(IxDyn(&[1]), value));
         for (path, value) in paths.iter().zip([2.0, 3.0]) {
             let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
-            let row = LEGACY_COLUMNS.map(|name| RecordField::new(name, Value::Array(cell(value))));
-            ms.main_table_mut()
-                .add_row(RecordValue::new(row.to_vec()))
-                .unwrap();
+            let row = REQUIRED_COLUMNS
+                .iter()
+                .map(|column| {
+                    let value = match (column.data_type, column.column_kind) {
+                        (PrimitiveType::Int32, ColumnKind::Scalar) => {
+                            Value::Scalar(ScalarValue::Int32(0))
+                        }
+                        (PrimitiveType::Float64, ColumnKind::Scalar) => {
+                            Value::Scalar(ScalarValue::Float64(0.0))
+                        }
+                        (PrimitiveType::Bool, ColumnKind::Scalar) => {
+                            Value::Scalar(ScalarValue::Bool(false))
+                        }
+                        (PrimitiveType::Bool, ColumnKind::VariableArray { ndim }) => Value::Array(
+                            ArrayValue::Bool(ArrayD::from_elem(IxDyn(&vec![1; ndim]), false)),
+                        ),
+                        (PrimitiveType::Float64, ColumnKind::FixedArray { shape }) => {
+                            Value::Array(ArrayValue::Float64(ArrayD::zeros(IxDyn(shape))))
+                        }
+                        (PrimitiveType::Float32, ColumnKind::VariableArray { ndim: 1 }) => {
+                            Value::Array(cell(value))
+                        }
+                        _ => unreachable!("unexpected MAIN column {}", column.name),
+                    };
+                    RecordField::new(column.name, value)
+                })
+                .collect();
+            ms.main_table_mut().add_row(RecordValue::new(row)).unwrap();
             ms.save_as(path).unwrap();
         }
         let concat = |path: &Path, order: [usize; 2]| {
