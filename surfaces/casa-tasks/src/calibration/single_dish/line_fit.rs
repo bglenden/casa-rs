@@ -15,7 +15,7 @@ use super::{baseline::selected_windows, selector};
 
 pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let input = task.input_path("infile")?;
-    let outfile = task.required_text("outfile")?;
+    let outfile = task.required_file_text("outfile")?;
     let output = (!outfile.is_empty()).then(|| Path::new(&outfile));
     let overwrite = task.flag("overwrite")?;
     if let Some(output) = output {

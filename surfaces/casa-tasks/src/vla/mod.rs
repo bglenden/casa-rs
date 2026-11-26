@@ -30,7 +30,7 @@ pub fn task_front_end()
 }
 
 /// Import one resolved request; CASA's `importvla` returns None.
-fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let options = options_from(task)?;
     let history = task_history(task, &options)?;
     let report = run(&options, Some(&history)).map_err(failure)?;
@@ -96,7 +96,7 @@ fn options_from(task: &TaskInvocation<'_>) -> Result<ImportVlaOptions, TaskFailu
     if vis.len() > 1 {
         return Err(TaskFailure::validation("importvla writes one vis").at("vis"));
     }
-    let options = ImportVlaOptions {
+    let mut options = ImportVlaOptions {
         archivefiles,
         vis: vis.pop(),
         bandname: task
@@ -138,6 +138,13 @@ fn options_from(task: &TaskInvocation<'_>) -> Result<ImportVlaOptions, TaskFailu
         evlabands: task.flag("evlabands")?,
     };
     options.require_archivefiles().map_err(failure)?;
+    if task.native_options().is_some() && options.vis.is_none() {
+        options.vis = Some(
+            options
+                .default_vis_path_in(task.workspace())
+                .map_err(failure)?,
+        );
+    }
     Ok(options)
 }
 

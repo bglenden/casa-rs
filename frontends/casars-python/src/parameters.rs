@@ -32,8 +32,8 @@ use pyo3::types::{PyDict, PyString};
 use serde::Serialize;
 
 use self::contract::{BundleView, CatalogEnvelopeView, snake_case_debug};
-use self::values::{parameter_values, serialize_native, value_to_python};
-pub(crate) use values::parameter_value;
+use self::values::{serialize_native, value_to_python};
+pub(crate) use values::{parameter_value, parameter_values};
 
 /// The `ValueError` a failed runtime call raises: `reason='...'`.
 pub(crate) fn reason_error(py: Python<'_>, reason: impl AsRef<str>) -> PyErr {

@@ -10,7 +10,6 @@ import numpy as np
 import pytest
 
 from casars import tasks, tools
-from casars.tasks import _runner
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -22,14 +21,6 @@ assert REFERENCE["casa_version"] == "6.7.6.14"
 CASES = REFERENCE["cases"]
 
 
-@pytest.fixture(autouse=True)
-def require_binary():
-    try:
-        _runner._task_executable("importfits")
-    except tasks.TaskBinaryNotFoundError:
-        if os.environ.get("CASARS_REQUIRE_TASK_BINARIES"):
-            raise
-        pytest.skip("importfits executable is unavailable")
 
 
 def run(name, product):

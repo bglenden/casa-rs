@@ -13,11 +13,11 @@ use crate::{
     ImmathRequest,
 };
 
-use super::ResolvedInputs;
 use super::selection::{
     ImmathSelection, PreparedInput, RawImage, RealMathPixel, apply_selection_to_raw,
     evaluate_immath_mask, open_raw_image, quote_var_aliases,
 };
+use super::{ResolvedInputs, operand_path};
 
 pub(super) fn run_evalexpr(
     request: &ImmathRequest,
@@ -67,11 +67,15 @@ fn run_evalexpr_typed<T: RealMathPixel>(
             referenced_images(&quote_var_aliases(mask, varnames)).map_err(expression_error)?,
         );
     }
+    let path_names: Vec<_> = names
+        .iter()
+        .filter(|name| !varnames.contains(name))
+        .map(|name| (name, operand_path(name)))
+        .collect();
     let mut raws: Vec<(usize, RawImage<T>)> = Vec::with_capacity(all_paths.len());
     for (index, path) in all_paths.iter().enumerate() {
-        if names
-            .iter()
-            .any(|name| Path::new(name) == path || varnames.get(index) == Some(name))
+        if path_names.iter().any(|(_, operand)| operand == path)
+            || varnames.get(index).is_some_and(|name| names.contains(name))
         {
             raws.push((index, open_raw_image::<T>(path)?));
         }
@@ -139,9 +143,12 @@ fn run_evalexpr_typed<T: RealMathPixel>(
         {
             resolver_map.insert(vn.clone(), prep.as_interface());
         }
-        if let Some(path) = all_paths.get(idx) {
-            resolver_map.insert(path.display().to_string(), prep.as_interface());
-        }
+        resolver_map.extend(
+            path_names
+                .iter()
+                .filter(|(_, operand)| *operand == all_paths[idx])
+                .map(|(name, _)| ((*name).clone(), prep.as_interface())),
+        );
     }
     let resolver = HashMapResolver(resolver_map);
     let compiled =

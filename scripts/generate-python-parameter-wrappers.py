@@ -472,10 +472,8 @@ def render_task_init(surfaces: list[dict[str, Any]]) -> str:
     names = [str(surface["id"]) for surface in surfaces if surface["kind"] == "task"]
     imports = "\n".join(f"    {name}," for name in names)
     exports = [
-        "TaskBinaryNotFoundError",
         "TaskCompletion",
         "TaskExecutionError",
-        "TaskInvocationError",
         "TaskParameterError",
         "TaskResultError",
         "TASK_SURFACES",
@@ -491,10 +489,8 @@ def render_task_init(surfaces: list[dict[str, Any]]) -> str:
             imports,
             ")",
             "from ._runner import (",
-            "    TaskBinaryNotFoundError,",
             "    TaskCompletion,",
             "    TaskExecutionError,",
-            "    TaskInvocationError,",
             "    TaskParameterError,",
             "    TaskResultError,",
             "    run,",

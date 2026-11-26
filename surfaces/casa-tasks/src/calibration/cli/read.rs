@@ -49,7 +49,7 @@ pub(super) struct Report {
 pub(super) fn report(task: &TaskInvocation<'_>) -> Result<Report, TaskFailure> {
     Ok(Report {
         format: parsed(task, "format", parse_output_format)?,
-        output: task.text("output")?.map(PathBuf::from),
+        output: task.text("output")?.map(|path| task.io_path(path)),
         overwrite: task.flag("overwrite")?,
     })
 }
@@ -68,7 +68,7 @@ pub(super) fn task_request(
         "export_corrected_data" => {
             CalibrationTaskRequest::ExportCorrectedData(ExportCorrectedDataTaskRequest {
                 input_ms: task.path("vis")?,
-                output_ms: PathBuf::from(task.required_text("outputvis")?),
+                output_ms: task.path("outputvis")?,
                 selection: MsSelection::new(),
             })
         }
@@ -111,7 +111,7 @@ fn summary(task: &TaskInvocation<'_>) -> Result<SummaryTaskRequest, TaskFailure>
 
 fn stats(task: &TaskInvocation<'_>) -> Result<StatsTaskRequest, TaskFailure> {
     Ok(StatsTaskRequest {
-        path: PathBuf::from(task.required_text("table_path")?),
+        path: task.path("table_path")?,
         axis: CalibrationStatsAxis::parse(&task.required_text("stats_axis")?),
         datacolumn: task.text("stats_datacolumn")?,
         use_flags: task.flag("use_flags")?,
@@ -129,7 +129,7 @@ fn solve_gain(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFai
         append: false,
         measurement_set: task.path("vis")?,
         selection: selection(task)?,
-        output_table: PathBuf::from(task.required_text("out_table")?),
+        output_table: task.path("out_table")?,
         gain_type: parsed(task, "gain_type", parse_gain_type)?,
         spline_controls: None,
         fringe_controls: None,
@@ -156,7 +156,7 @@ fn solve_bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest,
         append: false,
         measurement_set: task.path("vis")?,
         selection: selection(task)?,
-        output_table: PathBuf::from(task.required_text("out_table")?),
+        output_table: task.path("out_table")?,
         refant: parse_refant_selector(&task.required_text("refant")?),
         prior_calibration_tables: calibration_tables(task, Chain::Solve)?,
         parang: task.flag("parang")?,
@@ -188,8 +188,8 @@ fn fluxscale(task: &TaskInvocation<'_>) -> Result<FluxScaleRequest, TaskFailure>
     Ok(FluxScaleRequest {
         options: Default::default(),
         append: false,
-        input_table: PathBuf::from(task.required_text("fluxscale_input")?),
-        output_table: PathBuf::from(task.required_text("out_table")?),
+        input_table: task.path("fluxscale_input")?,
+        output_table: task.path("out_table")?,
         reference_fields,
         transfer_fields: parse_string_list(&task.text("transfer_fields")?.unwrap_or_default()),
         refspwmap: optional_parsed(task, "refspwmap", |value| {
@@ -204,14 +204,14 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
     Ok(GencalTaskRequest {
         prior: GencalRequest {
             measurement_set: task.path("vis")?,
-            output_table: PathBuf::from(task.required_text("out_table")?),
+            output_table: task.path("out_table")?,
             caltype: parsed(task, "caltype", str::parse::<GencalType>)?,
             antenna: task.text("antenna")?.unwrap_or_default(),
             spw: task.text("spw")?.unwrap_or_default(),
             parameter: optional_parsed(task, "parameter", |value| {
                 parse_f64_list("parameter", value)
             })?,
-            gaincurve_table: task.text("gaincurve_table")?.map(PathBuf::from),
+            gaincurve_table: task.text("gaincurve_table")?.map(|path| task.io_path(path)),
         },
         polarization: String::new(),
         gaincurve_infile: None,
@@ -257,7 +257,7 @@ fn calibration_tables(
     chain: Chain,
 ) -> Result<Vec<ApplyCalibrationTableSpec>, TaskFailure> {
     let tables = task.paths("gaintables")?;
-    let callib = task.text("callib")?.map(PathBuf::from);
+    let callib = task.text("callib")?.map(|path| task.io_path(path));
     let gainfield = task.text("gainfield")?;
     let interp = task.text("interp")?;
     let spwmap = task.text("spwmap")?;

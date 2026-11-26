@@ -8,10 +8,8 @@ use crate::{CasaValue, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::{
     ProviderProtocolDescriptor, ProviderSurfaceKind, TaskProviderContract, builtin_surface_bundle,
 };
-use casa_plot_data::simulation::simanalyze_with_plots;
-use casa_simulation::simanalyze::{SimanalyzeRequest, simanalyze};
+use casa_simulation::simanalyze::{SimanalyzeRequest, simanalyze_with_controls};
 use casa_simulation::{ExecutionControls, SessionResources};
-use std::path::Path;
 use std::time::Instant;
 
 /// simanalyze's native task protocol.
@@ -42,20 +40,22 @@ pub fn simanalyze_front_end()
     )
     .expect("simanalyze contract")
 }
-fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let started = Instant::now();
     let parameters = task.plain_values();
     let resources = SessionResources::from_controls(&ExecutionControls::default())
         .map_err(|error| TaskFailure::execution(error.to_string()))?;
     let request = SimanalyzeRequest {
+        workspace: Some(task.workspace().to_path_buf()),
         parameters: parameters.clone(),
         resources,
     };
-    let (outcome, plots) = match std::env::var_os("CASARS_PLOT_PAYLOAD") {
-        Some(path) => simanalyze_with_plots(&request, Path::new(&path)),
-        None => simanalyze(&request).map(|outcome| (outcome, Vec::new())),
-    }
-    .map_err(|error| TaskFailure::execution(error.to_string()))?;
+    let payload = super::plot_payload(task);
+    let cancel = super::cancellation(task);
+    let (outcome, plots) = super::with_figures(payload.as_deref(), |sink| {
+        simanalyze_with_controls(&request, sink, &cancel)
+    })
+    .map_err(|error| super::simulation_failure(&cancel, error))?;
     let mut artifacts: Vec<_> = outcome
         .products
         .iter()

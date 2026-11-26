@@ -20,6 +20,9 @@ use std::path::{Path, PathBuf};
 
 /// One task invocation, with CASA-named parameters and explicit resources.
 pub struct SimanalyzeRequest {
+    /// Base directory for a relative project and files outside the project.
+    /// Library callers can omit it to use their current working directory.
+    pub workspace: Option<PathBuf>,
     /// Sparse or resolved CASA parameters; the catalog supplies defaults.
     pub parameters: Map<String, Value>,
     /// Admission, worker and backend policy shared with simulation.
@@ -102,8 +105,23 @@ pub(super) fn failure(error: impl std::fmt::Display) -> SimobserveError {
     SimobserveError::raised(format!("simanalyze: {error}"))
 }
 
-pub(super) struct Parameters<'a>(pub &'a Map<String, Value>);
+pub(super) struct Parameters<'a>(pub &'a Map<String, Value>, Option<&'a Path>);
 impl Parameters<'_> {
+    fn workspace_path(&self, path: &str) -> PathBuf {
+        crate::simobserve::path_at(self.1, Path::new(path))
+    }
+
+    fn locate(&self, directory: &Path, value: &str) -> PathBuf {
+        let project = directory.file_name().unwrap_or_default().to_string_lossy();
+        let name = value.replace("$project", &project);
+        let in_project = directory.join(&name);
+        if in_project.exists() {
+            in_project
+        } else {
+            self.workspace_path(&name)
+        }
+    }
+
     fn text(&self, key: &str) -> &str {
         self.0[key].as_str().expect("resolved string")
     }
@@ -128,7 +146,7 @@ impl Parameters<'_> {
 /// Invalid parameters, missing inputs, unsupported input metadata or selections,
 /// resource admission or native imaging/analysis failures.
 pub fn simanalyze(request: &SimanalyzeRequest) -> Result<SimanalyzeOutcome, SimobserveError> {
-    run(request, None)
+    simanalyze_with_controls(request, None, &casa_imaging_application::Cancel::new())
 }
 
 /// Image, analyze, and emit figure inputs through `sink`.
@@ -139,21 +157,41 @@ pub fn simanalyze_with_plot_sink(
     request: &SimanalyzeRequest,
     sink: &mut dyn SimulationPlotSink,
 ) -> Result<SimanalyzeOutcome, SimobserveError> {
-    run(request, Some((sink, None)))
+    simanalyze_with_controls(
+        request,
+        Some(sink),
+        &casa_imaging_application::Cancel::new(),
+    )
+}
+
+/// Analyze a simulation with caller-owned cancellation and an optional
+/// plot sink. The imaging passes observe the same token.
+///
+/// # Errors
+/// Analysis errors, cancellation, or figure sink errors.
+pub fn simanalyze_with_controls<'a, 'b>(
+    request: &SimanalyzeRequest,
+    sink: Option<&'a mut (dyn SimulationPlotSink + 'b)>,
+    cancel: &casa_imaging_application::Cancel,
+) -> Result<SimanalyzeOutcome, SimobserveError> {
+    run(request, sink.map(|sink| (sink, None)), cancel)
 }
 
 pub(crate) fn simanalyze_with_plot_sink_and_override(
     request: &SimanalyzeRequest,
     sink: &mut dyn SimulationPlotSink,
     output_file_override: Option<PathBuf>,
+    cancel: &casa_imaging_application::Cancel,
 ) -> Result<SimanalyzeOutcome, SimobserveError> {
-    run(request, Some((sink, output_file_override)))
+    run(request, Some((sink, output_file_override)), cancel)
 }
 
-fn run(
+fn run<'a, 'b>(
     request: &SimanalyzeRequest,
-    plot_sink: Option<(&mut dyn SimulationPlotSink, Option<PathBuf>)>,
+    plot_sink: Option<(&'a mut (dyn SimulationPlotSink + 'b), Option<PathBuf>)>,
+    cancel: &casa_imaging_application::Cancel,
 ) -> Result<SimanalyzeOutcome, SimobserveError> {
+    crate::simobserve::check_cancel(cancel)?;
     let resources = request.resources;
     charge_process_caches(resources.host(), resources.policy()).map_err(failure)?;
     // Fixed provider/planning metadata plus four live representations of
@@ -174,7 +212,7 @@ fn run(
     )
     .map_err(failure)?;
     let values = resolve_defaults(&request.parameters);
-    let parameters = Parameters(&values);
+    let parameters = Parameters(&values, request.workspace.as_deref());
     let mut report = if parameters.text("logfile").is_empty() {
         None
     } else {
@@ -182,7 +220,7 @@ fn run(
         let mut report = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(parameters.text("logfile"))
+            .open(parameters.workspace_path(parameters.text("logfile")))
             .map_err(failure)?;
         writeln!(report, "simanalyze project={}", parameters.text("project")).map_err(failure)?;
         Some(report)
@@ -203,7 +241,8 @@ fn run(
         return Ok(outcome);
     }
     if parameters.flag("image") {
-        outcome.products = imaging::execute(&parameters, &plan, resources)?;
+        outcome.products = imaging::execute(&parameters, &plan, resources, cancel)?;
+        crate::simobserve::check_cancel(cancel)?;
         outcome.products.extend(plan.products()?);
         let originals = [plan.file(".image.flat"), plan.file(".residual.flat")];
         feather::combine(&parameters, &mut plan, resources)?;

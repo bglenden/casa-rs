@@ -15,27 +15,16 @@ The public surface is split into three concerns:
 `casars.imexplore` adds NumPy/Matplotlib helpers for reading and drawing image
 planes.
 
-A task call resolves its parameters through the Rust runtime, finds the
-task's executable through the Rust resolver, and starts it directly with
-`--json-run -`: the values the call set go to its stdin, its log lines reach
-`sys.stderr` as they arrive, and its typed reply on stdout says how it ended.
-A Python task call saves no Last. Every task draft also exposes the exact
-versioned Rust provider invocation; completions retain that projection,
-requests the catalog refuses raise `ValueError` (or `TypeError`) before
-anything starts, a task that refuses its parameters raises
-`casars.tasks.TaskParameterError`, a `ValueError`, and one that does not
-succeed raises `casars.tasks.TaskExecutionError`. A task whose surface names
-its CASA task has CASA's signature and returns CASA's value. Python does not
-own provider schemas, parameter defaults, capability interpretation, or
-task-result decoding: the generated signatures carry the contract's
-defaults.
+Python calls the shared Rust task adapters through `casars._core`. A call
+resolves CASA's parameters, releases the GIL during execution, and streams
+its logs to `sys.stderr`. The wheel includes the adapters. A Python task call
+leaves managed Last profiles untouched. A task draft can also project the
+request for an explicit CLI invocation.
 
-The executable comes from the task's `CASARS_<APP>_BIN` override, a suite
-root (`CASARS_SUITE_ROOT`, or the installed suite this package belongs to),
-or, for a package built from a checkout, that checkout's `debug` or `release`
-build. A wheel installed outside a suite, such as one from PyPI, needs
-`CASARS_SUITE_ROOT` or the override to run tasks; the in-process
-`casars.data`, `casars.tools` and `casars.simutil` need no executables.
+Parameter validation raises `ValueError` or `TypeError`. A refusal by a task
+raises `casars.tasks.TaskParameterError`, and a failed run raises
+`casars.tasks.TaskExecutionError`. CASA-shaped wrappers return CASA's value.
+The generic runner also returns the task's logs and declared products.
 
 ADR-0006 defines the implemented `casars.parameters` API and sparse TOML
 profile contract shared with the task executables' command lines. Every

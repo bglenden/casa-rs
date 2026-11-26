@@ -78,7 +78,7 @@ pub fn task_front_end()
 }
 
 /// Run one resolved calibration request and write its report.
-fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     match task.surface() {
         "appendantab" => return crate::calibration::appendantab::run(task),
         "pccor" => return crate::calibration::pccor::run(task),
@@ -278,11 +278,11 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         history::record_applycal(task, &request.measurement_set);
     }
     let value = casa_value(task.surface(), &applied, &result);
-    report_task_success(task.surface(), &report, &result, value)
+    report_task_success(task, &report, &result, value)
 }
 
 fn report_task_success(
-    surface: &str,
+    task: &TaskInvocation<'_>,
     report: &read::Report,
     result: &CalibrationTaskResult,
     value: CasaValue,
@@ -293,9 +293,12 @@ fn report_task_success(
         _ => None,
     };
     if let Some(kind) = compact_kind
-        && surface == "applycal"
+        && task.surface() == "applycal"
         && report.output.is_none()
-        && std::env::var_os("CASARS_APPLYCAL_VALUE_ONLY").is_some_and(|value| value == "1")
+        && task.native_options().map_or_else(
+            || std::env::var_os("CASARS_APPLYCAL_VALUE_ONLY").is_some_and(|value| value == "1"),
+            |options| options.applycal_value_only,
+        )
     {
         // The completion decoder needs the kind, and the CASA-signature
         // wrapper consumes only the value. Avoid serializing the row plan.

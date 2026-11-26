@@ -16,7 +16,7 @@ pub fn impbcor_front_end()
     image_task_front_end("impbcor", &["impbcor"], run)
 }
 
-fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let pbimage = match task.value("pbimage") {
         Some(ParameterValue::String(name)) if !name.is_empty() => {
             PbcorBeam::Image(task.input_path("pbimage")?)

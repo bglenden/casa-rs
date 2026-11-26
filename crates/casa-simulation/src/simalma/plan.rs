@@ -55,7 +55,8 @@ impl Plan {
 }
 
 pub(super) fn prepare(p: &Parameters, request: &SimalmaRequest) -> Result<Plan, SimobserveError> {
-    let directory = std::path::absolute(p.text("project")).map_err(failure)?;
+    let directory =
+        std::path::absolute(request.workspace.join(p.text("project"))).map_err(failure)?;
     let project = directory
         .file_name()
         .ok_or_else(|| failure("project must have a directory name"))?
@@ -83,7 +84,7 @@ pub(super) fn prepare(p: &Parameters, request: &SimalmaRequest) -> Result<Plan, 
         tp_minutes,
         tp_configuration,
     } = super::configuration::select(p, request, &directory, &project, &model, primary_beam)?;
-    protect_pointings(p, &directory, &arrays)?;
+    protect_pointings(p, &request.workspace, &directory, &arrays)?;
     if model.cell[0] == 0. {
         let cell = arrays
             .iter()
@@ -243,6 +244,7 @@ pub(super) fn publish_directory(p: &Parameters, plan: &Plan) -> Result<(), Simob
 // before overwriting the directory that may hold the selected input.
 fn protect_pointings(
     p: &Parameters,
+    workspace: &Path,
     directory: &Path,
     arrays: &[Array],
 ) -> Result<(), SimobserveError> {
@@ -252,8 +254,9 @@ fn protect_pointings(
     let project = std::fs::canonicalize(directory).unwrap_or(directory.to_path_buf());
     for array in arrays {
         let name = p.text("ptgfile").replace("$project", &array.stem);
-        let path = if Path::new(&name).exists() {
-            std::path::absolute(name).map_err(failure)?
+        let in_workspace = workspace.join(&name);
+        let path = if in_workspace.exists() {
+            in_workspace
         } else {
             directory.join(name)
         };

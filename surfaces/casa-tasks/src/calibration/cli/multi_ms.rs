@@ -60,7 +60,7 @@ pub(super) fn execute(
                 ParameterValue::String(path.to_string_lossy().into_owned()),
             )
             .map_err(|error| TaskFailure::execution(error.to_string()))?;
-        let result = run_partition(&TaskInvocation::new(&session, task.workspace()), &path);
+        let result = run_partition(&task.with_session(&session), &path);
         if let Err(error) = &result {
             tracing::warn!(partition = %path.display(), %error, "applycal failed for Multi-MS partition");
         }

@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's terminal and file listings of calibration solution values.
 
-use std::path::Path;
-
 use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::CasaValue;
 use casa_ms::MeasurementSet;
@@ -24,7 +22,10 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let listfile = task.text("listfile")?.filter(|path| !path.is_empty());
     let paged_reply = listfile.is_none()
         && page_rows > 0
-        && std::env::var_os("CASARS_LISTCAL_PAGED_REPLY").is_some();
+        && task.native_options().map_or_else(
+            || std::env::var_os("CASARS_LISTCAL_PAGED_REPLY").is_some(),
+            |options| options.listcal_paged_reply,
+        );
     if let Some(error) = &listing.error
         && (!paged_reply || listing.parts.is_empty())
     {
@@ -32,7 +33,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     }
     let text = listing.lines();
     if let Some(path) = listfile {
-        publish_listing(Path::new(&path), &text)
+        publish_listing(&task.io_path(&path), &text)
             .map_err(|error| TaskFailure::execution(error).at("listfile"))?;
         let message = format!("Writing output to file: {path}\n");
         return Ok(TaskSuccess::new(

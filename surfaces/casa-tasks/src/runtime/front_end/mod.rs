@@ -41,6 +41,11 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+mod native;
+#[cfg(feature = "imaging")]
+pub use native::TaskCancellation;
+pub use native::{NativeTaskOptions, TaskLogLineSink, run_task_in_process};
+
 use casa_contracts::{
     CasaValue, EXIT_EXECUTION_FAILED, EXIT_SUCCEEDED, EXIT_VALIDATION_FAILED, ParameterValue,
     ProviderProtocolDescriptor, SurfaceContractBundle, TaskFailureKind, TaskFrontEndSchemas,
@@ -197,6 +202,7 @@ pub struct TaskInvocation<'a> {
     workspace: &'a Path,
     argument_text: Option<&'a BTreeMap<String, String>>,
     default_stderr_logs: bool,
+    native: Option<&'a crate::NativeTaskOptions>,
 }
 
 impl<'a> TaskInvocation<'a> {
@@ -208,6 +214,48 @@ impl<'a> TaskInvocation<'a> {
             workspace,
             argument_text: None,
             default_stderr_logs: false,
+            native: None,
+        }
+    }
+
+    pub(crate) fn in_process(
+        session: &'a ParameterSession,
+        workspace: &'a Path,
+        argument_text: &'a BTreeMap<String, String>,
+        options: &'a crate::NativeTaskOptions,
+    ) -> Self {
+        Self {
+            session,
+            workspace,
+            argument_text: Some(argument_text),
+            default_stderr_logs: options.default_logs,
+            native: Some(options),
+        }
+    }
+
+    /// Carry the invocation's workspace and execution options into a subtask
+    /// with its own resolved parameters.
+    #[cfg(feature = "calibration")]
+    pub(crate) fn with_session<'b>(&'b self, session: &'b ParameterSession) -> TaskInvocation<'b> {
+        TaskInvocation {
+            native: self.native,
+            ..TaskInvocation::new(session, self.workspace)
+        }
+    }
+
+    #[cfg(any(feature = "ms", feature = "imaging", feature = "images"))]
+    pub(crate) fn native_options(&self) -> Option<&crate::NativeTaskOptions> {
+        self.native
+    }
+
+    /// Resolve a task-relative path for opening or creating a file. CLI runs
+    /// already enter the workspace before execution.
+    pub(crate) fn io_path(&self, path: impl AsRef<Path>) -> PathBuf {
+        let path = path.as_ref();
+        if self.native.is_some() && !path.as_os_str().is_empty() {
+            self.workspace.join(path)
+        } else {
+            path.to_path_buf()
         }
     }
 
@@ -216,6 +264,17 @@ impl<'a> TaskInvocation<'a> {
     #[must_use]
     pub fn default_stderr_logs(&self) -> bool {
         self.default_stderr_logs
+    }
+
+    #[cfg(feature = "calibration")]
+    pub(crate) fn write_default_log_line(&self, text: &str) {
+        if let Some(options) = self.native {
+            if let Some(write) = &options.log_line {
+                write(text);
+            }
+        } else {
+            eprintln!("{text}");
+        }
     }
 
     /// The surface to run.
@@ -249,6 +308,34 @@ impl<'a> TaskInvocation<'a> {
             .into_iter()
             .map(|(name, value)| (name, value.to_plain_json()))
             .collect()
+    }
+
+    #[cfg(any(feature = "simulation", feature = "imaging"))]
+    pub(crate) fn resolve_file_values(&self, values: &mut Map<String, Value>, names: &[&str]) {
+        if self.native.is_none() {
+            return;
+        }
+        for name in names {
+            if let Some(value) = values.get_mut(*name) {
+                match value {
+                    Value::Array(items) => {
+                        for item in items {
+                            self.resolve_file_value(item);
+                        }
+                    }
+                    _ => self.resolve_file_value(value),
+                }
+            }
+        }
+    }
+
+    #[cfg(any(feature = "simulation", feature = "imaging"))]
+    fn resolve_file_value(&self, value: &mut Value) {
+        if let Value::String(path) = value
+            && !matches!(path.as_str(), "" | "none" | "default")
+        {
+            *path = self.io_path(path.as_str()).to_string_lossy().into_owned();
+        }
     }
 
     /// Where relative paths resolve.
@@ -678,6 +765,7 @@ where
             workspace: &workspace,
             argument_text: None,
             default_stderr_logs,
+            native: None,
         });
         last.after_completion(&attempt, outcome.is_ok());
         stderr.extend(last.take_warnings().into_iter().map(|warning| {
@@ -883,49 +971,71 @@ where
                 diagnostic.parameter.clone(),
             );
         }
-        match self.execute(&TaskInvocation {
+        let invocation = TaskInvocation {
             session: &session,
             workspace: &workspace,
             argument_text: Some(&request.argument_text),
             default_stderr_logs,
-        }) {
-            Ok(success) => {
-                output_lines.extend(success.output_lines);
-                TaskReply::Succeeded {
-                    surface: request.surface,
-                    value: success.value,
-                    result: success.result,
-                }
-            }
-            Err(failure) => TaskReply::Failed {
-                surface: request.surface,
+            native: None,
+        };
+        let (reply, lines) = task_reply(&request.surface, self.execute(&invocation));
+        output_lines.extend(lines);
+        reply
+    }
+
+    fn execute(&self, invocation: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+        observe_task(invocation, &self.execute)
+    }
+}
+
+pub(crate) fn task_reply(
+    surface: &str,
+    outcome: Result<TaskSuccess, TaskFailure>,
+) -> (TaskReply, Vec<String>) {
+    let surface = surface.to_owned();
+    match outcome {
+        Ok(success) => (
+            TaskReply::Succeeded {
+                surface,
+                value: success.value,
+                result: success.result,
+            },
+            success.output_lines,
+        ),
+        Err(failure) => (
+            TaskReply::Failed {
+                surface,
                 kind: failure.kind,
                 message: failure.message,
                 parameter: failure.parameter,
             },
-        }
+            Vec::new(),
+        ),
     }
+}
 
-    fn execute(&self, invocation: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-        let surface = invocation.surface();
-        tracing::info!(task = surface, "{surface} started");
-        let outcome = (self.execute)(invocation);
-        match &outcome {
-            Ok(_) => tracing::info!(task = surface, "{surface} completed"),
-            Err(failure) if failure.kind == TaskFailureKind::Interrupted => tracing::warn!(
-                task = surface,
-                reason = %failure.message,
-                "{surface} interrupted"
-            ),
-            Err(failure) => tracing::error!(
-                casa.priority = "SEVERE",
-                task = surface,
-                error = %failure.message,
-                "{surface} failed"
-            ),
-        }
-        outcome
+pub(crate) fn observe_task(
+    invocation: &TaskInvocation<'_>,
+    execute: impl FnOnce(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>,
+) -> Result<TaskSuccess, TaskFailure> {
+    let surface = invocation.surface();
+    tracing::info!(task = surface, "{surface} started");
+    let outcome = execute(invocation);
+    match &outcome {
+        Ok(_) => tracing::info!(task = surface, "{surface} completed"),
+        Err(failure) if failure.kind == TaskFailureKind::Interrupted => tracing::warn!(
+            task = surface,
+            reason = %failure.message,
+            "{surface} interrupted"
+        ),
+        Err(failure) => tracing::error!(
+            casa.priority = "SEVERE",
+            task = surface,
+            error = %failure.message,
+            "{surface} failed"
+        ),
     }
+    outcome
 }
 
 /// The one action `args` asks for, and the arguments left for it. A spelling
@@ -1059,7 +1169,7 @@ fn has_variant_domain(domain: &casa_contracts::ParameterType) -> bool {
     }
 }
 
-fn open_named_session(
+pub(crate) fn open_named_session(
     request: OpenSessionRequest,
 ) -> Result<ParameterSession, (String, Option<String>)> {
     ParameterRuntime::default()
@@ -1083,7 +1193,7 @@ fn open_named_session(
         })
 }
 
-fn first_error(session: &ParameterSession) -> Option<&crate::runtime::Diagnostic> {
+pub(crate) fn first_error(session: &ParameterSession) -> Option<&crate::runtime::Diagnostic> {
     session
         .diagnostics()
         .iter()

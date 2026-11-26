@@ -321,7 +321,7 @@ fn record_history(task: &TaskInvocation<'_>, path: &Path, partition: bool) {
         tracing::warn!(partition = %path.display(), %error, "updating setjy partition HISTORY");
         return;
     }
-    super::history::record_task(&TaskInvocation::new(&session, task.workspace()), path);
+    super::history::record_task(&task.with_session(&session), path);
 }
 
 fn publish_models(

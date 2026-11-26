@@ -1,7 +1,5 @@
-"""A real task process, native plot payload, renderer and product completion."""
+"""Native plot payload, renderer and product completion."""
 
-import json
-import os
 from pathlib import Path
 import subprocess
 
@@ -14,39 +12,11 @@ from matplotlib import pyplot as plt
 from matplotlib.figure import Figure
 
 from casars import tasks
-from casars.tasks import _runner
-
-
-def test_orphan_pending_png_is_refused_instead_of_reporting_a_stale_file(tmp_path, monkeypatch):
-    old = tmp_path / "old.png"
-    old.write_bytes(b"previous-run-png")
-    reply = {
-        "status": "succeeded", "surface": "simobserve", "value": {"kind": "none"},
-        "result": {
-            "run": {"stem": "p", "directory": str(tmp_path), "warnings": [], "elapsed_ns": 0},
-            "plots": [], "artifacts": [{
-                "kind": "observe.png", "label": "Observation", "path": str(old),
-                "exists": False, "render_pending": True, "resource_kind": "file",
-            }],
-        },
-    }
-    fake = tmp_path / "orphan-provider"
-    fake.write_text("#!/usr/bin/env python3\nimport json,sys\njson.load(sys.stdin)\nprint(" + repr(json.dumps(reply)) + ")\n")
-    fake.chmod(0o755)
-    monkeypatch.setenv("CASARS_SIMOBSERVE_BIN", str(fake))
-    with pytest.raises(tasks.TaskResultError, match="pending.*figure"):
-        tasks.run("simobserve", workspace=tmp_path, graphics="file")
-    assert old.read_bytes() == b"previous-run-png"
+from casars.parameters import _native
 
 
 @pytest.fixture(scope="module")
 def simulation_inputs(tmp_path_factory):
-    try:
-        _runner._task_executable("simobserve")
-    except tasks.TaskBinaryNotFoundError as error:
-        if os.environ.get("CASARS_REQUIRE_TASK_BINARIES"):
-            raise
-        pytest.skip(str(error))
     root = tmp_path_factory.mktemp("simulation-inputs")
     repository = Path(__file__).resolve().parents[4]
     subprocess.run(["cargo", "run", "-q", "-p", "casars-python", "--example", "make_python_fixtures", "--", str(root)], cwd=repository, check=True)
@@ -68,15 +38,14 @@ def simulation_inputs(tmp_path_factory):
 def test_simobserve_renders_and_cleans_its_payload_before_completion(simulation_inputs, graphics, tmp_path, monkeypatch):
     model, config = simulation_inputs
     payloads, shown = [], []
-    popen = subprocess.Popen
+    run = _native().run_native_task
 
-    def launch(*args, **kwargs):
-        payload = kwargs.get("env", {}).get("CASARS_PLOT_PAYLOAD")
-        if payload:
-            payloads.append(Path(payload))
-        return popen(*args, **kwargs)
+    def capture_payload(surface, workspace, values, originals, options):
+        if payload := options["plot_payload"]:
+            payloads.append(payload)
+        return run(surface, workspace, values, originals, options)
 
-    monkeypatch.setattr(subprocess, "Popen", launch)
+    monkeypatch.setattr(_native(), "run_native_task", capture_payload)
     monkeypatch.setattr(Figure, "show", lambda figure, **kwargs: shown.append(figure))
     before = set(plt.get_fignums())
     try:

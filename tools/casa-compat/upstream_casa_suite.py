@@ -75,8 +75,6 @@ def pytest_configure():
     entry_point = getattr(casatasks, task)
     if implementation == "casa-rs":
         from casars import tasks
-        from casars.tasks import _runner
-        _runner._task_executable(task)
         entry_point = getattr(tasks, task)
         if task == "clearcal":
             # The stock suite keeps a table open while the task changes it.

@@ -29,7 +29,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
             task.flag("reindex")?,
         )
         .map_err(TaskFailure::execution)?;
-    let outfile = task.text("outfile")?.unwrap_or_default();
+    let outfile = task.file_text("outfile")?.unwrap_or_default();
     let overwrite = task.flag("overwrite")?;
     if outfile.is_empty() {
         return Err(TaskFailure::validation("outfile is empty.").at("outfile"));

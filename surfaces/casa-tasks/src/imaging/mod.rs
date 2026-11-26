@@ -207,7 +207,54 @@ pub fn task_request(
     task: &TaskInvocation<'_>,
 ) -> Result<(ImagingParameters, ImagingRequest), TaskFailure> {
     let default_surface = default_evla_surface();
-    request_from(task.plain_values(), default_surface.as_ref())
+    task_request_with_surface(task, default_surface.as_ref())
+}
+
+fn task_request_with_surface(
+    task: &TaskInvocation<'_>,
+    evla_surface: Option<&PathBuf>,
+) -> Result<(ImagingParameters, ImagingRequest), TaskFailure> {
+    let raw = task.plain_values();
+    if task.native_options().is_none() {
+        return request_from(raw, evla_surface);
+    }
+    let mut resolved = raw.clone();
+    task.resolve_file_values(
+        &mut resolved,
+        &[
+            "vis",
+            "imagename",
+            "outlierfile",
+            "startmodel",
+            "vptable",
+            "cfcache",
+            "native_cf_cache",
+            "evla_surface",
+        ],
+    );
+    for name in ["mask", "phasecenter"] {
+        if let Some(value) = resolved.get_mut(name) {
+            let rebase = |value: &mut Value| {
+                if let Value::String(text) = value
+                    && !text.is_empty()
+                {
+                    let path = task.io_path(text.as_str());
+                    if path.exists() || (name == "mask" && !text.contains(['[', ',', ';'])) {
+                        *text = path.to_string_lossy().into_owned();
+                    }
+                }
+            };
+            match value {
+                Value::Array(items) => items.iter_mut().for_each(rebase),
+                _ => rebase(value),
+            }
+        }
+    }
+    let (_, request) = request_from(resolved, evla_surface)?;
+    Ok((
+        ImagingParameters(raw),
+        request.with_task_workspace(task.workspace()),
+    ))
 }
 
 /// Run `task`, one resolved imager request, with default execution options.
@@ -222,7 +269,7 @@ pub fn run_task_with_options(
     task: &TaskInvocation<'_>,
     options: &ImagingExecutionOptions,
 ) -> Result<TaskSuccess, TaskFailure> {
-    let (parameters, request) = request_from(task.plain_values(), options.evla_surface.as_ref())?;
+    let (parameters, request) = task_request_with_surface(task, options.evla_surface.as_ref())?;
     // The record echoes some of tclean's values: a dirty run's threshold as
     // the caller gave it, a number as a number and text as text, and
     // tclean's default 0.0 where it was not given.
@@ -260,6 +307,55 @@ mod tests {
     use super::*;
     use casa_imaging_application::{default_tclean_parameters, single_dish};
     use serde_json::json;
+
+    #[test]
+    fn native_aw_paths_use_the_workspace() {
+        use casa_imaging_application::{AwCfSource, Gridder};
+
+        let workspace = tempfile::tempdir().unwrap();
+        let bundle = casa_contracts::builtin_surface_bundle("tclean").unwrap();
+        let mut session = crate::ParameterSession::defaults(bundle).unwrap();
+        let overrides = json!({
+            "vis": ["input.ms"],
+            "imagename": "output",
+            "cell": "1arcsec",
+            "gridder": "awproject",
+            "conjbeams": true,
+            "wprojplanes": 32,
+            "aw_cf_source": "native-evla",
+            "native_cf_cache": "cache",
+            "evla_surface": "surface",
+            "native_cf_working_size": 64,
+            "native_cf_oversampling": 4,
+            "native_cf_cache_bytes": 1_048_576,
+            "native_cf_maximum_cells": 64,
+        });
+        for (key, value) in overrides.as_object().unwrap() {
+            session
+                .set(
+                    key,
+                    casa_contracts::ParameterValue::from_plain_json(value).unwrap(),
+                )
+                .unwrap();
+        }
+        let names = std::collections::BTreeMap::new();
+        let native = crate::NativeTaskOptions::default();
+        let invocation = TaskInvocation::in_process(&session, workspace.path(), &names, &native);
+        let (_, request) = task_request_with_surface(&invocation, None).unwrap();
+        let Gridder::Awproject(aw) = request.gridder else {
+            panic!("expected awproject");
+        };
+        let AwCfSource::NativeEvla {
+            native_cf_cache,
+            evla_surface,
+            ..
+        } = aw.cf_source
+        else {
+            panic!("expected native EVLA convolution functions");
+        };
+        assert_eq!(native_cf_cache, workspace.path().join("cache"));
+        assert_eq!(evla_surface, workspace.path().join("surface"));
+    }
 
     #[test]
     fn tclean_domain_defaults_match_catalog_resolution() {

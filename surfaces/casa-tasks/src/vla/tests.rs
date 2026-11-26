@@ -26,6 +26,28 @@ fn options(line: &[&str]) -> Result<ImportVlaOptions, String> {
     options_from(&TaskInvocation::new(&session, Path::new("."))).map_err(|error| error.message)
 }
 
+#[test]
+fn native_import_derives_its_default_output_in_the_workspace() {
+    let workspace = tempdir().unwrap();
+    let bundle = casa_contracts::builtin_surface_bundle("importvla").unwrap();
+    let mut session = crate::ParameterSession::defaults(bundle).unwrap();
+    session
+        .set(
+            "archivefiles",
+            casa_contracts::ParameterValue::String("archive.xp1".into()),
+        )
+        .unwrap();
+    let originals = std::collections::BTreeMap::new();
+    let native = crate::NativeTaskOptions::default();
+    let task = TaskInvocation::in_process(&session, workspace.path(), &originals, &native);
+    let options = options_from(&task).unwrap();
+    assert_eq!(
+        options.archivefiles,
+        vec![workspace.path().join("archive.xp1")]
+    );
+    assert_eq!(options.vis, Some(workspace.path().join("archive.ms")));
+}
+
 fn sample_report() -> ImportReport {
     ImportReport {
         vis: PathBuf::from("/tmp/out.ms"),

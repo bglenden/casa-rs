@@ -90,6 +90,7 @@ impl Fixture {
         let resources =
             SessionResources::from_controls(&ExecutionControls::default()).expect("resources");
         SimobserveRequest {
+            workspace: None,
             parameters,
             data_roots: vec![self.path("data")],
             options: SimulatorOptions {

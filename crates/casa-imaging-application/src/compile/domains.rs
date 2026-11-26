@@ -183,7 +183,12 @@ pub(super) fn prepare_domains(
         facets,
     }];
     if let Some(path) = request.outlierfile.as_deref() {
-        let mut outliers = read_outlier_domains(path, request.imsize, request.cell)?;
+        let mut outliers = read_outlier_domains(
+            path,
+            request.imsize,
+            request.cell,
+            request.task_workspace.as_deref(),
+        )?;
         if let Some(outputs) = &request.numbered_outlier_outputs {
             if outputs.len() != outliers.len()
                 || outliers

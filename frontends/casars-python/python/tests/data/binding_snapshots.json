@@ -3816,9 +3816,9 @@
    "error": "ValueError",
    "message": "unknown MeasurementSet plot preset \"it's\"; expected one of: uv_coverage, antenna_layout, scan_timeline, spectral_window_coverage, phase_vs_time, amplitude_phase_vs_time_stacked, weight_vs_time, sigma_vs_time, flag_vs_time, weight_spectrum_vs_time, sigma_spectrum_vs_time, flag_row_vs_time, elevation_vs_time, azimuth_vs_time, hour_angle_vs_time, parallactic_angle_vs_time, azimuth_vs_elevation, amplitude_vs_frequency, amplitude_vs_channel, phase_vs_channel, phase_vs_frequency, amplitude_vs_velocity, phase_vs_velocity, amplitude_vs_uv_distance, amplitude_vs_time, real_vs_imaginary"
   },
-  "malformed successful task result": {
-   "error": "TaskResultError",
-   "message": "tclean produced a successful but invalid result: reason='unknown managed result for \"tclean\": invalid type: string \"runner stdout\", expected struct ImagerOutputWire at line 1 column 15'"
+  "native missing task input": {
+   "error": "TaskParameterError",
+   "message": "imstat refused its parameters (parameter 'imagename'): imagename \"missing.im\" does not exist"
   }
  }
 }

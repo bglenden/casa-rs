@@ -67,7 +67,7 @@ pub fn flagdata_front_end()
     .expect("the flagdata contract carries its surface")
 }
 
-fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let action = task.required_text("action")?;
     let mode = task.required_text("mode")?;
     if mode == "list" {
@@ -340,7 +340,7 @@ fn save_flag_parameters(
     shadow_command: Option<&str>,
     rflag_run: Option<(&rflag::ThresholdInputs, Option<&RFlagThresholdReport>)>,
 ) -> Result<(), TaskFailure> {
-    let outfile = task.required_text("outfile")?;
+    let outfile = task.required_file_text("outfile")?;
     if outfile.is_empty() && is_calibration_table(vis) {
         if matches!(action, "" | "none") {
             return Err(TaskFailure::execution(format!(

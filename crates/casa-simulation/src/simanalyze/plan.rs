@@ -110,26 +110,11 @@ fn files(directory: &Path) -> Result<Vec<PathBuf>, SimobserveError> {
     files.sort();
     Ok(files)
 }
-pub(super) fn expand_project(directory: &Path, value: &str) -> String {
-    value.replace(
-        "$project",
-        &directory.file_name().unwrap_or_default().to_string_lossy(),
-    )
-}
-pub(super) fn locate(directory: &Path, input: &str) -> PathBuf {
-    let in_project = directory.join(input);
-    if in_project.exists() {
-        in_project
-    } else {
-        PathBuf::from(input)
-    }
-}
-
 pub(super) fn prepare(
     p: &Parameters<'_>,
     resources: SessionResources,
 ) -> Result<Plan, SimobserveError> {
-    let directory = std::path::absolute(p.text("project")).map_err(failure)?;
+    let directory = std::path::absolute(p.workspace_path(p.text("project"))).map_err(failure)?;
     if !directory.is_dir() {
         return Err(failure(format!(
             "{} directory doesn't exist - the task expects to find results from creating the datasets there, like the skymodel.",
@@ -209,7 +194,7 @@ pub(super) fn prepare(
         )
     });
     let model = if !p.text("skymodel").is_empty() {
-        locate(&directory, &expand_project(&directory, p.text("skymodel")))
+        p.locate(&directory, p.text("skymodel"))
     } else {
         models
             .into_iter()
@@ -307,8 +292,7 @@ fn imaging(
     let fields = (0..source.row_count())
         .filter(|&row| matches!(codes.scalar_cell(row), Ok(ScalarValue::String(v)) if v=="OBJ"))
         .count();
-    let startmodel = expand_project(directory, p.text("modelimage"));
-    let startmodel = locate(directory, &startmodel);
+    let startmodel = p.locate(directory, p.text("modelimage"));
     let nchan = ms
         .spectral_window()
         .map_err(failure)?

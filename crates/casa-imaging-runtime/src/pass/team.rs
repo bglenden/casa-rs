@@ -35,10 +35,26 @@ impl WorkerTeam {
         }
         let pool = (workers > 1)
             .then(|| {
+                let dispatch = tracing::dispatcher::get_default(Clone::clone);
                 rayon::ThreadPoolBuilder::new()
                     .num_threads(workers)
                     .stack_size(WORKER_STACK_BYTES)
                     .thread_name(|index| format!("imaging-worker-{index}"))
+                    .spawn_handler(move |worker| {
+                        let dispatch = dispatch.clone();
+                        let mut thread = std::thread::Builder::new();
+                        if let Some(name) = worker.name() {
+                            thread = thread.name(name.to_owned());
+                        }
+                        if let Some(stack) = worker.stack_size() {
+                            thread = thread.stack_size(stack);
+                        }
+                        thread
+                            .spawn(move || {
+                                tracing::dispatcher::with_default(&dispatch, || worker.run());
+                            })
+                            .map(|_| ())
+                    })
                     .build()
                     .map_err(|_| PassError::Workers)
             })
