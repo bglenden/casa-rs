@@ -3,7 +3,7 @@
 
 use std::f64::consts::{PI, TAU};
 
-use casa_contracts::CasaValue;
+use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use num_complex::Complex64;
 
 use super::fit::FitOptions;
@@ -61,7 +61,7 @@ impl CalAnalysis {
     ///
     /// # Errors
     /// Invalid selector or unreadable calibration metadata and data.
-    pub fn get(&self, request: CalAnalysisQuery<'_>) -> Result<CasaValue, String> {
+    pub fn get(&self, request: CalAnalysisQuery<'_>) -> Result<RecordValue, String> {
         self.records(request, None)
     }
 
@@ -73,7 +73,7 @@ impl CalAnalysis {
         &self,
         request: CalAnalysisQuery<'_>,
         options: CalAnalysisFit<'_>,
-    ) -> Result<CasaValue, String> {
+    ) -> Result<RecordValue, String> {
         self.records(request, Some(FitOptions::parse(options)?))
     }
 
@@ -81,7 +81,7 @@ impl CalAnalysis {
         &self,
         request: CalAnalysisQuery<'_>,
         fit: Option<FitOptions>,
-    ) -> Result<CasaValue, String> {
+    ) -> Result<RecordValue, String> {
         let component = self.component(request.amplitude_or_phase)?;
         let iteration = match initial(request.axis, 'T') {
             'T' => Iteration::Time,
@@ -108,15 +108,18 @@ impl CalAnalysis {
                             request,
                             fit,
                         )?;
-                        records.push((records.len().to_string(), series));
+                        records.push(RecordField::new(
+                            records.len().to_string(),
+                            Value::Record(series),
+                        ));
                         Ok(())
                     },
                     iteration,
                 )?;
             }
         }
-        records.sort_unstable_by(|left, right| left.0.cmp(&right.0));
-        Ok(CasaValue::dict(records))
+        records.sort_unstable_by(|left, right| left.name.cmp(&right.name));
+        Ok(RecordValue::new(records))
     }
 
     fn component(&self, mode: &str) -> Result<Component, String> {
@@ -278,7 +281,7 @@ fn build_record(
     samples: &[Sample],
     query: CalAnalysisQuery<'_>,
     fit: Option<FitOptions>,
-) -> Result<CasaValue, String> {
+) -> Result<RecordValue, String> {
     let (x, fixed) = match iteration {
         Iteration::Time => ("frequency", "time"),
         Iteration::Frequency => ("time", "frequency"),
@@ -298,26 +301,36 @@ fn build_record(
         errors.push(sample.error);
     }
     let mut entries = vec![
-        ("abscissa", CasaValue::string(x)),
-        ("field", CasaValue::string(field.to_string())),
-        ("antenna1", CasaValue::string(first.to_string())),
-        ("antenna2", CasaValue::string(second.to_string())),
-        ("feed", CasaValue::string(feed)),
-        ("rap", CasaValue::string(component.name())),
-        (x, CasaValue::float64_vector(abscissa.iter().copied())),
-        (fixed, CasaValue::float(coordinate)),
+        (
+            "abscissa",
+            Value::Scalar(ScalarValue::String(x.to_string())),
+        ),
+        (
+            "field",
+            Value::Scalar(ScalarValue::String(field.to_string())),
+        ),
+        (
+            "antenna1",
+            Value::Scalar(ScalarValue::String(first.to_string())),
+        ),
+        (
+            "antenna2",
+            Value::Scalar(ScalarValue::String(second.to_string())),
+        ),
+        ("feed", Value::Scalar(ScalarValue::String(feed.to_string()))),
+        (
+            "rap",
+            Value::Scalar(ScalarValue::String(component.name().to_string())),
+        ),
+        (x, Value::Array(ArrayValue::from_f64_vec(abscissa.to_vec()))),
+        (fixed, Value::Scalar(ScalarValue::Float64(coordinate))),
     ];
     match component {
         Component::Amplitude => {
             if query.normalize {
                 normalize(&mut values, &mut errors, &mut flags);
             }
-            entries.push((
-                "norm",
-                CasaValue::Bool {
-                    value: query.normalize,
-                },
-            ));
+            entries.push(("norm", Value::Scalar(ScalarValue::Bool(query.normalize))));
         }
         Component::Phase => {
             if query.unwrap {
@@ -328,30 +341,27 @@ fn build_record(
                 *flag |= amplitude <= *error / PI;
                 *error = if *flag { PI } else { *error / amplitude };
             }
+            entries.push(("unwrap", Value::Scalar(ScalarValue::Bool(query.unwrap))));
             entries.push((
-                "unwrap",
-                CasaValue::Bool {
-                    value: query.unwrap,
-                },
+                "jumpMax",
+                Value::Scalar(ScalarValue::Float64(query.jump_max)),
             ));
-            entries.push(("jumpMax", CasaValue::float(query.jump_max)));
         }
         Component::Real => (),
     }
     if let Some(fit) = fit {
         entries.extend(fit.record(abscissa, &values, &errors, &mut flags));
     }
-    entries.push(("value", CasaValue::float64_vector(values)));
-    entries.push(("valueErr", CasaValue::float64_vector(errors)));
-    entries.push((
-        "flag",
-        CasaValue::BoolArray {
-            shape: vec![flags.len()],
-            data: flags,
-        },
-    ));
+    entries.push(("value", Value::Array(ArrayValue::from_f64_vec(values))));
+    entries.push(("valueErr", Value::Array(ArrayValue::from_f64_vec(errors))));
+    entries.push(("flag", Value::Array(ArrayValue::from_bool_vec(flags))));
     entries.sort_unstable_by_key(|(key, _)| *key);
-    Ok(CasaValue::dict(entries))
+    Ok(RecordValue::new(
+        entries
+            .into_iter()
+            .map(|(key, value)| RecordField::new(key, value))
+            .collect(),
+    ))
 }
 
 fn normalize(values: &mut [f64], errors: &mut [f64], flags: &mut [bool]) {

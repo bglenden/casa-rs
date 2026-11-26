@@ -61,7 +61,7 @@ impl From<HashMap<usize, EvaluatedApplyRow>> for PreappliedRows {
 }
 
 /// Apply priors as the solve reads each selected row.
-pub(crate) struct SolvePriorApply {
+pub struct SolvePriorApply {
     plan: ApplyPlan,
     chain: ApplyChain,
     rows: HashMap<usize, usize>,
@@ -99,10 +99,7 @@ impl SolvePriorApply {
         })
     }
 
-    pub(crate) fn single_dish(
-        ms: &MeasurementSet,
-        plan: ApplyPlan,
-    ) -> Result<Self, ApplyExecutionError> {
+    pub fn single_dish(ms: &MeasurementSet, plan: ApplyPlan) -> Result<Self, ApplyExecutionError> {
         let mut priors = Self::new(ms, plan, false, false, 1)?;
         priors.chain.single_dish_solve = true;
         Ok(priors)

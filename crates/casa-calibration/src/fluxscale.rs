@@ -19,7 +19,7 @@ mod cell;
 use cell::GainCell;
 mod fit;
 mod full_output;
-pub(crate) mod history;
+pub mod history;
 mod incremental;
 mod input;
 mod listing;
@@ -365,7 +365,7 @@ fn tool_field_error(error: FluxScaleError, selectors: &[String]) -> String {
     format!("Field Expression: {reason}")
 }
 
-pub(crate) fn fluxscale_with_output_mode(
+pub fn fluxscale_with_output_mode(
     request: &FluxScaleRequest,
     mode: crate::CalibrationOutputMode,
 ) -> Result<FluxScaleReport, FluxScaleError> {

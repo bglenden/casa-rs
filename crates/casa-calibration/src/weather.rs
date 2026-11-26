@@ -1,38 +1,50 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Weather-station and seasonal zenith opacity from EVLA Memo 143.
 
-mod figure;
 mod opacity;
 
 use std::path::Path;
 
-use casa_contracts::CasaFloat;
 use casa_tables::{Table, TableOptions};
 use casa_types::ScalarValue;
 use casa_types::quanta::format::{YMD, format_time};
 
-pub(crate) use figure::WeatherFigure;
-
-#[derive(serde::Serialize)]
-pub(crate) struct WeatherEstimate {
-    pub(crate) opacity: Vec<CasaFloat>,
-    pub(crate) windows_ghz: Vec<f64>,
-    pub(crate) plot: Option<WeatherFigure>,
+/// Opacity and station measurements prepared for `plotweather`.
+pub struct WeatherEstimate {
+    /// Zenith opacity per spectral window.
+    pub opacity: Vec<f64>,
+    /// Spectral window reference frequencies in GHz.
+    pub windows_ghz: Vec<f64>,
+    /// Time-series weather station data when plotting is enabled.
+    pub plot_data: Option<WeatherPlotData>,
 }
 
-struct WeatherPlotData {
-    time_seconds: Vec<f64>,
-    temperature_c: Vec<f64>,
-    dew_point_c: Vec<f64>,
-    wind_m_s: Vec<f64>,
-    wind_arrow_degrees: Vec<f64>,
-    station_water_mm: Vec<f64>,
-    seasonal_water_mm: Vec<f64>,
-    weighted_water_mm: Vec<f64>,
-    frequency_ghz: Vec<f64>,
-    station_opacity: Vec<f64>,
-    seasonal_opacity: Vec<f64>,
-    weighted_opacity: Vec<f64>,
+/// Weather station series and derived opacities for `plotweather`.
+pub struct WeatherPlotData {
+    /// Sample timestamps in MJD seconds.
+    pub time_seconds: Vec<f64>,
+    /// Ambient temperatures in Celsius.
+    pub temperature_c: Vec<f64>,
+    /// Dew-point temperatures in Celsius.
+    pub dew_point_c: Vec<f64>,
+    /// Wind speeds in m/s.
+    pub wind_m_s: Vec<f64>,
+    /// Wind vector angles in degrees.
+    pub wind_arrow_degrees: Vec<f64>,
+    /// Weather-station PWV values in mm.
+    pub station_water_mm: Vec<f64>,
+    /// Seasonal PWV model values in mm.
+    pub seasonal_water_mm: Vec<f64>,
+    /// Weighted PWV values in mm.
+    pub weighted_water_mm: Vec<f64>,
+    /// Opacity spectrum frequency grid in GHz.
+    pub frequency_ghz: Vec<f64>,
+    /// Opacity spectrum for mean station PWV.
+    pub station_opacity: Vec<f64>,
+    /// Opacity spectrum for seasonal PWV.
+    pub seasonal_opacity: Vec<f64>,
+    /// Opacity spectrum for mean weighted PWV.
+    pub weighted_opacity: Vec<f64>,
 }
 
 struct WeatherRows {
@@ -43,12 +55,11 @@ struct WeatherRows {
     wind_direction: Vec<f64>,
 }
 
-pub(crate) fn estimate_weather(
+/// Estimate zenith opacities and optional station plot series for a MeasurementSet.
+pub fn estimate_weather(
     path: &Path,
     seasonal_weight: f64,
     do_plot: bool,
-    vis: &str,
-    plot_name: &str,
 ) -> Result<WeatherEstimate, String> {
     // CASA reads these literal table directories. An unreadable optional
     // WEATHER table is a seasonal fallback, even if it cannot be opened as
@@ -85,10 +96,7 @@ pub(crate) fn estimate_weather(
     };
     let plot_rows = rows.filter(|_| do_plot);
     let mean_weighted = mean(&weighted);
-    let opacity = opacity::windows(&windows_ghz, mean_weighted)?
-        .into_iter()
-        .map(CasaFloat)
-        .collect();
+    let opacity = opacity::windows(&windows_ghz, mean_weighted)?;
     let plot_data = plot_rows.map(|rows| WeatherPlotData {
         seasonal_water_mm: vec![seasonal; rows.seconds.len()],
         time_seconds: rows.seconds,
@@ -107,14 +115,10 @@ pub(crate) fn estimate_weather(
         weighted_water_mm: weighted,
         frequency_ghz: opacity::frequencies(),
     });
-    let plot = plot_data
-        .as_ref()
-        .map(|data| figure::prepare(data, vis, plot_name))
-        .transpose()?;
     Ok(WeatherEstimate {
         opacity,
         windows_ghz,
-        plot,
+        plot_data,
     })
 }
 
@@ -219,7 +223,8 @@ fn seasonal_water(time_seconds: f64) -> Result<f64, String> {
     Ok(-1.71 + 1.3647 * (22.1 - 0.178 * adjusted + 0.00044 * adjusted * adjusted))
 }
 
-fn weather_date(time_seconds: f64) -> String {
+/// Format an MJD seconds timestamp using CASA's weather summary date format.
+pub fn weather_date(time_seconds: f64) -> String {
     let initial = format_time(time_seconds / 86_400.0, YMD, 0);
     if initial.contains("24:00:00") {
         format_time((time_seconds + 0.5) / 86_400.0, YMD, 0)

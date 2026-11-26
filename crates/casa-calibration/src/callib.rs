@@ -160,7 +160,8 @@ fn line_error(
     }
 }
 
-pub(crate) fn parse_apply_specs(
+/// Parse an inline calibration-library string into `ApplyCalibrationTableSpec` entries.
+pub fn parse_apply_specs(
     source_name: &str,
     contents: &str,
 ) -> Result<Vec<ApplyCalibrationTableSpec>, CallibError> {

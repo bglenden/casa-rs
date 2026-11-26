@@ -4,7 +4,8 @@ use std::collections::VecDeque;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
-pub(crate) fn normalized(path: &Path) -> io::Result<PathBuf> {
+/// Normalize a product path by resolving existing symlinks and `.`/`..` components.
+pub fn normalized(path: &Path) -> io::Result<PathBuf> {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -53,14 +54,15 @@ pub(crate) fn normalized(path: &Path) -> io::Result<PathBuf> {
     Ok(result)
 }
 
-pub(crate) fn overlap(left: &Path, right: &Path) -> io::Result<bool> {
+/// Return whether either normalized path is a prefix of the other.
+pub fn overlap(left: &Path, right: &Path) -> io::Result<bool> {
     let left = normalized(left)?;
     let right = normalized(right)?;
     Ok(left.starts_with(&right) || right.starts_with(&left))
 }
 
 /// The plain table whose record owns inherited subtable links.
-pub(crate) fn subtable_owner(
+pub fn subtable_owner(
     table: &casa_tables::Table,
     path: &Path,
 ) -> Result<PathBuf, casa_tables::TableError> {

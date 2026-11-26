@@ -22,14 +22,10 @@ casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-operator = { path = "../casa-imaging-operator" }
 casa-imaging-runtime = { path = "../casa-imaging-runtime" }
 casa-imaging-singledish = { path = "../casa-imaging-singledish" }
-casa-contracts = { path = "../../surfaces/casa-contracts" }
-casa-task-runtime = { path = "../casa-task-runtime" }
 casa-measures-data = { path = "../casa-measures-data" }
 casa-ms = { path = "../casa-ms" }
 casa-numerics = { path = "../casa-numerics" }
-casa-plot-data = { path = "../../surfaces/casa-plot-data", features = ["ms"] }
 casa-tables = { path = "../casa-tables" }
-casa-tasks = { path = "../../surfaces/casa-tasks", features = ["ms"] }
 casa-types = { path = "../casa-types" }
 libm = "0.2"
 ndarray.workspace = true
@@ -57,18 +53,6 @@ flate2 = "1"
 tar = "0.4"
 casa-test-support = { path = "../../dev/casa-test-support" }
 ndarray.workspace = true
-
-[[bin]]
-name = "calibrate"
-path = "src/bin/calibrate.rs"
-
-[[bin]]
-name = "flagdata"
-path = "src/bin/flagdata.rs"
-
-[[bin]]
-name = "mstransform"
-path = "src/bin/mstransform.rs"
 
 [lints]
 workspace = true

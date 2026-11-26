@@ -268,7 +268,7 @@ fn named(field: &str) -> Option<&'static str> {
 }
 
 /// The reference positions compiled into CASA's FluxStdSrcs.
-pub(crate) fn source_direction(field: &str) -> Option<MDirection> {
+pub fn source_direction(field: &str) -> Option<MDirection> {
     use casa_types::measures::direction::DirectionRef;
 
     // fluxcalibrator.data is used for positional source identification.

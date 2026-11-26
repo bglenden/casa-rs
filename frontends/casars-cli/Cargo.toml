@@ -10,7 +10,8 @@ publish = false
 autotests = false
 
 [features]
-default = ["imaging", "images", "ms", "vla"]
+default = ["calibration", "imaging", "images", "ms", "vla"]
+calibration = ["ms", "casa-tasks/calibration"]
 imaging = ["casa-tasks/imaging", "dep:casa-imaging-application", "dep:libc"]
 images = ["casa-tasks/images"]
 ms = ["casa-tasks/ms"]
@@ -28,6 +29,7 @@ libc = { version = "0.2", optional = true }
 
 [dev-dependencies]
 base64 = "0.22"
+casa-calibration = { path = "../../crates/casa-calibration" }
 casa-contracts = { path = "../../surfaces/casa-contracts" }
 casa-coordinates = { path = "../../crates/casa-coordinates" }
 casa-images = { path = "../../crates/casa-images" }
@@ -135,6 +137,21 @@ required-features = ["ms"]
 name = "msexplore"
 path = "src/bin/msexplore.rs"
 required-features = ["ms"]
+
+[[bin]]
+name = "calibrate"
+path = "src/bin/calibrate.rs"
+required-features = ["calibration"]
+
+[[bin]]
+name = "flagdata"
+path = "src/bin/flagdata.rs"
+required-features = ["calibration"]
+
+[[bin]]
+name = "mstransform"
+path = "src/bin/mstransform.rs"
+required-features = ["calibration"]
 
 [[test]]
 name = "hogbom_default"
@@ -275,3 +292,38 @@ required-features = ["ms"]
 name = "msconvert_cli"
 path = "tests/msconvert_cli.rs"
 required-features = ["ms"]
+
+[[test]]
+name = "calibration_apply_modes_cli"
+path = "tests/calibration_apply_modes_cli.rs"
+required-features = ["calibration"]
+
+[[test]]
+name = "calibration_casa_returns"
+path = "tests/calibration_casa_returns.rs"
+required-features = ["calibration"]
+
+[[test]]
+name = "calibration_existing_outputs"
+path = "tests/calibration_existing_outputs.rs"
+required-features = ["calibration"]
+
+[[test]]
+name = "calibration_output_lifecycle"
+path = "tests/calibration_output_lifecycle.rs"
+required-features = ["calibration"]
+
+[[test]]
+name = "flagdata_cli"
+path = "tests/flagdata_cli.rs"
+required-features = ["calibration"]
+
+[[test]]
+name = "flagdata_returns"
+path = "tests/flagdata_returns.rs"
+required-features = ["calibration"]
+
+[[test]]
+name = "mstransform_logging"
+path = "tests/mstransform_logging.rs"
+required-features = ["calibration"]

@@ -17,9 +17,9 @@ use crate::paths::{overlap, subtable_owner};
 use crate::solution_edit::{error_text, stage_calibration_table_edit_with_mode};
 
 type Stokes = [f64; 4];
-pub(crate) type FractionalPolarization = BTreeMap<String, BTreeMap<String, Stokes>>;
+pub type FractionalPolarization = BTreeMap<String, BTreeMap<String, Stokes>>;
 
-pub(crate) fn polarization_from_gain(
+pub fn polarization_from_gain(
     ms_path: &Path,
     input: &Path,
     output: Option<&Path>,

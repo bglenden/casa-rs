@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Publish CASA's virtual source recipes or their sampled scratch visibilities.
 
-pub(crate) mod image;
+pub mod image;
 mod imager;
 mod imager_definition;
 mod imager_sources;
@@ -9,10 +9,10 @@ pub(crate) mod legacy_aw;
 pub(crate) mod legacy_pbw;
 pub(crate) mod moving_source;
 pub(crate) mod predictcomp;
-pub(crate) mod setjy;
+pub mod setjy;
 pub(crate) mod settings;
 pub(crate) mod single_dish;
-pub(crate) mod virtual_publication;
+pub mod virtual_publication;
 mod voltage_pattern;
 
 pub use imager::{ImagerImageDefinition, ImagerPrediction, ImagerPredictionModel};
@@ -65,7 +65,7 @@ pub(crate) fn spectral_with_runtime(
     }
 }
 
-pub(crate) fn model_entry(
+pub fn model_entry(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
     kind: casa_ms::VirtualModelKind,
@@ -102,7 +102,7 @@ pub(crate) fn model_entry(
     })
 }
 
-pub(crate) fn write_model_scratch(
+pub fn write_model_scratch(
     ms: &mut MeasurementSet,
     selected: &ResolvedMsSelection,
     entries: &[VirtualModelEntry],

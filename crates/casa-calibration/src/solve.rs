@@ -20,7 +20,7 @@ pub(crate) mod baseline;
 mod batch_trial;
 mod delay;
 pub(crate) mod fringe;
-pub(crate) mod grouping;
+pub mod grouping;
 pub(crate) mod gspline;
 pub(crate) mod kernel;
 mod model;

@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use casa_contracts::CasaValue;
+use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 
 use super::ApplyPlan;
 use super::chain::viscal_order;
@@ -130,7 +130,7 @@ impl ToolApplyActivity {
         }
     }
 
-    pub(crate) fn into_record(mut self, origin: &str) -> CasaValue {
+    pub(crate) fn into_record(mut self, origin: &str) -> RecordValue {
         self.terms
             .sort_by_key(|term| (viscal_order(&term.subtype), term.position));
         let mut entries = self
@@ -140,42 +140,46 @@ impl ToolApplyActivity {
             .map(|(index, term)| {
                 let counts = term.counts;
                 let mut fields = vec![
-                    (
+                    RecordField::new(
                         "ndata",
-                        CasaValue::Int {
-                            value: counts.data as i64,
-                        },
+                        Value::Scalar(ScalarValue::Int64(counts.data as i64)),
                     ),
-                    (
+                    RecordField::new(
                         "nflagIn",
-                        CasaValue::Int {
-                            value: counts.flags_in as i64,
-                        },
+                        Value::Scalar(ScalarValue::Int64(counts.flags_in as i64)),
                     ),
-                    (
+                    RecordField::new(
                         "nflagOut",
-                        CasaValue::Int {
-                            value: counts.flags_out as i64,
-                        },
+                        Value::Scalar(ScalarValue::Int64(counts.flags_out as i64)),
                     ),
                 ];
                 if let Some(table) = term.name {
-                    fields.push(("table", CasaValue::string(table)));
+                    fields.push(RecordField::new(
+                        "table",
+                        Value::Scalar(ScalarValue::String(table)),
+                    ));
                 }
-                fields.push(("type", CasaValue::string(term.subtype)));
-                (format!("*{}", index + 1), CasaValue::dict(fields))
+                fields.push(RecordField::new(
+                    "type",
+                    Value::Scalar(ScalarValue::String(term.subtype)),
+                ));
+                RecordField::new(
+                    format!("*{}", index + 1),
+                    Value::Record(RecordValue::new(fields)),
+                )
             })
             .collect::<Vec<_>>();
-        entries.sort_by(|left, right| left.0.cmp(&right.0));
-        entries.push((
-            "nVisTotal".into(),
-            CasaValue::Int {
-                value: self.visibility_count as i64,
-            },
+        entries.sort_by(|left, right| left.name.cmp(&right.name));
+        entries.push(RecordField::new(
+            "nVisTotal",
+            Value::Scalar(ScalarValue::Int64(self.visibility_count as i64)),
         ));
-        CasaValue::dict([
-            ("VisEquation", CasaValue::dict(entries)),
-            ("origin", CasaValue::string(origin)),
+        RecordValue::new(vec![
+            RecordField::new("VisEquation", Value::Record(RecordValue::new(entries))),
+            RecordField::new(
+                "origin",
+                Value::Scalar(ScalarValue::String(origin.to_string())),
+            ),
         ])
     }
 }

@@ -22,9 +22,9 @@ pub enum CalibrationOutputMode {
 /// Owns only this operation's staging directory. An interrupted predecessor
 /// is refused; errors clean up our own stage and leave the destination intact.
 #[derive(Debug)]
-pub(crate) struct CalibrationOutput {
+pub struct CalibrationOutput {
     pub(crate) destination: PathBuf,
-    pub(crate) staging: PathBuf,
+    pub staging: PathBuf,
     mode: CalibrationOutputMode,
     table_type: Option<&'static str>,
     table_subtype: Option<&'static str>,
@@ -155,7 +155,7 @@ impl CalibrationOutput {
         )
     }
 
-    pub(crate) fn prepare_ephemeris_table(
+    pub fn prepare_ephemeris_table(
         path: &Path,
         overwrite: bool,
     ) -> Result<Self, CalibrationTableWriteError> {
@@ -243,7 +243,7 @@ impl CalibrationOutput {
         })
     }
 
-    pub(crate) fn commit(&self) -> Result<(), CalibrationTableWriteError> {
+    pub fn commit(&self) -> Result<(), CalibrationTableWriteError> {
         let fail = |reason| CalibrationTableWriteError::Publish {
             staging: self.staging.display().to_string(),
             output: self.destination.display().to_string(),

@@ -8,7 +8,7 @@
 fn every_builtin_provider_validates_through_the_shared_envelope() {
     assert_task_provider(
         "calibration",
-        casa_calibration::calibration_task_schema_bundle(),
+        casa_tasks::calibration::calibration_task_schema_bundle(),
     );
     assert_task_provider("importvla", casa_tasks::vla::importvla_task_schema_bundle());
     assert_task_provider(

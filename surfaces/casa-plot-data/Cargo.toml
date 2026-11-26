@@ -19,16 +19,26 @@ ms = [
     "dep:serde_json",
     "dep:tracing",
 ]
+calibration = [
+    "ms",
+    "dep:casa-calibration",
+    "dep:casa-measures-data",
+    "dep:num-complex",
+]
+slow-tests = []
 
 [lints]
 workspace = true
 
 [dependencies]
 casa-atmosphere = { path = "../../crates/casa-atmosphere", optional = true }
+casa-calibration = { path = "../../crates/casa-calibration", optional = true }
+casa-measures-data = { path = "../../crates/casa-measures-data", optional = true }
 casa-ms = { path = "../../crates/casa-ms", optional = true }
 casa-tables = { path = "../../crates/casa-tables", optional = true }
 casa-types = { path = "../../crates/casa-types", optional = true }
 ndarray = { workspace = true, optional = true }
+num-complex = { workspace = true, optional = true }
 schemars = { version = "0.8", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", optional = true }
@@ -45,3 +55,13 @@ tempfile = "3"
 [[example]]
 name = "profile_msexplore"
 required-features = ["ms"]
+
+[[test]]
+name = "ms_plots"
+path = "tests/ms_plots.rs"
+required-features = ["ms"]
+
+[[test]]
+name = "calibration_plots"
+path = "tests/calibration_plots.rs"
+required-features = ["calibration"]

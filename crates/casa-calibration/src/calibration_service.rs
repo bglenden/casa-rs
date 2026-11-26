@@ -5,7 +5,7 @@ use std::{env, fs, io, time::Duration};
 
 use ureq::tls::{PemItem, RootCerts, TlsConfig, parse_pem};
 
-pub(crate) fn agent(timeout: Duration) -> io::Result<ureq::Agent> {
+pub fn agent(timeout: Duration) -> io::Result<ureq::Agent> {
     let mut config = ureq::Agent::config_builder().timeout_global(Some(timeout));
     // Honor an explicitly configured trust bundle used by institutional HTTP
     // proxies. The standard public roots remain the default otherwise.

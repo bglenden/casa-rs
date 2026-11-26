@@ -39,7 +39,7 @@ pub fn visibility_model_input() -> impl TransformInputView {
     plotms_model_input(None)
 }
 
-pub(crate) fn plotms_model_input(
+pub fn plotms_model_input(
     references: Option<PlotMsModelReferences<'_>>,
 ) -> impl TransformInputView + '_ {
     ModelView {

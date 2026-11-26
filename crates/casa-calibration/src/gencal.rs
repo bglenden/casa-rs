@@ -4,7 +4,7 @@
 mod antpos_evla;
 mod antpos_file;
 mod eop;
-pub(crate) mod jyperk;
+pub mod jyperk;
 mod power_curve;
 mod specify_tool;
 mod spectral_axis;
@@ -125,7 +125,7 @@ impl GencalType {
         }
     }
 
-    pub(crate) fn is_gain_curve(self) -> bool {
+    pub fn is_gain_curve(self) -> bool {
         matches!(self, Self::Gc | Self::Gceff | Self::Eff)
     }
 
@@ -310,7 +310,8 @@ pub fn gencal(request: &GencalRequest) -> Result<GencalReport, GencalError> {
     )
 }
 
-pub(crate) fn gencal_with_output_mode(
+/// Generate a prior calibration table using an explicit output conflict policy.
+pub fn gencal_with_output_mode(
     request: &GencalRequest,
     polarization: &str,
     infile: Option<&Path>,
@@ -932,7 +933,7 @@ fn open_measurement_set(path: &Path) -> Result<MeasurementSet, GencalError> {
     })
 }
 
-pub(crate) fn prior_inputs_for_report(
+pub fn prior_inputs_for_report(
     request: &GencalRequest,
     infile: Option<&Path>,
 ) -> Result<Vec<PathBuf>, GencalError> {
@@ -1402,7 +1403,7 @@ fn f32_column(values: &[f32]) -> ArrayValue {
     )
 }
 
-pub(crate) fn default_vla_gaincurve_table() -> Option<PathBuf> {
+pub fn default_vla_gaincurve_table() -> Option<PathBuf> {
     if let Ok(path) = env::var("CASA_RS_VLA_GAINCURVES") {
         return Some(PathBuf::from(path));
     }

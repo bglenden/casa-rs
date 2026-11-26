@@ -3,16 +3,14 @@
 
 use std::path::Path;
 
-use casa_contracts::CasaValue;
 use casa_ms::{MeasurementSet, MsSelection};
-use casa_types::RecordValue;
+use casa_types::{ArrayValue, RecordField, RecordValue, Value};
 
 use super::traditional_apply::{
     calibration_factory_type, non_calibration_table, open_apply_table, snapshot_table,
 };
 use super::{CalibraterLifecycle, CalibraterLifecycleError, ConfiguredSolve};
 use crate::callib::{tool_library_specs, tool_table_record};
-use crate::casa_return::selectvis_record;
 use crate::constants::TABLE_INFO_TYPE;
 use crate::execute::{
     LibraryApplyRegistration, ToolActivityInput, ToolCorrection, execute_tool_apply,
@@ -22,6 +20,7 @@ use crate::plan::{
     ApplyInterpolationMode, ApplyMode, ApplyPlanRequest, plan_with_visibility_metadata,
 };
 use crate::solve::grouping::collect_selected_rows;
+use crate::solve_stats::selectvis_record_value;
 use crate::{
     AttachmentError, CalibrationError, CalibrationSolveRequest, GainSolveError, SelectedData,
 };
@@ -29,10 +28,10 @@ use crate::{
 impl CalibraterLifecycle {
     /// Activity from the last completed equation operation.
     #[must_use]
-    pub fn activity_record(&self) -> CasaValue {
+    pub fn activity_record(&self) -> RecordValue {
         self.last_activity
             .clone()
-            .unwrap_or_else(|| CasaValue::dict([] as [(&str, CasaValue); 0]))
+            .unwrap_or_else(|| RecordValue::new(Vec::new()))
     }
 
     /// Apply the configured chain to the attached, selected visibilities.
@@ -274,7 +273,7 @@ impl CalibraterLifecycle {
     ///
     /// The tool has no attached dataset, or the selected MeasurementSet
     /// metadata cannot be read.
-    pub fn configuration_record(&self) -> Result<CasaValue, CalibraterLifecycleError> {
+    pub fn configuration_record(&self) -> Result<RecordValue, CalibraterLifecycleError> {
         let equation = self.equation()?;
         let ms = MeasurementSet::open(equation.attachment.path()).map_err(AttachmentError::from)?;
         let rows = match collect_selected_rows(&ms, equation.attachment.selection(), true) {
@@ -305,17 +304,23 @@ impl CalibraterLifecycle {
             Some(path.display().to_string())
         });
         let mut entries = vec![
-            (
+            RecordField::new(
                 "apply_tables",
-                CasaValue::str_vector(self.applied_table_names()),
+                Value::Array(ArrayValue::from_string_vec(self.applied_table_names())),
             ),
-            ("selectvis", selectvis_record(Some(&selected))),
-            ("solve_tables", CasaValue::str_vector(output)),
+            RecordField::new(
+                "selectvis",
+                Value::Record(selectvis_record_value(Some(&selected))),
+            ),
+            RecordField::new(
+                "solve_tables",
+                Value::Array(ArrayValue::from_string_vec(output.into_iter().collect())),
+            ),
         ];
         if let Some(stats) = &self.last_solve_stats {
-            entries.push(("solvestats", stats.clone()));
+            entries.push(RecordField::new("solvestats", Value::Record(stats.clone())));
         }
-        Ok(CasaValue::dict(entries))
+        Ok(RecordValue::new(entries))
     }
 }
 

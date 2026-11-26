@@ -5,11 +5,10 @@ mod auto_mask;
 mod diagnostics;
 mod linear_fit;
 mod polynomial;
-mod sinusoid;
+pub mod sinusoid;
 mod spline;
-mod table;
-pub(crate) mod task;
-mod variable;
+pub mod table;
+pub mod variable;
 
 use std::collections::{BTreeMap, btree_map::Entry};
 use std::path::Path;

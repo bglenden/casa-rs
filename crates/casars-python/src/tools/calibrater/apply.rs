@@ -32,7 +32,9 @@ impl PyCalibrater {
     #[pyo3(signature = (), text_signature = "($self)")]
     fn activityrec(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let record = self.with_lifecycle(py, |state| Ok(state.activity_record()))?;
-        reply_value(py, &record)
+        let value =
+            casacore_value_to_casa(&Value::Record(record)).map_err(PyRuntimeError::new_err)?;
+        reply_value(py, &value)
     }
 
     #[pyo3(signature = (r#type = None, t = None, table = None, field = None, interp = None, select = None, calwt = None, spwmap = None, opacity = None), text_signature = "($self, type='', t=0.0, table='', field=[], interp='linear', select='', calwt=False, spwmap=[-1], opacity=[0.0])")]
@@ -168,7 +170,9 @@ impl PyCalibrater {
             Err(error) => Err(runtime_error(error)),
         })?;
         if let Some(record) = record {
-            return reply_value(py, &record);
+            let value =
+                casacore_value_to_casa(&Value::Record(record)).map_err(PyRuntimeError::new_err)?;
+            return reply_value(py, &value);
         }
         emit(
             py,

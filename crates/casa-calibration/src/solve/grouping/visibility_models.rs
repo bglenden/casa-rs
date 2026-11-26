@@ -20,7 +20,7 @@ const LEGACY_COMBINE: GainSolveCombine = GainSolveCombine {
 };
 
 /// The MODEL_DATA or virtual model visible to the old visibility iterator.
-pub(crate) struct VisibilityModels {
+pub struct VisibilityModels {
     rows: BTreeMap<usize, SelectedSolveRow>,
     models: ModelInputs,
 }
@@ -78,7 +78,7 @@ impl VisibilityModels {
         Self::with_models(ms, rows, models, combine, None)
     }
 
-    pub(crate) fn from_entries(
+    pub fn from_entries(
         ms: &MeasurementSet,
         rows: &[ResolvedMsSelectionRow],
         entries: &[VirtualModelEntry],
@@ -98,7 +98,7 @@ impl VisibilityModels {
 
     /// Use the legacy visibility iterator's FIELD-column directions for
     /// attached moving fields in `setjy` component predictions.
-    pub(crate) fn with_calibration_field_directions(
+    pub fn with_calibration_field_directions(
         mut self,
         ms: &MeasurementSet,
     ) -> Result<Self, GainSolveError> {
@@ -106,7 +106,7 @@ impl VisibilityModels {
         Ok(self)
     }
 
-    pub(crate) fn with_phase_centre_time(mut self, time_mjd_seconds: f64) -> Self {
+    pub fn with_phase_centre_time(mut self, time_mjd_seconds: f64) -> Self {
         for time in self.models.phase_times.values_mut() {
             *time = time_mjd_seconds;
         }
