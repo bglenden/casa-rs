@@ -132,6 +132,7 @@ pub fn private_table_file_metadata(path: &Path) -> io::Result<Metadata> {
 /// Preserve existing managed-file modes around a write to one table in an
 /// unpublished tree. Reject symbolic links before the write so a staged
 /// copy cannot write through a link to a file outside the replacement.
+/// Fresh readers obtain the new row count from the rebuilt descriptor.
 /// # Errors
 /// Returns an error for unsupported entries or if inspection, writing or
 /// restoring a file mode fails. Discard the private stage on failure.
@@ -140,15 +141,32 @@ pub fn write_private_table_preserving_modes(
     write: impl FnOnce() -> io::Result<()>,
 ) -> io::Result<()> {
     let mut permissions = Vec::new();
+    #[cfg(unix)]
+    let mut had_lock = false;
     for entry in fs::read_dir(table)? {
         let entry = entry?;
-        if !managed_table_file(&entry.file_name()) {
+        let name = entry.file_name();
+        if !managed_table_file(&name) {
             continue;
+        }
+        #[cfg(unix)]
+        if name == LOCK_FILE_NAME {
+            had_lock = true;
         }
         let metadata = private_table_file_metadata(&entry.path())?;
         permissions.push((entry.path(), metadata.permissions()));
     }
     write()?;
+    #[cfg(unix)]
+    if had_lock {
+        LockFile::create_or_open(
+            table,
+            true,
+            LockOptions::default().inspection_interval,
+            false,
+        )?
+        .clear_sync_data()?;
+    }
     for (path, permission) in permissions {
         if let Err(error) = fs::set_permissions(path, permission)
             && error.kind() != ErrorKind::NotFound
@@ -488,6 +506,22 @@ mod tests {
                 LockOutcome::HeldByAnotherProcess,
             );
         }
+    }
+
+    #[test]
+    fn a_private_rewrite_clears_the_previous_subtable_row_count() {
+        let scratch = tempfile::tempdir().unwrap();
+        let table = scratch.path();
+        fs::write(table.join("table.dat"), [0u8]).unwrap();
+        let lock = open_lock(table);
+        let mut sync = SyncData::new();
+        sync.record_write(7, 1, true, &[true]);
+        lock.write_sync_data(&sync).unwrap();
+        drop(lock);
+
+        write_private_table_preserving_modes(table, || fs::write(table.join("table.dat"), [1u8]))
+            .unwrap();
+        assert!(read_sync_data_from_table_dir(table).unwrap().is_none());
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

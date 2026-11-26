@@ -501,6 +501,7 @@ fn read_field_motion(path: &Path, allow_apparent: bool, allow_topocentric: bool)
                 PhaseCentreEphemerisError::InvalidKeyword { keyword } => keyword == "posrefsys",
                 PhaseCentreEphemerisError::UnsupportedPositionReference { reference } => {
                     reference.eq_ignore_ascii_case("APP")
+                        || (allow_topocentric && reference.eq_ignore_ascii_case("TOPO"))
                 }
                 PhaseCentreEphemerisError::UnsupportedObserverLocation { .. } => allow_topocentric,
                 _ => false,
