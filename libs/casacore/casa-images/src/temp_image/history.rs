@@ -2,12 +2,16 @@
 
 use std::borrow::Cow;
 
+use crate::ImageError;
 use crate::image::{ImageHistoryEntry, ImageHistoryRow, ImagePixel, PagedImage};
-use crate::{ImageError, ImageInterface};
 
 use super::TempImage;
 
 impl<T: ImagePixel> TempImage<T> {
+    fn history_directory(&self) -> Option<&std::path::Path> {
+        self.read_only.as_ref()?.source.history_directory()
+    }
+
     /// Returns the history entries.
     pub fn history(&self) -> Result<Vec<String>, ImageError> {
         Ok(self
@@ -31,7 +35,7 @@ impl<T: ImagePixel> TempImage<T> {
         location: &str,
         messages: &[String],
     ) -> Result<(), ImageError> {
-        if let Some(path) = self.stored_mask_source().and_then(ImageInterface::name) {
+        if let Some(path) = self.history_directory() {
             return PagedImage::<f32>::append_logtable_rows(
                 &path.join("logtable"),
                 location,
@@ -55,7 +59,7 @@ impl<T: ImagePixel> TempImage<T> {
         &mut self,
         entries: &[ImageHistoryRow],
     ) -> Result<(), ImageError> {
-        if let Some(path) = self.stored_mask_source().and_then(ImageInterface::name) {
+        if let Some(path) = self.history_directory() {
             return PagedImage::<f32>::append_logtable_entries(
                 &path.join("logtable"),
                 entries.iter().map(|row| {
@@ -78,7 +82,7 @@ impl<T: ImagePixel> TempImage<T> {
     /// # Errors
     /// Returns an error if the native component image's history is unreadable.
     pub fn history_rows(&self) -> Result<Cow<'_, [ImageHistoryRow]>, ImageError> {
-        if let Some(path) = self.stored_mask_source().and_then(ImageInterface::name) {
+        if let Some(path) = self.history_directory() {
             return crate::image::image_history_rows(path).map(Cow::Owned);
         }
         Ok(Cow::Borrowed(&self.history))

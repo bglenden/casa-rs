@@ -486,6 +486,10 @@ impl Lattice<f32> for ComponentListImage {
 }
 
 impl ImageInterface<f32> for ComponentListImage {
+    fn history_directory(&self) -> Option<&Path> {
+        self.name()
+    }
+
     fn stored_masks(&self) -> Option<&dyn casa_images::StoredImageMasks> {
         self.native
             .as_ref()

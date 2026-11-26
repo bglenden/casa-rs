@@ -430,6 +430,11 @@ pub trait ImageInterface<T: ImagePixel>: Lattice<T> {
     /// `'static` source types such as [`PagedImage<T>`]. Borrowed view-like
     /// sources that are not `'static` still fall back to snapshot compilation.
     fn as_any(&self) -> Option<&dyn Any>;
+    /// Directory containing the persistent logtable shared with an attached image view.
+    fn history_directory(&self) -> Option<&Path> {
+        None
+    }
+
     /// Named mask tables managed by this image.
     fn stored_masks(&self) -> Option<&dyn StoredImageMasks> {
         None
