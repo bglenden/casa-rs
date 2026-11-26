@@ -4,6 +4,7 @@
 mod channels;
 mod classic;
 mod grouping;
+mod legacy;
 mod output;
 mod robust;
 mod storage;
@@ -19,6 +20,7 @@ use ndarray::{ArrayD, Axis, IxDyn, ShapeBuilder};
 
 use channels::Channels;
 use classic::{Moments, VisibilityMoments};
+pub use legacy::{LegacyStatWtOptions, reweight_legacy};
 use output::Output;
 pub use robust::StatWtAlgorithm;
 pub use storage::StatWtMs;

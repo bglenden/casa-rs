@@ -12289,3 +12289,32 @@ and changes its external target while assigning the new data-description IDs.
 Casa-rs requires a private writable payload for the replacement and refuses
 this linked layout before changing the original MeasurementSet or its external
 file (#1030).
+
+## `oldstatwt()` can crash, bypass read-only access and overwrite correlation flags
+
+In CASA 6.7.6.14, `ms.oldstatwt()` defaults to `corrected_data` and requests
+that data cube even when `CORRECTED_DATA` is absent. On the stock
+`ngc5921_ut.ms` this terminates the Python process. The same method with
+`datacolumn='data'` updates `WEIGHT` and `SIGMA` when the tool was opened with
+`nomodify=True`. It reopens the attached table with `Table::Update` in the
+`Reweighter` constructor, and the tool reports itself writable afterward.
+
+casa-rs raises `RuntimeError` for an absent input column or a read-only
+attachment. Both errors preserve the attachment and leave the MAIN table
+unchanged. The missing-column case applies to input data required by the fit.
+
+When correlations have different `FLAG` values in the same channel,
+`StatWT::apply_variances` writes the collapsed `VisBuffer::flag()` matrix
+and broadcasts its flags to every correlation. A pinned paired test with
+one flagged correlation confirms that this can flag previously valid
+visibility samples. Changes made in that routine to the cached per-correlation
+flag cube for insufficient samples do not drive this write. casa-rs leaves
+`FLAG` and `FLAG_ROW` intact and marks unavailable estimates through the
+same zero `WEIGHT` and `SIGMA=-1` values.
+
+`VisBuffGroupAcc::fillChanMask` also uses the inclusive range width as the
+number of elements in a strided casacore slice. `fitspw='0:2~7^2'` reads
+channels 2, 4, 6, 8, 10 and 12 instead of 2, 4 and 6. With
+`fitspw='0:0~32^2'` on `ngc5921_ut.ms`, the slice overruns the 63-channel
+window and raises `Unknown exception caught`. casa-rs selects channels
+from the requested start through the inclusive stop, spaced by the step.

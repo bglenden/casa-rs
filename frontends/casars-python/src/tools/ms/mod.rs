@@ -10,6 +10,7 @@ mod history;
 mod iteration;
 mod legacy_iteration;
 mod legacy_selection;
+mod legacy_statwt;
 mod legacy_visibility;
 mod lister;
 pub(super) mod metadata_link;

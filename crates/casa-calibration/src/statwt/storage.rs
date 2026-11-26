@@ -180,6 +180,70 @@ impl StatWtMs {
         Ok(metadata)
     }
 
+    pub(super) fn legacy_boundaries(
+        &self,
+        rows: &[ResolvedMsSelectionRow],
+    ) -> MsResult<Vec<[i32; 4]>> {
+        let ids = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
+        let mut boundaries = vec![[0; 4]; rows.len()];
+        for (part, fragment) in self.parts.iter().zip(self.fragments(&ids)) {
+            if fragment.is_empty() {
+                continue;
+            }
+            let columns = ["ARRAY_ID", "SCAN_NUMBER", "STATE_ID", "OBSERVATION_ID"];
+            let ids = fragment.iter().map(|&(_, row)| row).collect::<Vec<_>>();
+            let mut values = part
+                .ms
+                .main_table()
+                .required_scalar_columns_owned_for_rows(&columns, &ids)?;
+            for (axis, column) in columns.into_iter().enumerate() {
+                let Some(RequiredScalarColumnValues::Int32(values)) = values.remove(column) else {
+                    return Err(invalid(format!("{column} must be int32")));
+                };
+                for (&(slot, _), value) in fragment.iter().zip(values) {
+                    boundaries[slot][axis] = value;
+                }
+            }
+        }
+        Ok(boundaries)
+    }
+
+    pub(super) fn persist_legacy(
+        &mut self,
+        updates: Vec<super::legacy::LegacyOutputRow>,
+        locks: &mut BTreeMap<PathBuf, TableWriteLock>,
+    ) -> MsResult<()> {
+        let mut remaining = updates.into_iter().peekable();
+        let columns = ["WEIGHT", "SIGMA"];
+        for part in &mut self.parts {
+            let table = part.ms.main_table_mut();
+            let limit = part.offset + table.row_count();
+            if !remaining.peek().is_some_and(|(row, _)| *row < limit) {
+                continue;
+            }
+            let lock = locks
+                .get_mut(&part.path)
+                .ok_or_else(|| invalid("missing oldstatwt write lock"))?;
+            let mut writer = table.row_accessor_mut().prepare(&columns)?;
+            let mut rows = Vec::new();
+            while remaining.peek().is_some_and(|(row, _)| *row < limit) {
+                let (row, values) = remaining.next().expect("update inside partition");
+                let row = row - part.offset;
+                rows.push(row);
+                writer.seek(row)?;
+                for (index, value) in values.into_iter().enumerate() {
+                    writer.set_value_at(index, casa_types::Value::Array(value))?;
+                }
+            }
+            writer.flush()?;
+            drop(writer);
+            lock.record_write();
+            table.prepare_write().save_selected_rows(&columns, &rows)?;
+            table.discard_persisted_cell_updates(&columns, &rows);
+        }
+        Ok(())
+    }
+
     pub(super) fn models(
         &self,
         rows: &[ResolvedMsSelectionRow],
