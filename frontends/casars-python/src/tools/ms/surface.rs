@@ -163,8 +163,8 @@ const METHODS: &[Method] = &[
             param("forcenewserver", K::Bool, Bool(false)),
             param("antnamescheme", K::Text, Text("old")),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "fromfitsidi",
@@ -689,8 +689,8 @@ const METHODS: &[Method] = &[
             param("padwithflags", K::Bool, Bool(false)),
             param("overwrite", K::Bool, Bool(false)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "uvsub",

@@ -4,6 +4,7 @@ from contextlib import closing
 import os
 from pathlib import Path
 from shutil import copytree
+import struct
 
 import numpy as np
 import pytest
@@ -163,3 +164,101 @@ def test_tofits_wsrt_stride_preserves_frequency_and_itrf_positions(fits_stock, t
     np.testing.assert_array_equal(spw["MEAS_FREQ_REF"], [5])
     positions = read(casa, reread / "ANTENNA", ["POSITION"])["POSITION"]
     np.testing.assert_allclose(positions, expected_positions, atol=1e-7, rtol=0)
+
+
+def fits_header(fields):
+    cards = []
+    for name, value in fields:
+        if isinstance(value, str):
+            value = f"'{value}'"
+        if isinstance(value, bool):
+            value = "T" if value else "F"
+        cards.append(f"{name:8}= {value:>20}".encode().ljust(80))
+    raw = b"".join(cards) + b"END".ljust(80)
+    return raw.ljust(len(raw) + (-len(raw) % 2880))
+
+
+def fits_binary_header(title, row_bytes, rows, columns):
+    fields = [
+        ("XTENSION", "BINTABLE"), ("BITPIX", 8), ("NAXIS", 2),
+        ("NAXIS1", row_bytes), ("NAXIS2", rows), ("PCOUNT", 0),
+        ("GCOUNT", 1), ("TFIELDS", len(columns)), ("EXTNAME", title),
+    ]
+    for index, (name, kind) in enumerate(columns, 1):
+        fields.extend([(f"TTYPE{index}", name), (f"TFORM{index}", kind)])
+    return fields
+
+
+def test_fromfits_system_power_extension(fits_stock, tmp_path):
+    casa = pinned_casa()
+    source = tmp_path / "power.uvfits"
+    with closing(casa.ms()) as tool:
+        assert tool.open(str(fits_stock / "uvfits_test.ms"))
+        assert tool.tofits(str(source))
+    columns = [
+        ("TIME", "1D"), ("TIME INTERVAL", "1E"), ("ANTENNA NO.", "1J"), ("FREQ ID", "1J"),
+        ("POWER DIF1", "1E"), ("POWER SUM1", "1E"), ("POST GAIN1", "1E"),
+        ("POWER DIF2", "1E"), ("POWER SUM2", "1E"), ("POST GAIN2", "1E"),
+    ]
+    system_power = fits_binary_header("AIPS SY", 44, 2, columns) + [("NO_IF", 1), ("NO_POL", 2)]
+    power = struct.pack(
+        ">df2i6fdf2i6f", 53500, .125, 1, 1, 2, 4, 6, 3, 5, 7,
+        53501, .25, 2, 2, 8, 10, 12, 9, 11, 13,
+    )
+    with source.open("ab") as file:
+        file.write(fits_header(system_power) + power.ljust(2880, b"\0"))
+    names = ("ANTENNA_ID", "FEED_ID", "SPECTRAL_WINDOW_ID", "TIME", "INTERVAL",
+             "SWITCHED_DIFF", "SWITCHED_SUM", "REQUANTIZER_GAIN")
+    results = []
+    for api, label in ((casa, "casa"), (tools, "native")):
+        path = tmp_path / f"{label}.ms"
+        with closing(api.ms()) as tool:
+            assert tool.fromfits(str(path), str(source))
+        with closing(casa.table()) as table:
+            assert table.open(str(path))
+            assert Path(table.getkeyword("SYSPOWER").removeprefix("Table: ")) == path / "SYSPOWER"
+        results.append(read(casa, path / "SYSPOWER", names))
+    compare(*results)
+    np.testing.assert_array_equal(results[-1]["SWITCHED_DIFF"], [[2, 8], [3, 9]])
+
+
+def test_fromfits_aips_binary_visibility_groups(fits_stock, tmp_path):
+    casa = pinned_casa()
+    base = tmp_path / "stock.uvfits"
+    with closing(casa.ms()) as tool:
+        assert tool.open(str(fits_stock / "uvfits_test.ms"))
+        assert tool.tofits(str(base))
+    raw = base.read_bytes()
+    extensions = next(offset for offset in range(2880, len(raw), 2880)
+                      if raw[offset:offset + 8] == b"XTENSION")
+    primary = fits_header([
+        ("SIMPLE", True), ("BITPIX", 8), ("NAXIS", 2), ("NAXIS1", 777777701),
+        ("NAXIS2", 0), ("EXTEND", True), ("DATE", "2005-09-11T00:00:00"),
+    ])
+    columns = [(name, "1E") for name in ("UU", "VV", "WW", "BASELINE", "DATE", "FREQSEL")]
+    groups = fits_binary_header("AIPS UV", 60, 2, columns + [("VISIBILITIES", "9E")])
+    groups.extend([
+        ("TELESCOP", "SMA"), ("OBSERVER", "fixture"), ("OBJECT", "TEST"),
+        ("DATE-OBS", "2005-09-11T00:00:00"), ("SPECSYS", "LSRK"),
+        ("TDIM7", "(3,1,3,1,1,1)"), ("TZERO5", 2453624.0),
+    ])
+    axes = [("COMPLEX", 1, 1, 1), ("STOKES", -1, 1, 1), ("FREQ", 230.5e9, 2, 1e6),
+            ("IF", 1, 1, 1), ("RA", 10, 1, 1), ("DEC", 15, 1, 1)]
+    for index, axis in enumerate(axes, 1):
+        groups.extend((f"{index}{key}7", value)
+                      for key, value in zip(("CTYP", "CRVL", "CRPX", "CDLT"), axis))
+    samples = struct.pack(
+        ">30f", 1e-8, 3e-8, -2e-8, 258, .875, 1, 1, 2, 3, 4, 5, -2, 7, 8, 1,
+        2e-8, 1e-8, 1e-8, 258, .9, 1, 2, 3, 4, 5, 6, 3, 8, 9, 1,
+    )
+    source = tmp_path / "binary.uvfits"
+    source.write_bytes(primary + raw[extensions:] + fits_header(groups) + samples.ljust(2880, b"\0"))
+    target = tmp_path / "binary.ms"
+    with closing(tools.ms()) as tool:
+        assert tool.fromfits(str(target), str(source))
+    result = read(casa, target, ("DATA", "FLAG", "WEIGHT_SPECTRUM", "ANTENNA1", "ANTENNA2"))
+    np.testing.assert_array_equal(result["DATA"], [[[1+2j, 2+3j], [4+5j, 5+6j], [7+8j, 8+9j]]])
+    np.testing.assert_array_equal(result["FLAG"], [[[False, False], [True, False], [False, False]]])
+    np.testing.assert_array_equal(result["WEIGHT_SPECTRUM"], [[[3, 4], [2, 3], [1, 1]]])
+    np.testing.assert_array_equal(result["ANTENNA1"], [0, 0])
+    np.testing.assert_array_equal(result["ANTENNA2"], [1, 1])

@@ -12436,3 +12436,30 @@ upstream `uvfits_test.ms` with `ms.tofits()` and import the result with
 `ms.fromfits()`. In the 630-row export, this happens on rows 1 through 29.
 The signed per-sample weights and `FLAG` agree across readers. casa-rs
 derives `FLAG_ROW` from all the flags in each persisted visibility cell.
+
+## WSRT UVFITS output can shift channel frequencies and antenna positions
+
+CASA 6.7.6.14 dispatches `ms.tofits()` to `MSFitsOutputAstron` when
+`OBSERVATION.TELESCOPE_NAME` is `WSRT`. Its output can contain an extra IF
+for a selected single spectral window. For a one-channel stride-two export
+of a topocentric window, its frequency reference pixel and AIPS FQ offset
+can cancel the absolute frequency. Its private antenna coordinate rotation
+also changes the positions obtained by the pinned UVFITS reader.
+
+The repository test reproduces the WSRT dispatch by labelling the upstream
+`uvfits_test.ms` as WSRT and selecting `spw='1:0~2^2'`. The pinned reader
+reports two windows near −0.0123 Hz and changed antenna positions for the
+pinned writer's file. The native file has one window at the mean of the
+two averaged channel centres, about 230.508 GHz, in the original
+topocentric frame. Antenna positions round-trip in ITRF. The native
+writer emits the actual selected windows and uses standard UVFITS antenna
+coordinates.
+## Legacy AIPS visibility tables can fail after preceding metadata
+
+CASA 6.7.6.14 accepts the legacy primary-array marker `NAXIS1=777777701`
+and looks for visibility data in an AIPS binary table. If AIPS FQ precedes
+AIPS UV in the fixture, its deferred FQ reader can advance to the wrong
+HDU and raise `NAXIS keyword missing`. casa-rs locates the visibility
+extension independently of the metadata order. It interprets the table's
+scaled parameters and signed weights and produces a normal MSv2 that the
+pinned reader can open.

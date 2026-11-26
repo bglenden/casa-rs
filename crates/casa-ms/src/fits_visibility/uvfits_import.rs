@@ -5,10 +5,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use casa_core::{ScalarValue, Value};
-use casa_tables::streamed_tiled::StreamedTiledShapeValueType;
-use casa_tables::{
-    ColumnOverrides, GeneratedArrayColumn, GeneratedScalarColumn, TableInfo, TableOptions,
+use casa_tables::streamed_tiled::{
+    StreamedTiledPrimitiveType, StreamedTiledShapeValueType, install_undefined_tiled_shape_column,
 };
+use casa_tables::{ColumnOverrides, GeneratedScalarColumn, TableInfo, TableOptions};
 use fitsio::FitsFile;
 
 use super::groups::{GroupMetadata, GroupVisibility, VisibilityGroups, open_file};
@@ -94,7 +94,7 @@ pub fn import_uvfits(input: &Path, output: &Path, options: UvFitsImportOptions) 
             Value::TableRef(casa_tables::strip_directory(&system_power, &staging)),
         );
     }
-    columns.finish(&mut ms)?;
+    columns.finish(&mut ms, &staging)?;
     if let Some(table) = &extensions.system_power {
         table.save(TableOptions::new(&system_power))?;
     }
@@ -105,6 +105,7 @@ pub fn import_uvfits(input: &Path, output: &Path, options: UvFitsImportOptions) 
 struct ImportColumns {
     writer: MeasurementSetWriteSession,
     rows: usize,
+    category_tile: [usize; 4],
 }
 
 impl ImportColumns {
@@ -123,6 +124,7 @@ impl ImportColumns {
             .checked_mul(layout.windows)
             .ok_or_else(|| invalid("UVFITS row count overflow"))?;
         let tile = import_tiles(header, groups, options);
+        let category_tile = [tile[0], tile[1], 1, tile[2]];
         let visibility = [layout.corr.len(), layout.frequency.length];
         let weight = [layout.corr.len()];
         let shape = |name: &str, value_type, cell: &[usize], tile_shape, storage_manager| {
@@ -169,18 +171,19 @@ impl ImportColumns {
             MeasurementSetWritePlan::variable_array_creation(rows, arrays, scalars, resources)
                 .map_err(invalid)?;
         let writer = MeasurementSetWriteSession::start(path, plan).map_err(invalid)?;
-        Ok(Self { writer, rows })
+        Ok(Self {
+            writer,
+            rows,
+            category_tile,
+        })
     }
 
-    fn finish(self, ms: &mut MeasurementSet) -> MsResult<()> {
+    fn finish(self, ms: &mut MeasurementSet, path: &Path) -> MsResult<()> {
         let mut overrides = ColumnOverrides::for_row_count(self.rows);
         for name in ["DATA", "FLAG", "WEIGHT", "SIGMA", "WEIGHT_SPECTRUM", "UVW"] {
             overrides.insert_deferred(name);
         }
-        overrides.insert_generated_array(
-            "FLAG_CATEGORY",
-            GeneratedArrayColumn::constant(self.rows, None),
-        );
+        overrides.insert_deferred("FLAG_CATEGORY");
         for (name, value) in CONSTANT_COLUMNS {
             overrides.insert_generated_scalar(
                 name,
@@ -190,7 +193,19 @@ impl ImportColumns {
         self.writer
             .save_and_finish(ms, &overrides)
             .map_err(invalid)?;
-        Ok(())
+        let seq =
+            crate::ms::measurement_set_main_data_manager_sequence(ms.main_table(), "FLAG_CATEGORY")
+                .ok_or_else(|| invalid("Missing FLAG_CATEGORY storage manager"))?;
+        install_undefined_tiled_shape_column(
+            path,
+            seq,
+            "FLAG_CATEGORY",
+            self.rows,
+            StreamedTiledPrimitiveType::Bool,
+            3,
+            &self.category_tile,
+        )
+        .map_err(invalid)
     }
 }
 
