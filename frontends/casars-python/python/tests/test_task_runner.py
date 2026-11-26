@@ -123,7 +123,13 @@ def test_sigint_cleans_up_and_second_native_run_succeeds(native_dataset, monkeyp
         def flush(self):
             stderr.flush()
 
-    imaging = {"vis": native_dataset.name, "imsize": 64, "cell": "30arcsec", "niter": 0}
+    imaging = {
+        "vis": native_dataset.name,
+        "imsize": 64,
+        "cell": "30arcsec",
+        "niter": 0,
+        "backend": "cpu",
+    }
     with monkeypatch.context() as patch:
         patch.setenv("CASA_RS_LOG_STDERR_PRIORITY", "INFO")
         patch.setattr(sys, "stderr", Terminal())
