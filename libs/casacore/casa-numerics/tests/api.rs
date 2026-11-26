@@ -44,3 +44,22 @@ fn rank_deficient_fit_returns_the_minimum_norm_coefficients() {
     close(fit[0], 3.5);
     close(fit[1], 0.0);
 }
+
+#[test]
+fn reweighting_preserves_exact_fit_zero_residual_samples() {
+    // Pass 1 constant mean is 2.0, so residuals are [0.0, 2.0, 1.0, 3.0].
+    // The active sample with 0.0 residual must receive weight 1.0 (not MIN_POSITIVE).
+    let samples = [
+        (-1.0, 2.0, 1.0),
+        (0.0, 0.0, 1.0),
+        (1.0, 1.0, 1.0),
+        (2.0, 5.0, 1.0),
+    ];
+    let fit = fit_polynomial_row(
+        &samples,
+        1,
+        RowWeights::Reweighted(NonZeroUsize::new(2).unwrap()),
+    )
+    .unwrap();
+    close(fit[0], 4.0 / 3.0);
+}

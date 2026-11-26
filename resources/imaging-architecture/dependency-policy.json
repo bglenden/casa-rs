@@ -226,9 +226,7 @@
     "libs/casacore/casa-aipsio/src",
     "libs/casacore/casa-measures/src"
    ],
-   "exclude_roots": [
-    "libs/casacore/casa-tables/src/bin"
-   ],
+   "exclude_roots": [],
    "extensions": [
     ".rs"
    ],
@@ -262,7 +260,6 @@
     "libs/casacore/casa-measures/src"
    ],
    "exclude_roots": [
-    "libs/casacore/casa-tables/src/bin",
     "libs/casacore/casa-tables/src/log_table.rs"
    ],
    "extensions": [

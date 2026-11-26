@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Multi-process lock contention integration tests.
 //!
-//! These tests use the `lock_helper` helper binary to verify that
+//! These tests spawn this test binary in a child process to verify that
 //! fcntl-based table locking works correctly across OS processes.
 //! Because fcntl locks are per-process (not per-fd), single-process
 //! tests cannot exercise true contention.
 #![cfg(unix)]
-// These tests spawn a helper binary and communicate via signal files.
-// The helper is a package bin target (`src/bin/lock_helper.rs`), so Cargo
-// builds it for tests and exposes `CARGO_BIN_EXE_lock_helper`.
+
+#[path = "lock_multiprocess/helper.rs"]
+mod helper;
 
 use std::collections::HashMap;
 use std::fs;
@@ -24,11 +24,42 @@ use casa_tables::{
     TableOptions, TableWriteLock,
 };
 
-/// Locate the test-built lock_helper binary.
-fn helper_binary() -> PathBuf {
-    let path = PathBuf::from(env!("CARGO_BIN_EXE_lock_helper"));
-    assert!(path.exists(), "lock_helper binary not found at {path:?}");
-    path
+const HELPER_ARGC_ENV: &str = "CASA_RS_LOCK_HELPER_ARGC";
+const HELPER_ARG_PREFIX_ENV: &str = "CASA_RS_LOCK_HELPER_ARG_";
+
+#[test]
+#[ignore = "helper process invoked by lock_multiprocess"]
+fn lock_helper_child() {
+    let argc: usize = std::env::var(HELPER_ARGC_ENV)
+        .expect("missing helper argc env")
+        .parse()
+        .expect("invalid helper argc");
+    let args: Vec<String> = (0..argc)
+        .map(|index| {
+            std::env::var(format!("{HELPER_ARG_PREFIX_ENV}{index}"))
+                .unwrap_or_else(|_| panic!("missing helper arg {index}"))
+        })
+        .collect();
+    helper::run(&args);
+}
+
+/// Build a `Command` that invokes `lock_helper_child` in a fresh process.
+fn helper_command(args: &[&str]) -> Command {
+    let exe = std::env::current_exe().expect("test binary path");
+    let mut command = Command::new(exe);
+    command.args(["--exact", "--ignored", "--nocapture", "lock_helper_child"]);
+    command.env(HELPER_ARGC_ENV, args.len().to_string());
+    for (index, arg) in args.iter().enumerate() {
+        command.env(format!("{HELPER_ARG_PREFIX_ENV}{index}"), arg);
+    }
+    command
+}
+
+fn extract_reply(stdout: &str) -> &str {
+    stdout
+        .lines()
+        .find_map(|line| line.strip_prefix(helper::REPLY_PREFIX))
+        .unwrap_or_else(|| panic!("helper stdout missing reply line: {stdout:?}"))
 }
 
 /// Create a test table with one row on disk.
@@ -70,22 +101,20 @@ fn wait_for_file(path: &Path, timeout: Duration) -> bool {
 fn write_lock_contention_across_processes() {
     let tmp = tempfile::TempDir::new().unwrap();
     let opts = create_test_table(tmp.path());
-    let helper = helper_binary();
     let table_dir = opts.path().to_str().unwrap();
 
     let signal_file = tmp.path().join("locked.signal");
     let wait_file = tmp.path().join("release.signal");
 
     // Process A: hold write lock.
-    let mut proc_a = Command::new(&helper)
-        .args([
-            table_dir,
-            "hold_write_lock",
-            signal_file.to_str().unwrap(),
-            wait_file.to_str().unwrap(),
-        ])
-        .spawn()
-        .expect("failed to spawn process A");
+    let mut proc_a = helper_command(&[
+        table_dir,
+        "hold_write_lock",
+        signal_file.to_str().unwrap(),
+        wait_file.to_str().unwrap(),
+    ])
+    .spawn()
+    .expect("failed to spawn process A");
 
     // Wait for process A to signal that it holds the lock.
     assert!(
@@ -94,8 +123,7 @@ fn write_lock_contention_across_processes() {
     );
 
     // Process B: try to acquire write lock — should fail.
-    let output_b = Command::new(&helper)
-        .args([table_dir, "try_write_lock"])
+    let output_b = helper_command(&[table_dir, "try_write_lock"])
         .output()
         .expect("failed to spawn process B");
 
@@ -112,8 +140,7 @@ fn write_lock_contention_across_processes() {
     assert!(status_a.success(), "Process A should exit cleanly");
 
     // Process B retries: should succeed now.
-    let output_b2 = Command::new(&helper)
-        .args([table_dir, "try_write_lock"])
+    let output_b2 = helper_command(&[table_dir, "try_write_lock"])
         .output()
         .expect("failed to spawn process B retry");
 
@@ -173,20 +200,18 @@ fn wait_for_request_from_this_process(table: &Path, timeout: Duration) -> bool {
 fn auto_locked_open_waits_for_the_read_lock_before_loading_metadata() {
     let tmp = tempfile::TempDir::new().unwrap();
     let opts = create_test_table(tmp.path());
-    let helper = helper_binary();
     let table_dir = opts.path().to_str().unwrap();
     let locked_file = tmp.path().join("writer-locked.signal");
     let release_file = tmp.path().join("writer-release.signal");
 
-    let mut writer = Command::new(&helper)
-        .args([
-            table_dir,
-            "hold_write_lock",
-            locked_file.to_str().unwrap(),
-            release_file.to_str().unwrap(),
-        ])
-        .spawn()
-        .expect("failed to spawn lock holder");
+    let mut writer = helper_command(&[
+        table_dir,
+        "hold_write_lock",
+        locked_file.to_str().unwrap(),
+        release_file.to_str().unwrap(),
+    ])
+    .spawn()
+    .expect("failed to spawn lock holder");
     assert!(
         wait_for_file(&locked_file, Duration::from_secs(10)),
         "writer did not acquire its lock"
@@ -225,20 +250,18 @@ fn auto_locked_open_waits_for_the_read_lock_before_loading_metadata() {
 fn table_write_lock_waits_for_another_process_in_the_request_list() {
     let tmp = tempfile::TempDir::new().unwrap();
     let opts = create_test_table(tmp.path());
-    let helper = helper_binary();
     let table_dir = opts.path().to_str().unwrap();
     let locked_file = tmp.path().join("holder-locked.signal");
     let release_file = tmp.path().join("holder-release.signal");
 
-    let mut holder = Command::new(&helper)
-        .args([
-            table_dir,
-            "hold_read_lock",
-            locked_file.to_str().unwrap(),
-            release_file.to_str().unwrap(),
-        ])
-        .spawn()
-        .expect("failed to spawn lock holder");
+    let mut holder = helper_command(&[
+        table_dir,
+        "hold_read_lock",
+        locked_file.to_str().unwrap(),
+        release_file.to_str().unwrap(),
+    ])
+    .spawn()
+    .expect("failed to spawn lock holder");
     assert!(
         wait_for_file(&locked_file, Duration::from_secs(10)),
         "holder did not acquire its lock"
@@ -270,20 +293,18 @@ fn table_write_lock_waits_for_another_process_in_the_request_list() {
 fn table_write_lock_admits_a_writer_after_a_holder_that_wrote_nothing() {
     let tmp = tempfile::TempDir::new().unwrap();
     let opts = create_test_table(tmp.path());
-    let helper = helper_binary();
     let table_dir = opts.path().to_str().unwrap();
     let locked_file = tmp.path().join("holder-locked.signal");
     let release_file = tmp.path().join("holder-release.signal");
 
-    let mut holder = Command::new(&helper)
-        .args([
-            table_dir,
-            "hold_write_lock",
-            locked_file.to_str().unwrap(),
-            release_file.to_str().unwrap(),
-        ])
-        .spawn()
-        .expect("failed to spawn lock holder");
+    let mut holder = helper_command(&[
+        table_dir,
+        "hold_write_lock",
+        locked_file.to_str().unwrap(),
+        release_file.to_str().unwrap(),
+    ])
+    .spawn()
+    .expect("failed to spawn lock holder");
     assert!(
         wait_for_file(&locked_file, Duration::from_secs(10)),
         "holder did not acquire its lock"
@@ -311,20 +332,18 @@ fn acquire_through_a_published_write(
     signals: &Path,
     acquire: fn(&Path) -> Result<TableWriteLock, TableError>,
 ) -> Result<TableWriteLock, TableError> {
-    let helper = helper_binary();
     let staged_file = signals.join("row-staged.signal");
     let publish_file = signals.join("publish.signal");
-    let mut writer = Command::new(&helper)
-        .args([
-            table.to_str().unwrap(),
-            "hold_write_with_row",
-            "42",
-            "published",
-            staged_file.to_str().unwrap(),
-            publish_file.to_str().unwrap(),
-        ])
-        .spawn()
-        .expect("failed to spawn staged writer");
+    let mut writer = helper_command(&[
+        table.to_str().unwrap(),
+        "hold_write_with_row",
+        "42",
+        "published",
+        staged_file.to_str().unwrap(),
+        publish_file.to_str().unwrap(),
+    ])
+    .spawn()
+    .expect("failed to spawn staged writer");
     assert!(
         wait_for_file(&staged_file, Duration::from_secs(10)),
         "writer did not stage the new row while holding its lock"
@@ -385,7 +404,7 @@ fn output_before(mut child: std::process::Child, deadline: std::time::Instant) -
     while std::time::Instant::now() < deadline {
         if child.try_wait().expect("poll the helper").is_some() {
             let output = child.wait_with_output().expect("helper output");
-            return Some(String::from_utf8_lossy(&output.stdout).into_owned());
+            return Some(extract_reply(&String::from_utf8_lossy(&output.stdout)).to_owned());
         }
         thread::sleep(Duration::from_millis(20));
     }
@@ -403,23 +422,21 @@ fn output_before(mut child: std::process::Child, deadline: std::time::Instant) -
 fn competing_read_lock_upgrades_do_not_deadlock() {
     let tmp = tempfile::TempDir::new().unwrap();
     let opts = create_test_table(tmp.path());
-    let helper = helper_binary();
     let table_dir = opts.path().to_str().unwrap();
     let go_file = tmp.path().join("go.signal");
 
     let upgraders = [2, 3].map(|id| {
         let ready_file = tmp.path().join(format!("ready-{id}.signal"));
-        let child = Command::new(&helper)
-            .args([
-                table_dir,
-                "auto_locked_write_row",
-                &id.to_string(),
-                ready_file.to_str().unwrap(),
-                go_file.to_str().unwrap(),
-            ])
-            .stdout(std::process::Stdio::piped())
-            .spawn()
-            .expect("failed to spawn upgrader");
+        let child = helper_command(&[
+            table_dir,
+            "auto_locked_write_row",
+            &id.to_string(),
+            ready_file.to_str().unwrap(),
+            go_file.to_str().unwrap(),
+        ])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn upgrader");
         assert!(
             wait_for_file(&ready_file, Duration::from_secs(10)),
             "upgrader {id} did not take its read lock"
@@ -461,11 +478,9 @@ fn competing_read_lock_upgrades_do_not_deadlock() {
 fn a_read_request_keeps_the_write_lock_and_its_changes() {
     let tmp = tempfile::TempDir::new().unwrap();
     let opts = create_test_table(tmp.path());
-    let helper = helper_binary();
     let table_dir = opts.path().to_str().unwrap();
     let another_process_read_locks = || {
-        Command::new(&helper)
-            .args([table_dir, "try_read_lock"])
+        helper_command(&[table_dir, "try_read_lock"])
             .status()
             .expect("failed to spawn lock probe")
             .success()
@@ -510,12 +525,10 @@ fn a_read_request_keeps_the_write_lock_and_its_changes() {
 fn cross_process_write_then_read() {
     let tmp = tempfile::TempDir::new().unwrap();
     let opts = create_test_table(tmp.path());
-    let helper = helper_binary();
     let table_dir = opts.path().to_str().unwrap();
 
     // Process writes a new row.
-    let output = Command::new(&helper)
-        .args([table_dir, "write_row", "42", "from_child"])
+    let output = helper_command(&[table_dir, "write_row", "42", "from_child"])
         .output()
         .expect("failed to spawn write process");
     assert!(
@@ -525,8 +538,7 @@ fn cross_process_write_then_read() {
     );
 
     // Another process reads row count.
-    let output = Command::new(&helper)
-        .args([table_dir, "read_row_count"])
+    let output = helper_command(&[table_dir, "read_row_count"])
         .output()
         .expect("failed to spawn read process");
     assert!(
@@ -534,10 +546,8 @@ fn cross_process_write_then_read() {
         "read_row_count failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let count: usize = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse()
-        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let count: usize = extract_reply(&stdout).trim().parse().unwrap();
     assert_eq!(count, 2, "child should see the row written by sibling");
 
     // Also verify from Rust in this process.
@@ -551,22 +561,20 @@ fn cross_process_write_then_read() {
 fn waiting_locked_open_reads_metadata_published_before_acquisition() {
     let tmp = tempfile::TempDir::new().unwrap();
     let opts = create_test_table(tmp.path());
-    let helper = helper_binary();
     let table_dir = opts.path().to_str().unwrap();
     let staged_file = tmp.path().join("row-staged.signal");
     let publish_file = tmp.path().join("publish.signal");
 
-    let mut writer = Command::new(&helper)
-        .args([
-            table_dir,
-            "hold_write_with_row",
-            "42",
-            "published",
-            staged_file.to_str().unwrap(),
-            publish_file.to_str().unwrap(),
-        ])
-        .spawn()
-        .expect("failed to spawn staged writer");
+    let mut writer = helper_command(&[
+        table_dir,
+        "hold_write_with_row",
+        "42",
+        "published",
+        staged_file.to_str().unwrap(),
+        publish_file.to_str().unwrap(),
+    ])
+    .spawn()
+    .expect("failed to spawn staged writer");
     assert!(
         wait_for_file(&staged_file, Duration::from_secs(10)),
         "writer did not stage the new row while holding its lock"
@@ -594,15 +602,14 @@ fn waiting_locked_open_reads_metadata_published_before_acquisition() {
 fn sequential_writes_from_multiple_processes() {
     let tmp = tempfile::TempDir::new().unwrap();
     let opts = create_test_table(tmp.path());
-    let helper = helper_binary();
     let table_dir = opts.path().to_str().unwrap();
 
     // Three processes write rows sequentially.
     for i in 2..=4 {
-        let output = Command::new(&helper)
-            .args([table_dir, "write_row", &i.to_string(), &format!("proc_{i}")])
-            .output()
-            .expect("failed to spawn write process");
+        let output =
+            helper_command(&[table_dir, "write_row", &i.to_string(), &format!("proc_{i}")])
+                .output()
+                .expect("failed to spawn write process");
         assert!(
             output.status.success(),
             "write_row {i} failed: {}",
@@ -634,11 +641,9 @@ fn published_modify_counter(opts: &TableOptions) -> u32 {
 fn table_write_lock_survives_other_handles_in_this_process() {
     let tmp = tempfile::TempDir::new().unwrap();
     let opts = create_test_table(tmp.path());
-    let helper = helper_binary();
     let table_dir = opts.path().to_str().unwrap();
     let another_process_takes_the_write_lock = || {
-        Command::new(&helper)
-            .args([table_dir, "try_write_lock"])
+        helper_command(&[table_dir, "try_write_lock"])
             .output()
             .expect("failed to spawn lock probe")
             .status
@@ -683,7 +688,7 @@ fn table_write_lock_survives_other_handles_in_this_process() {
     assert!(another_process_takes_the_write_lock());
 }
 
-/// A `lock_helper held_reader` process: a reader in another process that
+/// A `held_reader` child process: a reader in another process that
 /// holds the table open between its lock periods, as a casacore session
 /// does, so what it read stays cached until a published write tells it to
 /// re-read the table.
@@ -695,8 +700,7 @@ struct HeldReader {
 
 impl HeldReader {
     fn open(table: &Path) -> Self {
-        let mut child = Command::new(helper_binary())
-            .args([table.to_str().unwrap(), "held_reader"])
+        let mut child = helper_command(&[table.to_str().unwrap(), "held_reader"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -713,9 +717,14 @@ impl HeldReader {
     }
 
     fn reply(&mut self) -> String {
-        let mut line = String::new();
-        self.stdout.read_line(&mut line).expect("reader reply");
-        line.trim_end().to_owned()
+        loop {
+            let mut line = String::new();
+            let read = self.stdout.read_line(&mut line).expect("reader reply");
+            assert!(read > 0, "held reader exited unexpectedly");
+            if let Some(reply) = line.trim_end().strip_prefix(helper::REPLY_PREFIX) {
+                return reply.to_owned();
+            }
+        }
     }
 
     /// Lock, read and unlock again: the `id` of row 0 and the modify counter
