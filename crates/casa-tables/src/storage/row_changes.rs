@@ -20,6 +20,7 @@ use super::{
 mod publish;
 mod replace_columns;
 pub(crate) use publish::ReversibleEdit;
+pub(crate) use replace_columns::replace_private_int32_column;
 
 pub(crate) enum Rows<'a> {
     Append {

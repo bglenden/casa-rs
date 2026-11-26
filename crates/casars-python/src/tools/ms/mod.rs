@@ -23,6 +23,7 @@ mod selection_indices;
 mod selection_record;
 mod sort;
 mod spectral_grid;
+mod spectral_rewrite;
 mod split;
 mod statistics;
 mod statwt;

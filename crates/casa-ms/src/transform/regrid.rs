@@ -2,6 +2,9 @@
 //! Plan the reference spectral grid, and project each visibility buffer onto it.
 
 mod axis;
+pub use axis::LegacySpectralGrid;
+mod frame_only;
+pub use frame_only::{reframe_staged_ms, stage_frame_only_ms};
 mod interpolate;
 mod partition;
 mod shift;
@@ -14,8 +17,9 @@ pub use tool_grid::{
 };
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
-use casa_tables::{Table, TableError, TableOptions};
+use casa_tables::{RequiredScalarColumnValues, Table, TableError, TableOptions};
 use casa_types::measures::MeasFrame;
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
 use casa_types::measures::frequency::FrequencyRef;
@@ -28,6 +32,7 @@ use crate::MeasurementSet;
 use crate::derived::engine::MsCalEngine;
 use crate::derived::parse_phase_direction;
 use crate::spectral_selection::CasaChannelFrequencies;
+use crate::subtables::FieldDirectionPolynomial;
 
 use super::channel_average::{AveragedStatistics, sigma_from_weight, weight_from_sigma};
 use super::{
@@ -39,8 +44,10 @@ use shift::Shift;
 
 pub(super) struct Plan {
     windows: BTreeMap<i32, Window>,
-    frame: Option<Frame>,
+    field_layout: Option<frame_only::Layout>,
+    largest_windows: BTreeMap<i32, i32>,
     combined: bool,
+    legacy: bool,
 }
 
 struct Window {
@@ -48,6 +55,7 @@ struct Window {
     axis: CasaChannelFrequencies,
     partitions: Partitions,
     frame: FrequencyRef,
+    conversion: Option<Arc<Frame>>,
     sample_grid: Vec<f64>,
     channel_map: Option<Vec<Option<usize>>>,
     interpolation: Interpolation,
@@ -65,11 +73,16 @@ struct Recent {
 }
 
 struct Frame {
-    engine: MsCalEngine,
+    geometry: Arc<FrameGeometry>,
     target: MeasFrame,
     target_reference: FrequencyRef,
     metadata_reference: FrequencyRef,
     source_velocity: Option<f64>,
+}
+
+struct FrameGeometry {
+    engine: MsCalEngine,
+    field_polynomials: BTreeMap<usize, FieldDirectionPolynomial>,
 }
 
 const MIN_SOURCE_VELOCITY_M_PER_S: f64 = 1e-6;
@@ -77,11 +90,11 @@ const MIN_SOURCE_VELOCITY_M_PER_S: f64 = 1e-6;
 impl Plan {
     pub(super) fn new(
         input: &MeasurementSet,
-        options: &MsRegridOptions,
+        (options, legacy): (&MsRegridOptions, Option<LegacySpectralGrid>),
         combined: Option<&mut combine::Grid>,
         channel_selection: &BTreeMap<i32, TransformChannelSelection>,
         channel_bins: &mut BTreeMap<i32, Vec<Vec<usize>>>,
-        first_selected_row: usize,
+        (first_selected_row, legacy_rows): (usize, Option<&[usize]>),
         budget_bytes: usize,
     ) -> Result<Self, MsTransformError> {
         let method = Method::parse(&options.interpolation).ok_or_else(|| {
@@ -90,7 +103,27 @@ impl Plan {
                 options.interpolation
             ))
         })?;
-        let frame = Frame::new(input, options, first_selected_row)?;
+        let cvel = matches!(legacy, Some(LegacySpectralGrid::Cvel));
+        if let Some(rows) = legacy_rows
+            && !cvel
+            && let Some(layout) = frame_only::Layout::new(input, options, Some(rows))?
+        {
+            return Self::with_field_layout(
+                input,
+                (options, legacy),
+                method,
+                layout,
+                channel_bins,
+                budget_bytes,
+            );
+        }
+        let first_integration = match legacy_rows {
+            Some(rows) if cvel => earliest_integration(input.main_table(), rows)?,
+            _ => first_selected_row,
+        };
+        let frame =
+            Frame::for_main_integration(input, options, first_integration, legacy.is_some())?
+                .map(Arc::new);
         let mut budget = GridBudget::new(budget_bytes, frame.is_some());
         let table = input.spectral_window().map_err(ms_error)?;
         let is_combined = combined.is_some();
@@ -111,11 +144,11 @@ impl Plan {
                 .map(|channel| channel.width)
                 .collect::<Vec<_>>();
             let window = Window::new(
-                options,
+                (options, legacy),
                 method,
                 (&centres, &widths, source),
                 &mut grid.bins,
-                frame.as_ref(),
+                frame.clone(),
                 &mut budget,
             )?;
             windows.insert(id, window);
@@ -144,11 +177,11 @@ impl Plan {
                     }
                 }
                 let window = Window::new(
-                    options,
+                    (options, legacy),
                     method,
                     (&centres, &widths, source),
                     bins,
-                    frame.as_ref(),
+                    frame.clone(),
                     &mut budget,
                 )?;
                 windows.insert(id, window);
@@ -156,16 +189,79 @@ impl Plan {
         }
         Ok(Self {
             windows,
-            frame,
+            field_layout: None,
+            largest_windows: BTreeMap::new(),
             combined: is_combined,
+            legacy: legacy.is_some(),
         })
+    }
+
+    fn with_field_layout(
+        input: &MeasurementSet,
+        (options, legacy): (&MsRegridOptions, Option<LegacySpectralGrid>),
+        method: Method,
+        layout: frame_only::Layout,
+        channel_bins: &BTreeMap<i32, Vec<Vec<usize>>>,
+        budget_bytes: usize,
+    ) -> Result<Self, MsTransformError> {
+        let table = input.spectral_window().map_err(ms_error)?;
+        let mut budget = GridBudget::new(budget_bytes, true);
+        let geometry = FrameGeometry::open(input, options, true)?;
+        let mut windows = BTreeMap::<i32, Window>::new();
+        let mut largest_windows = BTreeMap::<i32, i32>::new();
+        for (id, origin) in layout.windows.iter().enumerate() {
+            let id = id as i32;
+            let row = origin.spw as usize;
+            let centres = table.chan_freq(row).map_err(ms_error)?;
+            let widths = table.chan_width(row).map_err(ms_error)?;
+            let mut bins = channel_bins[&origin.spw].clone();
+            let frame = origin.frame_at_reference(options, &geometry)?.map(Arc::new);
+            let window = Window::new(
+                (options, legacy),
+                method,
+                (&centres, &widths, origin.reference),
+                &mut bins,
+                frame,
+                &mut budget,
+            )?;
+            let largest = largest_windows.entry(origin.spw).or_insert(id);
+            if windows
+                .get(largest)
+                .is_none_or(|other| window.axis.centres_hz.len() > other.axis.centres_hz.len())
+            {
+                *largest = id;
+            }
+            windows.insert(id, window);
+        }
+        Ok(Self {
+            windows,
+            field_layout: Some(layout),
+            largest_windows,
+            combined: false,
+            legacy: true,
+        })
+    }
+
+    pub(super) fn output_description(&self, row: usize) -> Option<i32> {
+        self.field_layout.as_ref()?.description(row)
+    }
+
+    pub(super) fn is_legacy(&self) -> bool {
+        self.legacy
+    }
+
+    pub(super) fn field_channel_count(&self, row: usize) -> Option<usize> {
+        let id = self.field_layout.as_ref()?.window(row)?;
+        self.windows
+            .get(&id)
+            .map(|window| window.axis.centres_hz.len())
     }
 
     fn window_id(&self, spw: i32) -> i32 {
         if self.combined {
             *self.windows.keys().next().expect("combined window")
         } else {
-            spw
+            self.largest_windows.get(&spw).copied().unwrap_or(spw)
         }
     }
 
@@ -188,9 +284,18 @@ impl Plan {
         input: &Table,
         row: usize,
     ) -> Result<Projection<'_>, MsTransformError> {
-        let id = self.window_id(spw);
+        let id = if let Some(layout) = &self.field_layout {
+            layout
+                .window(row)
+                .ok_or_else(|| invalid(format!("Missing regrid window for MAIN row {row}.")))?
+        } else {
+            self.window_id(spw)
+        };
         let window = self.windows.get_mut(&id).expect("selected window");
-        let (interpolation, shift) = if let Some(frame) = &self.frame {
+        let dynamic = window.conversion.as_ref().filter(|frame| {
+            window.frame != frame.target_reference || frame.source_velocity.is_some()
+        });
+        let (interpolation, shift) = if let Some(frame) = dynamic {
             let time = crate::subtables::get_f64(input, row, "TIME").map_err(ms_error)?;
             let field =
                 crate::subtables::get_i32(input, row, "FIELD_ID").map_err(ms_error)? as usize;
@@ -254,6 +359,16 @@ impl Plan {
         request: &MsTransformRequest,
         metadata: &CompactSpectralMetadata,
     ) -> Result<(), MsTransformError> {
+        if let Some(layout) = &self.field_layout {
+            return layout.write_resampled(&request.output_ms, |id, _, record| {
+                let window = &self.windows[&(id as i32)];
+                let range = 0..window.axis.centres_hz.len();
+                for (name, value) in window.metadata_cells(range, self.legacy) {
+                    record.upsert(name, value);
+                }
+                Ok(())
+            });
+        }
         let path = request.output_ms.join("SPECTRAL_WINDOW");
         let error = |source| MsTransformError::MutateMeasurementSet {
             path: path.display().to_string(),
@@ -274,49 +389,11 @@ impl Plan {
             } else {
                 metadata.spw_map[&original] as usize
             };
-            let reference = self
-                .frame
-                .as_ref()
-                .map_or(window.frame, |frame| frame.metadata_reference);
             for (part, range) in window.partitions.ranges().iter().enumerate() {
-                let centres = &window.axis.centres_hz[range.clone()];
-                let widths = &window.axis.steps_hz[range.clone()];
-                let signed_widths =
-                    if window.axis.centres_hz.first() < window.axis.centres_hz.last() {
-                        widths.to_vec()
-                    } else {
-                        widths.iter().map(|width| -width).collect()
-                    };
-                for (name, values) in [
-                    ("CHAN_FREQ", centres),
-                    ("CHAN_WIDTH", signed_widths.as_slice()),
-                    ("EFFECTIVE_BW", signed_widths.as_slice()),
-                    ("RESOLUTION", signed_widths.as_slice()),
-                ] {
-                    let value = ArrayValue::Float64(Array1::from_vec(values.to_vec()).into_dyn());
+                for (name, value) in window.metadata_cells(range.clone(), self.legacy) {
                     table
                         .column_accessor_mut(name)
-                        .and_then(|mut col| col.set(row + part, Value::Array(value)))
-                        .map_err(error)?;
-                }
-                for (name, value) in [
-                    ("NUM_CHAN", ScalarValue::Int32(centres.len() as i32)),
-                    ("REF_FREQUENCY", ScalarValue::Float64(centres[0])),
-                    (
-                        "TOTAL_BANDWIDTH",
-                        ScalarValue::Float64(
-                            (centres[centres.len() - 1] - centres[0]).abs()
-                                + (widths[0] + widths[widths.len() - 1]) / 2.,
-                        ),
-                    ),
-                    (
-                        "MEAS_FREQ_REF",
-                        ScalarValue::Int32(reference.casacore_code()),
-                    ),
-                ] {
-                    table
-                        .column_accessor_mut(name)
-                        .and_then(|mut col| col.set(row + part, Value::Scalar(value)))
+                        .and_then(|mut col| col.set(row + part, value))
                         .map_err(error)?;
                 }
             }
@@ -326,6 +403,23 @@ impl Plan {
             .save(TableOptions::new(&path))
             .map_err(error)
     }
+}
+
+fn earliest_integration(main: &Table, rows: &[usize]) -> Result<usize, MsTransformError> {
+    let mut columns = main
+        .required_scalar_columns_owned_for_rows(&["TIME"], rows)
+        .map_err(ms_error)?;
+    let Some(RequiredScalarColumnValues::Float64(times)) = columns.remove("TIME") else {
+        return Err(invalid(
+            "Invalid TIME column for cvel frame conversion.".into(),
+        ));
+    };
+    rows.iter()
+        .copied()
+        .zip(times)
+        .min_by(|(left, a), (right, b)| a.total_cmp(b).then_with(|| left.cmp(right)))
+        .map(|(row, _)| row)
+        .ok_or_else(|| invalid("No integration for cvel frame conversion.".into()))
 }
 
 struct GridBudget {
@@ -373,19 +467,23 @@ impl GridBudget {
 
 impl Window {
     fn new(
-        options: &MsRegridOptions,
+        (options, legacy): (&MsRegridOptions, Option<LegacySpectralGrid>),
         method: Method,
         (source_frequencies, source_widths, frame): (&[f64], &[f64], FrequencyRef),
         bins: &mut Vec<Vec<usize>>,
-        conversion: Option<&Frame>,
+        conversion: Option<Arc<Frame>>,
         budget: &mut GridBudget,
     ) -> Result<Self, MsTransformError> {
-        let needs_weight_scaling =
-            conversion.is_some_and(|target| frame != target.target_reference);
+        let needs_weight_scaling = legacy.is_some()
+            || conversion
+                .as_ref()
+                .is_some_and(|target| frame != target.target_reference);
         let converted_frame = conversion
+            .as_ref()
             .map(|target| target.prepare(frame, &target.target))
             .transpose()?;
         let source_shift = conversion
+            .as_ref()
             .and_then(|target| target.source_velocity)
             .filter(|velocity| velocity.abs() > MIN_SOURCE_VELOCITY_M_PER_S)
             .map(|velocity| radial_shift(-velocity));
@@ -415,8 +513,26 @@ impl Window {
                 }
             })
             .collect::<Vec<_>>();
+        let channel_bounds = matches!(legacy, Some(LegacySpectralGrid::CenteredChannels { .. }))
+            || (matches!(legacy, Some(LegacySpectralGrid::Cvel)) && options.mode == "channel_b");
+        if channel_bounds
+            && method == Method::FftShift
+            && !legacy_fft_channel_spacing(&converted, &converted_widths)
+        {
+            return Err(MsTransformError::LegacyRegridUnchanged);
+        }
         let maximum_channels = budget.maximum_output_channels(frequencies.len())?;
-        let axis = axis::output_axis(options, &converted, &converted_widths, maximum_channels)?;
+        let axis = match legacy {
+            Some(
+                grid @ (LegacySpectralGrid::CenteredChannels { .. }
+                | LegacySpectralGrid::CenteredNumeric { .. }),
+            ) => grid.centered_frequencies(&converted, &converted_widths, maximum_channels)?,
+            Some(LegacySpectralGrid::FrameOnly) => CasaChannelFrequencies {
+                centres_hz: converted.clone(),
+                steps_hz: converted_widths.clone(),
+            },
+            _ => axis::output_axis(options, &converted, &converted_widths, maximum_channels)?,
+        };
         let count = axis.centres_hz.len();
         budget.charge(frequencies.len(), count)?;
         let mut noise_scale = if needs_weight_scaling {
@@ -431,7 +547,12 @@ impl Window {
         let pre_bin = (ratio + 0.001).floor() as usize;
         let mut sample_grid = axis.centres_hz.clone();
         let mut channel_map = None;
-        if bins.iter().all(|bin| bin.len() == 1) && pre_bin >= 2 && pre_bin <= frequencies.len() / 2
+        // SubMS writes interpolation at the output centres directly. The
+        // fine intermediate grid is specific to the mstransform iterator.
+        if legacy.is_none()
+            && bins.iter().all(|bin| bin.len() == 1)
+            && pre_bin >= 2
+            && pre_bin <= frequencies.len() / 2
         {
             if options.preaverage {
                 let selected = bins.iter().flatten().copied().collect::<Vec<_>>();
@@ -461,6 +582,7 @@ impl Window {
             axis,
             partitions,
             frame,
+            conversion,
             sample_grid,
             channel_map,
             interpolation,
@@ -470,6 +592,68 @@ impl Window {
             noise_scale: noise_scale as f32,
         })
     }
+
+    fn metadata_cells(
+        &self,
+        range: std::ops::Range<usize>,
+        legacy: bool,
+    ) -> [(&'static str, Value); 8] {
+        let centres = &self.axis.centres_hz[range.clone()];
+        let widths = &self.axis.steps_hz[range];
+        let signed_widths = if legacy || self.axis.centres_hz.first() < self.axis.centres_hz.last()
+        {
+            widths.to_vec()
+        } else {
+            widths.iter().map(|width| -width).collect()
+        };
+        let array = |values: &[f64]| {
+            Value::Array(ArrayValue::Float64(
+                Array1::from_vec(values.to_vec()).into_dyn(),
+            ))
+        };
+        let reference = self
+            .conversion
+            .as_ref()
+            .map_or(self.frame, |frame| frame.metadata_reference);
+        let bandwidth = (centres[centres.len() - 1] - centres[0]).abs()
+            + (widths[0] + widths[widths.len() - 1]) / 2.;
+        [
+            ("CHAN_FREQ", array(centres)),
+            ("CHAN_WIDTH", array(&signed_widths)),
+            ("EFFECTIVE_BW", array(&signed_widths)),
+            ("RESOLUTION", array(&signed_widths)),
+            (
+                "NUM_CHAN",
+                Value::Scalar(ScalarValue::Int32(centres.len() as i32)),
+            ),
+            (
+                "REF_FREQUENCY",
+                Value::Scalar(ScalarValue::Float64(centres[0])),
+            ),
+            (
+                "TOTAL_BANDWIDTH",
+                Value::Scalar(ScalarValue::Float64(bandwidth)),
+            ),
+            (
+                "MEAS_FREQ_REF",
+                Value::Scalar(ScalarValue::Int32(reference.casacore_code())),
+            ),
+        ]
+    }
+}
+
+fn legacy_fft_channel_spacing(centres: &[f64], widths: &[f64]) -> bool {
+    let mut previous_spacing = widths.first().map_or(0., |width| width.abs());
+    centres
+        .windows(2)
+        .zip(widths.windows(2))
+        .all(|(centres, widths)| {
+            let spacing = (centres[1] - centres[0]).abs();
+            let equal = (widths[1].abs() - widths[0].abs()).abs() <= 0.1
+                && (spacing - previous_spacing).abs() <= 0.1;
+            previous_spacing = spacing;
+            equal
+        })
 }
 
 fn averaged_axis(frequencies: &[f64], widths: &[f64], bins: &[Vec<usize>]) -> (Vec<f64>, Vec<f64>) {
@@ -535,15 +719,75 @@ fn fine_grid(
     (frequencies, Some(map))
 }
 
-impl Frame {
-    fn new(
+impl FrameGeometry {
+    fn open(
         input: &MeasurementSet,
         options: &MsRegridOptions,
-        first_row: usize,
+        legacy: bool,
+    ) -> Result<Arc<Self>, MsTransformError> {
+        // SubMS evaluates FIELD.phaseDirMeas at the integration epoch for
+        // every frequency frame, including the direction of an ephemeris.
+        let engine = if legacy {
+            MsCalEngine::for_spectral_rewrite(input)
+        } else if options.outframe.eq_ignore_ascii_case("SOURCE") {
+            MsCalEngine::for_calibration(input)
+        } else {
+            MsCalEngine::new(input)
+        }
+        .map_err(ms_error)?;
+        let mut field_polynomials = BTreeMap::new();
+        if legacy {
+            let fields = input.field().map_err(ms_error)?;
+            for field in 0..fields.row_count() {
+                if let Some(polynomial) =
+                    fields.phase_direction_polynomial(field).map_err(ms_error)?
+                {
+                    field_polynomials.insert(field, polynomial);
+                }
+            }
+        }
+        Ok(Arc::new(Self {
+            engine,
+            field_polynomials,
+        }))
+    }
+
+    fn at(&self, time: f64, field: usize) -> crate::MsResult<MeasFrame> {
+        let Some(polynomial) = self.field_polynomials.get(&field) else {
+            return self.engine.spectral_frame_observatory(time, field);
+        };
+        let direction = polynomial.at_seconds(time);
+        let frame = self
+            .engine
+            .spectral_frame_observatory_direction(time, direction.direction.clone())?;
+        let resolved = direction.resolve_offset(&frame)?;
+        Ok(frame.with_direction(resolved))
+    }
+}
+
+impl Frame {
+    fn for_main_integration(
+        input: &MeasurementSet,
+        options: &MsRegridOptions,
+        row: usize,
+        legacy: bool,
     ) -> Result<Option<Self>, MsTransformError> {
         if options.outframe.trim().is_empty() {
             return Ok(None);
         }
+        let main = input.main_table();
+        let time = crate::subtables::get_f64(main, row, "TIME").map_err(ms_error)?;
+        let field = crate::subtables::get_i32(main, row, "FIELD_ID").map_err(ms_error)?;
+        let geometry = FrameGeometry::open(input, options, legacy)?;
+        Self::new(options, time, field as usize, &geometry).map(Some)
+    }
+
+    fn new(
+        options: &MsRegridOptions,
+        reference_time: f64,
+        reference_field: usize,
+        geometry: &Arc<FrameGeometry>,
+    ) -> Result<Self, MsTransformError> {
         let name = options.outframe.to_ascii_uppercase();
         let target_reference = if name == "SOURCE" {
             FrequencyRef::GEO
@@ -560,17 +804,6 @@ impl Frame {
         } else {
             target_reference
         };
-        let engine = if name == "SOURCE" {
-            MsCalEngine::for_calibration(input)
-        } else {
-            MsCalEngine::new(input)
-        }
-        .map_err(ms_error)?;
-        let table = input.main_table();
-        let reference_time =
-            crate::subtables::get_f64(table, first_row, "TIME").map_err(ms_error)?;
-        let reference_field =
-            crate::subtables::get_i32(table, first_row, "FIELD_ID").map_err(ms_error)? as usize;
         let phasecenter = options.phasecenter.trim();
         let field = if phasecenter.is_empty() {
             Some(reference_field)
@@ -580,7 +813,8 @@ impl Frame {
         let mut source_velocity = (name == "SOURCE").then_some(0.);
         let target = if let Some(field) = field {
             if name == "SOURCE" {
-                let velocity = engine
+                let velocity = geometry
+                    .engine
                     .attached_radial_velocity(reference_time, field)
                     .map_err(ms_error)?;
                 if phasecenter.is_empty()
@@ -594,23 +828,25 @@ impl Frame {
                 }
                 source_velocity = Some(velocity.map_or(0., |velocity| velocity.ms()));
             }
-            engine.spectral_frame_observatory(reference_time, field)
+            geometry.at(reference_time, field)
         } else {
             let direction = parse_phase_direction(phasecenter).ok_or_else(|| {
                 invalid(format!(
                     "Cannot interpret phasecenter {phasecenter:?} as a FIELD ID or direction."
                 ))
             })?;
-            engine.spectral_frame_observatory_direction(reference_time, direction)
+            geometry
+                .engine
+                .spectral_frame_observatory_direction(reference_time, direction)
         }
         .map_err(ms_error)?;
-        Ok(Some(Self {
-            engine,
+        Ok(Self {
+            geometry: Arc::clone(geometry),
             target,
             target_reference,
             metadata_reference,
             source_velocity,
-        }))
+        })
     }
 
     fn prepare(
@@ -637,13 +873,11 @@ impl Frame {
         time: f64,
         field: usize,
     ) -> Result<impl Fn(f64) -> f64 + use<>, MsTransformError> {
-        let origin = self
-            .engine
-            .spectral_frame_observatory(time, field)
-            .map_err(ms_error)?;
+        let origin = self.geometry.at(time, field).map_err(ms_error)?;
         let conversion = self.prepare(source, &origin)?;
         let correction = if let Some(offset) = self.source_velocity {
-            self.engine
+            self.geometry
+                .engine
                 .attached_radial_velocity(time, field)
                 .map_err(ms_error)?
                 .map(|velocity| velocity.ms())
@@ -754,6 +988,28 @@ impl Projection<'_> {
                 "Unexpected regridded visibility type.".into(),
             )),
         }
+    }
+
+    pub(super) fn scale_noise(
+        &self,
+        values: &mut ArrayValue,
+        sigma: bool,
+        hanning: bool,
+    ) -> Result<(), TableError> {
+        let ArrayValue::Float32(values) = values else {
+            return Err(TableError::Schema(
+                "Spectral weights and sigma must be Float32.".into(),
+            ));
+        };
+        let scale = if sigma {
+            // SubMS calculates SIGMA before refreshing the WEIGHT factors.
+            let factor = if hanning { 1.32 } else { 1.0 };
+            (self.noise_scale * factor).sqrt().recip()
+        } else {
+            self.noise_scale
+        };
+        values.mapv_inplace(|value| value * scale);
+        Ok(())
     }
 
     pub(super) fn statistics(

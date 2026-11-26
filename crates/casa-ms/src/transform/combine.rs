@@ -35,6 +35,7 @@ pub(super) struct Grid {
     pub(super) frequencies: Vec<f64>,
     pub(super) width: f64,
     interpolation: Vec<LinearSample>,
+    legacy_cvel: bool,
 }
 
 impl Grid {
@@ -44,6 +45,7 @@ impl Grid {
         grid_selection: &BTreeMap<i32, TransformChannelSelection>,
         bin_width: usize,
         grid_budget: usize,
+        legacy_cvel: bool,
     ) -> Result<Option<Self>, MsTransformError> {
         if grid_selection.len() < 2 {
             return Ok(None);
@@ -60,7 +62,7 @@ impl Grid {
             .map_or(0, |spw| spw.channels.len());
         for selected in selection.values() {
             let count = selected.channels.len();
-            if count != expected {
+            if !legacy_cvel && count != expected {
                 return Err(error(format!(
                     "Currently the option 'combinespws' is only supported when the number of channels is the same for all the spw's selected. One of the SPWs selected has {expected} channels, but another selected SPW has {count} channels."
                 )));
@@ -147,6 +149,7 @@ impl Grid {
             frequencies,
             width,
             interpolation,
+            legacy_cvel,
         }))
     }
 
@@ -757,7 +760,8 @@ fn reduce_group(
         };
         let flags = array_view(flags)?;
         let shape = [flags.nrows(), flags.ncols()];
-        if shape != *common_shape.get_or_insert(shape) {
+        let common = common_shape.get_or_insert(shape);
+        if shape[0] != common[0] || (!grid.legacy_cvel && shape[1] != common[1]) {
             return Err(TableError::Schema(
                 "SPW combination requires compatible correlation and selected channel axes.".into(),
             ));
@@ -800,6 +804,7 @@ fn reduce_group(
         weight_mode
     };
     let contributions = Contributors::new(grid, &rows_by_window, shape);
+    let different_exposure = different_exposure && !grid.legacy_cvel;
     for (i, copy) in columns.copies().iter().enumerate() {
         let cells = &input.visibility[i];
         let result = match copy.source {
@@ -834,14 +839,24 @@ fn reduce_group(
         output.visibility[i].push(result);
     }
     let masks = contributions.flags();
-    let weights = contributions.noise(weight_mode);
-    let (weight, sigma) = if weight_mode == sigma_mode {
-        let sigmas = weights.mapv(sigma_from_weight);
-        (weights, sigmas)
+    let (weight, sigma) = if grid.legacy_cvel {
+        // SubMS combines persisted spectra with the same overlap fractions as DATA.
+        let spectrum = |slot: usize, noise| {
+            input.spectra[slot][first]
+                .as_ref()
+                .map(|_| ArrayValue::Float32(contributions.noise(noise).into_dyn()))
+        };
+        (spectrum(0, Noise::Calibrated), spectrum(1, Noise::Sigma))
     } else {
+        let weight = contributions.noise(weight_mode);
+        let sigma = if weight_mode == sigma_mode {
+            weight.mapv(sigma_from_weight)
+        } else {
+            contributions.noise(sigma_mode).mapv(sigma_from_weight)
+        };
         (
-            weights,
-            contributions.noise(sigma_mode).mapv(sigma_from_weight),
+            Some(ArrayValue::Float32(weight.into_dyn())),
+            Some(ArrayValue::Float32(sigma.into_dyn())),
         )
     };
     output.flags.push(Some(ArrayValue::Bool(masks.into_dyn())));
@@ -854,8 +869,8 @@ fn reduce_group(
     output.uvw.push(input.uvw[first].clone());
     output.weights.push(input.weights[first].clone());
     output.sigmas.push(input.sigmas[first].clone());
-    output.spectra[0].push(Some(ArrayValue::Float32(weight.into_dyn())));
-    output.spectra[1].push(Some(ArrayValue::Float32(sigma.into_dyn())));
+    output.spectra[0].push(weight);
+    output.spectra[1].push(sigma);
     Ok(())
 }
 
@@ -928,6 +943,7 @@ struct Window<'a> {
 enum Noise {
     Calibrated,
     Observed,
+    Sigma,
     Unit,
 }
 
@@ -936,6 +952,7 @@ impl Window<'_> {
         match kind {
             Noise::Calibrated => self.weight.value(corr, channel),
             Noise::Observed => weight_from_sigma(self.sigma.value(corr, channel)),
+            Noise::Sigma => self.sigma.value(corr, channel),
             Noise::Unit => 1.0,
         }
     }
@@ -1005,7 +1022,7 @@ impl<'a> Contributors<'a> {
             let total = self.for_sample(corr, channel, |window, input, fraction| {
                 sum += fraction * f64::from(window.noise(kind, corr, input));
             });
-            if total >= 0.999999 {
+            if total >= 0.999999 || (self.grid.legacy_cvel && total > 0.) {
                 (sum / total) as f32
             } else {
                 sum as f32

@@ -69,24 +69,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (mode = None, nchan = None, start = None, width = None, interp = None, phasec = None, restfreq = None, outframe = None, veltype = None, hanning = None), text_signature = "($self, mode='channel', nchan=-1, start=[], width=[], interp='linear', phasec=[], restfreq=[], outframe='', veltype='radio', hanning=True)")]
-    fn cvel(
-        &self,
-        mode: Option<&Bound<'_, PyAny>>,
-        nchan: Option<&Bound<'_, PyAny>>,
-        start: Option<&Bound<'_, PyAny>>,
-        width: Option<&Bound<'_, PyAny>>,
-        interp: Option<&Bound<'_, PyAny>>,
-        phasec: Option<&Bound<'_, PyAny>>,
-        restfreq: Option<&Bound<'_, PyAny>>,
-        outframe: Option<&Bound<'_, PyAny>>,
-        veltype: Option<&Bound<'_, PyAny>>,
-        hanning: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("cvel")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (msfile = None, fitsfile = None, nomodify = None, lock = None, obstype = None, host = None, forcenewserver = None, antnamescheme = None), text_signature = "($self, msfile='', fitsfile='', nomodify=True, lock=False, obstype=0, host='', forcenewserver=False, antnamescheme='old')")]
     fn fromfits(
         &self,
@@ -145,23 +127,6 @@ impl PyMsTool {
         datacolumn: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("oldstatwt")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outframe = None, mode = None, restfreq = None, interpolation = None, start = None, center = None, bandwidth = None, chanwidth = None, hanning = None), text_signature = "($self, outframe='LSRK', mode='chan', restfreq=-3e+30, interpolation='LINEAR', start=-3e+30, center=-3e+30, bandwidth=-1.0, chanwidth=-1.0, hanning=True)")]
-    fn regridspw(
-        &self,
-        outframe: Option<&Bound<'_, PyAny>>,
-        mode: Option<&Bound<'_, PyAny>>,
-        restfreq: Option<&Bound<'_, PyAny>>,
-        interpolation: Option<&Bound<'_, PyAny>>,
-        start: Option<&Bound<'_, PyAny>>,
-        center: Option<&Bound<'_, PyAny>>,
-        bandwidth: Option<&Bound<'_, PyAny>>,
-        chanwidth: Option<&Bound<'_, PyAny>>,
-        hanning: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("regridspw")
     }
 
     /// Not yet implemented in casa-rs.

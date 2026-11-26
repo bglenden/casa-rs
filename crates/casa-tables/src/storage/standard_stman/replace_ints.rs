@@ -34,6 +34,20 @@ pub(in crate::storage) fn stage_int32_replacement(
         };
         selected.push((index, values));
     }
+    let selected = selected
+        .iter()
+        .map(|(column, values)| (*column, values.as_slice()))
+        .collect::<Vec<_>>();
+    replace_int32_columns(original, staged, manager, &selected, rows)
+}
+
+pub(in crate::storage) fn replace_int32_columns(
+    original: &Path,
+    target: &Path,
+    manager: &DataManagerEntry,
+    selected: &[(usize, &[i32])],
+    rows: u64,
+) -> Result<bool, StorageError> {
     if rows == 0 || selected.is_empty() {
         return Ok(false);
     }
@@ -43,7 +57,7 @@ pub(in crate::storage) fn stage_int32_replacement(
     let dm_info = parse_ssm_dm_blob(&manager.data)?;
     let indices = parse_ssm_indices(&mut input, &header)?;
     let mut edits = BTreeMap::<u32, Vec<(usize, &[i32])>>::new();
-    for (column, values) in &selected {
+    for (column, values) in selected {
         let (&offset, index) = dm_info
             .column_offsets
             .get(*column)
@@ -75,8 +89,10 @@ pub(in crate::storage) fn stage_int32_replacement(
         }
     }
 
-    fs::copy(original, staged)?;
-    let mut output = OpenOptions::new().write(true).open(staged)?;
+    if original != target {
+        fs::copy(original, target)?;
+    }
+    let mut output = OpenOptions::new().write(true).open(target)?;
     let mut buckets = ReadBuckets::new(input)?;
     let mut bytes = Vec::new();
     for (bucket, edits) in edits {

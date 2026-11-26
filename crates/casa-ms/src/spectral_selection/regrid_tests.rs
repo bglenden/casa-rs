@@ -384,3 +384,75 @@ fn an_unset_nchan_keeps_an_optical_velocity_table_within_the_data() {
         "{table:?}"
     );
 }
+
+#[test]
+fn centered_legacy_numeric_grids_match_casa() {
+    use LegacyRegridQuantity::{Frequency, OpticalVelocity, RadioVelocity, Wavelength};
+
+    // The unmodified ngc5921_ut.ms input in CASA 6.7.6.14's tool-ms suite.
+    let width = 24_414.062_5;
+    let channels = (0..63)
+        .map(|channel| 1_412_665_073.768_775_5 + f64::from(channel) * width)
+        .collect::<Vec<_>>();
+    let centre = channels[24];
+    let rest_hz = 1_420_405_751.0;
+    let cases = [
+        (
+            Frequency,
+            (centre, 32.0 * width, 2.0 * width, rest_hz),
+            [1_412_884_800.331_275_5, 1_412_933_628.456_275_5],
+            [48_828.125, 48_828.125],
+        ),
+        (
+            RadioVelocity,
+            (
+                vrad(centre, rest_hz),
+                32.0 * width * C / rest_hz,
+                2.0 * width * C / rest_hz,
+                rest_hz,
+            ),
+            [1_412_884_800.331_275_7, 1_412_933_628.456_275_7],
+            [48_828.125, 48_828.125],
+        ),
+        (
+            OpticalVelocity,
+            (
+                vopt(centre, rest_hz),
+                32.0 * width * C * rest_hz / centre.powi(2),
+                2.0 * width * C * rest_hz / centre.powi(2),
+                rest_hz,
+            ),
+            [1_412_884_901.946_048, 1_412_933_705.618_680_5],
+            [48_801.986_891_746_52, 48_805.358_372_926_71],
+        ),
+        (
+            Wavelength,
+            (
+                C / centre,
+                32.0 * width * C / centre.powi(2),
+                2.0 * width * C / centre.powi(2),
+                rest_hz,
+            ),
+            [1_412_884_901.946_047_3, 1_412_933_705.618_68],
+            [48_801.986_891_984_94, 48_805.358_373_165_13],
+        ),
+    ];
+
+    for (quantity, args, expected_centres, expected_widths) in cases {
+        let grid =
+            centered_numeric_frequencies(quantity, args, &channels, &[width; 63], 63).unwrap();
+        assert_eq!(grid.centres_hz.len(), 16, "{quantity:?}");
+        for (actual, expected) in grid.centres_hz.iter().zip(expected_centres) {
+            assert!(
+                (actual - expected).abs() < 1e-5,
+                "{quantity:?}: {actual}, {expected}"
+            );
+        }
+        for (actual, expected) in grid.steps_hz.iter().zip(expected_widths) {
+            assert!(
+                (actual - expected).abs() < 1e-5,
+                "{quantity:?}: {actual}, {expected}"
+            );
+        }
+    }
+}

@@ -9,7 +9,28 @@ use std::path::{Path, PathBuf};
 use crate::{TableError, TableWriteLock};
 
 mod copy_tree;
-pub use copy_tree::{copy_locked_external_tree, copy_locked_table_tree};
+pub use copy_tree::{
+    copy_locked_external_tree, copy_locked_table_tree, copy_locked_table_tree_with_shared_files,
+    preserve_replacement_tree_entries, private_table_file_metadata, table_manager_file_sequence,
+    write_private_table_preserving_modes,
+};
+
+/// Replace a physical Int32 column in an exclusively owned private stage.
+/// Returns `false` for unsupported layouts so the caller can use its general
+/// table writer. StandardStMan retains the descriptor and bucket layout.
+/// The caller must discard the stage on error and publish only on success.
+/// # Errors
+/// The descriptor or data buckets cannot be read or the payload cannot be
+/// safely updated. A fresh Table handle must read the updated values.
+#[doc(hidden)]
+pub fn replace_private_int32_column(
+    table: &Path,
+    column: &str,
+    values: &[i32],
+) -> Result<bool, TableError> {
+    crate::storage::row_changes::replace_private_int32_column(table, column, values)
+        .map_err(Into::into)
+}
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod bound_file;
