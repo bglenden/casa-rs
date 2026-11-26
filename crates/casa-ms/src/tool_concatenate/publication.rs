@@ -107,7 +107,7 @@ fn concatenate(
     }
     let mut held = WriteGuards::new(retained);
     held.acquire(BTreeSet::from([target.clone(), donor.clone()]))?;
-    let (attached, incoming) = rayon::join(
+    let (attached, incoming) = super::join_with_tracing(
         || InputTables::capture(&target),
         || InputTables::capture(&donor),
     );
@@ -126,7 +126,7 @@ fn concatenate(
     held.acquire(leaf_writers)?;
     validate_inputs(&attached, &incoming)?;
 
-    let (target_ms, donor_ms) = rayon::join(
+    let (target_ms, donor_ms) = super::join_with_tracing(
         || attached.open(target_main, false),
         || incoming.open(donor_main, true),
     );
@@ -259,12 +259,13 @@ fn concatenate(
         return Err(io("concatenation edit is missing its captured write lock"));
     }
     let prepare_tables = || {
+        let dispatch = tracing::dispatcher::get_default(Clone::clone);
         work.into_par_iter()
-            .map(prepare_table_edit)
+            .map(|entry| tracing::dispatcher::with_default(&dispatch, || prepare_table_edit(entry)))
             .collect::<MsResult<Vec<_>>>()
     };
     let edits = if let Some((file, text)) = scan_file.as_mut().zip(scan_text.as_deref()) {
-        rayon::join(prepare_tables, || file.stage(text)).0?
+        super::join_with_tracing(prepare_tables, || file.stage(text)).0?
     } else {
         prepare_tables()?
     };
@@ -630,9 +631,10 @@ fn publish_batch_then(
     mut edits: Vec<TableEdit<'_>>,
     finish: impl FnOnce() -> MsResult<()>,
 ) -> MsResult<()> {
+    let dispatch = tracing::dispatcher::get_default(Clone::clone);
     let publish = edits
         .par_iter_mut()
-        .map(TableEdit::publish)
+        .map(|edit| tracing::dispatcher::with_default(&dispatch, || edit.publish()))
         .collect::<Vec<_>>();
     let result: MsResult<()> = publish
         .into_iter()
@@ -640,7 +642,7 @@ fn publish_batch_then(
         .and_then(|()| {
             edits
                 .par_iter_mut()
-                .map(TableEdit::synchronize)
+                .map(|edit| tracing::dispatcher::with_default(&dispatch, || edit.synchronize()))
                 .collect::<Vec<_>>()
                 .into_iter()
                 .collect()
@@ -662,7 +664,9 @@ fn publish_batch_then(
             )))
         };
     }
-    edits.into_par_iter().for_each(TableEdit::finish);
+    edits
+        .into_par_iter()
+        .for_each(|edit| tracing::dispatcher::with_default(&dispatch, || edit.finish()));
     Ok(())
 }
 

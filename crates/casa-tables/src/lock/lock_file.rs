@@ -78,6 +78,7 @@ use super::sync_data::SyncData;
 use super::{LockType, TableHolder};
 
 mod delegated_write;
+mod wait;
 pub use delegated_write::DelegatedTableWrite;
 
 /// Size of a canonical `Int` in the lock file (4 bytes, big-endian).
@@ -520,22 +521,25 @@ impl LockFile {
                  is released, as casacore does",
                 table.display()
             );
+            let dispatch = tracing::dispatcher::get_default(Clone::clone);
             let (stop, stopped) = std::sync::mpsc::channel::<()>();
             std::thread::scope(|scope| {
                 let table = table.as_path();
                 scope.spawn(move || {
-                    while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) =
-                        stopped.recv_timeout(WAIT_REPORT_INTERVAL)
-                    {
-                        let waited_s = started.elapsed().as_secs_f64();
-                        tracing::info!(
-                            table = %table.display(),
-                            lock,
-                            waited_s,
-                            "still waiting for the {lock} lock on table {} after {waited_s:.0} s",
-                            table.display()
-                        );
-                    }
+                    tracing::dispatcher::with_default(&dispatch, move || {
+                        while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) =
+                            stopped.recv_timeout(WAIT_REPORT_INTERVAL)
+                        {
+                            let waited_s = started.elapsed().as_secs_f64();
+                            tracing::info!(
+                                table = %table.display(),
+                                lock,
+                                waited_s,
+                                "still waiting for the {lock} lock on table {} after {waited_s:.0} s",
+                                table.display()
+                            );
+                        }
+                    });
                 });
                 let outcome = self.wait_blocking(lock_type);
                 drop(stop);
@@ -855,48 +859,7 @@ impl LockFile {
 
     /// Remove our PID from the request list.
     fn remove_request_id(&self) -> io::Result<()> {
-        let fd = self.shared.fd;
-        let mut header = [0u8; SIZEREQID];
-        let n = read_at(fd, &mut header, 0)?;
-        if n < SIZEINT {
-            return Ok(());
-        }
-
-        let count = i32::from_be_bytes(header[0..4].try_into().unwrap());
-        if count <= 0 {
-            return Ok(());
-        }
-
-        // Find our PID in the list and remove it.
-        let mut found = false;
-        for i in 0..count.min(NRREQID as i32) as usize {
-            let pid_offset = (1 + 2 * i) * SIZEINT;
-            let pid = i32::from_be_bytes(header[pid_offset..pid_offset + 4].try_into().unwrap());
-            if pid == self.pid {
-                // Shift remaining entries down.
-                let remaining = count as usize - i - 1;
-                if remaining > 0 {
-                    let src_start = (1 + 2 * (i + 1)) * SIZEINT;
-                    let dst_start = pid_offset;
-                    let len = remaining * 2 * SIZEINT;
-                    header.copy_within(src_start..src_start + len, dst_start);
-                }
-                // Clear the last slot.
-                let last_offset = (1 + 2 * (count as usize - 1)) * SIZEINT;
-                header[last_offset..last_offset + 2 * SIZEINT].fill(0);
-                found = true;
-                break;
-            }
-        }
-
-        if found {
-            let new_count = count - 1;
-            header[0..4].copy_from_slice(&new_count.to_be_bytes());
-            write_at(fd, &header, 0)?;
-            unsafe { libc::fsync(fd) };
-        }
-
-        Ok(())
+        wait::remove_request_id_from_fd(self.shared.fd, self.pid)
     }
 }
 

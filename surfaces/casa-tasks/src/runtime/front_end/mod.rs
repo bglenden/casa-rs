@@ -243,7 +243,12 @@ impl<'a> TaskInvocation<'a> {
         }
     }
 
-    #[cfg(any(feature = "ms", feature = "imaging", feature = "images"))]
+    #[cfg(any(
+        feature = "ms",
+        feature = "imaging",
+        feature = "images",
+        feature = "vla"
+    ))]
     pub(crate) fn native_options(&self) -> Option<&crate::NativeTaskOptions> {
         self.native
     }

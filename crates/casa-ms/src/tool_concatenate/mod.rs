@@ -297,3 +297,17 @@ fn required_table(ms: &MeasurementSet, table: SubtableId) -> MsResult<&Table> {
     ms.subtable(table)
         .ok_or_else(|| MsError::MissingSubtable(table.name().into()))
 }
+
+pub(super) fn join_with_tracing<A, B, RA, RB>(left: A, right: B) -> (RA, RB)
+where
+    A: FnOnce() -> RA + Send,
+    B: FnOnce() -> RB + Send,
+    RA: Send,
+    RB: Send,
+{
+    let dispatch = tracing::dispatcher::get_default(Clone::clone);
+    rayon::join(
+        || tracing::dispatcher::with_default(&dispatch, left),
+        || tracing::dispatcher::with_default(&dispatch, right),
+    )
+}

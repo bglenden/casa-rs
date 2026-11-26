@@ -11,35 +11,6 @@ use crate::TableError;
 #[cfg(unix)]
 use std::sync::Arc;
 
-#[cfg(unix)]
-fn acquire_interruptibly(
-    lock: &mut LockFile,
-    path: &Path,
-    reservations: Option<&[DelegatedTableWrite]>,
-    cancelled: &dyn Fn() -> bool,
-) -> std::io::Result<LockOutcome> {
-    let mut outcome = lock.acquire_with_reservation(LockType::Write, 1, reservations)?;
-    if outcome == LockOutcome::HeldByAnotherProcess {
-        tracing::warn!(
-            "table {} is locked by another process; waiting for the write lock",
-            path.display()
-        );
-    }
-    while outcome == LockOutcome::HeldByAnotherProcess && !cancelled() {
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        if !cancelled() {
-            outcome = lock.acquire_with_reservation(LockType::Write, 1, reservations)?;
-        }
-    }
-    if cancelled() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Interrupted,
-            "task cancelled while acquiring table write lock",
-        ));
-    }
-    Ok(outcome)
-}
-
 /// Casacore's in-use marker for an open table that acquires access locks
 /// separately for its I/O.
 pub struct TableUseLock {
@@ -450,9 +421,11 @@ impl TableWriteLock {
             )
             .map_err(lock_io)?;
             let mut outcome = match cancelled {
-                Some(cancelled) => {
-                    acquire_interruptibly(&mut lock_file, &path, reservations.as_deref(), cancelled)
-                }
+                Some(cancelled) => lock_file.acquire_with_reservation_interruptibly(
+                    LockType::Write,
+                    reservations.as_deref(),
+                    cancelled,
+                ),
                 None => {
                     lock_file.acquire_with_reservation(LockType::Write, 1, reservations.as_deref())
                 }
