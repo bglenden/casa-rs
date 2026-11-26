@@ -9,7 +9,7 @@ pub(crate) mod observation;
 pub(crate) mod payload;
 
 use casa_imaging_runtime::charge_process_caches;
-use casa_ms::plot_document::PlotFigure;
+use casa_plot_data::plot_document::PlotFigure;
 
 use super::antennas::Array;
 use super::pointings::Pointings;
@@ -68,7 +68,7 @@ pub(super) fn prepare(
 fn figure(
     run: &Run<'_>,
     suffix: &str,
-    document: casa_ms::plot_document::PlotDocument,
+    document: casa_plot_data::plot_document::PlotDocument,
 ) -> PlotFigure {
     let mode = run.parameters.graphics.as_str();
     PlotFigure {

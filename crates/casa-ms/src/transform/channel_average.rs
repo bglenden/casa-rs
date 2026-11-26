@@ -45,14 +45,19 @@ impl<'a, T: Copy> ChannelMatrix<'a, T> {
     }
 }
 
+/// Weight convention backing a visibility data column.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum WeightKind {
+pub enum WeightKind {
+    /// Observed weights (`WEIGHT` / `SIGMA`).
     Observed,
+    /// Calibrated weights (`WEIGHT_SPECTRUM` / `WEIGHT` on corrected data).
     Calibrated,
+    /// Unit weights for model or lag data.
     Unit,
 }
 
-pub(crate) fn visibility_weight_kind(
+/// Choose the weight convention matching the requested visibility `column`.
+pub fn visibility_weight_kind(
     column: OptionalMainColumn,
     has_observed: bool,
     has_corrected: bool,
@@ -363,7 +368,7 @@ impl<'a> ChannelAverages<'a> {
 }
 
 /// Reduce channel weights, using flagged channels only when all are flagged.
-pub(crate) fn mean_weight_preferring_unflagged(bins: impl Iterator<Item = (bool, f32)>) -> f32 {
+pub fn mean_weight_preferring_unflagged(bins: impl Iterator<Item = (bool, f32)>) -> f32 {
     let mut sums = [0.0, 0.0];
     let mut counts = [0, 0];
     for (flagged, value) in bins {
@@ -407,7 +412,8 @@ pub(super) fn unaveraged_spectra(
     ))
 }
 
-pub(crate) fn weight_from_sigma(sigma: f32) -> f32 {
+/// Convert a CASA sigma value to its inverse-variance weight.
+pub fn weight_from_sigma(sigma: f32) -> f32 {
     if sigma > f32::MIN_POSITIVE {
         1.0 / (sigma * sigma)
     } else {
@@ -415,7 +421,8 @@ pub(crate) fn weight_from_sigma(sigma: f32) -> f32 {
     }
 }
 
-pub(crate) fn sigma_from_weight(weight: f32) -> f32 {
+/// Convert an inverse-variance weight to a CASA sigma value.
+pub fn sigma_from_weight(weight: f32) -> f32 {
     if weight > f32::MIN_POSITIVE {
         1.0 / weight.sqrt()
     } else {

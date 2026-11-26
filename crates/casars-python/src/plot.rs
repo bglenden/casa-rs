@@ -8,8 +8,8 @@
 //! layer's coordinates as owned `float64` NumPy arrays and its provenance as
 //! one dictionary per point.
 
-use casa_ms::plot_document::{PlotDocumentAxis, PlotDocumentLayer};
-use casa_ms::{
+use casa_plot_data::plot_document::{PlotDocumentAxis, PlotDocumentLayer};
+use casa_plot_data::{
     MeasurementSetPlot, MeasurementSetPlotRequest, MsPlotPreset,
     build_measurement_set_plot as build_plot,
 };

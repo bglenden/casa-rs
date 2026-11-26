@@ -302,14 +302,18 @@ pub(crate) fn reference_direction(
 }
 
 /// A typed inertial ephemeris or a legacy geocentric apparent table.
+/// Attached ephemeris data resolved for a FIELD row.
 #[derive(Clone, Debug)]
-pub(crate) enum AttachedFieldEphemeris {
+pub enum AttachedFieldEphemeris {
+    /// Inertial table ephemeris sampled at UTC epochs.
     Inertial(Arc<FieldEphemeris>),
+    /// Apparent JPL/comet ephemeris table.
     Apparent(Arc<CometTable>),
 }
 
 impl AttachedFieldEphemeris {
-    pub(crate) fn distance_metres(&self, mjd: f64) -> MsResult<f64> {
+    /// Interpolated distance in metres at the requested UTC MJD.
+    pub fn distance_metres(&self, mjd: f64) -> MsResult<f64> {
         let casacore_au = Unit::new("AU").expect("astronomical unit").val().factor;
         match self {
             Self::Inertial(series) => {
@@ -332,7 +336,8 @@ impl AttachedFieldEphemeris {
         }
     }
 
-    pub(crate) fn radial_velocity(
+    /// Interpolated radial velocity at the requested UTC MJD.
+    pub fn radial_velocity(
         &self,
         mjd: f64,
     ) -> MsResult<casa_types::measures::radial_velocity::MRadialVelocity> {

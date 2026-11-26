@@ -13,19 +13,25 @@ fn every_builtin_provider_validates_through_the_shared_envelope() {
     assert_task_provider("importvla", casa_tasks::vla::importvla_task_schema_bundle());
     assert_task_provider(
         "msexplore",
-        casa_ms::msexplore::task_contract::msexplore_task_schema_bundle(),
+        casa_tasks::ms::msexplore::task_contract::msexplore_task_schema_bundle(),
     );
     assert_task_provider(
         "simobserve",
         casars_simulation::simobserve_task_schema_bundle(),
     );
-    assert_task_provider("mstransform", casa_ms::mstransform_task_schema_bundle());
-    assert_task_provider("concat", casa_ms::concat::concat_task_schema_bundle());
-    assert_task_provider("flagdata", casa_ms::flagdata_task_schema_bundle());
-    assert_task_provider("flagmanager", casa_ms::flagmanager_task_schema_bundle());
+    assert_task_provider(
+        "mstransform",
+        casa_tasks::ms::mstransform_task_schema_bundle(),
+    );
+    assert_task_provider("concat", casa_tasks::ms::concat_task_schema_bundle());
+    assert_task_provider("flagdata", casa_tasks::ms::flagdata_task_schema_bundle());
+    assert_task_provider(
+        "flagmanager",
+        casa_tasks::ms::flagmanager_task_schema_bundle(),
+    );
     assert_task_provider(
         "msconvert",
-        casars_msconvert::msconvert_task_schema_bundle(),
+        casa_tasks::ms::msconvert::msconvert_task_schema_bundle(),
     );
     assert_task_provider(
         "image-analysis",

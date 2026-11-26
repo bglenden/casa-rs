@@ -233,7 +233,7 @@ impl MsCalEngine {
 
     /// Prepare FIELD scalar sampling, for which the ephemeris remains
     /// available on rows whose directions are supplied by polynomials.
-    pub(crate) fn for_ephemeris_scalars(ms: &MeasurementSet) -> MsResult<Self> {
+    pub fn for_ephemeris_scalars(ms: &MeasurementSet) -> MsResult<Self> {
         let mut engine = Self::new(ms)?;
         engine.field_motions = crate::ephemeris::scalar_field_motions(ms)?;
         Ok(engine)
@@ -461,7 +461,7 @@ impl MsCalEngine {
 
     /// Evaluate a scalar from the attached ephemeris at the FIELD column's
     /// interpolation epoch. A fixed field has no attached value.
-    pub(crate) fn field_ephemeris_scalar(
+    pub fn field_ephemeris_scalar(
         &self,
         field_id: usize,
         time_mjd_sec: f64,
@@ -773,7 +773,8 @@ impl MsCalEngine {
         self.hour_angle_at_position(time_mjd_sec, field_id, self.observatory_position.clone())
     }
 
-    pub(crate) fn hour_angle_at_position(
+    /// Compute hour angle (radians) at the supplied array position.
+    pub fn hour_angle_at_position(
         &self,
         time_mjd_sec: f64,
         field_id: usize,
@@ -808,7 +809,8 @@ impl MsCalEngine {
         )
     }
 
-    pub(crate) fn parallactic_angle_at_position(
+    /// Compute parallactic angle (radians) at the supplied array position.
+    pub fn parallactic_angle_at_position(
         &self,
         time_mjd_sec: f64,
         field_id: usize,
@@ -849,7 +851,7 @@ impl MsCalEngine {
     }
 
     /// Compute azimuth and elevation (radians) at the supplied array position.
-    pub(crate) fn azel_at_position(
+    pub fn azel_at_position(
         &self,
         time_mjd_sec: f64,
         field_id: usize,
@@ -1117,13 +1119,14 @@ impl MsCalEngine {
 
 /// The unprojected casacore UVWMachine rotation between two directions in
 /// the same reference frame.
-pub(crate) struct UvwRotation {
+pub struct UvwRotation {
     uvw: [[f64; 3]; 3],
     phase: [f64; 3],
 }
 
 impl UvwRotation {
-    pub(crate) fn new(source: &MDirection, target: &MDirection) -> Self {
+    /// Build a UVW coordinate rotation from `source` to `target` in the same frame.
+    pub fn new(source: &MDirection, target: &MDirection) -> Self {
         Self {
             uvw: uvw_rotation_matrix(source, target),
             phase: uvw_phase_rotation_vector(source, target),
@@ -1131,7 +1134,7 @@ impl UvwRotation {
     }
 
     /// Return the rotated UVW and geometric path difference in metres.
-    pub(crate) fn apply(&self, uvw: [f64; 3]) -> ([f64; 3], f64) {
+    pub fn apply(&self, uvw: [f64; 3]) -> ([f64; 3], f64) {
         let rotated = row_vec3_mul_mat3(uvw, self.uvw);
         (rotated, dot3(self.phase, rotated))
     }
@@ -1382,7 +1385,8 @@ fn detect_time_reference(ms: &MeasurementSet) -> EpochRef {
     detect_epoch_reference(ms.main_table(), "TIME", EpochRef::UTC)
 }
 
-pub(crate) fn detect_epoch_reference(table: &Table, column: &str, default: EpochRef) -> EpochRef {
+/// Detect the epoch reference frame from a table column's measure metadata.
+pub fn detect_epoch_reference(table: &Table, column: &str, default: EpochRef) -> EpochRef {
     let Some(reference) = borrowed_measure_reference(table, column) else {
         return default;
     };
@@ -1453,7 +1457,8 @@ fn selected_f64_value(table: &Table, row: usize, column: &str) -> MsResult<f64> 
     }
 }
 
-pub(crate) fn resolve_direction_reference_selected(
+/// Resolve the direction reference frame for a selected row without reading all rows.
+pub fn resolve_direction_reference_selected(
     table: &Table,
     table_name: &str,
     column: &str,
@@ -1558,7 +1563,8 @@ fn resolve_field_phase_direction_j2000_with_observatory(
     Ok(dir.convert_to(DirectionRef::J2000, &frame)?)
 }
 
-pub(crate) fn resolve_direction_reference(
+/// Resolve the direction reference frame for one row of a table direction column.
+pub fn resolve_direction_reference(
     table: &Table,
     table_name: &str,
     column: &str,

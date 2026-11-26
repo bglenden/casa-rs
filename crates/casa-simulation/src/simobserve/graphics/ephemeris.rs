@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's 96-sample elevation curve, transit and observation time range.
 
-use casa_ms::{
-    MeasurementSet,
-    plot_document::{PlotDocumentPanel, PlotLayerData, PlotLayerKind},
-};
+use casa_ms::MeasurementSet;
+use casa_plot_data::plot_document::{PlotDocumentPanel, PlotLayerData, PlotLayerKind};
 use casa_types::ArrayValue;
 use casa_types::measures::{
     EpochRef, MEpoch, MeasFrame,

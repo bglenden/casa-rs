@@ -31,6 +31,7 @@ casa-imaging-singledish = { path = "../casa-imaging-singledish" }
 casa-lattices = { path = "../casa-lattices" }
 casa-ms = { path = "../casa-ms" }
 casa-numerics = { path = "../casa-numerics" }
+casa-plot-data = { path = "../../surfaces/casa-plot-data" }
 casa-contracts = { path = "../../surfaces/casa-contracts" }
 casa-tables = { path = "../casa-tables" }
 casa-task-runtime = { path = "../casa-task-runtime" }

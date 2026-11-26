@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use casa_ms::plot_document::{
+use casa_plot_data::plot_document::{
     PlotAxisScale, PlotDocument, PlotDocumentAnnotation, PlotDocumentAxis, PlotDocumentLayer,
     PlotDocumentPanel, PlotFigure, PlotLayerKind, PlotLayerStyle, PlotLayout, PlotPayloadStrategy,
     PlotTextStyle,

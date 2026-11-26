@@ -256,9 +256,11 @@ dependencies = [
  "casa-ms",
  "casa-numerics",
  "casa-observation",
+ "casa-plot-data",
  "casa-simulation",
  "casa-tables",
  "casa-task-runtime",
+ "casa-tasks",
  "casa-test-support",
  "casa-types",
  "csv-core",
@@ -585,7 +587,6 @@ dependencies = [
  "bytemuck",
  "casa-atmosphere",
  "casa-components",
- "casa-contracts",
  "casa-coordinates",
  "casa-fft",
  "casa-logging",
@@ -594,7 +595,6 @@ dependencies = [
  "casa-observation",
  "casa-simulation",
  "casa-tables",
- "casa-task-runtime",
  "casa-test-support",
  "casa-types",
  "fancy-regex",
@@ -659,6 +659,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "casa-plot-data"
+version = "0.27.0"
+dependencies = [
+ "casa-atmosphere",
+ "casa-ms",
+ "casa-tables",
+ "casa-test-support",
+ "casa-types",
+ "flate2",
+ "ndarray",
+ "num-complex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tar",
+ "tempfile",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "casa-simulation"
 version = "0.27.0"
 dependencies = [
@@ -679,6 +700,7 @@ dependencies = [
  "casa-logging",
  "casa-ms",
  "casa-numerics",
+ "casa-plot-data",
  "casa-tables",
  "casa-task-runtime",
  "casa-test-support",
@@ -738,17 +760,24 @@ dependencies = [
 name = "casa-tasks"
 version = "0.27.0"
 dependencies = [
+ "casa-atmosphere",
  "casa-contracts",
  "casa-images",
  "casa-imaging-application",
  "casa-imaging-deconvolution",
  "casa-lattices",
+ "casa-measures-data",
  "casa-ms",
+ "casa-numerics",
+ "casa-observation",
+ "casa-plot-data",
+ "casa-tables",
  "casa-task-runtime",
  "casa-test-support",
  "casa-types",
  "casa-vla",
  "ndarray",
+ "num-complex",
  "schemars",
  "serde",
  "serde_json",
@@ -852,6 +881,7 @@ dependencies = [
  "casa-logging",
  "casa-ms",
  "casa-numerics",
+ "casa-plot-data",
  "casa-simulation",
  "casa-tables",
  "casa-task-runtime",
@@ -864,27 +894,10 @@ dependencies = [
  "ndarray",
  "serde",
  "serde_json",
- "tempfile",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "casars-msconvert"
-version = "0.27.0"
-dependencies = [
- "casa-contracts",
- "casa-ms",
- "casa-observation",
- "casa-task-runtime",
- "casa-types",
- "flate2",
- "schemars",
- "serde",
- "serde_json",
  "tar",
  "tempfile",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -901,12 +914,12 @@ dependencies = [
  "casa-lattices",
  "casa-measures-data",
  "casa-ms",
+ "casa-plot-data",
  "casa-simulation",
  "casa-tables",
  "casa-task-runtime",
  "casa-tasks",
  "casa-types",
- "casars-msconvert",
  "casars-simulation",
  "ndarray",
  "num-complex",
@@ -929,6 +942,7 @@ dependencies = [
  "casa-contracts",
  "casa-measures-data",
  "casa-ms",
+ "casa-plot-data",
  "casa-simulation",
  "casa-tables",
  "casa-task-runtime",

@@ -40,7 +40,7 @@ use columns::{SelectedRowColumns, load_f64_column, load_field_ids, load_i32_colu
 mod edit;
 mod feed_expr;
 mod intent;
-pub(crate) mod parser;
+pub mod parser;
 mod row_grammar;
 pub(crate) use row_grammar::{
     first_unflagged_time_row, flagdata_c_string, flagdata_channel_ranges,
@@ -57,7 +57,7 @@ pub(crate) use uv_expr::UvDistanceSelection;
 pub use antenna_expr::{
     AntennaRow, BaselineSelection, resolve_antenna_lists, resolve_antenna_selector,
 };
-pub use edit::{MsSelectorEditContext, validate_ms_selector_edit};
+pub use edit::{MsSelectorEditContext, MsSelectorKind, validate_ms_selector_edit};
 pub use parser::{FieldSelectorRow, resolve_field_selector_rows};
 pub use spw_expr::{
     ChannelFrequencyRange, ChannelRange, DataDescriptionRow, SpectralWindowRow, SpwSelection,
@@ -471,7 +471,8 @@ impl MsSelection {
         }
     }
 
-    pub(crate) fn from_summary_options(options: &crate::listobs::ListObsOptions) -> Self {
+    /// Build a row-selection request carrying only `listobs` selection fields.
+    pub fn from_summary_options(options: &crate::listobs::ListObsOptions) -> Self {
         Self {
             selectdata: options.selectdata,
             field: options.field.clone(),
@@ -694,14 +695,16 @@ impl MsSelection {
     }
 }
 
-pub(crate) fn resolve_row_indices_with_system_budget(
+/// Resolve MS main-table row indices using the standard grammar and system memory budget.
+pub fn resolve_row_indices_with_system_budget(
     ms: &MeasurementSet,
     request: &MsSelection,
 ) -> MsResult<Vec<usize>> {
     resolve_row_indices_with_grammar(ms, request, RowGrammar::Standard)
 }
 
-pub(crate) fn resolve_casa_row_indices(
+/// Resolve MS main-table row indices using CASA selection grammar and system memory budget.
+pub fn resolve_casa_row_indices(
     ms: &MeasurementSet,
     request: &MsSelection,
 ) -> MsResult<Vec<usize>> {
@@ -709,7 +712,8 @@ pub(crate) fn resolve_casa_row_indices(
         .map(|selection| selection.row_indices().collect())
 }
 
-pub(crate) fn resolve_casa_selection_with_system_budget(
+/// Resolve full MS selection metadata using CASA grammar and system memory budget.
+pub fn resolve_casa_selection_with_system_budget(
     ms: &MeasurementSet,
     request: &MsSelection,
 ) -> MsResult<ResolvedMsSelection> {

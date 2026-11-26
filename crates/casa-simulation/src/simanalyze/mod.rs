@@ -16,7 +16,7 @@ use crate::simutil::analysis::{self, Fidelity};
 use crate::{SessionResources, simutil};
 use casa_contracts::builtin_surface_bundle;
 use casa_imaging_runtime::{Demand, admit, charge_process_caches};
-use casa_ms::plot_document::PlotFigure;
+use casa_plot_data::plot_document::PlotFigure;
 use casa_task_runtime::resolve_plain_values;
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};

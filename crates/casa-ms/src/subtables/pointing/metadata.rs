@@ -183,7 +183,8 @@ impl PointingRows<'_> {
 }
 
 impl MsPointing<'_> {
-    pub(crate) fn plotms_samples(&self, antennas: &[i32]) -> MsResult<Vec<(i32, f64, MDirection)>> {
+    /// Read unique `(ANTENNA_ID, TIME, DIRECTION)` samples sorted for PlotMS.
+    pub fn plotms_samples(&self, antennas: &[i32]) -> MsResult<Vec<(i32, f64, MDirection)>> {
         let mut samples = Vec::new();
         PointingRows(self.table()).visit(0..self.row_count(), antennas, |id, sample, _, _| {
             if !sample.time.is_finite() {

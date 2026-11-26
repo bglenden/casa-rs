@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use casa_measures_data::{MeasuresRuntime, PlanetaryTable, RuntimePolicy};
-use casa_ms::plot_document::{
+use casa_plot_data::plot_document::{
     PlotAxisScale, PlotDocument, PlotDocumentAnnotation, PlotDocumentAxis, PlotDocumentLayer,
     PlotDocumentPanel, PlotLayerKind, PlotLayerStyle, PlotPayloadStrategy, PlotTextStyle,
 };

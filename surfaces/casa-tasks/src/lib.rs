@@ -8,5 +8,7 @@
 pub mod images;
 #[cfg(feature = "imaging")]
 pub mod imaging;
+#[cfg(feature = "ms")]
+pub mod ms;
 #[cfg(feature = "vla")]
 pub mod vla;

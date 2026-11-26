@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use casa_calibration::{
     CalibrationPlotPreset, CalibrationPlotRequest, build_calibration_plot_payload,
 };
-use casa_ms::{MsAxis, MsPlotPayload, MsSelection};
+use casa_ms::MsSelection;
+use casa_plot_data::{MsAxis, MsPlotPayload};
 use casa_tables::{ColumnSchema, Table, TableInfo, TableOptions, TableSchema};
 use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
