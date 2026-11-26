@@ -144,44 +144,17 @@ operations. The common validator rejects wrong surface kinds, missing
 parameter surfaces, noncanonical actions, duplicate operations, protocol
 metadata errors, and semantic/flattened schema drift.
 
-## Application Catalog and Launching
+## Application Catalog
 
-`casa-provider-contracts` also owns the single `ApplicationCatalog`. Every
-parameter surface has exactly one task-application entry that references the
-surface by stable ID, and every application is a task: each catalog entry is
-one task surface. Display name, category, and protocol
-family are projected from the referenced surface rather than copied into
-another inventory. Each application adds only executable/package identity
-(`launch`), its explicit override variable, the kinds of dataset it reads,
-and packaging visibility (`include_in_suite`); an entry carrying any other
-field is refused. Several
-surfaces may share one executable, a family whose first word
-names the surface: `imhead` and `imstat` run `imexplore`; `plotms` runs
-`msexplore`; `split` runs `mstransform`; and `gaincal`, `bandpass`,
-`applycal`, `fluxscale`, and `gencal` run `calibrate`, whose own `calibrate`
-surface is its default.
+`casa-contracts` owns the CLI and suite's `ApplicationCatalog`. Each entry
+references one task surface by stable ID and describes its executable, Cargo
+package, dataset kinds, and suite inclusion. Display name, category, and
+protocol family come from the referenced surface. A CLI command can host
+multiple tasks: `imexplore` hosts `imhead` and `imstat`, and `calibrate` hosts
+`gaincal`, `bandpass`, `applycal`, `fluxscale`, and `gencal` alongside its own
+default surface.
 
-`casa_provider_contracts::resolve_task_executable` is the one search for the
-file a task runs; Python reaches it through `casars._core`. The first step
-that applies decides:
-
-1. the task's override variable (`override_env`, `CASARS_<APP>_BIN`, such as
-   `CASARS_IMAGER_BIN` or `CASARS_CALIBRATE_BIN`);
-2. a suite root, `CASARS_SUITE_ROOT` or else the installed suite the Python
-   package belongs to (the installer's environment is `<suite>/python`,
-   beside `<suite>/bin` and `bundle-manifest.json`), whose `bin/` holds the
-   executable;
-3. a development checkout: the newest `debug` or `release` build of the
-   executable under the workspace the package was built from, in
-   `$CARGO_TARGET_DIR` or `target/`.
-
-A step that applies but lacks the file is an error naming what it lacked, and
-never falls through to a later step, so an installed suite never runs a
-checkout's build. A missing development build is reported with the
-`cargo build -p <package> --bin <executable>` that makes it. Nothing is run
-through `cargo`, `PATH` is not searched, and the caller's own path
-(`current_exe`) is not consulted. Python, packaging scripts, and the suite
-inventory all project from this catalog.
+Both the CLI and the Python extension call the task adapters in `casa-tasks`.
 
 ## Parameter Catalog and Surface Definitions
 

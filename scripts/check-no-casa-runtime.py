@@ -102,13 +102,10 @@ def catalog_violations() -> list[str]:
                 f"application {entry.get('id')!r} executable {executable!r} is not a bin "
                 f"target of workspace package {package!r}"
             )
-        for field in ("executable", "override_env"):
-            value = str(launch.get(field, ""))
-            if BRIDGE_NAME.search(value):
-                problems.append(
-                    f"application {entry.get('id')!r} launches through CASA bridge "
-                    f"{field}={value!r}"
-                )
+        if BRIDGE_NAME.search(executable):
+            problems.append(
+                f"application {entry.get('id')!r} launches through CASA bridge {executable!r}"
+            )
     for surface in load(surfaces_path).get("surfaces", []):
         invocation = str(surface.get("execution", {}).get("invocation_name", ""))
         if BRIDGE_NAME.search(invocation):

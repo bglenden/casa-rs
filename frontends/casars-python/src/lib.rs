@@ -95,12 +95,8 @@ fn _core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
         parameters::parameter_write_managed,
         module
     )?)?;
-    module.add_function(wrap_pyfunction!(tasks::application_catalog, module)?)?;
     module.add_function(wrap_pyfunction!(native_tasks::run_native_task, module)?)?;
-    module.add_function(wrap_pyfunction!(tasks::task_executable, module)?)?;
     module.add_function(wrap_pyfunction!(tasks::prepare_task_table_write, module)?)?;
-    module.add_function(wrap_pyfunction!(tasks::task_outcome, module)?)?;
-    module.add_function(wrap_pyfunction!(tasks::task_plot_documents, module)?)?;
     module.add_function(wrap_pyfunction!(plot::build_measurement_set_plot, module)?)?;
     Ok(())
 }

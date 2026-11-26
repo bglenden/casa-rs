@@ -8,8 +8,8 @@ Python (`-I`) against an extracted `scan-observation-engine-20261101.tar`: its
 `oracle-science/` and CASA's grammar receipts under `oracle-grammar-*/`.
 
 Each case calls `casars.tasks.tclean` with keyword arguments, as a user does,
-in a separate interpreter that has the casars package (`--casars-python`), with
-`CASARS_IMAGER_BIN` naming the task binary. Science cases compare every image
+in a separate interpreter that has the casars package (`--casars-python`).
+Science cases compare every image
 product with CASA's: exact product inventory, masks, finite support, NRMS at
 most 1e-3 (`.sumwt` within 5e-5 of CASA's peak), WCS, rest frequency, units,
 Stokes and frames, beam axes within 1e-3 and position angle within 0.01 deg,
@@ -32,7 +32,7 @@ from pathlib import Path
 SCALAR_RTOL = 1e-4
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from tclean_compare import compare_product, load_reader, members, run_native, sha256  # noqa: E402
+from tclean_compare import compare_product, load_reader, members, native_extension_sha256, run_native  # noqa: E402
 
 SCIENCE = {
     "all_true": {"selectdata": True},
@@ -55,7 +55,6 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--archive-root", type=Path, required=True)
     parser.add_argument("--casars-python", type=Path, required=True)
-    parser.add_argument("--imager-binary", type=Path, required=True)
     parser.add_argument("--revision", required=True, help="40-character source revision")
     parser.add_argument("--backend", default="cpu", choices=("cpu", "gpu"))
     parser.add_argument("--precision", default="f64", choices=("f32", "f64"))
@@ -71,7 +70,7 @@ def science_case(args, name, common, reference, tools):
     folder.mkdir(parents=True)
     values = dict(common, imagename=str(folder / "image"), **SCIENCE[name])
     values.update(backend=args.backend, gridprecision=args.precision)
-    row = {"parameters": values} | run_native(args.casars_python, args.imager_binary, values, folder)
+    row = {"parameters": values} | run_native(args.casars_python, values, folder)
     casa_folder = args.archive_root / "oracle-science" / name
     if "result" not in row:
         return row | {"passed": False}
@@ -116,7 +115,7 @@ def grammar_case(args, receipt, name, case, common):
     values = dict(common, imagename=str(folder / "image"), **selectors)
     values.update(backend=args.backend, gridprecision=args.precision)
     row = {"selectors": selectors, "casa_succeeded": case["succeeded"]}
-    row |= run_native(args.casars_python, args.imager_binary, values, folder)
+    row |= run_native(args.casars_python, values, folder)
     native = members(folder)
     if case["succeeded"]:
         row["passed"] = "result" in row and native == sorted(case["image_products"])
@@ -156,7 +155,7 @@ def main():
         "casa_tasks": casatasks.version_string(),
         "casa_tools": casatools.version_string(),
         "native_revision": args.revision,
-        "imager_binary_sha256": sha256(args.imager_binary),
+        "native_extension_sha256": native_extension_sha256(args.casars_python),
         "casars_python": str(args.casars_python),
         "backend": args.backend,
         "precision": args.precision,

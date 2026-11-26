@@ -306,26 +306,17 @@ To build and install the Python/command-line suite from the checkout:
 CARGO_INCREMENTAL=0 just install-local-suite
 ```
 
-For an editable Python development environment, build the task executables
-you need and install the package editable:
+For an editable Python development environment, install the package from the checkout.
 
 ```bash
-CARGO_INCREMENTAL=0 cargo build -p casa-calibration --bin calibrate
 python3 -m venv .venv
 source .venv/bin/activate
 CARGO_INCREMENTAL=0 python -m pip install -e 'frontends/casars-python[test,plot]'
 ```
 
-`cargo build -p <package> --bin <executable>` builds one task executable
-(`CARGO_INCREMENTAL=0 cargo build --workspace --bins` builds them all); the
-[application catalog](crates/casa-provider-contracts/resources/application-catalog.json)
-names each task's package and executable. Unless `CASARS_SUITE_ROOT` is
-set, a package built from a checkout runs the newest `debug` or `release`
-build of each executable in that checkout's `target/` (or
-`$CARGO_TARGET_DIR`), and a missing build is reported with the `cargo build`
-command that makes it. To run another file, set the task's override, such as
-`CASARS_CALIBRATE_BIN` or `CASARS_IMAGER_BIN`. Nothing searches `PATH` or
-runs `cargo`.
+To build a standalone CLI command, use `cargo build -p casars-cli --bin <executable>`.
+The [application catalog](surfaces/casa-contracts/resources/application-catalog.json)
+maps task surfaces to their CLI commands.
 
 Before building for performance measurements or release, use the pinned
 SIMD-enabled FFTW recipe rather than assuming the system package has the

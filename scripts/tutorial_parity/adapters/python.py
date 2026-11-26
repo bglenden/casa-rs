@@ -37,7 +37,6 @@ class PythonAdapter:
         if not resources.dry_run:
             write_json_atomic(request, {
                 "schema_version": 1,
-                "binary_dir": str(resources.binary_dir),
                 "operations": [
                     {
                         "task": operation.task,

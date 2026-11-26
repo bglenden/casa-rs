@@ -33,8 +33,8 @@ def load(path: Path) -> dict[str, object]:
 def main() -> int:
     applications = load(APPLICATIONS_PATH)
     surfaces = load(SURFACES_PATH)
-    if applications.get("schema_version") != 2:
-        fail("application catalog schema_version must be 2")
+    if applications.get("schema_version") != 3:
+        fail("application catalog schema_version must be 3")
     if surfaces.get("schema_version") != 1:
         fail("parameter surface schema_version must be 1")
 
@@ -73,7 +73,7 @@ def main() -> int:
         launch = entry.get("launch")
         if not isinstance(launch, dict) or not all(
             isinstance(launch.get(field), str) and launch[field]
-            for field in ("executable", "cargo_package", "override_env")
+            for field in ("executable", "cargo_package")
         ):
             fail(f"application {entry.get('id')!r} has an incomplete launch descriptor")
 

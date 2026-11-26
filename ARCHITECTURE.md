@@ -75,15 +75,9 @@ decision 10). Adding a crate to that set is the owner's decision.
   images cross it through the typed `TiledArrayStorage` seam.
 - Provider bundles are versioned boundary contracts; CLI parsers are views
   derived from them.
-- `casa-provider-contracts::ApplicationCatalog` is the one application
-  inventory; every entry is a task. `resolve_task_executable` is the one
-  resolver of a task's executable: the catalog override
-  (`CASARS_<APP>_BIN`), else a suite root's `bin/` (`CASARS_SUITE_ROOT`, or
-  the installed suite the Python package belongs to), else the newest
-  `debug` or `release` build of the development checkout the package was
-  built from. The first step that applies decides; a missing file is an
-  error naming the fix, never a fall-through to a later step, `PATH` or
-  `cargo run`.
+- `casa-contracts::ApplicationCatalog` maps task surfaces to the standalone
+  CLI and suite inventory. Python runs the adapters in `casa-tasks` through
+  the wheel's `casars._core` extension.
 - Parameter concepts live in the checked `ParameterCatalog`; each provider
   bundle embeds the concepts it references. A task's `SurfaceDefinition`
   supplies defaults, activation, narrowing and presentation, but
