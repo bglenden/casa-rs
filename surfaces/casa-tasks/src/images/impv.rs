@@ -18,7 +18,7 @@ pub fn impv_front_end()
     image_task_front_end("impv", &["impv"], run)
 }
 
-fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let request = ImpvRequest {
         imagename: task.input_path("imagename")?,
         outfile: task.path("outfile")?,
@@ -33,7 +33,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         region: parse_region_parameter(task.value("region"), true)?,
         chans: task.text("chans")?,
         stokes: task.text("stokes")?,
-        mask: task.text("mask")?,
+        mask: super::front_end::mask_in_workspace(task)?,
         stretch: task.flag("stretch")?,
         overwrite: task.flag("overwrite")?,
     };

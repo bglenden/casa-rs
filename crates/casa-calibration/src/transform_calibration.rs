@@ -23,8 +23,9 @@ use crate::plan::{ApplyMode, ApplyPlanRequest, plan_transform_rows};
 /// table and calibration tables are read only.
 pub fn transform_callibrary(
     path: &Path,
+    workspace: &Path,
 ) -> Result<Option<Arc<dyn TransformInputView>>, CallibError> {
-    let calibration_tables = load_transform_apply_specs(path)?;
+    let calibration_tables = load_transform_apply_specs(path, workspace)?;
     if calibration_tables.is_empty() {
         return Ok(None);
     }

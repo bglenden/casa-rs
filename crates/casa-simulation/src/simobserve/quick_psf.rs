@@ -58,7 +58,11 @@ fn image_size(
         .ok_or_else(|| failure("the requested PSF size is not representable"))
 }
 
-pub(super) fn prepare(run: &mut Run<'_>, sky: &Sky) -> Result<(), SimobserveError> {
+pub(super) fn prepare(
+    run: &mut Run<'_>,
+    sky: &Sky,
+    cancel: &Cancel,
+) -> Result<(), SimobserveError> {
     if !run.predict
         || !run.uvmode
         || !matches!(run.parameters.graphics.as_str(), "both" | "file" | "screen")
@@ -100,7 +104,7 @@ pub(super) fn prepare(run: &mut Run<'_>, sky: &Sky) -> Result<(), SimobserveErro
         RunContext {
             host: *resources.host(),
             policy: *resources.policy(),
-            cancel: Cancel::new(),
+            cancel: cancel.clone(),
             summary: None,
         },
     )

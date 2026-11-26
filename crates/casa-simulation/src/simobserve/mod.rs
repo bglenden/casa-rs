@@ -89,6 +89,8 @@ pub use parameters::SimobserveParameters;
 
 use std::path::{Path, PathBuf};
 
+pub use casa_imaging_application::Cancel;
+
 use thiserror::Error;
 
 use crate::plot_sink::{SimobservePlotInput, SimulationPlotSink};
@@ -185,7 +187,7 @@ impl SimobserveError {
 /// What CASA raises, with its message, and what the sky-model helpers, the
 /// antenna-list reader and the simulator sessions refuse.
 pub fn simobserve(request: &SimobserveRequest) -> Result<SimobserveOutcome, SimobserveError> {
-    run(request, None)
+    simobserve_with_controls(request, None, &Cancel::new())
 }
 
 /// Simulate and emit complete figure inputs through `sink`.
@@ -197,13 +199,19 @@ pub fn simobserve_with_plot_sink(
     request: &SimobserveRequest,
     sink: &mut dyn SimulationPlotSink,
 ) -> Result<SimobserveOutcome, SimobserveError> {
-    run(request, Some(sink))
+    simobserve_with_controls(request, Some(sink), &Cancel::new())
 }
 
-fn run(
+/// Simulate using the caller's cancellation token and optional figure sink.
+///
+/// # Errors
+/// Simulation errors, cancellation at a phase boundary, or figure sink errors.
+pub fn simobserve_with_controls<'a, 'b>(
     request: &SimobserveRequest,
-    plot_sink: Option<&mut dyn SimulationPlotSink>,
+    plot_sink: Option<&'a mut (dyn SimulationPlotSink + 'b)>,
+    cancel: &Cancel,
 ) -> Result<SimobserveOutcome, SimobserveError> {
+    check_cancel(cancel)?;
     let graphics_requested = matches!(
         request.parameters.graphics.as_str(),
         "file" | "screen" | "both"
@@ -215,6 +223,7 @@ fn run(
     let sky = sky::complete(&mut run, input, &array)?;
     let pointings = pointings::prepare(&mut run, &sky, &array)?;
     let calibrator = schedule::calibrator(&mut run)?;
+    check_cancel(cancel)?;
     if run.predict {
         observe::observe(&mut run, &sky, &array, &pointings, calibrator.as_ref())?;
     } else if !run.parameters.thermalnoise.is_empty() || run.parameters.leakage > 0.0 {
@@ -227,7 +236,8 @@ fn run(
         }
         run.uvmode = !noise::is_total_power(&ms)?;
     }
-    quick_psf::prepare(&mut run, &sky)?;
+    check_cancel(cancel)?;
+    quick_psf::prepare(&mut run, &sky, cancel)?;
     if render_plots && let Some(sink) = plot_sink {
         let offsets = pointings::relative_offsets(&pointings.pointings, &sky)?;
         let pointing_centre = if run.predict {
@@ -270,6 +280,7 @@ fn run(
             resources: run.request.options.resources,
         })?;
     }
+    check_cancel(cancel)?;
     noise::corrupt(&mut run, &sky, &array)?;
     run.clean_up(&sky)?;
     Ok(SimobserveOutcome {
@@ -278,6 +289,13 @@ fn run(
         products: run.products,
         warnings: run.warnings,
     })
+}
+
+pub(crate) fn check_cancel(cancel: &Cancel) -> Result<(), SimobserveError> {
+    if cancel.is_cancelled() {
+        return Err(SimobserveError::raised("simulation was interrupted"));
+    }
+    Ok(())
 }
 
 /// One run's state, as CASA's task keeps it in its variables.

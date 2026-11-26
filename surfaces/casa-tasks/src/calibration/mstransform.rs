@@ -3,7 +3,7 @@
 //! and `split` task provider, on the shared task front end. Its first word
 //! names the surface (`mstransform split ...`); `mstransform` runs otherwise.
 
-use std::{io::ErrorKind, num::NonZeroUsize, path::Path};
+use std::{io::ErrorKind, num::NonZeroUsize};
 
 use crate::ms::{ms_task_success, mstransform_task_schema_bundle, task_selection_text};
 use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
@@ -30,7 +30,7 @@ pub fn mstransform_front_end()
 }
 
 /// Run the shared transform and project the public task's return value.
-fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let (request, mut options) = transform_request(task)?;
     if request.input_ms != request.output_ms && !request.output_ms.exists() {
         let calibration = callibrary(task)?;
@@ -164,7 +164,7 @@ fn callibrary(
         return Ok(None);
     }
     let filename = task.text("callib")?.unwrap_or_default();
-    transform_callibrary(Path::new(&filename)).map_err(|error| {
+    transform_callibrary(&task.io_path(&filename), task.workspace()).map_err(|error| {
         let reason = match &error {
             CallibError::ReadFile { source, .. } if source.kind() == ErrorKind::NotFound => {
                 "No such file or directory".into()

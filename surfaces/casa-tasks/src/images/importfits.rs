@@ -27,7 +27,7 @@ fn to_importfits_values(items: &[ParameterValue]) -> Vec<ImportFitsValue> {
         .collect()
 }
 
-fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let items = |name| match task.value(name) {
         Some(ParameterValue::Array(items)) => Ok(to_importfits_values(items)),
         _ => Err(TaskFailure::validation("expected a list").at(name)),

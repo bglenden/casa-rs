@@ -31,20 +31,20 @@ pub(crate) fn record_sdcal(task: &TaskInvocation<'_>, vis: &Path) {
 }
 
 fn record_messages(task: &TaskInvocation<'_>, vis: &Path, messages: Vec<String>) {
-    if let Err(error) = append(vis, "ms", task.surface(), messages) {
+    if let Err(error) = append(vis, "ms", task.surface(), messages, Some(task)) {
         tracing::warn!(task = task.surface(), "updating HISTORY: {error}");
     }
 }
 
 pub(super) fn record_setjy_flux(vis: &Path, messages: Vec<String>) {
-    if let Err(error) = append(vis, "setjy", "setjy", messages) {
+    if let Err(error) = append(vis, "setjy", "setjy", messages, None) {
         tracing::warn!("updating setjy flux HISTORY: {error}");
     }
 }
 
 pub(super) fn record_setjy_imager_flux(vis: &Path, messages: Vec<String>) {
     if !messages.is_empty()
-        && let Err(error) = append(vis, "imager", "imager::setjy()", messages)
+        && let Err(error) = append(vis, "imager", "imager::setjy()", messages, None)
     {
         tracing::warn!("updating setjy imager flux HISTORY: {error}");
     }
@@ -55,15 +55,31 @@ fn append(
     application: &str,
     origin: &str,
     messages: Vec<String>,
+    task: Option<&TaskInvocation<'_>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let path = vis.join("HISTORY");
     #[cfg(unix)]
-    let mut table = Table::open_with_lock(
-        TableOptions::new(&path),
-        casa_tables::LockOptions::new(casa_tables::LockMode::PermanentLockingWait),
-    )?;
+    let mut delegated = task
+        .and_then(TaskInvocation::native_options)
+        .and_then(|options| options.table_writes.as_ref())
+        .map(|reservations| {
+            casa_tables::TableWriteLock::acquire_reserved_to_reread(&path, 0, reservations)
+        })
+        .transpose()?;
+    #[cfg(unix)]
+    let mut table = if delegated.is_some() {
+        Table::open(TableOptions::new(&path))?
+    } else {
+        Table::open_with_lock(
+            TableOptions::new(&path),
+            casa_tables::LockOptions::new(casa_tables::LockMode::PermanentLockingWait),
+        )?
+    };
     #[cfg(not(unix))]
-    let mut table = Table::open(TableOptions::new(&path))?;
+    let mut table = {
+        let _ = task;
+        Table::open(TableOptions::new(&path))?
+    };
     let time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs_f64()
@@ -89,7 +105,15 @@ fn append(
         }
         table.add_row(row)?;
     }
+    #[cfg(unix)]
+    if let Some(lock) = delegated.as_mut() {
+        lock.record_write();
+    }
     table.save(TableOptions::new(path))?;
+    #[cfg(unix)]
+    if let Some(lock) = delegated {
+        lock.release()?;
+    }
     Ok(())
 }
 

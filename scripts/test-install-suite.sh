@@ -9,8 +9,8 @@ Usage: scripts/test-install-suite.sh [--hide-checkout]
 Builds the suite's release binaries and wheel, packages and installs the
 suite into a temporary root, and checks the installed suite from outside the
 checkout: the commands on PATH (never split, feather, immath or impv), every
-executable's discovery, a task run from its command and from the suite's
-Python, and the executable Python chose.
+executable's discovery, and a task run from its command and from the
+suite's Python.
 
 --hide-checkout moves the source checkout aside while the installed suite is
 checked, and back afterwards, so nothing the suite runs can reach it. CI
@@ -151,27 +151,22 @@ test -f .casa-rs/parameters/flagmanager/last-successful.toml
 
 echo "==> Verifying installed Python package"
 source "$install_root/$version/python/bin/activate"
-python - "$install_root/$version" <<'PY'
+python - <<'PY'
 import inspect
 import pathlib
-import sys
 
 import casars
 from casars import tasks
 from casars.parameters import TaskParameters
 
-suite = pathlib.Path(sys.argv[1]).resolve()
 assert casars.__version__
 for name in ("calibrate", "importvla", "msexplore", "tclean", "immoments", "impv", "imsubimage", "immath", "exportfits", "importfits"):
     assert callable(getattr(tasks, name))
 assert "vis" in inspect.signature(tasks.calibrate).parameters
 assert TaskParameters.defaults("calibrate").surface == "calibrate"
 
-# The suite's Python runs the suite's own executable.
 completion = tasks.run("flagmanager", vis="mssel_test_small.ms", mode="list")
 assert completion.successful, completion.describe()
-executable = pathlib.Path(completion.command[0]).resolve()
-assert executable.parent == suite / "bin", executable
 # The CASA-signature wrapper returns CASA's value: no saved versions, and
 # the MeasurementSet's absolute path.
 ms = str(pathlib.Path("mssel_test_small.ms").resolve())

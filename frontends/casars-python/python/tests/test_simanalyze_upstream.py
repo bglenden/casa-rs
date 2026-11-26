@@ -2,7 +2,6 @@
 """Runnable native counterpart of upstream's disabled combined-imaging case."""
 import gzip
 import json
-import os
 from pathlib import Path
 import tarfile
 
@@ -11,7 +10,6 @@ import pytest
 
 from casars import tasks
 from casars._native_image import NativeImageView
-from casars.tasks import _runner
 
 
 def test_upstream_combined_imaging_produces_if_tp_and_feather_images(tmp_path):
@@ -22,12 +20,6 @@ def test_upstream_combined_imaging_produces_if_tp_and_feather_images(tmp_path):
     Use the existing compact, independently CASA-generated scenario and
     numerical reference, within the regular test machine's memory budget.
     """
-    try:
-        _runner._task_executable("simanalyze")
-    except tasks.TaskBinaryNotFoundError as error:
-        if os.environ.get("CASARS_REQUIRE_TASK_BINARIES"):
-            raise
-        pytest.skip(str(error))
     fixtures = Path(__file__).resolve().parents[4] / "crates" / "casa-simulation/tests/data"
     with tarfile.open(fixtures / "simanalyze_multi_inputs.tar.gz") as archive:
         options = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}

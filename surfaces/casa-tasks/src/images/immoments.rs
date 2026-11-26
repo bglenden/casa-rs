@@ -15,7 +15,7 @@ pub fn immoments_front_end()
     image_task_front_end("immoments", &["immoments"], run)
 }
 
-fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let axis = match task.value("axis") {
         None => None,
         Some(ParameterValue::Integer(index)) => Some(MomentAxis::Index(*index)),
@@ -27,13 +27,13 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         outfile: task.path("outfile")?,
         moments: moment_numbers(&task.integers("moments")?)?,
         axis,
-        region: task.text("region")?,
+        region: super::front_end::region_in_workspace(task)?,
         box_pixels: task.text("box")?,
         stokes: task.text("stokes")?,
         chans: task.text("chans")?,
         includepix: pixel_range("includepix", &task.numbers("includepix")?)?,
         excludepix: pixel_range("excludepix", &task.numbers("excludepix")?)?,
-        mask: task.text("mask")?,
+        mask: super::front_end::mask_in_workspace(task)?,
         stretch: task.flag("stretch")?,
         overwrite: task.flag("overwrite")?,
     };

@@ -78,7 +78,7 @@ pub fn task_front_end()
 }
 
 /// Run one resolved msconvert request.
-fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let request = request_from(task)?;
     let result = msconvert(&request)?;
     // Each loss is logged as a warning when it is taken.

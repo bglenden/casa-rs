@@ -9,10 +9,13 @@ mod analysis;
 pub mod predictcomp;
 mod task_contract;
 
+pub(crate) use alma::run as run_simalma;
 pub use alma::{simalma_front_end, simalma_protocol_descriptor, simalma_task_schema_bundle};
+pub(crate) use analysis::run as run_simanalyze;
 pub use analysis::{
     simanalyze_front_end, simanalyze_protocol_descriptor, simanalyze_task_schema_bundle,
 };
+pub(crate) use predictcomp::run as run_predictcomp;
 pub use predictcomp::{predictcomp_front_end, predictcomp_task_schema_bundle};
 pub use task_contract::*;
 
@@ -20,8 +23,11 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use casa_contracts::{RunProductKind, SurfaceContractBundle};
-use casa_plot_data::simulation::simobserve_with_plots;
-use casa_simulation::simobserve::{SimobserveParameters, SimobserveRequest, simobserve};
+use casa_plot_data::{plot_document::PlotFigure, simulation::PlotDocumentSink};
+use casa_simulation::SimulationPlotSink;
+use casa_simulation::simobserve::{
+    Cancel, SimobserveError, SimobserveParameters, SimobserveRequest, simobserve_with_controls,
+};
 use casa_simulation::simutil::direction::Directions;
 use casa_simulation::{ExecutionControls, SessionResources, SimulatorOptions};
 use serde_json::{Map, Value};
@@ -161,6 +167,16 @@ pub fn run(
     parameters: SimobserveTaskParameters,
     task: SimobserveParameters,
 ) -> Result<SimobserveRunTaskResult, String> {
+    let payload = std::env::var_os("CASARS_PLOT_PAYLOAD").map(PathBuf::from);
+    run_with_payload(parameters, task, payload.as_deref(), &Cancel::new())
+}
+
+fn run_with_payload(
+    parameters: SimobserveTaskParameters,
+    task: SimobserveParameters,
+    payload: Option<&Path>,
+    cancel: &Cancel,
+) -> Result<SimobserveRunTaskResult, String> {
     let started = Instant::now();
     let resources = SessionResources::from_controls(&ExecutionControls::default())
         .map_err(|error| error.to_string())?;
@@ -169,10 +185,9 @@ pub fn run(
         data_roots: data_roots()?,
         options: SimulatorOptions::from_system(resources).map_err(|error| error.to_string())?,
     };
-    let (outcome, plots) = match std::env::var_os("CASARS_PLOT_PAYLOAD") {
-        Some(path) => simobserve_with_plots(&request, Path::new(&path)),
-        None => simobserve(&request).map(|outcome| (outcome, Vec::new())),
-    }
+    let (outcome, plots) = with_figures(payload, |sink| {
+        simobserve_with_controls(&request, sink, cancel)
+    })
     .map_err(|error| error.to_string())?;
     let mut artifacts: Vec<_> = outcome
         .products
@@ -247,10 +262,29 @@ pub fn task_front_end()
 }
 
 /// Run one resolved simobserve request.
-fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    let (parameters, simulation) =
+pub(crate) fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    let (parameters, mut simulation) =
         parameters_from(task.plain_values()).map_err(TaskFailure::validation)?;
-    let result = run(parameters, simulation).map_err(TaskFailure::execution)?;
+    if task.native_options().is_some() {
+        let project = task.io_path(&simulation.project);
+        for path in [&mut simulation.antennalist, &mut simulation.sdantlist] {
+            *path = project_fallback_path(task, &project, path);
+        }
+        for path in [&mut simulation.skymodel, &mut simulation.complist] {
+            *path = task.io_path(path.as_str()).to_string_lossy().into_owned();
+        }
+        if !simulation.ptgfile.contains("$project") && task.io_path(&simulation.ptgfile).exists() {
+            simulation.ptgfile = task
+                .io_path(&simulation.ptgfile)
+                .to_string_lossy()
+                .into_owned();
+        }
+        simulation.project = project.to_string_lossy().into_owned();
+    }
+    let payload = plot_payload(task);
+    let cancel = cancellation(task);
+    let result = run_with_payload(parameters, simulation, payload.as_deref(), &cancel)
+        .map_err(|error| simulation_failure(&cancel, error))?;
     let text = format!(
         "Wrote {} products of {} in {}\n",
         result.artifacts.len(),
@@ -258,6 +292,53 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         result.run.directory
     );
     Ok(TaskSuccess::new(CasaValue::None, &result)?.with_text(text))
+}
+
+fn with_figures<T>(
+    payload: Option<&Path>,
+    run: impl FnOnce(Option<&mut dyn SimulationPlotSink>) -> Result<T, SimobserveError>,
+) -> Result<(T, Vec<PlotFigure>), SimobserveError> {
+    match payload {
+        Some(path) => {
+            let mut sink = PlotDocumentSink::new(path);
+            let outcome = run(Some(&mut sink))?;
+            Ok((outcome, sink.into_figures()))
+        }
+        None => run(None).map(|outcome| (outcome, Vec::new())),
+    }
+}
+
+fn cancellation(task: &TaskInvocation<'_>) -> Cancel {
+    #[cfg(feature = "imaging")]
+    if let Some(options) = task.native_options() {
+        return options.imaging.cancel.clone();
+    }
+    let _ = task;
+    Cancel::new()
+}
+
+fn simulation_failure(cancel: &Cancel, error: impl ToString) -> TaskFailure {
+    if cancel.is_cancelled() {
+        TaskFailure::interrupted(error.to_string())
+    } else {
+        TaskFailure::execution(error.to_string())
+    }
+}
+
+fn plot_payload(task: &TaskInvocation<'_>) -> Option<PathBuf> {
+    task.native_options().map_or_else(
+        || std::env::var_os("CASARS_PLOT_PAYLOAD").map(PathBuf::from),
+        |options| options.plot_payload.clone(),
+    )
+}
+
+fn project_fallback_path(task: &TaskInvocation<'_>, project: &Path, name: &str) -> String {
+    let path = task.io_path(name);
+    if !name.is_empty() && !project.join(name).exists() && path.exists() {
+        path.to_string_lossy().into_owned()
+    } else {
+        name.to_owned()
+    }
 }
 
 #[cfg(test)]

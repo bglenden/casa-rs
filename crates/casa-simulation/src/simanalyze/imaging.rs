@@ -13,11 +13,11 @@ use casa_types::ScalarValue;
 use serde_json::json;
 use std::path::PathBuf;
 
-pub(crate) fn context(resources: SessionResources) -> RunContext {
+pub(crate) fn context(resources: SessionResources, cancel: &Cancel) -> RunContext {
     RunContext {
         host: *resources.host(),
         policy: *resources.policy(),
-        cancel: Cancel::new(),
+        cancel: cancel.clone(),
         summary: None,
     }
 }
@@ -26,6 +26,7 @@ pub(super) fn execute(
     p: &Parameters<'_>,
     plan: &Plan,
     resources: SessionResources,
+    cancel: &Cancel,
 ) -> Result<Vec<PathBuf>, SimobserveError> {
     preflight::check(p, plan)?;
     let mut products = Vec::new();
@@ -99,14 +100,14 @@ pub(super) fn execute(
         );
     }
     if let Some(input) = &plan.inputs.total_power {
-        products.extend(total_power::image(input, p, plan, resources)?);
+        products.extend(total_power::image(input, p, plan, resources, cancel)?);
     }
     if let Some(initial) = request {
         let _seed = start_model(p, plan, &mut parameters, resources)?;
         let mut request =
             ImagingRequest::from_tclean_with_defaults(&parameters).map_err(failure)?;
         request.backend = initial.backend;
-        casa_imaging_application::execute(&request, context(resources)).map_err(failure)?;
+        casa_imaging_application::execute(&request, context(resources, cancel)).map_err(failure)?;
     }
     Ok(products)
 }

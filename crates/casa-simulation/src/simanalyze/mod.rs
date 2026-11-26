@@ -128,7 +128,7 @@ impl Parameters<'_> {
 /// Invalid parameters, missing inputs, unsupported input metadata or selections,
 /// resource admission or native imaging/analysis failures.
 pub fn simanalyze(request: &SimanalyzeRequest) -> Result<SimanalyzeOutcome, SimobserveError> {
-    run(request, None)
+    simanalyze_with_controls(request, None, &casa_imaging_application::Cancel::new())
 }
 
 /// Image, analyze, and emit figure inputs through `sink`.
@@ -139,21 +139,41 @@ pub fn simanalyze_with_plot_sink(
     request: &SimanalyzeRequest,
     sink: &mut dyn SimulationPlotSink,
 ) -> Result<SimanalyzeOutcome, SimobserveError> {
-    run(request, Some((sink, None)))
+    simanalyze_with_controls(
+        request,
+        Some(sink),
+        &casa_imaging_application::Cancel::new(),
+    )
+}
+
+/// Analyze a simulation with caller-owned cancellation and an optional
+/// plot sink. The imaging passes observe the same token.
+///
+/// # Errors
+/// Analysis errors, cancellation, or figure sink errors.
+pub fn simanalyze_with_controls<'a, 'b>(
+    request: &SimanalyzeRequest,
+    sink: Option<&'a mut (dyn SimulationPlotSink + 'b)>,
+    cancel: &casa_imaging_application::Cancel,
+) -> Result<SimanalyzeOutcome, SimobserveError> {
+    run(request, sink.map(|sink| (sink, None)), cancel)
 }
 
 pub(crate) fn simanalyze_with_plot_sink_and_override(
     request: &SimanalyzeRequest,
     sink: &mut dyn SimulationPlotSink,
     output_file_override: Option<PathBuf>,
+    cancel: &casa_imaging_application::Cancel,
 ) -> Result<SimanalyzeOutcome, SimobserveError> {
-    run(request, Some((sink, output_file_override)))
+    run(request, Some((sink, output_file_override)), cancel)
 }
 
-fn run(
+fn run<'a, 'b>(
     request: &SimanalyzeRequest,
-    plot_sink: Option<(&mut dyn SimulationPlotSink, Option<PathBuf>)>,
+    plot_sink: Option<(&'a mut (dyn SimulationPlotSink + 'b), Option<PathBuf>)>,
+    cancel: &casa_imaging_application::Cancel,
 ) -> Result<SimanalyzeOutcome, SimobserveError> {
+    crate::simobserve::check_cancel(cancel)?;
     let resources = request.resources;
     charge_process_caches(resources.host(), resources.policy()).map_err(failure)?;
     // Fixed provider/planning metadata plus four live representations of
@@ -203,7 +223,8 @@ fn run(
         return Ok(outcome);
     }
     if parameters.flag("image") {
-        outcome.products = imaging::execute(&parameters, &plan, resources)?;
+        outcome.products = imaging::execute(&parameters, &plan, resources, cancel)?;
+        crate::simobserve::check_cancel(cancel)?;
         outcome.products.extend(plan.products()?);
         let originals = [plan.file(".image.flat"), plan.file(".residual.flat")];
         feather::combine(&parameters, &mut plan, resources)?;

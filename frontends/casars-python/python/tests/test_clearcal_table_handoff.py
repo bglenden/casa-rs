@@ -114,18 +114,17 @@ def test_clearcal_keeps_attached_reads_out_until_the_provider_returns(native_dat
     assert table.open(str(native_dataset))
     assert history.open(str(native_dataset / "HISTORY"))
     history_rows = history.nrows()
-    launch = _runner.subprocess.Popen
+    run = _runner._native().run_native_task
 
-    def launch_after_read_attempt(*args, **kwargs):
-        # This happens after the handoff and before the child can take its
-        # write lock. A successful getcol would leave that child waiting.
+    def run_after_read_attempt(*args, **kwargs):
+        # Both tables are reserved before the native worker takes its lock.
         with pytest.raises(RuntimeError, match="task provider is using this table"):
             table.getcol("DATA")
         with pytest.raises(RuntimeError, match="task provider is using this table"):
             history.nrows()
-        return launch(*args, **kwargs)
+        return run(*args, **kwargs)
 
-    monkeypatch.setattr(_runner.subprocess, "Popen", launch_after_read_attempt)
+    monkeypatch.setattr(_runner._native(), "run_native_task", run_after_read_attempt)
     try:
         tasks.clearcal(str(native_dataset), addmodel=True)
         np.testing.assert_array_equal(table.getcol("CORRECTED_DATA"), table.getcol("DATA"))

@@ -188,8 +188,13 @@ pub fn task_front_end_with_plot_payload(
 
 /// Load transient PlotMS calibration from the user's callibrary entries.
 /// The final argument requests channel weighting for independent ordinates.
-pub type PlotMsCalibrationLoader =
-    fn(&MeasurementSet, &MsSelection, &[String], bool) -> Result<PlotMsCalibration, TaskFailure>;
+pub type PlotMsCalibrationLoader = fn(
+    &MeasurementSet,
+    &MsSelection,
+    &[String],
+    bool,
+    &Path,
+) -> Result<PlotMsCalibration, TaskFailure>;
 
 pub use casa_ms::{PlotMsModelReferences, PlotMsModelSpwSelection};
 pub use casa_plot_data::msexplore::PlotMsModelLoader;
@@ -211,7 +216,7 @@ pub fn task_front_end_with_plot_sources(
 
 /// Run one resolved `msexplore` or `plotms` request. `msexplore` returns its
 /// summary, as CASA's `listobs` returns its record; `plotms` returns None.
-fn run_task(
+pub(crate) fn run_task(
     task: &TaskInvocation<'_>,
     payload: Option<&Path>,
     load_calibration: Option<PlotMsCalibrationLoader>,
@@ -437,7 +442,13 @@ fn run_visibility_plot(
         .map(|(load, _)| {
             let channel_weighting = options.secondary_y_data_column.is_some()
                 && options.avgchannel.is_some_and(|width| width > 1);
-            let mut input = load(&ms, &options.selection, library, channel_weighting)?;
+            let mut input = load(
+                &ms,
+                &options.selection,
+                library,
+                channel_weighting,
+                task.workspace(),
+            )?;
             input.x_data_column = options.x_data_column;
             Ok::<_, TaskFailure>(input)
         })
@@ -1209,7 +1220,7 @@ const PLOT_CONTROLS: &[&str] = &[
 /// contradict one another.
 fn options_from(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFailure> {
     let text = |name: &str| task.text(name);
-    let path = |name: &str| Ok::<_, TaskFailure>(task.text(name)?.map(PathBuf::from));
+    let path = |name: &str| Ok::<_, TaskFailure>(task.text(name)?.map(|path| task.io_path(path)));
     let flag = |name: &str| task.flag(name);
     let options = CliOptions {
         ms_path: task.path("vis")?,

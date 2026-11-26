@@ -18,7 +18,7 @@
 //! #979; the session already refuses the parameters casa-rs does not
 //! implement at all unless they hold CASA's default.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::{TaskFailure, TaskInvocation};
 use casa_contracts::{ParameterValue, python_repr};
@@ -33,7 +33,7 @@ use casa_calibration::{
     ApplyArgumentError, ApplyCalibrationTableSpec, ApplyMode, BandpassFrequencyInterval,
     BandpassSolveCombine, BandpassSolveCuts, BandpassType, FluxScaleRequest, GainNormalization,
     GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSplineControls,
-    GainType, GencalRequest, GencalType, RefAntSelector, load_apply_specs_from_callib,
+    GainType, GencalRequest, GencalType, RefAntSelector, load_apply_specs_from_callib_at,
 };
 
 /// The request a CASA-named surface makes.
@@ -60,7 +60,7 @@ pub(super) fn task_request(
 fn applycal(task: &TaskInvocation<'_>) -> Result<ExecuteApplyTaskRequest, TaskFailure> {
     let (calibration_tables, callibrary_error, argument_error) = if task.flag("docallib")? {
         let source = task.text("callib")?.unwrap_or_default();
-        match load_apply_specs_from_callib(Path::new(&source)) {
+        match load_apply_specs_from_callib_at(&task.io_path(&source), task.workspace()) {
             Ok(tables) => (tables, None, None),
             Err(error) => (Vec::new(), Some(error.to_string()), None),
         }
@@ -105,7 +105,7 @@ fn gaincal(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailur
     Ok(SolveGainTaskRequest {
         append: task.flag("append")?,
         selection: selection(task)?,
-        output_table: PathBuf::from(task.required_text("caltable")?),
+        output_table: task.path("caltable")?,
         gain_type,
         spline_controls,
         fringe_controls: None,
@@ -180,7 +180,7 @@ fn fringefit(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFail
     Ok(SolveGainTaskRequest {
         measurement_set: task.path("vis")?,
         selection: selection(task)?,
-        output_table: PathBuf::from(task.required_text("caltable")?),
+        output_table: task.path("caltable")?,
         append: task.flag("append")?,
         gain_type: GainType::K,
         spline_controls: None,
@@ -223,7 +223,7 @@ fn accor(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFailure>
     Ok(SolveGainTaskRequest {
         measurement_set: task.path("vis")?,
         selection: selection(task)?,
-        output_table: PathBuf::from(task.required_text("caltable")?),
+        output_table: task.path("caltable")?,
         append: task.flag("append")?,
         gain_type: GainType::G,
         spline_controls: None,
@@ -276,7 +276,7 @@ fn blcal(task: &TaskInvocation<'_>) -> Result<CalibrationTaskRequest, TaskFailur
         gain: SolveGainTaskRequest {
             measurement_set: task.path("vis")?,
             selection: selection(task)?,
-            output_table: PathBuf::from(output_table),
+            output_table: task.io_path(output_table),
             append: false,
             gain_type: GainType::G,
             spline_controls: None,
@@ -322,7 +322,7 @@ fn bandpass(task: &TaskInvocation<'_>) -> Result<SolveBandpassTaskRequest, TaskF
     Ok(SolveBandpassTaskRequest {
         append: task.flag("append")?,
         selection: selection(task)?,
-        output_table: PathBuf::from(task.required_text("caltable")?),
+        output_table: task.path("caltable")?,
         refant: bandpass_refant(&task.required_text("refant")?),
         prior_calibration_tables: chain(task, Chain::Solve)?,
         parang: task.flag("parang")?,
@@ -409,7 +409,7 @@ pub(super) fn leakage_request(
     let interval = selector_text(task.value("solint")).unwrap_or_default();
     let (time, frequency) = interval.split_once(',').unwrap_or((&interval, ""));
     Ok(LeakageSolveRequest {
-        output: PathBuf::from(task.required_text("caltable")?),
+        output: task.path("caltable")?,
         selection: selection(task)?,
         kind,
         model_source,
@@ -483,12 +483,12 @@ fn fluxscale(task: &TaskInvocation<'_>) -> Result<FluxScaleRequest, TaskFailure>
             listfile: task
                 .text("listfile")?
                 .filter(|text| !text.is_empty())
-                .map(PathBuf::from),
+                .map(|path| task.io_path(path)),
             display: task.flag("display")?,
         },
         append: task.flag("append")?,
-        input_table: PathBuf::from(task.required_text("caltable")?),
-        output_table: PathBuf::from(task.required_text("fluxtable")?),
+        input_table: task.path("caltable")?,
+        output_table: task.path("fluxtable")?,
         reference_fields,
         transfer_fields: fields(task, "transfer")?,
         // CASA's [-1] maps no window.
@@ -536,7 +536,7 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
         ) {
         task.text("infile")?
             .filter(|path| !path.is_empty() && !(caltype == GencalType::Antpos && path == "None"))
-            .map(PathBuf::from)
+            .map(|path| task.io_path(path))
     } else {
         None
     };
@@ -548,12 +548,12 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
     Ok(GencalTaskRequest {
         prior: GencalRequest {
             measurement_set: task.path("vis")?,
-            output_table: PathBuf::from(task.required_text("caltable")?),
+            output_table: task.path("caltable")?,
             caltype,
             antenna,
             spw: task.text("spw")?.unwrap_or_default(),
             parameter: task.numbers("parameter")?,
-            gaincurve_table: task.text("gaincurve_table")?.map(PathBuf::from),
+            gaincurve_table: task.text("gaincurve_table")?.map(|path| task.io_path(path)),
         },
         polarization: task.text("pol")?.unwrap_or_default(),
         gaincurve_infile: infile.clone().filter(|_| caltype.is_gain_curve()),
@@ -676,7 +676,7 @@ fn chain(
             TaskFailure::validation("docallib requires callib, a calibration library file")
                 .at("callib")
         })?;
-        return load_apply_specs_from_callib(Path::new(&callib))
+        return load_apply_specs_from_callib_at(&task.io_path(&callib), task.workspace())
             .map_err(|error| TaskFailure::validation(error.to_string()).at("callib"));
     }
     traditional_chain(task, chain).map(|(tables, _)| tables)
@@ -712,7 +712,7 @@ fn traditional_chain(
                 None => return Ok((specs, Some(ApplyArgumentError::MissingCalwt))),
             },
         };
-        let mut spec = ApplyCalibrationTableSpec::new(table);
+        let mut spec = ApplyCalibrationTableSpec::new(task.io_path(table));
         spec.gainfield = gainfield
             .get(index)
             .and_then(|field| parse_gainfield_value(field));

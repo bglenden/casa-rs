@@ -16,7 +16,6 @@ import inspect
 import builtins
 import json
 from pathlib import Path
-import sys
 
 import pytest
 
@@ -81,36 +80,23 @@ def test_a_casa_task_takes_casas_parameters_then_keyword_only_controls(name: str
         assert parameter.kind is inspect.Parameter.KEYWORD_ONLY, parameter.name
 
 
-FAKE_TASK = """#!{python}
-import json, os, sys
-request = json.load(sys.stdin)
-with open(os.environ["FAKE_TASK_LOG"], "a", encoding="utf-8") as log:
-    log.write(json.dumps(request) + "\\n")
-result = {{"run": {{"stem": request["values"].get("project", "sim")}}, "artifacts": []}}
-print(json.dumps({{"status": "succeeded", "surface": request["surface"],
-                  "value": {{"kind": "none"}}, "result": result}}))
-"""
-
-
 @pytest.fixture
 def requests(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Fake simobserve's executable; the requests it receives."""
+    """Capture explicit arguments at the native task boundary."""
+    from types import SimpleNamespace
+    from casars.parameters import _native
 
-    log = tmp_path / "requests.jsonl"
-    fake = tmp_path / "fake-simobserve"
-    fake.write_text(FAKE_TASK.format(python=sys.executable), encoding="utf-8")
-    fake.chmod(0o755)
-    monkeypatch.setenv("CASARS_SIMOBSERVE_BIN", str(fake))
-    monkeypatch.setenv("FAKE_TASK_LOG", str(log))
+    requests = []
+
+    def run(surface, workspace, values, originals, options):
+        requests.append({"surface": surface, "values": values})
+        return SimpleNamespace(status="succeeded", logs="", message=None, parameter=None,
+                               value=lambda: None, completion=lambda *_: None, plots=lambda *_: [])
+
     monkeypatch.chdir(tmp_path)
-    # This provider only records arguments and returns no figures. Keep its
-    # signature tests independent of the optional presentation dependency.
+    monkeypatch.setattr(_native(), "run_native_task", run)
     monkeypatch.setattr(_runner, "_require_plotting", lambda: None)
-
-    def read() -> list[dict]:
-        return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
-
-    return read
+    return lambda: requests
 
 
 def test_a_positional_call_sends_only_what_the_caller_gave(requests) -> None:

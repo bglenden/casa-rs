@@ -16,7 +16,7 @@ pub fn imsubimage_front_end()
     image_task_front_end("imsubimage", &["imsubimage"], run)
 }
 
-fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let outfile = task
         .text("outfile")?
         .map_or_else(PathBuf::new, PathBuf::from);
@@ -24,10 +24,10 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         imagename: task.input_path("imagename")?,
         outfile,
         box_pixels: task.text("box")?,
-        region: task.text("region")?,
+        region: super::front_end::region_in_workspace(task)?,
         chans: task.text("chans")?,
         stokes: task.text("stokes")?,
-        mask: task.text("mask")?,
+        mask: super::front_end::mask_in_workspace(task)?,
         dropdeg: task.flag("dropdeg")?,
         overwrite: task.flag("overwrite")?,
         verbose: task.flag("verbose")?,

@@ -6,8 +6,10 @@ use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use super::lock_file::path_key;
 #[cfg(unix)]
-use super::{LockFile, LockOptions, LockOutcome, LockType, SyncData};
+use super::{DelegatedTableWrite, LockFile, LockOptions, LockOutcome, LockType, SyncData};
 use crate::TableError;
+#[cfg(unix)]
+use std::sync::Arc;
 
 /// Casacore's in-use marker for an open table that acquires access locks
 /// separately for its I/O.
@@ -204,6 +206,8 @@ pub struct TableWriteLock {
     directory_key: (u64, u64),
     #[cfg(unix)]
     lock_file: Option<LockFile>,
+    #[cfg(unix)]
+    reservations: Option<Arc<[DelegatedTableWrite]>>,
     /// Whether a write was recorded; releasing then publishes it.
     #[cfg_attr(not(unix), allow(dead_code))]
     written: bool,
@@ -288,7 +292,13 @@ impl TableWriteLock {
     /// `table.lock` cannot be opened or `fcntl` fails for a reason other than
     /// a held lock or missing lock support.
     pub fn acquire(table_dir: impl AsRef<Path>, nattempts: u32) -> Result<Self, TableError> {
-        Self::take(table_dir.as_ref(), nattempts, true)
+        Self::take(
+            table_dir.as_ref(),
+            nattempts,
+            true,
+            #[cfg(unix)]
+            None,
+        )
     }
 
     /// Take the write lock as [`acquire`](Self::acquire) does, for a writer
@@ -304,10 +314,55 @@ impl TableWriteLock {
         table_dir: impl AsRef<Path>,
         nattempts: u32,
     ) -> Result<Self, TableError> {
-        Self::take(table_dir.as_ref(), nattempts, false)
+        Self::take(
+            table_dir.as_ref(),
+            nattempts,
+            false,
+            #[cfg(unix)]
+            None,
+        )
     }
 
-    fn take(table_dir: &Path, nattempts: u32, refuse_stale: bool) -> Result<Self, TableError> {
+    /// Take a write lock under this task's local reservations, then reread
+    /// the table. The guard retains the reservations until it is released.
+    ///
+    /// # Errors
+    /// As [`Self::acquire_to_reread`]. A different task's reservation
+    /// refuses the request even when this process owns the underlying lock.
+    #[cfg(unix)]
+    pub fn acquire_reserved_to_reread(
+        table_dir: &Path,
+        nattempts: u32,
+        reservations: &Arc<[DelegatedTableWrite]>,
+    ) -> Result<Self, TableError> {
+        Self::take(table_dir, nattempts, false, Some(Arc::clone(reservations)))
+    }
+
+    /// Lock a related table, such as an MS subtable, with the same task
+    /// reservations as this guard. The related lock must be released first.
+    ///
+    /// # Errors
+    /// As [`Self::acquire_to_reread`].
+    pub fn acquire_related_to_reread(
+        &self,
+        table_dir: &Path,
+        nattempts: u32,
+    ) -> Result<Self, TableError> {
+        Self::take(
+            table_dir,
+            nattempts,
+            false,
+            #[cfg(unix)]
+            self.reservations.clone(),
+        )
+    }
+
+    fn take(
+        table_dir: &Path,
+        nattempts: u32,
+        refuse_stale: bool,
+        #[cfg(unix)] reservations: Option<Arc<[DelegatedTableWrite]>>,
+    ) -> Result<Self, TableError> {
         let path = table_dir.to_path_buf();
         #[cfg(unix)]
         {
@@ -329,11 +384,13 @@ impl TableWriteLock {
                 false,
             )
             .map_err(lock_io)?;
-            let mut outcome = lock_file.acquire(LockType::Write, 1).map_err(lock_io)?;
+            let mut outcome = lock_file
+                .acquire_with_reservation(LockType::Write, 1, reservations.as_deref())
+                .map_err(lock_io)?;
             if outcome == LockOutcome::HeldByAnotherProcess && nattempts != 1 {
                 let published = published_modify_counter(&lock_file);
                 outcome = lock_file
-                    .acquire(LockType::Write, nattempts)
+                    .acquire_with_reservation(LockType::Write, nattempts, reservations.as_deref())
                     .map_err(lock_io)?;
                 if refuse_stale
                     && outcome.is_acquired()
@@ -358,6 +415,7 @@ impl TableWriteLock {
                 path,
                 directory_key,
                 lock_file: Some(lock_file),
+                reservations,
                 written: false,
                 table_dat_at_acquire,
             })

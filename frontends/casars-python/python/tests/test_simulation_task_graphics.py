@@ -4,7 +4,6 @@ import gzip
 from copy import deepcopy
 import importlib.util
 import json
-import os
 from pathlib import Path
 import re
 import shutil
@@ -19,7 +18,6 @@ matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 from matplotlib.figure import Figure
 from casars import tasks
-from casars.tasks import _runner
 
 REPO=Path(__file__).resolve().parents[4]
 spec=importlib.util.spec_from_file_location('simulation_figures',REPO/'tools/simulation/simulation_task_graphics_compare.py')
@@ -30,11 +28,6 @@ spec.loader.exec_module(helper)
 
 @pytest.fixture(scope='module')
 def rendered_cases(tmp_path_factory):
-    for task in ['simalma','simanalyze']:
-        try:_runner._task_executable(task)
-        except tasks.TaskBinaryNotFoundError as error:
-            if os.environ.get('CASARS_REQUIRE_TASK_BINARIES'):raise
-            pytest.skip(str(error))
     root=tmp_path_factory.mktemp('simulation-task-figures')
     data=REPO/'crates/casa-simulation/tests/data'
     for filename in ['simalma_inputs.tar.gz','simanalyze_multi_inputs.tar.gz']:

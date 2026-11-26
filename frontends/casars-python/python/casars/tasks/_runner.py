@@ -1,37 +1,31 @@
-"""Run a catalog task by starting its executable directly (ADR-0017).
+"""Run catalog tasks in process through the shared Rust adapters.
 
-Python resolves the task's parameters through the Rust parameter runtime,
-finds the task's executable through the Rust resolver, and starts it with
-``--json-run -``: the CASA-named values set are written to its stdin, its
-log lines are passed to ``sys.stderr`` as they arrive, and its typed reply on
-stdout says how it ended. A Python task call neither loads nor saves Last.
+The Rust parameter runtime resolves CASA-named values. Native tasks release
+the GIL, relay logs to Python, and return CASA's value and declared products.
+A Python task call neither loads nor saves Last.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import errno
 import functools
 from http import HTTPStatus
 import inspect
-from json import JSONDecodeError, dumps, loads
+from json import JSONDecodeError
 from math import inf, isfinite, isnan, nextafter
 from numbers import Real
 import os
 from os import PathLike
 from pathlib import Path
-import signal
-import subprocess
 import sys
-import threading
 import tempfile
 from typing import Any, TypeAlias
 from urllib.error import HTTPError, URLError
 
 from ..parameters import (
     ParameterData,
-    ProviderInvocation,
     SurfaceParameters,
     TaskParameters,
     _native,
@@ -40,24 +34,6 @@ from ..parameters import (
 from ._completion import completion_projection
 
 StrPath: TypeAlias = str | PathLike[str]
-
-# How long a task has to stop after Python forwards it an interrupt.
-_INTERRUPT_GRACE_SECONDS = 10.0
-
-
-class TaskBinaryNotFoundError(FileNotFoundError):
-    """Raised when a task's executable cannot be found.
-
-    The message names the step of the search that applied and what it
-    lacked: the task's ``CASARS_<APP>_BIN`` override, the suite at
-    ``CASARS_SUITE_ROOT`` or the installed suite, or a development
-    checkout's build.
-    """
-
-
-class TaskInvocationError(RuntimeError):
-    """Raised when a task's executable was found but could not be started."""
-
 
 class TaskResultError(RuntimeError):
     """Raised when Rust rejects a successful task's result."""
@@ -97,27 +73,21 @@ class TaskParameterError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class TaskCompletion:
-    """One finished task process: how it ended and what it wrote.
+    """The outcome of a native task and its declared products.
 
-    ``status`` is the task's outcome: ``succeeded``, ``refused`` (its
-    parameters, before it changed anything), ``failed``, ``interrupted``,
-    ``signalled``, or ``malformed_reply``. ``stdout`` is the task's reply and
-    ``stderr`` its log, which was also written to ``sys.stderr`` as the task
-    ran.
+    The task's live log is also available in ``logs``. Its CASA return value is
+    ``value``, and ``status`` describes success, refusal, failure or interruption.
     """
 
     task: str
-    command: tuple[str, ...]
     workspace: Path
-    returncode: int
-    stdout: str
-    stderr: str
-    provider_invocation: ProviderInvocation
+    logs: str
     status: str
     message: str | None
     parameter: str | None
     value: Any
     result: object | None
+    _details: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
     @property
     def successful(self) -> bool:
@@ -145,10 +115,7 @@ class TaskCompletion:
             return f"{self.task} failed{at}: {self.message}"
         if self.status == "interrupted":
             return f"{self.task} was interrupted: {self.message}"
-        detail = self.stderr.strip().splitlines()[-1:] or ["no log output"]
-        if self.status == "signalled":
-            return f"{self.task} was ended by signal {-self.returncode}: {detail[0]}"
-        return f"{self.task} gave no valid reply ({self.message}): {detail[0]}"
+        return f"{self.task}: {self.status}"
 
 
 def run(
@@ -173,8 +140,8 @@ def run(
     to replace or change data. A task that refuses its parameters raises
     :class:`TaskParameterError`, a ``ValueError``, and one that starts and
     does not succeed :class:`TaskExecutionError`, a ``RuntimeError``; an
-    interrupt (Ctrl-C) is passed to the task, which is given time to stop,
-    and then raised here.
+    interrupt (Ctrl-C) requests cancellation and is raised after the
+    native call has cleaned up.
     """
 
     return _run_task(task, parameters, workspace, values)
@@ -278,7 +245,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_listcal(values, arguments)
     if name == "setjy" and arguments["listmodels"]:
         completion = run(name, **values)
-        for candidate in loads(completion.stdout)["result"]["models"]:
+        for candidate in completion._details["models"]:
             print(candidate)
         return completion.value
     if name == "calstat":
@@ -741,7 +708,7 @@ def _call_plotbandpass(values, arguments):
         raise
     if completion.value is not None:
         return _bandpass_statistics(completion.value)
-    return () if loads(completion.stdout)["result"]["empty_tuple"] else None
+    return () if completion._details["empty_tuple"] else None
 
 
 def _bandpass_statistics(value):
@@ -1330,7 +1297,7 @@ def _call_listcal(values: dict[str, Any], arguments: Mapping[str, Any]) -> None:
         completion = run("listcal", **values)
     except (TypeError, ValueError) as error:
         raise AssertionError(str(error)) from error
-    _present_listcal(loads(completion.stdout)["result"])
+    _present_listcal(completion._details)
 
 
 def _present_listcal(report: Mapping[str, Any]) -> None:
@@ -2043,122 +2010,73 @@ def _execute(
     return _execute_task(task, resolved, workspace, None, value_only=value_only)
 
 
-def _plotms_model_requested(parameters: SurfaceParameters) -> bool:
-    y = parameters.get("ydatacolumn")
-    ordinates = y if isinstance(y, (list, tuple)) else (y,)
-    columns = (parameters.get("xdatacolumn"), *ordinates)
-    names = (column.lower() for column in columns if isinstance(column, str))
-    return any("model" in name or name == "residual" for name in names)
-
-
 def _execute_task(
     task: str, resolved: SurfaceParameters, workspace: Path, payload: Path | None,
     *, bandpass_completed_pages: int | None = None, argument_text: Mapping[str, str] | None = None,
     value_only: bool = False,
 ) -> TaskCompletion:
-    invocation = resolved.provider_invocation()
-    if argument_text:
-        assert invocation.stdin is not None
-        request = loads(invocation.stdin)
-        request["argument_text"] = argument_text
-        invocation = replace(invocation, stdin=dumps(request))
-    if task == "plotms" and (resolved.get("callib") or _plotms_model_requested(resolved)):
-        command = (_task_executable("calibrate"), "plotms", *invocation.args)
-    else:
-        command = (_task_executable(task), *invocation.args)
-    environment = dict(os.environ)
-    environment.pop("CASARS_APPLYCAL_VALUE_ONLY", None)
-    if task == "applycal" and value_only:
-        environment["CASARS_APPLYCAL_VALUE_ONLY"] = "1"
-    if task == "listcal":
-        # A later listing error takes effect only when the reader reaches it.
-        environment["CASARS_LISTCAL_PAGED_REPLY"] = "1"
-    if task in {"simobserve", "simanalyze", "simalma", "plotms"}:
-        environment.pop("CASARS_PLOT_PAYLOAD", None)
-    if payload is not None:
-        environment["CASARS_PLOT_PAYLOAD"] = str(payload)
-    if task == "plotbandpass":
-        environment.pop("CASARS_BANDPASS_COMPLETED_PAGES", None)
-        if bandpass_completed_pages is not None:
-            environment["CASARS_BANDPASS_COMPLETED_PAGES"] = str(bandpass_completed_pages)
+    values, originals = resolved._task_values()
+    native = _native()
     table_write = None
     if task == "clearcal" and (vis := resolved.get("vis")):
-        table_write = _native().prepare_task_table_write(workspace / vis[0])
+        table_write = native.prepare_task_table_write(workspace / vis[0])
     try:
-        try:
-            # The task runs in its own session, so a terminal's Ctrl-C reaches
-            # Python alone, which passes it on once, in a terminal as in a
-            # notebook: a second interrupt ends the imager at once.
-            process = subprocess.Popen(
-                command,
-                cwd=workspace,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                start_new_session=True,
-                env=environment,
-            )
-        except OSError as error:
-            raise TaskInvocationError(f"cannot start {task} ({command[0]}): {error}") from error
-        stdout, stderr = _communicate(process, invocation.stdin or "")
+        reply = native.run_native_task(
+            task,
+            workspace,
+            values,
+            originals,
+            {
+                "argument_text": resolved._task_argument_text() | dict(argument_text or {}),
+                "plot_payload": payload,
+                "applycal_value_only": value_only,
+                "bandpass_completed_pages": bandpass_completed_pages,
+                "table_write": table_write,
+            },
+        )
     finally:
         if table_write is not None:
             table_write.release()
-
     if payload is not None:
         try:
-            plots = _native().task_plot_documents(task, process.returncode, stdout, payload.stat().st_size)
+            plots = reply.plots(payload.stat().st_size)
             _render_task_plots(plots, payload, workspace, resolved if task == "plotms" else None)
         except Exception as error:
             raise TaskResultError(f"{task} plot rendering failed: {error}") from error
 
-    if task == "plotweather" and process.returncode == 0:
-        plot = loads(stdout)["result"]["plot"]
-        if plot is not None:
-            from ._weather_plot import render_weather
+    details = {}
+    if reply.status == "succeeded" and task in {"setjy", "listcal", "plotbandpass", "plotweather", "predictcomp"}:
+        details = reply.details()
+    if task == "plotweather" and (plot := details.get("plot")) is not None:
+        from ._weather_plot import render_weather
 
-            render_weather(plot, workspace)
+        render_weather(plot, workspace)
+    if task == "predictcomp" and (plot := details.get("plot")) is not None:
+        from ._predictcomp_plot import render_prediction
 
-    if task == "predictcomp" and process.returncode == 0:
-        plot = loads(stdout)["result"]["plot"]
-        if plot is not None:
-            from ._predictcomp_plot import render_prediction
+        render_prediction(plot, workspace)
 
-            render_prediction(plot, workspace)
-
-    values = [
+    output_values = [
         (name, _display_value(state.value))
         for name, state in sorted(resolved.states.items())
         if state.value is not None
     ]
     try:
-        outcome = _native().task_outcome(
-            task, process.returncode, stdout, str(workspace), values
-        )
+        projection = reply.completion(workspace, output_values)
     except ValueError as error:
         raise TaskResultError(
             f"{task} produced a successful but invalid result: {error}"
         ) from error
     completion = TaskCompletion(
         task=task,
-        command=command,
         workspace=workspace,
-        returncode=process.returncode,
-        stdout=stdout,
-        stderr=stderr,
-        provider_invocation=invocation,
-        status=outcome["status"],
-        message=outcome.get("message", outcome.get("reason")),
-        parameter=outcome.get("parameter"),
-        value=outcome.get("value"),
-        result=(
-            completion_projection(outcome["completion"])
-            if "completion" in outcome
-            else None
-        ),
+        logs=reply.logs,
+        status=reply.status,
+        message=reply.message,
+        parameter=reply.parameter,
+        value=reply.value(),
+        result=completion_projection(projection) if projection is not None else None,
+        _details=details,
     )
     if completion.status == "refused":
         raise TaskParameterError(completion)
@@ -2167,11 +2085,10 @@ def _execute_task(
     if task == "plotbandpass" and bandpass_completed_pages is None:
         from ._bandpass_plot import render_bandpass
 
-        reply = loads(stdout)["result"]
-        completed, immediate = render_bandpass(reply, workspace)
+        completed, immediate = render_bandpass(details, workspace)
         if immediate:
             return replace(completion, value=None)
-        if completion.value is not None and completed < len(reply["pages"]):
+        if completion.value is not None and completed < len(details["pages"]):
             partial = _execute_task(task, resolved, workspace, payload, bandpass_completed_pages=completed)
             return replace(completion, value=partial.value)
     return completion
@@ -2259,90 +2176,6 @@ def _save_figure(figure, destination: Path, *, replace_existing=True, **options)
         path.unlink(missing_ok=True)
 
 
-def _communicate(process: subprocess.Popen[str], request: str) -> tuple[str, str]:
-    """Send ``request``, pass the log on as it arrives, and collect the reply.
-
-    Each pipe has its own thread, so none fills while another is waited on,
-    and the log keeps draining while an interrupted task shuts down. The main
-    thread only waits for the task; anything that stops the wait, an
-    interrupt above all, is passed to the task first.
-    """
-
-    reply: list[str] = []
-    log: list[str] = []
-
-    def send() -> None:
-        try:
-            assert process.stdin is not None
-            process.stdin.write(request)
-            process.stdin.close()
-        except (BrokenPipeError, OSError):
-            pass
-
-    def collect() -> None:
-        assert process.stdout is not None
-        reply.append(process.stdout.read())
-
-    def relay() -> None:
-        assert process.stderr is not None
-        for line in process.stderr:
-            log.append(line)
-            terminal = sys.stderr
-            if terminal is None:
-                continue
-            # A terminal that fails to write must not stop the drain.
-            try:
-                terminal.write(line)
-                terminal.flush()
-            except Exception:
-                pass
-
-    threads = [threading.Thread(target=target) for target in (send, collect, relay)]
-    for thread in threads:
-        thread.daemon = True
-        thread.start()
-    try:
-        process.wait()
-    except BaseException:
-        _stop(process)
-        raise
-    finally:
-        for thread in threads:
-            thread.join(timeout=_INTERRUPT_GRACE_SECONDS)
-    return "".join(reply), "".join(log)
-
-
-def _stop(process: subprocess.Popen[str]) -> None:
-    """Interrupt a running task as Ctrl-C would, and kill it if it stays.
-
-    The task has the grace period to stop, its log still draining; a second
-    interrupt in that time kills it at once.
-    """
-
-    if process.poll() is not None:
-        return
-    try:
-        process.send_signal(signal.SIGINT)
-        process.wait(timeout=_INTERRUPT_GRACE_SECONDS)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait()
-    except BaseException:
-        process.kill()
-        process.wait()
-        raise
-
-
-def _task_executable(task: str) -> str:
-    """The executable that runs ``task``, found by the Rust resolver."""
-
-    try:
-        path = _native().task_executable(task, dict(os.environ), sys.prefix)
-    except FileNotFoundError as error:
-        raise TaskBinaryNotFoundError(str(error)) from None
-    return os.fspath(path)
-
-
 def _resolve_workspace(
     workspace: StrPath | None,
     parameters: SurfaceParameters | None,
@@ -2376,10 +2209,8 @@ def _display_value(value: ParameterData) -> str:
 
 
 __all__ = [
-    "TaskBinaryNotFoundError",
     "TaskCompletion",
     "TaskExecutionError",
-    "TaskInvocationError",
     "TaskParameterError",
     "TaskResultError",
     "run",

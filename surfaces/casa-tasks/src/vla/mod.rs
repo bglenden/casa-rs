@@ -30,7 +30,7 @@ pub fn task_front_end()
 }
 
 /// Import one resolved request; CASA's `importvla` returns None.
-fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let options = options_from(task)?;
     let history = task_history(task, &options)?;
     let report = run(&options, Some(&history)).map_err(failure)?;

@@ -356,7 +356,7 @@ fn prepare(
             ..ResolutionPatch::default()
         })
         .map_err(|_| input::error())?;
-    let task = TaskInvocation::new(&session, parent.workspace());
+    let task = parent.with_session(&session);
     let mode = task.required_text("mode")?;
     let column = flagdata_column_argument(&task)?.unwrap_or_default();
     let cmd_time_chunk = time_chunk_argument(&task)?;
@@ -414,7 +414,7 @@ fn save_commands(
     save_only: bool,
     calibration: bool,
 ) -> Result<(), TaskFailure> {
-    let outfile = task.required_text("outfile")?;
+    let outfile = task.required_file_text("outfile")?;
     let reason = task.required_text("cmdreason")?;
     if outfile.is_empty() {
         if calibration {

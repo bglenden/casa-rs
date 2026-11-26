@@ -530,47 +530,8 @@ impl<'s> Lexer<'s> {
     }
 }
 
-/// Returns the image operands in a lattice expression, in first-use order.
-///
-/// Both bare and quoted image names are included. Function names and CASA
-/// Boolean literals are excluded.
-///
-/// # Errors
-/// Returns a tokenizer error if the expression is lexically invalid.
-pub fn referenced_images(expression: &str) -> Result<Vec<String>, ExprParseError> {
-    let mut lexer = Lexer::new(expression);
-    let mut current = lexer.next_token()?.0;
-    let mut names = Vec::new();
-    while current != Token::Eof {
-        let (next, position) = lexer.next_token()?;
-        if matches!(current, Token::QuotedPath(_)) && next == Token::Colon {
-            let selector = expression[position + 1..]
-                .split(|character: char| {
-                    !character.is_ascii_alphanumeric() && !matches!(character, '_' | '.')
-                })
-                .next()
-                .unwrap_or_default();
-            return Err(ExprParseError {
-                message: format!("Parse error at or near ':{selector}'"),
-                position,
-            });
-        }
-        let name = match current {
-            Token::QuotedPath(name) => Some(name),
-            Token::Ident(name) if !matches!(name.as_str(), "T" | "F") && next != Token::LParen => {
-                Some(name)
-            }
-            _ => None,
-        };
-        if let Some(name) = name
-            && !names.contains(&name)
-        {
-            names.push(name);
-        }
-        current = next;
-    }
-    Ok(names)
-}
+mod operand_paths;
+pub use operand_paths::{referenced_images, substitute_image_operands};
 
 // ---------------------------------------------------------------------------
 // Parser intermediate representation

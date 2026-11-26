@@ -16,7 +16,7 @@ pub fn impbcor_front_end()
     image_task_front_end("impbcor", &["impbcor"], run)
 }
 
-fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let pbimage = match task.value("pbimage") {
         Some(ParameterValue::String(name)) if !name.is_empty() => {
             PbcorBeam::Image(task.input_path("pbimage")?)
@@ -38,7 +38,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
     };
     let region = parse_region_parameter(task.value("region"), false)?;
-    let mask = task.text("mask")?;
+    let mask = super::front_end::mask_in_workspace(task)?;
     // CASA reads stretch only with a mask, and ignores it otherwise.
     let stretch = mask.is_some() && task.flag("stretch")?;
     let request = ImpbcorRequest {

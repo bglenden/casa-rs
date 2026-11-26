@@ -330,20 +330,14 @@ provider result (`calibration-report-v1`, `imager-run-v1`,
 completion decoder projects products and the summary. Nothing is injected
 into the binary's arguments to ask for it.
 
-Last has one owner on each path: a command line run of a binary records Last
-before the callback and Last Successful only after success, unless
-`--no-save-last`; `--json-run` reads and writes neither, so Python task calls
-save none. Every Python task call is one invocation shape: the executable the
-resolver names, the surface's `fixed_args`, then `--json-run -` with the
-values the call set on stdin. Python passes the task's log lines to
-`sys.stderr` as they arrive and classifies the reply through `casars._core`.
-A success returns a `TaskCompletion` carrying the reply's `value` and the
-products the decoder projects. A `validation` reply raises
-`TaskParameterError`, a `ValueError` whose completion's `status` is
-`refused`; anything else raises `TaskExecutionError`, whose completion's
-`status` is `failed`, `interrupted`, `signalled` or `malformed_reply`. A
-value the contract refuses when Python resolves the call raises `ValueError`
-before anything starts, or `TypeError` for a value of the wrong type.
+A command-line run records Last before the callback and Last Successful
+after success, unless `--no-save-last` is set. Both `--json-run` and in-process
+Python tasks leave managed profiles alone. Python resolves the task with
+`casars._core`, executes it in the supplied workspace, and relays task logs
+as they arrive. A success returns a `TaskCompletion` carrying CASA's value,
+logs and declared products. A refusal raises `TaskParameterError` with a
+`refused` completion. An execution failure raises `TaskExecutionError`.
+Ctrl-C requests cancellation and raises `KeyboardInterrupt` after cleanup.
 
 A succeeded reply's `value` is CASA's return value as a tagged `CasaValue`
 (`casa-provider-contracts`): `none`, `bool`, `int`, `float` (non-finite

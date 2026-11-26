@@ -146,8 +146,9 @@ struct Surveyed<'a> {
 /// The outlier file's output prefixes.
 pub(crate) fn outlier_output_prefixes(
     path: &std::path::Path,
+    workspace: Option<&std::path::Path>,
 ) -> Result<Vec<std::path::PathBuf>, PrepareError> {
-    outliers::read_output_prefixes(path)
+    outliers::read_output_prefixes(path, workspace)
 }
 
 /// Compile `request` against its MeasurementSets.

@@ -8,8 +8,7 @@ use crate::{CasaValue, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::{
     ProviderProtocolDescriptor, ProviderSurfaceKind, TaskProviderContract, builtin_surface_bundle,
 };
-use casa_plot_data::simulation::simanalyze_with_plots;
-use casa_simulation::simanalyze::{SimanalyzeRequest, simanalyze};
+use casa_simulation::simanalyze::{SimanalyzeRequest, simanalyze_with_controls};
 use casa_simulation::{ExecutionControls, SessionResources};
 use std::path::Path;
 use std::time::Instant;
@@ -42,20 +41,28 @@ pub fn simanalyze_front_end()
     )
     .expect("simanalyze contract")
 }
-fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let started = Instant::now();
     let parameters = task.plain_values();
     let resources = SessionResources::from_controls(&ExecutionControls::default())
         .map_err(|error| TaskFailure::execution(error.to_string()))?;
+    let mut execution_parameters = parameters.clone();
+    task.resolve_file_values(&mut execution_parameters, &["project", "logfile"]);
+    if task.native_options().is_some() {
+        let project =
+            Path::new(execution_parameters["project"].as_str().unwrap_or_default()).to_path_buf();
+        resolve_inputs(task, &project, &mut execution_parameters);
+    }
     let request = SimanalyzeRequest {
-        parameters: parameters.clone(),
+        parameters: execution_parameters,
         resources,
     };
-    let (outcome, plots) = match std::env::var_os("CASARS_PLOT_PAYLOAD") {
-        Some(path) => simanalyze_with_plots(&request, Path::new(&path)),
-        None => simanalyze(&request).map(|outcome| (outcome, Vec::new())),
-    }
-    .map_err(|error| TaskFailure::execution(error.to_string()))?;
+    let payload = super::plot_payload(task);
+    let cancel = super::cancellation(task);
+    let (outcome, plots) = super::with_figures(payload.as_deref(), |sink| {
+        simanalyze_with_controls(&request, sink, &cancel)
+    })
+    .map_err(|error| super::simulation_failure(&cancel, error))?;
     let mut artifacts: Vec<_> = outcome
         .products
         .iter()
@@ -81,4 +88,29 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         plots,
     };
     TaskSuccess::new(CasaValue::None, &report)
+}
+
+fn resolve_inputs(
+    task: &TaskInvocation<'_>,
+    project: &Path,
+    parameters: &mut serde_json::Map<String, serde_json::Value>,
+) {
+    use serde_json::Value;
+    let rebase = |value: &mut Value| {
+        if let Value::String(names) = value {
+            *names = names
+                .split(',')
+                .map(|name| super::project_fallback_path(task, project, name.trim()))
+                .collect::<Vec<_>>()
+                .join(",");
+        }
+    };
+    for name in ["vis", "skymodel", "modelimage", "featherimage"] {
+        if let Some(value) = parameters.get_mut(name) {
+            match value {
+                Value::Array(paths) => paths.iter_mut().for_each(rebase),
+                _ => rebase(value),
+            }
+        }
+    }
 }

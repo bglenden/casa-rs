@@ -4,8 +4,7 @@
 
 - `casars.data` provides in-process access to persistent CASA-style images and
   tables.
-- `casars.tasks` provides higher-level task wrappers, each of which starts
-  its task's own executable.
+- `casars.tasks` provides higher-level task wrappers that run in process.
 - `casars.tools` provides CASA's tools as classes under CASA's names, with
   CASA's methods, parameter order and defaults, so a CASA script changes only
   its imports (ADR-0017): `simulator` (CASA's `sm`), `measures` (`me`),
@@ -39,20 +38,12 @@
 The generic `casars.tasks.run()` entry point accepts every catalog task. Every
 task is also exposed exactly once as `casars.tasks.<task>` through a generated
 CASA-named function that takes CASA's parameters. These functions share the
-Rust-owned parameter and result contracts. A call resolves its parameters in
-Rust, starts the task's executable as a child process with `--json-run -`,
-passes the task's log lines to `sys.stderr` as they arrive. A task whose
-surface names its CASA task (every task but the casa-rs tasks `calibrate`,
-`msexplore` and `msconvert`, and `plotms`) has CASA's exact signature and
-returns CASA's value; the others return a `TaskCompletion`. A task that
-refuses its parameters raises `casars.tasks.TaskParameterError`, a
-`ValueError`, and one that does not succeed
-`casars.tasks.TaskExecutionError`. The executable is the task's
-`CASARS_<APP>_BIN` override when it is set, else the one in a suite's `bin/`
-(`CASARS_SUITE_ROOT`, or the suite the package was installed into), else, for
-a package built from a checkout, that checkout's build
-([Compatibility](versioning.md#task-runner-compatibility)). The in-process
-`casars.data`, `casars.tools` and `casars.simutil` need no executables.
+Rust-owned parameter and result contracts. Native execution releases the GIL
+and relays log lines to `sys.stderr`. The generic runner returns those lines
+in `TaskCompletion.logs` alongside status, CASA return value, and products.
+A wrapper for a CASA-named surface returns CASA's value with its original
+signature. Wrappers for `calibrate`, `msexplore`, `msconvert`, and `plotms`
+return a completion. Tasks are included in the Python wheel.
 
 `casars.data` is stateful and file-backed. It is intended for interoperability
 with the Python ecosystem through NumPy-native reads and writes. For images,

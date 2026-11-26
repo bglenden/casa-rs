@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 mod convert;
+mod native_tasks;
 mod object_contract;
 mod parameters;
 mod plot;
@@ -95,6 +96,7 @@ fn _core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(tasks::application_catalog, module)?)?;
+    module.add_function(wrap_pyfunction!(native_tasks::run_native_task, module)?)?;
     module.add_function(wrap_pyfunction!(tasks::task_executable, module)?)?;
     module.add_function(wrap_pyfunction!(tasks::prepare_task_table_write, module)?)?;
     module.add_function(wrap_pyfunction!(tasks::task_outcome, module)?)?;

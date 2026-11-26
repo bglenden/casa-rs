@@ -30,7 +30,7 @@ pub fn task_front_end()
     .expect("the flagmanager contract carries its surface")
 }
 
-fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let vis = task.path("vis")?;
     let request = FlagManagerTaskRequest {
         vis: vis.clone(),

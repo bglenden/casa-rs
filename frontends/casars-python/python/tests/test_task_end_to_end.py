@@ -1,10 +1,4 @@
-"""Python runs a real task executable (#931 PR 3).
-
-The resolver finds the executable itself: the override, an installed suite,
-or this development checkout's build. Without one the tests skip, unless
-``CASARS_REQUIRE_TASK_BINARIES`` is set, as in CI's job that builds them;
-then a missing executable fails the run.
-"""
+"""Run CASA-shaped Python task calls against native data fixtures."""
 
 from __future__ import annotations
 
@@ -20,7 +14,6 @@ import pytest
 from casars import tasks
 from casars._native_image import NativeImageView
 from casars.parameters import TaskParameters
-from casars.tasks import _runner
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SMALL_MS_ARCHIVE = Path(
@@ -29,35 +22,6 @@ SMALL_MS_ARCHIVE = Path(
         REPO_ROOT / "crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz",
     )
 )
-
-
-def task_executable(name: str) -> str:
-    try:
-        return _runner._task_executable(name)
-    except tasks.TaskBinaryNotFoundError as missing:
-        if os.environ.get("CASARS_REQUIRE_TASK_BINARIES"):
-            raise
-        pytest.skip(f"no {name} executable: {missing}")
-
-
-@pytest.fixture
-def flagmanager() -> str:
-    return task_executable("flagmanager")
-
-
-@pytest.fixture
-def flagdata() -> str:
-    return task_executable("flagdata")
-
-
-def require_executables(*names: str) -> None:
-    for name in names:
-        try:
-            _runner._task_executable(name)
-        except tasks.TaskBinaryNotFoundError as missing:
-            if os.environ.get("CASARS_REQUIRE_TASK_BINARIES"):
-                raise
-            pytest.skip(f"no {name} executable: {missing}")
 
 
 @pytest.fixture
@@ -72,11 +36,6 @@ def image(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def calibrate() -> str:
-    return task_executable("gencal")
-
-
-@pytest.fixture
 def small_ms(tmp_path: Path) -> Path:
     with tarfile.open(SMALL_MS_ARCHIVE, "r:gz") as archive:
         extract = {"filter": "data"} if sys.version_info >= (3, 12) else {}
@@ -84,8 +43,7 @@ def small_ms(tmp_path: Path) -> Path:
     return tmp_path / "mssel_test_small.ms"
 
 
-def test_a_task_runs_its_real_executable(
-    flagmanager: str,
+def test_flagmanager_runs_in_process_and_preserves_last(
     small_ms: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -103,21 +61,19 @@ def test_a_task_runs_its_real_executable(
     completion = tasks.run("flagmanager", vis=small_ms.name, mode="list", comment="from Python")
 
     assert completion.successful, completion.describe()
-    assert completion.command[0] == flagmanager
-    assert completion.command[1:] == ("--json-run", "-")
     # flagmanager returns CASA's version list: no saved versions yet, and
     # the MeasurementSet's absolute path.
     assert completion.value == {"MS": str(small_ms.resolve())}
     # The log streamed to stderr as the task ran.
-    assert "flagmanager started" in completion.stderr
-    assert "flagmanager completed" in completion.stderr
-    assert completion.stderr in capsys.readouterr().err
+    assert "flagmanager started" in completion.logs
+    assert "flagmanager completed" in completion.logs
+    assert completion.logs in capsys.readouterr().err
     # A Python call neither loads nor saves Last.
     assert (last.read_bytes(), last_successful.read_bytes()) == before
 
 
 def test_flagdata_returns_casas_summary_and_empty_dictionary(
-    flagdata: str, small_ms: Path, monkeypatch: pytest.MonkeyPatch
+    small_ms: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # #931 PR 4c: CASA's flagdata returns its summary in summary mode and
     # {} in its other modes.
@@ -145,7 +101,7 @@ def test_flagdata_returns_casas_summary_and_empty_dictionary(
 
 
 def test_gencal_takes_casas_signature_and_returns_none(
-    calibrate: str, small_ms: Path, monkeypatch: pytest.MonkeyPatch
+    small_ms: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # #931 PR 4d: the calibration tasks take CASA's parameters; gencal
     # returns None, as CASA's does, and writes its table.
@@ -162,7 +118,7 @@ def test_gencal_takes_casas_signature_and_returns_none(
 
 
 def test_a_real_refusal_names_its_parameter(
-    flagmanager: str, small_ms: Path, monkeypatch: pytest.MonkeyPatch
+    small_ms: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(small_ms.parent)
     # The generic runner retains the structured refusal. The CASA wrapper
@@ -173,7 +129,6 @@ def test_a_real_refusal_names_its_parameter(
     completion = failure.value.completion
     assert completion.status == "refused", completion.describe()
     assert completion.parameter == "versionname"
-    assert completion.returncode == 2
     with pytest.raises(ValueError, match="^Illegal versionname: ''$") as wrapper_failure:
         tasks.flagmanager(vis=small_ms.name, mode="restore")
     assert type(wrapper_failure.value) is ValueError
@@ -182,7 +137,6 @@ def test_a_real_refusal_names_its_parameter(
 def test_casas_spellings_of_a_default_run_as_casa_runs_them(
     image: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    require_executables("immath", "imhead")
     monkeypatch.chdir(image.parent)
     # CASA reads varnames=[] as its '', and ignores sigma outside its
     # polarization modes (#931).
@@ -201,20 +155,17 @@ def test_casas_spellings_of_a_default_run_as_casa_runs_them(
 def test_a_missing_input_image_is_a_parameter_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    require_executables("imstat")
     monkeypatch.chdir(tmp_path)
     # CASA's imstat('does-not-exist.im') is a parameter error (#931).
     with pytest.raises(tasks.TaskParameterError) as failure:
         tasks.imstat("does-not-exist.im")
     completion = failure.value.completion
     assert completion.parameter == "imagename"
-    assert completion.returncode == 2
 
 
 def test_imhead_preserves_python_scalar_header_types(
     image: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    require_executables("imhead")
     monkeypatch.chdir(image.parent)
     assert tasks.imhead(image.name, mode="put", hdkey="count", hdvalue=42) is None
     assert tasks.imhead(image.name, mode="put", hdkey="real", hdvalue=1.25) is None
@@ -233,7 +184,6 @@ def test_imhead_preserves_python_scalar_header_types(
 def test_imhead_history_is_visible_with_default_logging(
     image: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    require_executables("imhead")
     monkeypatch.chdir(image.parent)
     for name in ("CASA_RS_LOG_TABLE", "CASA_RS_LOG_TABLE_PRIORITY", "CASA_RS_LOG_STDERR_PRIORITY"):
         monkeypatch.delenv(name, raising=False)
@@ -244,7 +194,6 @@ def test_imhead_history_is_visible_with_default_logging(
 
 
 def test_imhead_custom_array_from_python(image: Path) -> None:
-    require_executables("imhead")
     assert tasks.imhead(str(image), mode="add", hdkey="values", hdvalue=[1, 2.5]) is None
     with pytest.raises(tasks.TaskExecutionError, match="Unhandled data type Array<double>"):
         tasks.imhead(str(image), mode="get", hdkey="values")
@@ -254,7 +203,6 @@ def test_imhead_custom_array_from_python(image: Path) -> None:
 def test_imhead_custom_records_from_python(image: Path) -> None:
     import numpy as np
 
-    require_executables("imhead")
     value = {
         "nested": {
             "values": [1, 2],
@@ -274,7 +222,6 @@ def test_imhead_custom_records_from_python(image: Path) -> None:
 
 
 def test_imhead_reads_casa_complex_scalars(tmp_path: Path) -> None:
-    require_executables("imhead")
     fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/custom_complex.im"
     image = tmp_path / "complex.im"
     shutil.copytree(fixture, image)
@@ -287,7 +234,6 @@ def test_imhead_reads_casa_complex_scalars(tmp_path: Path) -> None:
 def test_imhead_writes_complex_records_and_roundtrips_profiles(tmp_path: Path) -> None:
     import numpy as np
 
-    require_executables("imhead")
     fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/normal.im"
     image = tmp_path / "complex-write.im"
     shutil.copytree(fixture, image)
@@ -318,7 +264,6 @@ def test_imhead_writes_complex_records_and_roundtrips_profiles(tmp_path: Path) -
 def test_imhead_writes_numpy_complex_matrix_in_record(tmp_path: Path) -> None:
     import numpy as np
 
-    require_executables("imhead")
     fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/normal.im"
     image = tmp_path / "complex-array.im"
     shutil.copytree(fixture, image)
@@ -344,7 +289,6 @@ def test_imhead_rejects_unsupported_extended_numpy_precision(tmp_path: Path) -> 
 def test_imhead_empty_numpy_arrays_preserve_casa_dtype_and_shape(tmp_path: Path) -> None:
     import numpy as np
 
-    require_executables("imhead")
     fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/normal.im"
     image = tmp_path / "empty-arrays.im"
     shutil.copytree(fixture, image)
@@ -369,7 +313,6 @@ def test_imhead_reads_casa_created_empty_array_records(tmp_path: Path) -> None:
     import json
     import numpy as np
 
-    require_executables("imhead")
     root = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix"
     image = tmp_path / "casa-empty.im"
     shutil.copytree(root / "custom_empty_arrays.im", image)
@@ -384,7 +327,6 @@ def test_imhead_nonfinite_header_values_roundtrip(tmp_path: Path) -> None:
     import math
     import numpy as np
 
-    require_executables("imhead")
     fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/normal.im"
     image = tmp_path / "nonfinite.im"
     shutil.copytree(fixture, image)
@@ -411,7 +353,6 @@ def test_imhead_reads_casa_created_nonfinite_record(tmp_path: Path) -> None:
     import math
     import numpy as np
 
-    require_executables("imhead")
     root = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix"
     image = tmp_path / "casa-nonfinite.im"
     shutil.copytree(root / "custom_nonfinite.im", image)
@@ -430,7 +371,6 @@ def test_imhead_nonzenithal_spectral_reference_matches_casa(tmp_path: Path, proj
     import json
     import numpy as np
 
-    require_executables("imhead")
     root = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix"
     image = tmp_path / f"{projection}.im"
     shutil.copytree(root / f"{projection}.im", image)
@@ -447,7 +387,6 @@ def test_imhead_nonzenithal_spectral_reference_matches_casa(tmp_path: Path, proj
 @pytest.mark.parametrize("key", ["bunit", "object", "observer", "telescope"])
 @pytest.mark.parametrize("ignored", [[1, 2], {"ignored": "yes"}])
 def test_imhead_delete_ignores_compound_value(tmp_path: Path, key: str, ignored: object) -> None:
-    require_executables("imhead")
     fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_put/base.im"
     image = tmp_path / f"{key}.im"
     shutil.copytree(fixture, image)
@@ -462,7 +401,6 @@ def test_imhead_fits_returns_casa_python_types(tmp_path: Path) -> None:
     import runpy
     import numpy as np
 
-    require_executables("imhead")
     root = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_fits"
     oracle = json.loads((root / "expected.json").read_text())
     describe = runpy.run_path(str(REPO_ROOT / "tools/casa-compat/record_casa_returns.py"))["describe"]
@@ -506,7 +444,6 @@ def test_imhead_zero_dim_numpy_record_values_match_casa(tmp_path: Path) -> None:
     import json
     import numpy as np
 
-    require_executables("imhead")
     root = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix"
     oracle = json.loads((root / "zero_dim_expected.json").read_text())
     for index, case in enumerate(oracle["cases"]):
@@ -532,7 +469,6 @@ def test_imhead_zero_dim_numpy_record_values_match_casa(tmp_path: Path) -> None:
 def test_imhead_zero_dim_direct_array_matches_casa_error_on_get(tmp_path: Path, value: object) -> None:
     import numpy as np
 
-    require_executables("imhead")
     source = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/normal.im"
     image = tmp_path / "zero-dim-direct.im"
     shutil.copytree(source, image)
@@ -545,7 +481,6 @@ def test_imhead_ignores_zero_dim_arrays_inside_flat_lists(tmp_path: Path) -> Non
     import json
     import numpy as np
 
-    require_executables("imhead")
     source = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/normal.im"
     image = tmp_path / "zero-dim-list.im"
     shutil.copytree(source, image)
@@ -563,7 +498,6 @@ def test_imhead_numpy_scalars_match_casa_by_context(tmp_path: Path) -> None:
     import json
     import numpy as np
 
-    require_executables("imhead")
     root = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix"
     oracle = json.loads((root / "numpy_scalar_expected.json").read_text())
     for index, case in enumerate(oracle["cases"]):
@@ -607,7 +541,6 @@ def test_imhead_ignored_elements_in_multidimensional_arrays_match_casa(tmp_path:
     import json
     import numpy as np
 
-    require_executables("imhead")
     root = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix"
     expected = json.loads((root / "ignored_matrix_expected.json").read_text())["cases"]
     cases = {
@@ -643,7 +576,6 @@ def test_imhead_ignored_elements_in_multidimensional_arrays_match_casa(tmp_path:
 def test_imhead_large_integer_record_uses_casa_conversion(tmp_path: Path) -> None:
     import numpy as np
 
-    require_executables("imhead")
     fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/normal.im"
     image = tmp_path / "large-integers.im"
     shutil.copytree(fixture, image)
@@ -662,7 +594,6 @@ def test_imhead_unsigned_record_array_uses_casa_dtype(tmp_path: Path) -> None:
     import json
     import numpy as np
 
-    require_executables("imhead")
     root = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix"
     image = tmp_path / "unsigned.im"
     shutil.copytree(root / "custom_uint32.im", image)
@@ -691,7 +622,6 @@ def test_complex_profile_nesting_is_bounded_before_it_is_saved(tmp_path: Path) -
 def test_imhead_casa_record_multidimensional_arrays(tmp_path: Path) -> None:
     import numpy as np
 
-    require_executables("imhead")
     fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/custom_record.im"
     image = tmp_path / "record.im"
     shutil.copytree(fixture, image)
@@ -701,7 +631,6 @@ def test_imhead_casa_record_multidimensional_arrays(tmp_path: Path) -> None:
 
 
 def test_imhead_put_accepts_rest_frequency_quantity_record(tmp_path: Path) -> None:
-    require_executables("imhead")
     fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/normal.im"
     image = tmp_path / "spectral.im"
     shutil.copytree(fixture, image)
@@ -717,7 +646,6 @@ def test_imhead_put_accepts_rest_frequency_quantity_record(tmp_path: Path) -> No
 
 
 def test_imhead_edits_and_removes_a_restoring_beam(tmp_path: Path) -> None:
-    require_executables("imhead")
     fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/beam.im"
     image = tmp_path / "beam.im"
     shutil.copytree(fixture, image)
@@ -731,7 +659,6 @@ def test_imhead_verbose_preserves_summary_record(tmp_path: Path) -> None:
     import json
     import numpy as np
 
-    require_executables("imhead")
     fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/verbose_beams.im"
     image = tmp_path / "verbose.im"
     shutil.copytree(fixture, image)
@@ -749,7 +676,6 @@ def test_imhead_verbose_preserves_summary_record(tmp_path: Path) -> None:
 def test_imhead_edits_stokes_reference_values(tmp_path: Path) -> None:
     import numpy as np
 
-    require_executables("imhead")
     fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/stokes_four.im"
     image = tmp_path / "stokes.im"
     shutil.copytree(fixture, image)
@@ -758,7 +684,6 @@ def test_imhead_edits_stokes_reference_values(tmp_path: Path) -> None:
 
 
 def test_imhead_edits_direction_reference(tmp_path: Path) -> None:
-    require_executables("imhead")
     fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/normal.im"
     image = tmp_path / "direction.im"
     shutil.copytree(fixture, image)
@@ -770,7 +695,6 @@ def test_imhead_edits_direction_reference(tmp_path: Path) -> None:
 def test_msconvert_converts_both_ways_and_reports_its_losses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    require_executables("msconvert")
     fixtures = REPO_ROOT / "crates/casa-ms/tests/fixtures/ms_trial"
     with tarfile.open(fixtures / "ms_trial.ms.tgz", "r:gz") as archive:
         extract = {"filter": "data"} if sys.version_info >= (3, 12) else {}
@@ -812,7 +736,7 @@ def test_msconvert_converts_both_ways_and_reports_its_losses(
 
 
 def test_gencal_cumulates_and_report_refusal_preserves_product(
-    calibrate: str, small_ms: Path, monkeypatch: pytest.MonkeyPatch
+    small_ms: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """CASA 6.7.6.14 adds real corrections; report policy is independent."""
     import numpy as np
