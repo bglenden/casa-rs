@@ -20,8 +20,8 @@
 
 use std::path::{Path, PathBuf};
 
+use casa_contracts::{ParameterValue, python_repr};
 use casa_ms::{MeasurementSet, MsSelection};
-use casa_provider_contracts::{ParameterValue, python_repr};
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
 use super::read::{count, parse_gainfield_value, parse_interp_value};

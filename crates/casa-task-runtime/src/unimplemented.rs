@@ -3,7 +3,7 @@
 //!
 //! A surface that mimics a CASA task takes every CASA parameter, so CASA's
 //! signature is exact. A parameter casa-rs does not implement yet carries
-//! [`UnimplementedParameter`](casa_provider_contracts::UnimplementedParameter)
+//! [`UnimplementedParameter`](casa_contracts::UnimplementedParameter)
 //! in the contract: resolution accepts it at its
 //! default, as CASA reads the default, and refuses any other value before
 //! the task starts, on the command line and from Python alike. The marker
@@ -13,9 +13,7 @@
 
 use std::collections::BTreeMap;
 
-use casa_provider_contracts::{
-    DefaultSpec, ParameterValue, SurfaceContractBundle, SurfaceParameterBinding,
-};
+use casa_contracts::{DefaultSpec, ParameterValue, SurfaceContractBundle, SurfaceParameterBinding};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode};
 use crate::normalize::semantic_eq;

@@ -11,9 +11,7 @@
 //! must equal the table as the bundle publishes it, and the installed CASA
 //! binding (`python/tests/data/casa_<tool>_signatures.json`).
 
-use casa_provider_contracts::{
-    ObjectConstructorDescriptor, ObjectMethodDescriptor, ObjectTypeContract,
-};
+use casa_contracts::{ObjectConstructorDescriptor, ObjectMethodDescriptor, ObjectTypeContract};
 use schemars::schema::RootSchema;
 use serde_json::{Map, Value as JsonValue, json};
 

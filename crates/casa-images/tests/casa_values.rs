@@ -11,7 +11,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
-use casa_provider_contracts::{CasaValue, TaskReply};
+use casa_contracts::{CasaValue, TaskReply};
 use serde_json::{Value, json};
 use support::write_image;
 
@@ -120,7 +120,7 @@ fn immoments_takes_casas_moments_and_includepix() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let bundle = casa_provider_contracts::builtin_surface_bundle("immoments").unwrap();
+    let bundle = casa_contracts::builtin_surface_bundle("immoments").unwrap();
     let products = casa_task_runtime::decode_task_completion(&bundle, &summary, root, &[])
         .unwrap()
         .products;
@@ -494,7 +494,7 @@ fn stale_impbcor_profile_is_refused_before_writing() {
     let root = workspace.path();
     write_image(&root.join("in.image"), 2.0);
     write_image(&root.join("pb.image"), 1.0);
-    let current = casa_provider_contracts::builtin_surface_bundle("impbcor")
+    let current = casa_contracts::builtin_surface_bundle("impbcor")
         .unwrap()
         .surface
         .contract_version();

@@ -4,8 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
+use casa_contracts::{ParameterValue, TaskFailureKind, builtin_surface_bundle};
 use casa_ms::MsSelection;
-use casa_provider_contracts::{ParameterValue, TaskFailureKind, builtin_surface_bundle};
 use casa_task_runtime::{
     OpenSessionRequest, ParameterRuntime, ResolutionPatch, TaskFailure, TaskInvocation,
 };

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Added singleton coordinates and axis ordering for CASA importfits.
 
+use casa_contracts::ParameterValue;
 use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate, Projection,
     ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
 };
-use casa_provider_contracts::ParameterValue;
 use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::quanta::{

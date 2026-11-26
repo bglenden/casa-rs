@@ -9,8 +9,8 @@ mod spectral;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use casa_contracts::CasaValue;
 use casa_ms::{MeasurementSet, MsSelection, ResolvedMsSelection};
-use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, IxDyn};

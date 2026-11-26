@@ -16,9 +16,6 @@ cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
 workspace = true
 
 [dependencies]
-casa-provider-contracts = { path = "../casa-provider-contracts" }
-casa-task-runtime = { path = "../casa-task-runtime" }
-casa-logging = { path = "../casa-logging" }
 casa-measures-data = { path = "../casa-measures-data" }
 casa-ms = { path = "../casa-ms" }
 casa-tables = { path = "../casa-tables" }

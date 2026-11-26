@@ -28,7 +28,6 @@
     "crates/casa-ms/src/write_session.rs",
     "crates/casa-ms/tests/msexplore_casa_parity.rs",
     "crates/casa-ms/tests/msexplore_cli.rs",
-    "crates/casa-provider-contracts/src/parameters.rs",
     "crates/casa-tables/examples/support/table_demos.rs",
     "crates/casa-tables/src/storage/incremental_stman.rs",
     "crates/casa-tables/src/storage/mod.rs",
@@ -50,6 +49,7 @@
     "crates/casa-vla/src/record.rs",
     "dev/casa-test-support/src/measures_interop.rs",
     "suites/casacore-interop/tests/measures_interop.rs",
-    "suites/perf/tests/images_perf_vs_cpp.rs"
+    "suites/perf/tests/images_perf_vs_cpp.rs",
+    "surfaces/casa-contracts/src/parameters.rs"
   ]
 }

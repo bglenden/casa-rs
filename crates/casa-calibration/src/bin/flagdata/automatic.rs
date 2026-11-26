@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Table-specific averaging and iterator controls for automatic flagging.
 
+use casa_contracts::{EmptyArrayType, NumpyScalarType, ParameterValue};
 use casa_ms::FlagDataMode;
-use casa_provider_contracts::{EmptyArrayType, NumpyScalarType, ParameterValue};
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 use casa_types::quanta::Quantity;
 

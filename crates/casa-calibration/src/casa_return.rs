@@ -12,7 +12,7 @@
 
 use std::path::Path;
 
-use casa_provider_contracts::{CasaFloat, CasaValue, FloatDtype};
+use casa_contracts::{CasaFloat, CasaValue, FloatDtype};
 
 use crate::{
     ApplyCalibrationTableSpec, FluxScaleFieldResult, FluxScaleReport, SelectedData, SolveCounts,

@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use casa_provider_contracts::{CasaEntry, CasaKey, CasaValue};
+use casa_contracts::{CasaEntry, CasaKey, CasaValue};
 
 use super::spectrum::{Ordinate, median};
 use super::{BandpassPlots, DerivativeStatistics, PlatformingTime};

@@ -2,7 +2,7 @@
 //! User sky state and equivalent-blackbody and Rayleigh–Jeans temperatures.
 
 use casa_atmosphere::{AtmosphereError, AtmosphereSpectrum, Sky};
-use casa_provider_contracts::CasaValue;
+use casa_contracts::CasaValue;
 use pyo3::prelude::*;
 
 use super::absorption::{INVALID_CHANNEL, channel_index, channel_range};

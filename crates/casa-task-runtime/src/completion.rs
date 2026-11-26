@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use casa_provider_contracts::{
+use casa_contracts::{
     DefaultSpec, ManagedResultDecoder, ParameterValue, RunProductDescriptor, RunProductKind,
     RunProductRole, RunProductSource, SurfaceContractBundle,
 };
@@ -421,7 +421,7 @@ struct ArtifactWire {
 mod tests {
     use std::fs;
 
-    use casa_provider_contracts::builtin_surface_bundle;
+    use casa_contracts::builtin_surface_bundle;
     use tempfile::tempdir;
 
     use super::*;

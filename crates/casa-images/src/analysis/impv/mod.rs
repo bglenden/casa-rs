@@ -10,11 +10,11 @@ pub use tool::{ImagePvProduct, generate_image_pv};
 use std::io;
 use std::path::Path;
 
+use casa_contracts::{ParameterValue, parameter_value_to_casacore};
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate,
     LinearCoordinate,
 };
-use casa_provider_contracts::{ParameterValue, parameter_value_to_casacore};
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{Table, TableOptions};
 use casa_types::quanta::{Quantity, Unit};

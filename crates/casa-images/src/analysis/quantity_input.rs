@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Quantity values accepted by CASA image metadata operations.
 
-use casa_provider_contracts::ParameterValue;
+use casa_contracts::ParameterValue;
 use casa_types::quanta::{Quantity, Unit};
 
 use super::projection_header::cpp_number_precision;
@@ -35,7 +35,7 @@ pub(super) fn parse(value: &ParameterValue) -> Result<(Quantity, String), ImageE
                     (*value, "Double", cpp_number_precision(*value, 6))
                 }
                 Some(ParameterValue::Integer(value)) => {
-                    let value = casa_provider_contracts::casa_variant_integer(*value);
+                    let value = casa_contracts::casa_variant_integer(*value);
                     (f64::from(value), "Int", value.to_string())
                 }
                 _ => return Err(invalid("Illegal Quantity record".into())),
@@ -46,7 +46,7 @@ pub(super) fn parse(value: &ParameterValue) -> Result<(Quantity, String), ImageE
             let rendered = if fields.len() == 2 {
                 format!("  unit: String \"{unit}\"\n  value: {ty} {rendered}")
             } else {
-                let record = casa_provider_contracts::parameter_value_to_casacore(value)
+                let record = casa_contracts::parameter_value_to_casacore(value)
                     .map_err(|error| invalid(error.into()))?;
                 let casa_types::Value::Record(record) = record else {
                     unreachable!()

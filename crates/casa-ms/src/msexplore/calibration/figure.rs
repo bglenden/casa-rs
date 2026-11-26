@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use casa_provider_contracts::ParameterValue;
+use casa_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
 use super::axis::Axis;

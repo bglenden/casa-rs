@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use casa_contracts::ParameterValue;
 use casa_images::{
     ImpvRequest, PvAmount, PvPosition,
     analysis::{
@@ -10,7 +11,6 @@ use casa_images::{
     },
     image::image_history_rows,
 };
-use casa_provider_contracts::ParameterValue;
 use pyo3::prelude::*;
 
 use crate::convert::{IntList, Variant};

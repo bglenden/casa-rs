@@ -3,18 +3,9 @@
 
 use std::{collections::BTreeMap, path::PathBuf};
 
-use casa_provider_contracts::{CasaValue, ParameterValue};
+use casa_contracts::{CasaValue, ParameterValue};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-
-/// Check the schema library's map ordering across the build and target.
-#[allow(dead_code)] // The target may use the non-generated fallback.
-pub(crate) fn schema_maps_preserve_order() -> bool {
-    let mut map = schemars::Map::new();
-    map.insert("z", ());
-    map.insert("a", ());
-    map.keys().next().is_some_and(|key| *key == "z")
-}
 
 /// Global extrema and zero-based pixel positions, over unmasked pixels.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -315,7 +306,7 @@ pub struct ImmomentsRequest {
     pub moments: Vec<i32>,
     /// Collapse axis as a zero-based index, or a CASA axis name.
     #[serde(default)]
-    pub axis: Option<casa_provider_contracts::ParameterValue>,
+    pub axis: Option<casa_contracts::ParameterValue>,
     /// CASA CRTF or saved-image region.
     #[serde(default)]
     pub region: Option<String>,

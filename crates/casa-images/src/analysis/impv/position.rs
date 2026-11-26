@@ -3,8 +3,8 @@
 
 use std::f64::consts::PI;
 
+use casa_contracts::{ParameterValue, parameter_value_to_casacore};
 use casa_coordinates::{Coordinate, DirectionCoordinate};
-use casa_provider_contracts::{ParameterValue, parameter_value_to_casacore};
 use casa_types::Value;
 use casa_types::measures::{
     MeasFrame,

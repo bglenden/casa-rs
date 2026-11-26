@@ -8,8 +8,8 @@ use std::io;
 use std::ops::{Div, Mul};
 use std::path::{Path, PathBuf};
 
+use casa_contracts::{ParameterValue, parameter_value_to_casacore};
 use casa_coordinates::CoordinateType;
-use casa_provider_contracts::{ParameterValue, parameter_value_to_casacore};
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{Table, TableOptions};
 use casa_types::{ArrayD, RecordValue, Value};

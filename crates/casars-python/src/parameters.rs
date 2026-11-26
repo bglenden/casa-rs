@@ -16,7 +16,7 @@ mod values;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use casa_provider_contracts::{
+use casa_contracts::{
     ParameterValue, SurfaceContractBundle, builtin_surface_bundle, builtin_surface_catalog,
 };
 use casa_task_runtime::{
@@ -405,8 +405,10 @@ fn provider_invocation_with_originals(
     let invocation = project_provider_invocation_with_originals(&session, &originals)
         .map_err(|error| parameter_error("project provider invocation", error))?;
     let descriptor = match session.bundle().surface.provider_family() {
-        "imager" => Some(casars_imager::imager_protocol_descriptor()),
-        "single_dish" => Some(casars_imager::single_dish::tsdimaging_task_schema_bundle().protocol),
+        "imager" => Some(casa_tasks::imaging::imager_protocol_descriptor()),
+        "single_dish" => {
+            Some(casa_tasks::imaging::single_dish::tsdimaging_task_schema_bundle().protocol)
+        }
         "simobserve" => Some(casars_simulation::simobserve_protocol_descriptor()),
         "simanalyze" => Some(casars_simulation::simanalyze_protocol_descriptor()),
         "simalma" => Some(casars_simulation::simalma_protocol_descriptor()),

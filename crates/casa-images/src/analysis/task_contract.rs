@@ -2,11 +2,10 @@
 //! The image-analysis provider contract, shared by the build and runtime.
 
 use super::schema::{ImageAnalysisTaskRequest, ImageAnalysisTaskResult};
-use casa_provider_contracts::{
-    NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
-    ProviderProjectionMetadata, ProviderProtocolDescriptor, ProviderSurfaceKind,
-    TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas, TaskSemanticContract,
-    builtin_surface_bundle, merged_components,
+use casa_contracts::{
+    ProviderCliMachineActions, ProviderCliProjection, ProviderProjectionMetadata,
+    ProviderProtocolDescriptor, ProviderSurfaceKind, TaskOperationDescriptor, TaskProviderContract,
+    TaskProviderSchemas, TaskSemanticContract, builtin_surface_bundle, merged_components,
 };
 use schemars::schema_for;
 
@@ -149,7 +148,6 @@ pub(super) fn try_image_analysis_task_schema_bundle() -> Result<TaskProviderCont
         domain_schemas: TaskProviderSchemas {
             request_schema,
             result_schema,
-            additional: NoAdditionalProviderSchemas::default(),
         },
     })
 }

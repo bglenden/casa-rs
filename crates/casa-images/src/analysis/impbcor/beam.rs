@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Full-rank and direction-plane primary beams for `impbcor`.
 
+use casa_contracts::{ParameterValue, parameter_array_to_casa};
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate,
 };
-use casa_provider_contracts::{ParameterValue, parameter_array_to_casa};
 use casa_types::{ArrayD, ArrayValue};
 use ndarray::{Axis, Slice};
 

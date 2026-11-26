@@ -3,11 +3,11 @@
 
 use std::process::ExitCode;
 
+use casa_contracts::ParameterValue;
 use casa_images::{
     ImageAnalysisTaskResult, ImportFitsRequest, image_task_front_end, image_task_success,
     importfits,
 };
-use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 fn main() -> ExitCode {

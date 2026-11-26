@@ -17,7 +17,7 @@ pub(crate) fn resolved(
     let fields = values.as_object_mut().expect("object");
     fields.extend(overrides.as_object().expect("overrides object").clone());
     casa_task_runtime::resolve_plain_values(
-        casa_provider_contracts::builtin_surface_bundle("tclean").expect("tclean surface"),
+        casa_contracts::builtin_surface_bundle("tclean").expect("tclean surface"),
         PathBuf::from("."),
         fields,
     )

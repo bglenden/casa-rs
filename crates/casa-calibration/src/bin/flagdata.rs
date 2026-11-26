@@ -7,6 +7,10 @@
 use std::path::Path;
 use std::process::ExitCode;
 
+use casa_contracts::{
+    CasaFloat, CasaValue, DefaultSpec, FloatDtype, NumpyScalarType, ParameterValue,
+    TaskFailureKind, python_repr,
+};
 use casa_ms::flagging::{
     AntennaIntegrationOptions, RFlagThresholdReport, ShadowOptions, flagdata_path_with_model,
 };
@@ -16,10 +20,6 @@ use casa_ms::{
     FlagSummaryOptions, FlaggingError, MeasurementSet, QuackMode, TransformTaskHistory,
     append_flag_command, append_task_history, flagdata_empty_record, flagdata_named_summary_record,
     flagdata_task_schema_bundle, ms_task_success, save_next_casa_flag_backup, task_selection_text,
-};
-use casa_provider_contracts::{
-    CasaFloat, CasaValue, DefaultSpec, FloatDtype, NumpyScalarType, ParameterValue,
-    TaskFailureKind, python_repr,
 };
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
@@ -1276,7 +1276,7 @@ mod tests {
         read: fn(&TaskInvocation<'_>) -> Result<T, TaskFailure>,
     ) -> Result<T, TaskFailure> {
         let args = args.iter().map(OsString::from).collect::<Vec<_>>();
-        let bundle = casa_provider_contracts::builtin_surface_bundle("flagdata").unwrap();
+        let bundle = casa_contracts::builtin_surface_bundle("flagdata").unwrap();
         let line = TaskCommandLine::parse(&bundle, &args).unwrap();
         let session = ParameterRuntime::default()
             .open_session(line.open_session_request(bundle))

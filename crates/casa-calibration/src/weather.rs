@@ -6,7 +6,7 @@ mod opacity;
 
 use std::path::Path;
 
-use casa_provider_contracts::CasaFloat;
+use casa_contracts::CasaFloat;
 use casa_tables::{Table, TableOptions};
 use casa_types::ScalarValue;
 use casa_types::quanta::format::{YMD, format_time};

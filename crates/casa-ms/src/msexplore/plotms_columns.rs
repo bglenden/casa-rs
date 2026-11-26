@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use casa_provider_contracts::ParameterValue;
+use casa_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
 use super::{ChannelBin, FloatGrid, MsAxis, MsDataColumn, MsPlotSpec, PlotMsInput};

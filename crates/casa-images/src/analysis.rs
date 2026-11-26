@@ -4,6 +4,7 @@
 use std::fs;
 use std::path::Path;
 
+use casa_contracts::ParameterValue;
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, FitsHeader, StokesType,
 };
@@ -12,7 +13,6 @@ use casa_lattices::{
     StatisticsAlgorithmKind, StatsElement, TiledShape, compute_robust_stats, parse_algorithm,
     parse_center, parse_clmethod,
 };
-use casa_provider_contracts::ParameterValue;
 use casa_tables::{Table, TableOptions};
 use casa_types::{ArrayD, RecordValue, ScalarValue, Value};
 use fitsio::images::ImageType as FitsImageType;
@@ -108,12 +108,8 @@ pub use self::lel_pixels::{
     calculate_complex_pixels, calculate_real_pixels, materialize_image_tool_expression,
 };
 pub use self::list_log::imhead_list_log;
-#[cfg(casa_prebuilt_image_provider)]
-pub(crate) use self::schema::schema_maps_preserve_order;
 pub use self::schema::*;
 pub use self::summary_log::imhead_summary_log;
-#[cfg(casa_prebuilt_image_provider)]
-pub(crate) use self::task_contract::IMAGE_ANALYSIS_TASK_SURFACES;
 pub use self::task_contract::{
     IMAGE_ANALYSIS_TASK_PROTOCOL_NAME, IMAGE_ANALYSIS_TASK_PROTOCOL_VERSION,
     image_analysis_protocol_descriptor, image_analysis_task_schema_bundle,
@@ -540,7 +536,7 @@ pub fn imhead_put_reference_pixel(
     }
     let (value, rendered) = match hdvalue {
         ParameterValue::Integer(value) => {
-            let value = casa_provider_contracts::casa_variant_integer(*value);
+            let value = casa_contracts::casa_variant_integer(*value);
             (f64::from(value), value.to_string())
         }
         ParameterValue::Float(value) if value.is_finite() => {
@@ -1312,7 +1308,7 @@ pub fn imhead_is_custom_key(key: &str) -> bool {
 pub fn imhead_custom_value(
     path: impl AsRef<Path>,
     key: &str,
-) -> Result<casa_provider_contracts::CasaValue, ImageError> {
+) -> Result<casa_contracts::CasaValue, ImageError> {
     let path = path.as_ref();
     if path.is_file() {
         return imhead_fits::custom_value(path, key);
@@ -1320,8 +1316,8 @@ pub fn imhead_custom_value(
     fn get<T: ImagePixel>(
         image: &PagedImage<T>,
         key: &str,
-    ) -> Result<casa_provider_contracts::CasaValue, ImageError> {
-        use casa_provider_contracts::CasaValue;
+    ) -> Result<casa_contracts::CasaValue, ImageError> {
+        use casa_contracts::CasaValue;
         let info = image.misc_info();
         let value = info
             .get(key)
@@ -1333,7 +1329,7 @@ pub fn imhead_custom_value(
                 value: i64::from(*value),
             }),
             Value::Scalar(ScalarValue::Float64(value)) => Ok(CasaValue::float(*value)),
-            Value::Record(_) => casa_provider_contracts::casacore_value_to_casa(value)
+            Value::Record(_) => casa_contracts::casacore_value_to_casa(value)
                 .map_err(|error| ImageError::InvalidMetadata(error.into())),
             Value::Scalar(ScalarValue::Bool(_)) => Err(ImageError::InvalidMetadata(
                 "Unhandled data type Bool for user defined type. Send us a bug report".into(),
@@ -1417,7 +1413,7 @@ pub fn imhead_custom_value_change(
                 format!("\"{value}\""),
             ),
             ParameterValue::Integer(value) => {
-                let value = casa_provider_contracts::casa_variant_integer(*value);
+                let value = casa_contracts::casa_variant_integer(*value);
                 (Value::Scalar(ScalarValue::Int32(value)), value.to_string())
             }
             ParameterValue::Float(value) => (
@@ -1429,7 +1425,7 @@ pub fn imhead_custom_value_change(
                 if *value { "1" } else { "0" }.to_string(),
             ),
             ParameterValue::Array(values) => {
-                let array = casa_provider_contracts::parameter_array_to_casa(values)
+                let array = casa_contracts::parameter_array_to_casa(values)
                     .map_err(|error| ImageError::InvalidMetadata(error.into()))?;
                 if matches!(array, casa_types::ArrayValue::Complex64(_)) {
                     return Err(ImageError::InvalidMetadata(format!(
@@ -1440,7 +1436,7 @@ pub fn imhead_custom_value_change(
                 (Value::Array(array), rendered)
             }
             ParameterValue::EmptyArray { dtype, shape } => {
-                let array = casa_provider_contracts::empty_parameter_array(*dtype, shape)
+                let array = casa_contracts::empty_parameter_array(*dtype, shape)
                     .map_err(|error| ImageError::InvalidMetadata(error.into()))?;
                 if matches!(array, casa_types::ArrayValue::Complex64(_)) {
                     return Err(ImageError::InvalidMetadata(format!(
@@ -1451,7 +1447,7 @@ pub fn imhead_custom_value_change(
                 (Value::Array(array), rendered)
             }
             ParameterValue::ScalarArray(value) => {
-                let array = casa_provider_contracts::scalar_parameter_array(value)
+                let array = casa_contracts::scalar_parameter_array(value)
                     .map_err(|error| ImageError::InvalidMetadata(error.into()))?;
                 if matches!(array, casa_types::ArrayValue::Complex64(_)) {
                     return Err(ImageError::InvalidMetadata(format!(
@@ -1462,7 +1458,7 @@ pub fn imhead_custom_value_change(
                 (Value::Array(array), rendered)
             }
             ParameterValue::Table(_) => {
-                let stored = casa_provider_contracts::parameter_value_to_casacore(value)
+                let stored = casa_contracts::parameter_value_to_casacore(value)
                     .map_err(|error| ImageError::InvalidMetadata(error.into()))?;
                 let Value::Record(record) = &stored else {
                     unreachable!()

@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use casa_contracts::{TaskFailureKind, builtin_surface_bundle};
 use casa_ms::MsSelection;
-use casa_provider_contracts::{TaskFailureKind, builtin_surface_bundle};
 use casa_task_runtime::{ParameterRuntime, TaskCommandLine, TaskFailure, TaskInvocation};
 use tempfile::TempDir;
 
@@ -224,10 +224,10 @@ fn a_table_list_reads_alike_from_a_list_or_one_string() {
     // one comma-separated string.
     let both = vec![PathBuf::from("phase.gcal"), PathBuf::from("bandpass.bcal")];
     for value in [
-        casa_provider_contracts::ParameterValue::String("phase.gcal, bandpass.bcal".into()),
-        casa_provider_contracts::ParameterValue::Array(vec![
-            casa_provider_contracts::ParameterValue::String("phase.gcal".into()),
-            casa_provider_contracts::ParameterValue::String("sub/../bandpass.bcal".into()),
+        casa_contracts::ParameterValue::String("phase.gcal, bandpass.bcal".into()),
+        casa_contracts::ParameterValue::Array(vec![
+            casa_contracts::ParameterValue::String("phase.gcal".into()),
+            casa_contracts::ParameterValue::String("sub/../bandpass.bcal".into()),
         ]),
     ] {
         let mut session = casa_task_runtime::ParameterSession::defaults(
@@ -237,7 +237,7 @@ fn a_table_list_reads_alike_from_a_list_or_one_string() {
         session
             .set(
                 "vis",
-                casa_provider_contracts::ParameterValue::String("dataset.ms".into()),
+                casa_contracts::ParameterValue::String("dataset.ms".into()),
             )
             .unwrap();
         session.set("gaintables", value.clone()).unwrap();

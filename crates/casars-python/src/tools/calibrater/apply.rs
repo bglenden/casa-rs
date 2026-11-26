@@ -7,9 +7,7 @@ use casa_calibration::{
     ApplyCalibrationTableSpec, CalibraterLifecycleError, CallibError, load_callibrary_record,
     validate_callibrary_record,
 };
-use casa_provider_contracts::{
-    ParameterValue, casacore_value_to_casa, parameter_value_to_casacore,
-};
+use casa_contracts::{ParameterValue, casacore_value_to_casa, parameter_value_to_casacore};
 use casa_types::{RecordValue, Value};
 use pyo3::exceptions::{PyRuntimeError, PySystemError, PyTypeError};
 use pyo3::{

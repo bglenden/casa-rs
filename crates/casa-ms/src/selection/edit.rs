@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Canonical syntax and dataset-context validation for MeasurementSet selectors.
 
-use casa_provider_contracts::SelectorGrammar;
+use casa_contracts::SelectorGrammar;
 
 use crate::selection::syntax::{parse_numeric_id_selector, parse_spw_selector};
 use crate::{MeasurementSet, MsError, MsResult, MsSelection};

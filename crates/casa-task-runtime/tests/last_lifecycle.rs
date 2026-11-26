@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use casa_provider_contracts::{ParameterValue, builtin_surface_bundle};
+use casa_contracts::{ParameterValue, builtin_surface_bundle};
 use casa_task_runtime::{
     ManagedProfileKind, ManagedStateStore, ParameterSession, TaskLastCoordinator,
 };

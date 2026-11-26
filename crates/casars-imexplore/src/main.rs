@@ -9,13 +9,13 @@ use std::fmt::{Display, Write as _};
 use std::path::Path;
 use std::process::ExitCode;
 
+use casa_contracts::ParameterValue;
 use casa_images::{
     ImageError, ImageHeaderSummary, ImageStatisticsSummary, ImstatOutcome, ImstatPlanesSummary,
     ImstatRequest, StatisticsAlgorithmKind, image_task_front_end, imhead, imhead_add_delete,
     imhead_extrema, imhead_list_record, imhead_put, imhead_summary_record, imstat,
     imstat_planes_record, imstat_record, parse_imstat_algorithm,
 };
-use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{CasaValue, TaskFailure, TaskInvocation, TaskSuccess};
 
 fn main() -> ExitCode {
@@ -48,7 +48,7 @@ fn run_imhead(
 ) -> Result<TaskSuccess, TaskFailure> {
     let operation_value = task
         .value("hdvalue")
-        .map(casa_provider_contracts::casa_numpy_scalar_root)
+        .map(casa_contracts::casa_numpy_scalar_root)
         .transpose()
         .map_err(|error| TaskFailure::validation(error).at("hdvalue"))?;
     let path = task.input_path("imagename")?;
@@ -299,14 +299,12 @@ fn history_value(value: &ParameterValue) -> String {
         ParameterValue::String(value) => history_string(value),
         ParameterValue::Bool(value) => if *value { "True" } else { "False" }.to_string(),
         ParameterValue::Integer(value) => value.to_string(),
-        ParameterValue::Float(value) => casa_provider_contracts::python_float(*value),
+        ParameterValue::Float(value) => casa_contracts::python_float(*value),
         ParameterValue::Complex(_)
         | ParameterValue::EmptyArray { .. }
         | ParameterValue::ScalarArray(_)
-        | ParameterValue::NumpyScalar { .. } => casa_provider_contracts::python_repr(value),
-        ParameterValue::Array(_) | ParameterValue::Table(_) => {
-            casa_provider_contracts::python_repr(value)
-        }
+        | ParameterValue::NumpyScalar { .. } => casa_contracts::python_repr(value),
+        ParameterValue::Array(_) | ParameterValue::Table(_) => casa_contracts::python_repr(value),
     }
 }
 

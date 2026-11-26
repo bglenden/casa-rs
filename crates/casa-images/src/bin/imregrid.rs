@@ -4,11 +4,11 @@
 
 use std::process::ExitCode;
 
+use casa_contracts::{CasaValue, ParameterValue};
 use casa_images::{
     ImageAnalysisTaskResult, ImregridOutcome, ImregridRequest, ImregridTemplate,
     image_task_front_end, image_task_returning, imregrid,
 };
-use casa_provider_contracts::{CasaValue, ParameterValue};
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 fn main() -> ExitCode {

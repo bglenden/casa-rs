@@ -9,12 +9,12 @@ mod smoothing;
 
 use std::path::{Path, PathBuf};
 
+use casa_contracts::CasaValue;
 use casa_ms::MsSelection;
 use casa_ms::transform::{
     MsTransformReport, MsTransformRequest, TransformDataColumn, TransformTaskHistory,
     convolve_spectra,
 };
-use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 use super::selector;

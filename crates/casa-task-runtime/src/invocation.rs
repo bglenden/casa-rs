@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use casa_provider_contracts::{
+use casa_contracts::{
     NumpyScalarType, ParameterType, ParameterValue, ProviderInvocation, TaskRunRequest,
     ValueAdapter,
 };
@@ -161,7 +161,7 @@ fn is_explicit_absence(value: &ParameterValue) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use casa_provider_contracts::{ParameterValue, builtin_surface_bundle};
+    use casa_contracts::{ParameterValue, builtin_surface_bundle};
 
     use crate::ParameterSession;
 
@@ -251,7 +251,7 @@ mod tests {
 
     #[test]
     fn complex_record_uses_typed_transport_and_roundtrips_profile() {
-        use casa_provider_contracts::CasaFloat;
+        use casa_contracts::CasaFloat;
         let mut session =
             ParameterSession::defaults(builtin_surface_bundle("imhead").unwrap()).unwrap();
         session
@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn empty_array_uses_typed_transport_and_roundtrips_profile() {
-        use casa_provider_contracts::EmptyArrayType;
+        use casa_contracts::EmptyArrayType;
         let mut session =
             ParameterSession::defaults(builtin_surface_bundle("imhead").unwrap()).unwrap();
         session

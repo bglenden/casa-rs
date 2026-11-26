@@ -52,7 +52,7 @@ fn custom_matrices_match_casa() {
         if let Some(expected) = case.get("stored") {
             let info = image.misc_info();
             let stored = info.get("custom").unwrap();
-            let value = casa_provider_contracts::casacore_value_to_casa(stored).unwrap();
+            let value = casa_contracts::casacore_value_to_casa(stored).unwrap();
             let (kind, shape) = match &value {
                 CasaValue::BoolArray { shape, .. } => ("b", shape),
                 CasaValue::IntArray {
@@ -104,8 +104,7 @@ fn casa_created_standalone_matrices_keep_shape_and_values() {
             casa_images::PagedImage::<f32>::open(root.join(format!("custom_matrix_{name}.im")))
                 .unwrap();
         let info = image.misc_info();
-        let value =
-            casa_provider_contracts::casacore_value_to_casa(info.get("custom").unwrap()).unwrap();
+        let value = casa_contracts::casacore_value_to_casa(info.get("custom").unwrap()).unwrap();
         assert_eq!(value.to_plain_json(), expected, "{name}");
     }
 }

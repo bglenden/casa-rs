@@ -8,8 +8,8 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use casa_contracts::{CasaValue, TaskProviderContract};
 use casa_observation::{MergeTolerance, ObservationError};
-use casa_provider_contracts::{CasaValue, TaskProviderContract};
 use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_types::quanta::{Quantity, Unit};
 use schemars::JsonSchema;

@@ -50,7 +50,7 @@ mod wvrgcal;
 
 use std::path::Path;
 
-use casa_provider_contracts::CasaValue;
+use casa_contracts::CasaValue;
 use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 
 use crate::{
@@ -231,12 +231,11 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
                         let reason = message
                             .split_once(" (os error ")
                             .map_or(message.as_str(), |(reason, _)| reason);
-                        let path = casa_provider_contracts::ParameterValue::String(
-                            path.display().to_string(),
-                        );
+                        let path =
+                            casa_contracts::ParameterValue::String(path.display().to_string());
                         format!(
                             "[Errno {errno}] {reason}: {}",
-                            casa_provider_contracts::python_repr(&path)
+                            casa_contracts::python_repr(&path)
                         )
                     } else {
                         format!("{message}: {}", path.display())

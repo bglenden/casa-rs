@@ -6,7 +6,7 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use casa_provider_contracts::{CasaValue, ParameterValue};
+use casa_contracts::{CasaValue, ParameterValue};
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::quanta::{Quantity, Unit};
 use serde_json::{Map, Value, json};

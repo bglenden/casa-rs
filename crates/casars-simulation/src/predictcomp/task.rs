@@ -5,10 +5,8 @@ use std::path::{Path, PathBuf};
 
 use casa_calibration::{predict_calibrator_component, predict_solar_component_2012};
 use casa_components::SkyComponent;
+use casa_contracts::{CasaFloat, CasaValue, FloatDtype, RunProductKind, casacore_value_to_casa};
 use casa_measures_data::MeasuresRuntime;
-use casa_provider_contracts::{
-    CasaFloat, CasaValue, FloatDtype, RunProductKind, casacore_value_to_casa,
-};
 use casa_simulation::predictcomp::{CalibratorBaselines, calibrator_baselines};
 use casa_tables::publication::check_write_access;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};

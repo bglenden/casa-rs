@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA polynomial fits of a selected calibration series.
 
-use casa_provider_contracts::CasaValue;
+use casa_contracts::CasaValue;
 
 use super::series::initial;
 

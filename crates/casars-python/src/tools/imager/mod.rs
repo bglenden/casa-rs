@@ -535,7 +535,7 @@ impl PyImager {
         interpolation: &str,
     ) -> PyResult<Py<PyAny>> {
         use casa_calibration::{ImagerSetJyRequest, imager_setjy};
-        use casa_provider_contracts::CasaValue;
+        use casa_contracts::CasaValue;
 
         let request = ImagerSetJyRequest {
             workspace: std::env::current_dir().map_err(runtime_error)?,

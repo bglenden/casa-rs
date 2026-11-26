@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The atmosphere wrapper's typed scalar and vector quantities.
 
-use casa_provider_contracts::CasaValue;
+use casa_contracts::CasaValue;
 use casa_types::quanta::{Quantity, casacore};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;

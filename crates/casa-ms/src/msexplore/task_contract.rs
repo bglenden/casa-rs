@@ -4,11 +4,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use casa_provider_contracts::{
-    NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
-    ProviderProjectionMetadata, ProviderProtocolDescriptor, ProviderSurfaceKind,
-    TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas, TaskSemanticContract,
-    builtin_surface_bundle, merged_components,
+use casa_contracts::{
+    ProviderCliMachineActions, ProviderCliProjection, ProviderProjectionMetadata,
+    ProviderProtocolDescriptor, ProviderSurfaceKind, TaskOperationDescriptor, TaskProviderContract,
+    TaskProviderSchemas, TaskSemanticContract, builtin_surface_bundle, merged_components,
 };
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
@@ -264,7 +263,6 @@ pub fn msexplore_task_schema_bundle() -> TaskProviderContract {
         domain_schemas: TaskProviderSchemas {
             request_schema,
             result_schema,
-            additional: NoAdditionalProviderSchemas {},
         },
     }
 }
@@ -318,7 +316,7 @@ fn write_output(path: &Path, overwrite: bool, text: &str) -> Result<(), String> 
 
 #[cfg(test)]
 mod tests {
-    use casa_provider_contracts::ProviderSurfaceKind;
+    use casa_contracts::ProviderSurfaceKind;
     use tempfile::tempdir;
 
     use super::{

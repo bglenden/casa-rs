@@ -209,7 +209,7 @@ fn default_tclean_control(case: &Value, quick: &Path) {
         "niter": 0, "calcres": false, "restoration": false,
     });
     let resolved = casa_task_runtime::resolve_plain_values(
-        casa_provider_contracts::builtin_surface_bundle("tclean").expect("surface"),
+        casa_contracts::builtin_surface_bundle("tclean").expect("surface"),
         std::env::current_dir().expect("workspace"),
         values.as_object().expect("object"),
     )

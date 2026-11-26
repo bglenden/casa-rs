@@ -12,7 +12,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use casa_provider_contracts::{CasaEntry, CasaKey, CasaValue};
+use casa_contracts::{CasaEntry, CasaKey, CasaValue};
 
 use crate::{FlagCounts, FlagSummaryBreakdown, FlagVersionEntry};
 

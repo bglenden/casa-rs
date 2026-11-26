@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's cInt/cFloat/cIntVec treat Python's bool as a numeric subclass.
 
-use casa_provider_contracts::ParameterValue;
+use casa_contracts::ParameterValue;
 
 pub(super) fn boolean_as_integer(value: &ParameterValue) -> ParameterValue {
     match value {
@@ -17,7 +17,7 @@ pub(super) fn boolean_as_integer(value: &ParameterValue) -> ParameterValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use casa_provider_contracts::{NumpyScalarType, builtin_surface_catalog};
+    use casa_contracts::{NumpyScalarType, builtin_surface_catalog};
 
     #[test]
     fn casa_numeric_bool_coercion_is_opt_in_and_keeps_numpy_bool_distinct() {
@@ -38,7 +38,7 @@ mod tests {
             value: Box::new(ParameterValue::Bool(true)),
         };
         assert!(super::super::normalize_value(&numpy, &concept).is_err());
-        concept.normalization = casa_provider_contracts::NormalizationRule::Identity;
+        concept.normalization = casa_contracts::NormalizationRule::Identity;
         assert!(super::super::normalize_value(&ParameterValue::Bool(true), &concept).is_err());
         assert_eq!(
             boolean_as_integer(&ParameterValue::Array(vec![ParameterValue::Bool(false)])),

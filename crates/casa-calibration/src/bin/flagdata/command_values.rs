@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Lex the parameter assignments used in CASA flag command files.
 
-use casa_provider_contracts::ParameterValue;
+use casa_contracts::ParameterValue;
 
 #[derive(Default)]
 pub(super) struct Assignments(Vec<(String, ParameterValue, Option<String>)>);

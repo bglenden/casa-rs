@@ -26,7 +26,7 @@ def test_catalog_generates_one_wrapper_for_every_task() -> None:
     # Wrappers follow the launch catalog's order, independently of the
     # parameter catalog's insertion order.
     applications = json.loads((
-        REPO_ROOT / "crates/casa-provider-contracts/resources/application-catalog.json"
+        REPO_ROOT / "surfaces/casa-contracts/resources/application-catalog.json"
     ).read_text())["applications"]
     assert tasks.TASK_SURFACES == tuple(item["id"] for item in applications)
     assert all(callable(getattr(tasks, name)) for name in tasks.TASK_SURFACES)

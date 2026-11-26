@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! World coordinates and integration scale of a collapsed image axis.
 
+use casa_contracts::ParameterValue;
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
-use casa_provider_contracts::ParameterValue;
 use casa_types::measures::{
     MeasFrame,
     doppler::{DopplerRef, MDoppler},

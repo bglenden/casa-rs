@@ -4,7 +4,7 @@
 use std::fmt::Write;
 
 use casa_atmosphere::{AtmosphereProfile, AtmosphereType, Layer, ProfileParameters};
-use casa_provider_contracts::CasaValue;
+use casa_contracts::CasaValue;
 use pyo3::prelude::*;
 
 use super::quantity::{self, AtmosphereQuantity, QuantityArg};

@@ -549,7 +549,7 @@ if [[ "$skip_rust_enabled" == "0" ]]; then
       exit 1
     fi
   else
-    cargo build --release -p casars-imager --bin casars-imager >/dev/null
+    cargo build --release -p casars-cli --bin casars-imager >/dev/null
   fi
 fi
 

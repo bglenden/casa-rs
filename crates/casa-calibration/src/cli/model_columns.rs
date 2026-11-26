@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
+use casa_contracts::{CasaValue, NumpyScalarType, ParameterValue};
 use casa_ms::{MeasurementSet, MsSelection};
-use casa_provider_contracts::{CasaValue, NumpyScalarType, ParameterValue};
 use casa_tables::TableWriteLock;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 

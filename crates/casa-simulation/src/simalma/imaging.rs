@@ -7,10 +7,10 @@ use crate::{
     simobserve::SimobserveError,
     simutil::analysis,
 };
+use casa_contracts::builtin_surface_bundle;
 use casa_images::{ImageInterface, PagedImage};
 use casa_imaging_runtime::{Demand, admit};
 use casa_ms::concat::{ConcatRequest, concat_with_memory};
-use casa_provider_contracts::builtin_surface_bundle;
 use casa_task_runtime::resolve_plain_values;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};

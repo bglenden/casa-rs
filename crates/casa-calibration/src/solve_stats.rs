@@ -29,7 +29,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use casa_provider_contracts::CasaValue;
+use casa_contracts::CasaValue;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

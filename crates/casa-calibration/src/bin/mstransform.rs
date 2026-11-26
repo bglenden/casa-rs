@@ -6,15 +6,13 @@
 use std::{io::ErrorKind, num::NonZeroUsize, path::Path, process::ExitCode};
 
 use casa_calibration::{CallibError, transform_callibrary, transform_model_input};
+use casa_contracts::{CasaValue, DefaultSpec, NumpyScalarType, ParameterValue, python_repr};
 use casa_ms::selection::MsSelection;
 use casa_ms::{
     ContinuumFitOptions, MsPartitionAxis, MsRegridOptions, MsTransformError,
     MsTransformMultiMsOptions, MsTransformRequest, MsTransformTaskOptions, MsTransformTiling,
     TimeAverageOptions, TransformDataColumn, TransformTaskHistory, ms_task_success,
     mstransform_task, mstransform_task_schema_bundle, task_selection_text,
-};
-use casa_provider_contracts::{
-    CasaValue, DefaultSpec, NumpyScalarType, ParameterValue, python_repr,
 };
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
@@ -695,7 +693,7 @@ mod tests {
             .chain(args)
             .map(OsString::from)
             .collect::<Vec<_>>();
-        let bundle = casa_provider_contracts::builtin_surface_bundle(surface).unwrap();
+        let bundle = casa_contracts::builtin_surface_bundle(surface).unwrap();
         let line = TaskCommandLine::parse(&bundle, &args).unwrap();
         let session = ParameterRuntime::default()
             .open_session(line.open_session_request(bundle))

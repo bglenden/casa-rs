@@ -197,7 +197,7 @@ fn each_hosted_surface_lists_every_parameter_in_its_help() {
             help.contains(&format!("Parameters of {surface}:")),
             "{help}"
         );
-        let bundle = casa_provider_contracts::builtin_surface_bundle(surface).unwrap();
+        let bundle = casa_contracts::builtin_surface_bundle(surface).unwrap();
         for binding in bundle.surface.bindings() {
             let cli = binding.projections.cli.as_ref().expect("CLI projection");
             let spelling = match cli.flags.first() {

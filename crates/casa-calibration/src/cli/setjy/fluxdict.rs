@@ -3,8 +3,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use casa_contracts::{CasaValue, ParameterValue};
 use casa_ms::{MsSelection, ResolvedMsSelection};
-use casa_provider_contracts::{CasaValue, ParameterValue};
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 
@@ -118,7 +118,7 @@ pub(super) fn run(
     Ok(CasaValue::Dict { entries: combined })
 }
 
-fn append_values(combined: &mut Vec<casa_provider_contracts::CasaEntry>, values: CasaValue) {
+fn append_values(combined: &mut Vec<casa_contracts::CasaEntry>, values: CasaValue) {
     let CasaValue::Dict { entries } = values else {
         unreachable!()
     };

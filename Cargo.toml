@@ -1,9 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/casa-provider-contracts",
+    "surfaces/casa-contracts",
+    "surfaces/casa-tasks",
+    "frontends/casars-cli",
     "crates/casa-task-runtime",
-    "crates/casars-imager",
     "crates/casars-imexplore",
     "crates/casars-msconvert",
     "crates/casars-simulation",
@@ -108,7 +109,9 @@ opt-level = 3
 opt-level = 3
 [profile.test.package.casa-imaging-application]
 opt-level = 3
-[profile.test.package.casars-imager]
+[profile.test.package.casa-tasks]
+opt-level = 3
+[profile.test.package.casars-cli]
 opt-level = 3
 [profile.test.package.casa-fft]
 opt-level = 3

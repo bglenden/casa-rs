@@ -17,9 +17,9 @@ use crate::fits_read::{PrimaryHdu, image_info_from_fits_header};
 pub(super) fn custom_value(
     path: &Path,
     key: &str,
-) -> Result<casa_provider_contracts::CasaValue, ImageError> {
+) -> Result<casa_contracts::CasaValue, ImageError> {
+    use casa_contracts::CasaValue;
     use casa_coordinates::{FitsHeader, FitsValue};
-    use casa_provider_contracts::CasaValue;
     let upper = key.to_ascii_uppercase();
     let internal = [
         "SIMPLE", "BITPIX", "NAXIS", "EXTEND", "BLOCKED", "BLANK", "BSCALE", "BZERO", "XTENSION",

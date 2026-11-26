@@ -46,8 +46,7 @@ fn mixed_custom_arrays_match_casa() {
             .replace("<IMAGE>", path.to_str().unwrap());
         assert_eq!(history[before + 2], task, "{index}: task history");
         let info = image.misc_info();
-        let stored =
-            casa_provider_contracts::casacore_value_to_casa(info.get("custom").unwrap()).unwrap();
+        let stored = casa_contracts::casacore_value_to_casa(info.get("custom").unwrap()).unwrap();
         assert_eq!(stored.to_plain_json(), case["stored"], "{index}: stored");
         if let Some(shape) = case.get("shape") {
             assert!(

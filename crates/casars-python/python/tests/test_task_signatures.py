@@ -25,7 +25,7 @@ from casars.tasks import _runner
 
 REPO = Path(__file__).resolve().parents[4]
 INVENTORY = REPO / "resources" / "casa-compat" / "casa-6.7.6.14" / "tasks"
-SURFACES = REPO / "crates" / "casa-provider-contracts" / "resources" / "parameter-surfaces.json"
+SURFACES = REPO / "surfaces" / "casa-contracts" / "resources" / "parameter-surfaces.json"
 
 # casa-rs tasks with no CASA counterpart, outside the mimic rule.
 CASA_RS_ONLY = {"calibrate", "msconvert", "msexplore"}

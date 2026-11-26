@@ -25,7 +25,7 @@ casa-measures-data = { path = "../casa-measures-data" }
 casa-numerics = { path = "../casa-numerics" }
 casa-observation = { path = "../casa-observation" }
 casa-components = { path = "../casa-components" }
-casa-provider-contracts = { path = "../casa-provider-contracts" }
+casa-contracts = { path = "../../surfaces/casa-contracts" }
 casa-task-runtime = { path = "../casa-task-runtime" }
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }

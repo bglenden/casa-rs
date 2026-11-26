@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
+use casa_contracts::ParameterValue;
 use casa_coordinates::CoordinateType;
 use casa_images::analysis::{SubimageOptions, SubimagePlan, SubimageRegion};
 use casa_images::image::image_history_entries;
@@ -10,7 +11,6 @@ use casa_images::{
     AnyPagedImage, GaussianBeam, ImageBeamSet, ImagePixel, ImpvRequest, ImsubimageRequest,
     PagedImage, PvPosition, TempImage, TempStoragePolicy, imhead, impbcor, impv, imsubimage,
 };
-use casa_provider_contracts::ParameterValue;
 use casa_types::{ArrayValue, Complex32, Complex64, ScalarValue, Value};
 use serde_json::Value as Json;
 

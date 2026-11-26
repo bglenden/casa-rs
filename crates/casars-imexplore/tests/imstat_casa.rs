@@ -14,7 +14,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use casa_provider_contracts::TaskReply;
+use casa_contracts::TaskReply;
 use serde_json::{Value, json};
 
 /// The path of a fixture under `tests/data/imstat`.

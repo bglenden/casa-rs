@@ -9,7 +9,7 @@
 //! enumerations that the catalog stores as words, such as a semantic role or
 //! a resource kind, become snake-case strings.
 
-use casa_provider_contracts::{
+use casa_contracts::{
     NarrowingConstraint, ParameterCatalog, ParameterType, ParameterValue, Predicate,
     SurfaceContractBundle, SurfaceDefinition,
 };
@@ -47,18 +47,18 @@ pub(crate) enum TaggedValue {
         value: f64,
     },
     Complex {
-        real: casa_provider_contracts::CasaFloat,
-        imag: casa_provider_contracts::CasaFloat,
+        real: casa_contracts::CasaFloat,
+        imag: casa_contracts::CasaFloat,
     },
     EmptyArray {
-        dtype: casa_provider_contracts::EmptyArrayType,
+        dtype: casa_contracts::EmptyArrayType,
         shape: Vec<usize>,
     },
     ScalarArray {
         value: Box<TaggedValue>,
     },
     NumpyScalar {
-        dtype: casa_provider_contracts::NumpyScalarType,
+        dtype: casa_contracts::NumpyScalarType,
         value: Box<TaggedValue>,
     },
     String {
@@ -393,8 +393,8 @@ struct BindingView {
     projections: ProjectionsView,
 }
 
-impl From<&casa_provider_contracts::SurfaceParameterBinding> for BindingView {
-    fn from(value: &casa_provider_contracts::SurfaceParameterBinding) -> Self {
+impl From<&casa_contracts::SurfaceParameterBinding> for BindingView {
+    fn from(value: &casa_contracts::SurfaceParameterBinding) -> Self {
         let projections = &value.projections;
         Self {
             name: value.name.clone(),
@@ -503,7 +503,7 @@ pub(crate) struct CatalogEnvelopeView {
 }
 
 impl CatalogEnvelopeView {
-    pub(crate) fn new(catalog: &casa_provider_contracts::SurfaceCatalogBundle) -> Self {
+    pub(crate) fn new(catalog: &casa_contracts::SurfaceCatalogBundle) -> Self {
         Self {
             schema_version: catalog.schema_version as u64,
             catalog: CatalogView::from(&catalog.catalog),

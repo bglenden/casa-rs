@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CONTRACT_ROOT = REPO_ROOT / "crates" / "casa-provider-contracts" / "resources"
+CONTRACT_ROOT = REPO_ROOT / "surfaces" / "casa-contracts" / "resources"
 APPLICATIONS_PATH = CONTRACT_ROOT / "application-catalog.json"
 SURFACES_PATH = CONTRACT_ROOT / "parameter-surfaces.json"
 

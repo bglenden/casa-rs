@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 
-use casa_provider_contracts::ParameterValue;
+use casa_contracts::ParameterValue;
 
 use super::{TaskFailure, TaskInvocation};
 use crate::invocation::parameter_value_is_omitted;
