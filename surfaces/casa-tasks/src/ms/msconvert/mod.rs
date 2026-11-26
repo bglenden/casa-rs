@@ -6,8 +6,8 @@
 //!
 //! The task is casa-rs's own: CASA has none, and XRADIO's
 //! `convert_msv2_to_processing_set` converts one way only. It is a surface
-//! over casa-ms's converter
-//! ([`casa_ms::observation_io::convert`]), which reads the source through
+//! over the MS transform converter
+//! ([`casa_mstransform::convert`]), which reads the source through
 //! the observation boundary as any consumer reads it and creates the
 //! destination from those batches: every acquisition and every selected
 //! data group, flags, weights, UVW and time auxiliaries are carried
@@ -34,7 +34,7 @@
 //! its pointing converted unless `withpointing` is off (`with_pointing`),
 //! and by default each dataset chunked as
 //! XRADIO chunks it
-//! ([`xradio_chunks`](casa_ms::observation_io::convert::xradio_chunks)).
+//! ([`xradio_chunks`](casa_mstransform::convert::xradio_chunks)).
 //! Its partitions are converted `nthreads` at a time, by default as many as
 //! the cores and the memory allow. An MSv2 destination is written by one
 //! thread.

@@ -6,7 +6,7 @@ use casa_core::quanta::{
     Unit,
     casacore::{get_value, stream_double},
 };
-use casa_ms::tool_concatenate::{
+use casa_mstransform::tool_concatenate::{
     PhysicalConcatenation, TestConcatenation, VirtualConcatenation, concatenate, test_concatenate,
     virtual_concatenate,
 };

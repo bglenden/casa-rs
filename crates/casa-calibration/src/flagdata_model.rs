@@ -2,7 +2,7 @@
 //! Bind the shared virtual visibility predictor for the flagdata task.
 
 use casa_core::Complex32;
-use casa_ms::flagging::FlagDataModelPredictor;
+use casa_flagging::FlagDataModelPredictor;
 use casa_ms::{MeasurementSet, ResolvedMsSelectionRow};
 use ndarray::{ArrayD, Axis};
 

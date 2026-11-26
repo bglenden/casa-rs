@@ -63,7 +63,9 @@
   "casa-atmosphere": "science",
   "casa-tasks": "frontend",
   "casars-cli": "frontend",
-  "casars-python": "frontend"
+  "casars-python": "frontend",
+  "casa-mstransform": "observation",
+  "casa-flagging": "observation"
  },
  "definitional_packages": [
   "casa-core",
@@ -131,6 +133,7 @@
    "casa-components",
    "casa-fft",
    "casa-imageanalysis",
+   "casa-flagging",
    "casa-images",
    "casa-imaging-application",
    "casa-imaging-model",
@@ -141,6 +144,7 @@
    "casa-lattices",
    "casa-measures",
    "casa-ms",
+   "casa-mstransform",
    "casa-numerics",
    "casa-tables"
   ],
@@ -159,6 +163,26 @@
   ],
   "casa-components": [
    "casa-measures",
+   "casa-tables"
+  ],
+  "casa-ms": [
+   "casa-measures",
+   "casa-numerics",
+   "casa-observation",
+   "casa-tables"
+  ],
+  "casa-flagging": [
+   "casa-components",
+   "casa-ms",
+   "casa-numerics",
+   "casa-tables"
+  ],
+  "casa-mstransform": [
+   "casa-fft",
+   "casa-measures",
+   "casa-ms",
+   "casa-numerics",
+   "casa-observation",
    "casa-tables"
   ]
  },
@@ -235,7 +259,9 @@
     "crates/casa-imaging-application/src",
     "crates/casa-simulation/src",
     "libs/casacore/casa-fft/src",
-    "crates/casa-ms/src",
+    "libs/casacore/casa-ms/src",
+    "libs/casa/casa-mstransform/src",
+    "libs/casa/casa-flagging/src",
     "libs/casacore/casa-tables/src",
     "libs/casacore/casa-images/src",
     "libs/casa/casa-imageanalysis/src",
@@ -269,7 +295,9 @@
     "crates/casa-imaging-application/src",
     "crates/casa-simulation/src",
     "libs/casacore/casa-fft/src",
-    "crates/casa-ms/src",
+    "libs/casacore/casa-ms/src",
+    "libs/casa/casa-mstransform/src",
+    "libs/casa/casa-flagging/src",
     "libs/casacore/casa-tables/src",
     "libs/casacore/casa-images/src",
     "libs/casa/casa-imageanalysis/src",
@@ -313,7 +341,7 @@
    "id": "observation-geometry-provider-injection",
    "message": "the observation boundary's adapters and the batch geometry receive an injected Measures provider and cannot discover MeasuresRuntime",
    "roots": [
-    "crates/casa-ms/src/observation_io",
+    "libs/casacore/casa-ms/src/observation_io",
     "crates/casa-imaging-model/src/batch_geometry"
    ],
    "extensions": [

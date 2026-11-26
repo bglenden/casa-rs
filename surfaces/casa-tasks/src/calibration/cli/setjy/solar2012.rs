@@ -14,7 +14,7 @@ use casa_core::measures::frequency::MFrequency;
 use casa_core::measures::position::MPosition;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::schema::main_table::VisibilityDataColumn;
-use casa_ms::virtual_model::selected_model_combinations;
+use casa_ms::selected_model_combinations;
 use casa_ms::{
     MeasurementSet, MsSelection, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
     parse_numeric_row_id_ranges,

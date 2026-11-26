@@ -5,7 +5,7 @@
 //! CASA refuses it, before anything is written or flagged; read-only modes
 //! and refused arguments leave the MeasurementSet byte for byte as it was.
 
-#[path = "../../../crates/casa-ms/tests/common/mod.rs"]
+#[path = "../../../libs/casacore/casa-ms/tests/common/mod.rs"]
 mod common;
 
 use std::collections::BTreeMap;

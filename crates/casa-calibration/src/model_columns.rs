@@ -11,14 +11,14 @@ use casa_core::{ArrayValue, Complex32, PrimitiveType};
 use casa_ms::schema::main_table::{
     OptionalMainColumn, VisibilityDataColumn, initial_model_visibility,
 };
-use casa_ms::scratch_columns;
+
 use casa_ms::selection::syntax::ChannelSelection;
 use casa_ms::selection::{ResolvedMsSelection, ResolvedMsSelectionRow};
-use casa_ms::write_session::{
+use casa_ms::{MeasurementSet, MsError, MsResult, MsSelection};
+use casa_ms::{
     MeasurementSetMutationBatch, MeasurementSetWritePlan, MeasurementSetWriteResources,
     MeasurementSetWriteSession, maximum_visibility_cell_elements,
 };
-use casa_ms::{MeasurementSet, MsError, MsResult, MsSelection};
 use casa_tables::streamed_tiled::{
     StreamedTiledShapeColumn, StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType,
     StreamingTiledShapeWriter,
@@ -190,7 +190,7 @@ pub fn reset_calibration_set(
     let clear_virtual = calset == 1;
     if !old_iterator || !has_column(ms, CORRECTED) {
         if clear_virtual {
-            casa_ms::virtual_model::clear_virtual_model_holding(ms, &[], &[], &mut lock)?;
+            casa_ms::clear_virtual_model_holding(ms, &[], &[], &mut lock)?;
         }
         return Err(invalid(if old_iterator {
             "the MeasurementSet has no CORRECTED_DATA column"
@@ -230,7 +230,7 @@ pub(crate) fn initialize_scratch_column(
         if column == MODEL {
             // CASA invalidates virtual recipes when it attaches a scratch
             // model iterator, even if the scratch samples already exist.
-            scratch_columns::prepare_write_holding(ms, column, false, &mut lock)?;
+            casa_ms::prepare_write_holding(ms, column, false, &mut lock)?;
         }
         return Ok(lock);
     }
@@ -276,10 +276,10 @@ pub fn delete_calibration_model(
             windows.sort_unstable();
             windows.dedup();
         }
-        casa_ms::virtual_model::clear_virtual_model_holding(ms, &fields, &windows, lock)?;
+        casa_ms::clear_virtual_model_holding(ms, &fields, &windows, lock)?;
     }
     if scratch {
-        scratch_columns::remove_scratch_model_holding(ms, lock)?;
+        casa_ms::remove_scratch_model_holding(ms, lock)?;
     }
     Ok(())
 }
@@ -386,7 +386,7 @@ pub fn initialize_hanning_scratch_holding(
         ));
     }
     let mode = ScratchWriteMode::Projected { corrected, model };
-    scratch_columns::prepare_write_holding(ms, CORRECTED, true, lock)?;
+    casa_ms::prepare_write_holding(ms, CORRECTED, true, lock)?;
     let whole_table = !rows.is_empty() && rows.iter().copied().eq(0..ms.row_count());
     if whole_table && !has_corrected && can_clone_tiled_observed(ms, observed) {
         add_scratch_schema(ms, CORRECTED, observed)?;
@@ -590,7 +590,7 @@ pub(crate) fn scratch_write_plan<'a>(
         .map(|&column| ScratchDestination::new(ms, column, mode.physical_name(column)))
         .collect::<MsResult<Vec<_>>>()?;
     if clear_virtual {
-        casa_ms::virtual_model::clear_virtual_model_holding(ms, &[], &[], lock)?;
+        casa_ms::clear_virtual_model_holding(ms, &[], &[], lock)?;
     }
     let creates = columns
         .iter()
@@ -602,7 +602,7 @@ pub(crate) fn scratch_write_plan<'a>(
         .collect::<Vec<_>>();
     if mode == ScratchWriteMode::Create {
         for &column in columns {
-            scratch_columns::prepare_write_holding(ms, column, true, lock)?;
+            casa_ms::prepare_write_holding(ms, column, true, lock)?;
         }
     }
     for (&column, &create) in columns.iter().zip(&creates) {
@@ -632,8 +632,8 @@ fn add_scratch_schema(
         .then(|| ms.main_table().column_keywords(observed))
         .flatten()
         .cloned();
-    let schema = casa_ms::column_def::build_table_schema(&[*column.optional_column().column_def()])
-        .map_err(invalid)?;
+    let schema =
+        casa_ms::build_table_schema(&[*column.optional_column().column_def()]).map_err(invalid)?;
     let definition = schema
         .column(column.name())
         .expect("scratch column schema")

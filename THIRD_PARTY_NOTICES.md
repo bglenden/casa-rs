@@ -30,7 +30,7 @@ the official-release archive does not cover a different installation.
 
 ## ATM
 
-`crates/casa-atmosphere` is a Rust port of ATM, the atmospheric transmission
+`libs/casa/casa-atmosphere` is a Rust port of ATM, the atmospheric transmission
 model distributed with CASA (`casatools/src/code/atmosphere/ATM`, ATM 1.0.0),
 Copyright (c) Instituto de Estructura de la Materia (IEM-CSIC), J. R. Pardo
 et al., in the framework of the ALMA collaboration. ATM is available under

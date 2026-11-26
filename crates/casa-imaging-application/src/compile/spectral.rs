@@ -19,8 +19,8 @@ use casa_imaging_model::{
 };
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{
-    CubeAxisConfig, CubeAxisValue, CubeInterpolation, CubeSpectralSetup, MeasurementSet,
-    SubtableId, spectral_selection::CubeSpecMode,
+    CubeAxisConfig, CubeAxisValue, CubeInterpolation, CubeSpecMode, CubeSpectralSetup,
+    MeasurementSet, SubtableId,
 };
 use casa_observation::{Catalogue, FieldId, WindowId};
 
@@ -496,11 +496,8 @@ fn cube_setup(
     if input_frequency_factor != 1.0 {
         // CASA cuts the stored axis at the selected edges before shifting it.
         if axis.start.is_none()
-            && let Some(cut) = casa_ms::spectral_selection::casa_default_start_channels(
-                &frequencies_hz,
-                &widths_hz,
-                band_hz,
-            )
+            && let Some(cut) =
+                casa_ms::casa_default_start_channels(&frequencies_hz, &widths_hz, band_hz)
         {
             frequencies_hz = frequencies_hz[cut.clone()].to_vec();
             widths_hz = widths_hz[cut].to_vec();

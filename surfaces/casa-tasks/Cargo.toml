@@ -30,6 +30,8 @@ images = [
     "dep:casa-lattices",
 ]
 ms = [
+    "dep:casa-flagging",
+    "casa-mstransform/msv4",
     "dep:casa-atmosphere",
     "dep:casa-measures",
     "dep:casa-ms",
@@ -49,13 +51,15 @@ simulation = [
     "dep:casa-ms",
     "dep:casa-simulation",
 ]
-vla = ["dep:casa-ms", "dep:casa-vla"]
+vla = ["dep:casa-ms", "dep:casa-mstransform", "dep:casa-vla"]
 
 [lints]
 workspace = true
 
 [dependencies]
-casa-atmosphere = { path = "../../crates/casa-atmosphere", optional = true }
+casa-flagging = { workspace = true, optional = true }
+casa-mstransform = { workspace = true, optional = true }
+casa-atmosphere = { workspace = true, optional = true }
 casa-calibration = { path = "../../crates/casa-calibration", optional = true }
 casa-components = { workspace = true, optional = true }
 casa-contracts = { path = "../casa-contracts" }
@@ -64,14 +68,14 @@ casa-images = { workspace = true, optional = true }
 casa-imaging-application = { path = "../../crates/casa-imaging-application", optional = true }
 casa-lattices = { workspace = true, optional = true }
 casa-measures = { workspace = true, optional = true }
-casa-ms = { path = "../../crates/casa-ms", features = ["msv4"], optional = true }
+casa-ms = { workspace = true, features = ["msv4"], optional = true }
 casa-numerics = { workspace = true, optional = true }
 casa-observation = { workspace = true, optional = true }
 casa-plot-data = { path = "../casa-plot-data", features = ["ms"], optional = true }
 casa-simulation = { path = "../../crates/casa-simulation", optional = true }
 casa-tables.workspace = true
 casa-core.workspace = true
-casa-vla = { path = "../../crates/casa-vla", optional = true }
+casa-vla = { workspace = true, optional = true }
 fs2 = "0.4"
 ndarray = { workspace = true, optional = true }
 num-complex = { workspace = true, optional = true }

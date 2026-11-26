@@ -210,10 +210,9 @@ fn a_plane_at_casas_empty_sum_weight_bound_is_empty() {
         .unwrap()
         .contains_column("WEIGHT_SPECTRUM")
     {
-        let schema = casa_ms::column_def::build_table_schema(&[
-            *OptionalMainColumn::WeightSpectrum.column_def(),
-        ])
-        .unwrap();
+        let schema =
+            casa_ms::build_table_schema(&[*OptionalMainColumn::WeightSpectrum.column_def()])
+                .unwrap();
         ms.main_table_mut()
             .add_column(schema.column("WEIGHT_SPECTRUM").unwrap().clone(), None)
             .unwrap();

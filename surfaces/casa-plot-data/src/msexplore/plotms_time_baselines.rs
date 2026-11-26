@@ -14,7 +14,7 @@ use super::{
     AveragedSeriesAccumulator, AveragingBaselineToken, AveragingPointKey, AveragingTimeKey,
     ChannelBin, FloatGrid, MsAverageSpec, plotms_columns,
 };
-use casa_ms::transform::{
+use casa_mstransform::{
     PlotTimeGroups, TimeUvwAverage, centered_time_and_interval, mean_weight_preferring_unflagged,
 };
 

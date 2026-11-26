@@ -35,7 +35,7 @@ fn fixture(root: &Path) -> PathBuf {
     fs::create_dir_all(root).unwrap();
     assert!(!root.join("mssel_test_small.ms").exists());
     let archive = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../casa-ms/tests/fixtures/mssel_test_small.ms.tgz");
+        .join("../../libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz");
     tar::Archive::new(flate2::read::GzDecoder::new(
         fs::File::open(archive).unwrap(),
     ))

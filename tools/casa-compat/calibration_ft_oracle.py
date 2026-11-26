@@ -426,7 +426,7 @@ def publication_after_cleanup_error(root, failed, native):
     """Read the exact record and grids left by the native MAIN-cleanup test."""
     source = failed / "mssel_test_small.ms"
     archive = (Path(__file__).resolve().parents[2]
-               / "crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz")
+               / "libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz")
     with tarfile.open(archive) as fixture:
         fixture.extractall(root, filter="data")
     reference = root / source.name

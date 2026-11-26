@@ -400,11 +400,9 @@ fn fluxscale_with_fields(
     if history_path.is_none()
         && let Some(vis) = &request.options.measurement_set
     {
-        casa_ms::ms::MeasurementSet::open(vis).map_err(|error| {
-            FluxScaleError::UnsupportedInput {
-                path: vis.display().to_string(),
-                reason: error.to_string(),
-            }
+        casa_ms::MeasurementSet::open(vis).map_err(|error| FluxScaleError::UnsupportedInput {
+            path: vis.display().to_string(),
+            reason: error.to_string(),
         })?;
     }
     let FluxScaleFields {

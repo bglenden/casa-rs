@@ -12,7 +12,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use casa_ms::listobs::SpectralWindowSummary;
+use casa_ms::SpectralWindowSummary;
 use casa_ms::{ListObsOptions, ListObsSummary, ListObsUvCoverage, MeasurementSet};
 
 /// Stable plot identifiers supported by `listobs`.
@@ -823,12 +823,13 @@ mod tests {
         ListObsPlotKind, ListObsPlotPayload, ListObsPlotSpec,
         build_listobs_plot_payload_from_summary, build_listobs_uv_plot_payload, parse_on_off,
     };
-    use casa_ms::listobs::{
+    use casa_ms::{
         AntennaSummary, DataDescriptionSummary, FieldSummary, MeasurementSetInfo,
-        ObservationSummary, PolarizationSummary, ScanSummary, SourceSummary, SpectralWindowSummary,
+        MeasurementSetScanSummary, ObservationSummary, PolarizationSummary, SourceSummary,
+        SpectralWindowSummary,
     };
-    use casa_ms::listobs::{ListObsUvPoint, ListObsUvTrack};
     use casa_ms::{ListObsOptions, ListObsSummary, ListObsUvCoverage};
+    use casa_ms::{MeasurementSetUvPoint, MeasurementSetUvTrack};
 
     #[test]
     fn default_specs_can_round_trip_cli_assignments() {
@@ -1373,7 +1374,7 @@ mod tests {
                 end_mjd_seconds: Some(180.0),
             }],
             scans: vec![
-                ScanSummary {
+                MeasurementSetScanSummary {
                     observation_id: 0,
                     array_id: 0,
                     scan_number: 1,
@@ -1392,7 +1393,7 @@ mod tests {
                     mean_interval_seconds_by_spw: vec![15.0],
                     unflagged_row_count: None,
                 },
-                ScanSummary {
+                MeasurementSetScanSummary {
                     observation_id: 0,
                     array_id: 0,
                     scan_number: 2,
@@ -1552,21 +1553,21 @@ mod tests {
             sample_count: 4,
             max_abs_uv_lambda: 2400.0,
             tracks: vec![
-                ListObsUvTrack {
+                MeasurementSetUvTrack {
                     antenna1: 0,
                     antenna2: 1,
                     field_id: 0,
                     spectral_window_id: 0,
                     center_frequency_hz: 1.0e9,
                     samples: vec![
-                        ListObsUvPoint {
+                        MeasurementSetUvPoint {
                             row: 0,
                             time_mjd_seconds: 100.0,
                             u_lambda: 200.0,
                             v_lambda: 400.0,
                             w_lambda: 0.0,
                         },
-                        ListObsUvPoint {
+                        MeasurementSetUvPoint {
                             row: 1,
                             time_mjd_seconds: 101.0,
                             u_lambda: 1200.0,
@@ -1575,21 +1576,21 @@ mod tests {
                         },
                     ],
                 },
-                ListObsUvTrack {
+                MeasurementSetUvTrack {
                     antenna1: 0,
                     antenna2: 2,
                     field_id: 1,
                     spectral_window_id: 1,
                     center_frequency_hz: 1.2e9,
                     samples: vec![
-                        ListObsUvPoint {
+                        MeasurementSetUvPoint {
                             row: 2,
                             time_mjd_seconds: 102.0,
                             u_lambda: -2400.0,
                             v_lambda: 1000.0,
                             w_lambda: 0.0,
                         },
-                        ListObsUvPoint {
+                        MeasurementSetUvPoint {
                             row: 3,
                             time_mjd_seconds: 103.0,
                             u_lambda: -400.0,

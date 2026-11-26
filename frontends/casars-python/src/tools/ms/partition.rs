@@ -2,16 +2,17 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_ms::{
-    schema::main_table::OptionalMainColumn,
-    selection::MsSelection,
-    tool_history::append_tool_history,
-    tool_sort::check_named_output_path,
-    transform::{
-        LegacyMsTool, LegacyTimeOptions, MsTransformError, MsTransformRequest,
-        MsTransformTaskOptions, MsTransformTiling, TimeAverageOptions, TransformDataColumn,
-        mstransform_task,
-    },
+use casa_ms::schema::main_table::OptionalMainColumn;
+
+use casa_ms::selection::MsSelection;
+
+use casa_ms::append_tool_history;
+
+use casa_mstransform::tool_sort::check_named_output_path;
+
+use casa_mstransform::{
+    LegacyMsTool, LegacyTimeOptions, MsTransformError, MsTransformRequest, MsTransformTaskOptions,
+    MsTransformTiling, TimeAverageOptions, TransformDataColumn, mstransform_task,
 };
 use casa_tables::publication::{check_write_access, lock_table_tree_for_replacement};
 use casa_tables::{Table, TableOptions};

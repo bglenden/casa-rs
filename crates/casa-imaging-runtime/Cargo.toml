@@ -21,7 +21,7 @@ casa-lattices.workspace = true
 casa-tables.workspace = true
 num-complex.workspace = true
 rayon = "1"
-casa-ms = { path = "../casa-ms" }
+casa-ms.workspace = true
 fs2 = "0.4"
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }

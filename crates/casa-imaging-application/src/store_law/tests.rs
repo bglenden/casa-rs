@@ -15,7 +15,7 @@ use crate::{Cancel, HostResources, RunContext};
 /// `name` in it.
 fn unpack(root: &Path, archive: &str, name: &str) -> PathBuf {
     let archive = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../casa-ms/tests/fixtures")
+        .join("../../libs/casacore/casa-ms/tests/fixtures")
         .join(archive);
     tar::Archive::new(flate2::read::GzDecoder::new(
         std::fs::File::open(archive).expect("fixture"),

@@ -12,7 +12,7 @@ use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::CasaValue;
 use serde::Serialize;
 
-use casa_ms::FlagMerge;
+use casa_flagging::FlagMerge;
 
 /// A MeasurementSet task's reply: `value` is what CASA's task returns
 /// ([`CasaValue::None`] for `None`; [`crate::ms::casa_return`] builds the

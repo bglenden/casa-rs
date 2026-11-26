@@ -3,9 +3,8 @@
 
 use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::{CasaValue, ParameterValue};
-use casa_ms::{
-    MeasurementSet, MsSelection, save_next_flag_backup, save_next_partition_flag_backup,
-};
+use casa_flagging::{save_next_flag_backup, save_next_partition_flag_backup};
+use casa_ms::{MeasurementSet, MsSelection};
 
 use casa_calibration::{
     StatWtAlgorithm, StatWtChannelBin, StatWtCombine, StatWtDataColumn, StatWtMs, StatWtOptions,

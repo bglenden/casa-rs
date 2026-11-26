@@ -6,10 +6,9 @@ use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 
-use casa_ms::{
-    MeasurementSet, MsSelection, PreparedTransformInputView, ResolvedMsSelectionRow,
-    TransformInputColumns, TransformInputView,
-};
+use casa_ms::{MeasurementSet, MsSelection, ResolvedMsSelectionRow};
+
+use casa_mstransform::{PreparedTransformInputView, TransformInputColumns, TransformInputView};
 use casa_tables::{Table, TableError};
 
 use crate::callib::{CallibError, load_transform_apply_specs};

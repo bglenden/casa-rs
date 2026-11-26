@@ -39,14 +39,19 @@ cargo run -q -p casa-test-support --bin casatestdata-preflight -- \
   --require unittest/importvla/AS758_C030425.xp1 \
   --require unittest/importvla/AS758_C030426.xp5
 run_timed_step \
-  "Running casacore-interop C++ interop suite" \
-  cargo test -p casacore-interop --features cpp-interop-tests --tests
-run_timed_step \
-  "Running MeasurementSet C++ interop suite" \
-  cargo test -p casa-ms --features cpp-interop-tests \
+  "Checking named MeasurementSet and VLA interop targets" \
+  cargo test -p casacore-interop --features cpp-interop-tests --no-run \
     --test ms_data_interop \
     --test ms_full_verify_vs_cpp \
-    --test spectral_frame_parity
+    --test spectral_frame_parity \
+    --test cpp_first_record_parity \
+    --test cpp_import_ms_parity \
+    --test cpp_import_ms_parity_matrix \
+    --test real_importvla_parity \
+    --test spectral_conversion_xp1_debug
+run_timed_step \
+  "Running casacore-interop C++ interop suite" \
+  cargo test -p casacore-interop --features cpp-interop-tests --tests
 run_timed_step \
   "Running simulator MeasurementSet C++ interop" \
   cargo test -p casa-simulation --features cpp-interop-tests \
@@ -55,13 +60,5 @@ run_timed_step \
   "Running imaging product replacement C++ interop" \
   cargo test -p casa-imaging-products --features cpp-interop-tests \
     --test replacement_interop
-run_timed_step \
-  "Running VLA C++ interop suite" \
-  cargo test -p casa-vla --features cpp-interop-tests \
-    --test cpp_first_record_parity \
-    --test cpp_import_ms_parity \
-    --test cpp_import_ms_parity_matrix \
-    --test real_importvla_parity \
-    --test spectral_conversion_xp1_debug
 script_finished_at="$(date +%s)"
 echo "C++ interop release gate completed in $(format_elapsed $(( script_finished_at - script_started_at )))"

@@ -36,7 +36,7 @@ from casars import data, parameters, tasks, tools
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 FIXTURE = Path(__file__).parent / "data" / "binding_snapshots.json"
-SMALL_MS_ARCHIVE = REPO_ROOT / "crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz"
+SMALL_MS_ARCHIVE = REPO_ROOT / "libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz"
 
 # The relative tolerance of every float in the fixture.
 REL_TOL = 1e-9

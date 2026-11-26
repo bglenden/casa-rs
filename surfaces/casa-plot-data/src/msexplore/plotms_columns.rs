@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use casa_ms::MeasurementSet;
 use casa_ms::schema::main_table::OptionalMainColumn;
-use casa_ms::transform::{
+use casa_mstransform::{
     WeightKind, mean_weight_preferring_unflagged, sigma_from_weight, visibility_weight_kind,
     weight_from_sigma,
 };

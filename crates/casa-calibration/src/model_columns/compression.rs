@@ -6,12 +6,10 @@ use std::ops::Range;
 
 use casa_core::{ArrayValue, PrimitiveType, ScalarValue};
 use casa_ms::schema::main_table::VisibilityDataColumn;
-use casa_ms::write_session::{
+use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow};
+use casa_ms::{
     MeasurementSetMutationColumnBatch, MeasurementSetMutationColumnValues,
     MeasurementSetWriteColumnPlan, MeasurementSetWriteResources, VisibilityWriteDestination,
-};
-use casa_ms::{
-    MeasurementSet, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow, scratch_columns,
 };
 use casa_tables::streamed_tiled::{
     StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType, StreamingTiledShapeWriter,
@@ -76,7 +74,7 @@ pub(super) fn initialize_columns(
     } else {
         CORRECTED
     };
-    if let Err(error) = scratch_columns::prepare_write_holding(ms, column, true, lock) {
+    if let Err(error) = casa_ms::prepare_write_holding(ms, column, true, lock) {
         let added = created.iter().map(String::as_str).collect::<Vec<_>>();
         ms.main_table_mut()
             .remove_columns_preserving_managers(&added)

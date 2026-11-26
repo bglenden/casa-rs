@@ -7,13 +7,13 @@ use std::path::Path;
 use casa_core::measures::MeasFrame;
 use casa_core::measures::frequency::FrequencyRef;
 use casa_core::quanta::{Quantity, Unit, casacore};
+use casa_ms::LegacyRegridQuantity;
 use casa_ms::SubtableId;
-use casa_ms::ms::subtable_path_from_main;
+use casa_ms::append_tool_history;
 use casa_ms::selection::MsSelectionIoBudget;
-use casa_ms::spectral_selection::LegacyRegridQuantity;
+use casa_ms::subtable_path_from_main;
 use casa_ms::subtables::{MsAntenna, MsSpectralWindow};
-use casa_ms::tool_history::append_tool_history;
-use casa_ms::transform::{
+use casa_mstransform::{
     HanningDataColumn, LegacyMsTool, LegacySpectralGrid, MsRegridOptions, MsTransformError,
     MsTransformRequest, MsTransformTaskOptions, ToolSpectralWindow, TransformDataColumn,
     mstransform_task, reframe_staged_ms, stage_frame_only_ms, tool_channel_frequencies,

@@ -55,7 +55,7 @@ const CORRELATIONS: [Correlation; 4] = [
 
 fn fixture(root: &Path, name: &str) -> PathBuf {
     let archive = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../casa-ms/tests/fixtures/ms_trial")
+        .join("../../libs/casacore/casa-ms/tests/fixtures/ms_trial")
         .join(format!("{name}.tgz"));
     Archive::new(GzDecoder::new(File::open(archive).expect("fixture")))
         .unpack(root)

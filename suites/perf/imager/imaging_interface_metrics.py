@@ -18,10 +18,10 @@ from perf_harness.subprocesses import run_command
 DEFAULT_PATHS = [
     "crates/casa-imaging/src",
     "crates/casars-imager/src",
-    "crates/casa-ms/src/visibility_buffer.rs",
-    "crates/casa-ms/src/spectral_selection.rs",
-    "crates/casa-ms/src/selection.rs",
-    "crates/casa-ms/src/selection/syntax.rs",
+    "libs/casacore/casa-ms/src/visibility_buffer.rs",
+    "libs/casacore/casa-ms/src/spectral_selection.rs",
+    "libs/casacore/casa-ms/src/selection.rs",
+    "libs/casacore/casa-ms/src/selection/syntax.rs",
 ]
 
 PUBLIC_RE = re.compile(r"^\s*pub\s+(fn|struct|enum|trait|type|const|static|mod|use)\b")

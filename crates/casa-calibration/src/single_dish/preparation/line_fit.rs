@@ -15,7 +15,7 @@ use casa_core::{
 };
 use casa_imageanalysis::analysis::{ChannelLineShape, fit_channel_lines};
 use casa_ms::MeasurementSet;
-use casa_ms::transform::{
+use casa_mstransform::{
     MsTransformRequest, MsTransformTaskOptions, SpectrumBaseline, SpectrumRow, SpectrumWeights,
     TimeAverageOptions, transform_baseline_spectra,
 };
@@ -187,7 +187,7 @@ impl SingleDishSession {
 
 impl LineAveraging {
     pub(super) fn operation_options(&self) -> Result<MsTransformTaskOptions, String> {
-        use casa_ms::transform::SingleDishPolarizationAverage;
+        use casa_mstransform::SingleDishPolarizationAverage;
 
         let time_averaging = self.time_options()?;
         let single_dish_polarization = if time_averaging.is_some() {

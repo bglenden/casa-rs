@@ -39,6 +39,6 @@ run_timed_step \
   cargo test -p casa-perf-suite --release --features performance-tests --tests -- --nocapture
 run_timed_step \
   "Running MeasurementSet release performance suite" \
-  cargo test -p casa-ms --release --features performance-tests --test ms_perf_vs_cpp -- --nocapture
+  cargo test -p casa-ms --release --features performance-tests --test api -- ms_perf_vs_cpp:: --nocapture
 script_finished_at="$(date +%s)"
 echo "Release performance suite completed in $(format_elapsed $(( script_finished_at - script_started_at )))"

@@ -4,7 +4,8 @@
 use std::collections::{BTreeMap, HashMap};
 
 use casa_core::ArrayValue;
-use casa_ms::{MeasurementSet, PlotMsModelReferences, ResolvedMsSelectionRow, TransformInputView};
+use casa_ms::{MeasurementSet, ResolvedMsSelectionRow};
+use casa_mstransform::{PlotMsModelReferences, TransformInputView};
 
 use crate::transform_models::plotms_model_input;
 
@@ -18,7 +19,7 @@ pub fn load_models(
     rows: &[ResolvedMsSelectionRow],
     references: Option<PlotMsModelReferences<'_>>,
 ) -> Result<Option<HashMap<usize, ArrayValue>>, String> {
-    let fields = casa_ms::scratch_columns::virtual_model_fields(ms);
+    let fields = casa_ms::virtual_model_fields(ms);
     if !rows.iter().any(|row| fields.contains(&row.field_id)) {
         return Ok(None);
     }

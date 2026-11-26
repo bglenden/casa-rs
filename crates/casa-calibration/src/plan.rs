@@ -18,7 +18,7 @@ use std::time::Instant;
 
 use casa_core::{ArrayValue, ScalarValue};
 use casa_ms::ChannelSelection;
-use casa_ms::ms::MeasurementSet;
+use casa_ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::selection::{MsSelection, ResolvedMsSelection};
 use casa_ms::{MsError, MsSpectralWindow};

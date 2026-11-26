@@ -6,7 +6,7 @@ use std::f64::consts::{LN_2, TAU};
 
 use casa_core::{ArrayValue, Complex32};
 use casa_fft::Fft2;
-use casa_ms::transform::SpectrumConvolution;
+use casa_mstransform::SpectrumConvolution;
 use ndarray::{ArrayD, Axis};
 
 #[derive(Clone, Copy)]

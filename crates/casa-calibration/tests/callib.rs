@@ -9,7 +9,7 @@ use casa_calibration::{
     plan_apply_from_path,
 };
 use casa_core::ArrayValue;
-use casa_ms::ms::MeasurementSet;
+use casa_ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::selection::MsSelection;
 

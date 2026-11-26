@@ -7,7 +7,7 @@
 
 #[path = "../../../crates/casa-calibration/tests/common/mod.rs"]
 mod common;
-#[path = "../../../crates/casa-ms/tests/common/mod.rs"]
+#[path = "../../../libs/casacore/casa-ms/tests/common/mod.rs"]
 mod ms_common;
 
 use std::collections::BTreeMap;
@@ -21,7 +21,7 @@ use casa_calibration::{
     export_corrected_data, fluxscale, solve_calibration,
 };
 use casa_core::Complex32;
-use casa_ms::ms::MeasurementSet;
+use casa_ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::selection::MsSelection;
 use casa_tasks::calibration::{CalibrationTaskRequest, ExecuteApplyTaskRequest};

@@ -269,7 +269,7 @@ pub fn estimate_statwt(
                 .rows
                 .len()
                 .saturating_mul(128 + channels * correlations * cell_bytes);
-            if count > 0 && bytes + group_bytes > casa_ms::write_session::TARGET_BATCH_BYTES {
+            if count > 0 && bytes + group_bytes > casa_ms::TARGET_BATCH_BYTES {
                 break;
             }
             bytes = bytes.saturating_add(group_bytes);
@@ -349,9 +349,7 @@ pub fn estimate_statwt(
                             .map(|value| value.len() * size_of::<f32>())
                             .sum::<usize>();
                     pending.push(update);
-                    if pending_bytes >= casa_ms::write_session::TARGET_BATCH_BYTES
-                        || pending.len() == 65_536
-                    {
+                    if pending_bytes >= casa_ms::TARGET_BATCH_BYTES || pending.len() == 65_536 {
                         ms.persist(&columns, &mut pending, locks)?;
                         pending_bytes = 0;
                     }

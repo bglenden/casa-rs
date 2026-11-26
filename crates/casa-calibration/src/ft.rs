@@ -27,14 +27,12 @@ use std::ops::Range;
 use casa_coordinates::SpectralCoordinate;
 use casa_core::{ArrayValue, Complex32};
 use casa_ms::schema::main_table::VisibilityDataColumn;
-use casa_ms::virtual_model::selected_model_combinations;
-use casa_ms::write_session::{
-    MeasurementSetMutationBatch, MeasurementSetWriteError, MeasurementSetWriteSession,
-};
+use casa_ms::selected_model_combinations;
 use casa_ms::{
     MeasurementSet, MsError, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow,
     VirtualModelEntry,
 };
+use casa_ms::{MeasurementSetMutationBatch, MeasurementSetWriteError, MeasurementSetWriteSession};
 use casa_tables::TableWriteLock;
 use ndarray::{ArrayD, Axis, IxDyn};
 

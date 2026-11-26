@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 
 use crate::{TaskFailure, TaskInvocation};
 use casa_contracts::ParameterValue;
-use casa_ms::{MeasurementSet, save_next_partition_flag_backup};
+use casa_flagging::save_next_partition_flag_backup;
+use casa_ms::MeasurementSet;
 use casa_tables::{Table, TableInfo, table_cache_name};
 
 use crate::calibration::managed_output::{ApplyMultiMsReport, ApplyPartitionReport};

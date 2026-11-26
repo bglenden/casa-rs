@@ -239,7 +239,7 @@ def test_create_default_manager_and_dminfo_specs(tmp_path: Path) -> None:
     tool.done()
 
     ms_dir = tmp_path / "ms"
-    with tarfile.open(REPO_ROOT / "crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz", "r:gz") as arc:
+    with tarfile.open(REPO_ROOT / "libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz", "r:gz") as arc:
         extract = {"filter": "data"} if sys.version_info >= (3, 12) else {}
         arc.extractall(ms_dir, **extract)
     assert tool.open(str(ms_dir / "mssel_test_small.ms"))
@@ -256,7 +256,7 @@ def test_create_default_manager_and_dminfo_specs(tmp_path: Path) -> None:
 
 
 def test_append_to_mixed_measurement_set_preserves_manager_layout(tmp_path: Path) -> None:
-    fixture = REPO_ROOT / "crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz"
+    fixture = REPO_ROOT / "libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz"
     with tarfile.open(fixture, "r:gz") as archive:
         archive.extractall(tmp_path, filter="data")
     path = tmp_path / "mssel_test_small.ms"
@@ -291,7 +291,7 @@ def test_append_to_mixed_measurement_set_preserves_manager_layout(tmp_path: Path
 
 
 def test_column_addition_changes_only_the_selected_manager(tmp_path: Path) -> None:
-    fixture = REPO_ROOT / "crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz"
+    fixture = REPO_ROOT / "libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz"
     with tarfile.open(fixture, "r:gz") as archive:
         archive.extractall(tmp_path, filter="data")
     path = tmp_path / "mssel_test_small.ms"

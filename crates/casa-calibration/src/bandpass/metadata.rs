@@ -3,7 +3,7 @@
 use super::{BandpassFrequencyInterval, BandpassSolveError};
 use crate::solve::grouping::SelectedSolveRow;
 use casa_core::{ArrayValue, ScalarValue, Value};
-use casa_ms::{ChannelSelection, ms::MeasurementSet};
+use casa_ms::{ChannelSelection, MeasurementSet};
 use casa_tables::{Table, TableOptions};
 use std::{
     collections::{BTreeMap, BTreeSet},

@@ -4,7 +4,7 @@ use std::num::IntErrorKind;
 
 use crate::{TaskFailure, TaskInvocation};
 use casa_contracts::ParameterValue;
-use casa_ms::flagging::{TfcropFit, TfcropOptions, TfcropPasses, TfcropWindowStats};
+use casa_flagging::{TfcropFit, TfcropOptions, TfcropPasses, TfcropWindowStats};
 
 pub(super) fn validate_types(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
     integer_setting(task, "maxnpieces")?;

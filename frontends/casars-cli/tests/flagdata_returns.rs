@@ -6,7 +6,7 @@
 //! `tools/casa-compat/record_casa_returns.py`. The CASA values casa-rs does
 //! not implement yet are refused before the task starts, naming #978.
 
-#[path = "../../../crates/casa-ms/tests/common/mod.rs"]
+#[path = "../../../libs/casacore/casa-ms/tests/common/mod.rs"]
 mod common;
 
 use std::io::Write;

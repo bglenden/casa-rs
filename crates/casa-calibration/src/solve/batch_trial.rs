@@ -18,7 +18,7 @@ mod feed;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
-use casa_ms::ms::MeasurementSet;
+use casa_ms::MeasurementSet;
 use casa_ms::observation_io::{GroupClosure, OpenOptions};
 use casa_ms::selection::MsSelection;
 use casa_observation::{
@@ -35,7 +35,7 @@ use feed::{solve_concurrent, solve_sequential};
 
 fn fixture(root: &Path, name: &str) -> PathBuf {
     let archive = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../casa-ms/tests/fixtures/ms_trial")
+        .join("../../libs/casacore/casa-ms/tests/fixtures/ms_trial")
         .join(format!("{name}.tgz"));
     tar::Archive::new(flate2::read::GzDecoder::new(
         File::open(archive).expect("fixture"),
@@ -592,7 +592,7 @@ fn solutions_recover_the_fixture_gains() {
     let manifest: serde_json::Value = serde_json::from_reader(
         File::open(
             Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../casa-ms/tests/fixtures/ms_trial/manifest.json"),
+                .join("../../libs/casacore/casa-ms/tests/fixtures/ms_trial/manifest.json"),
         )
         .expect("manifest"),
     )

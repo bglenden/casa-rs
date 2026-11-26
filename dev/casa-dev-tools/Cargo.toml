@@ -14,7 +14,7 @@ workspace = true
 [dependencies]
 casa-tables.workspace = true
 casa-measures.workspace = true
-casa-ms = { path = "../../crates/casa-ms" }
+casa-ms.workspace = true
 casa-simulation = { path = "../../crates/casa-simulation" }
 casa-core.workspace = true
 libc = "0.2"

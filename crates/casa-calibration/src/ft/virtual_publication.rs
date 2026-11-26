@@ -4,10 +4,10 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use casa_ms::virtual_model::{
+use casa_ms::{MeasurementSet, MsResult, VirtualModelEntry};
+use casa_ms::{
     VirtualModelPublication, verify_virtual_model_target_holding, virtual_model_target_for_field,
 };
-use casa_ms::{MeasurementSet, MsResult, VirtualModelEntry};
 use casa_tables::TableWriteLock;
 
 use super::{image::ImageModel, invalid};

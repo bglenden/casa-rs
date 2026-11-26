@@ -11,7 +11,7 @@ use casa_contracts::{
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 
-use casa_ms::{FlagMerge, FlagVersionEntry};
+use casa_flagging::{FlagMerge, FlagVersionEntry};
 
 /// JSON request accepted by the native `mstransform` provider, for its
 /// `mstransform` and `split` surfaces.
@@ -192,7 +192,7 @@ pub struct FlagManagerMutationResult {
 
 /// Canonical provider bundle for `mstransform` and `split`.
 pub fn mstransform_task_schema_bundle() -> TaskProviderContract {
-    one_shot_contract::<MsTransformTaskRequest, casa_ms::MsTransformReport>(
+    one_shot_contract::<MsTransformTaskRequest, casa_mstransform::MsTransformReport>(
         "casa_ms_transform_task",
         &["mstransform", "split"],
     )
@@ -201,7 +201,7 @@ pub fn mstransform_task_schema_bundle() -> TaskProviderContract {
 /// Canonical provider bundle for `flagdata`; its result is `null` when
 /// `action` runs nothing.
 pub fn flagdata_task_schema_bundle() -> TaskProviderContract {
-    one_shot_contract::<FlagDataTaskRequest, Option<casa_ms::FlagDataReport>>(
+    one_shot_contract::<FlagDataTaskRequest, Option<casa_flagging::FlagDataReport>>(
         "casa_ms_flagdata_task",
         &["flagdata"],
     )

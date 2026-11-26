@@ -21,9 +21,8 @@ use casa_imaging_model::{
     WeightDensityScope,
 };
 use casa_ms::{
-    MeasurementSet, MeasurementSetBuilder, OptionalMainColumn, SubtableId, VisibilityDataColumn,
-    column_def::{ColumnDef, ColumnKind},
-    schema,
+    ColumnDef, ColumnKind, MeasurementSet, MeasurementSetBuilder, OptionalMainColumn, SubtableId,
+    VisibilityDataColumn, schema,
 };
 use ndarray::ArrayD;
 use serde_json::json;

@@ -40,7 +40,7 @@ class ScopeTests(unittest.TestCase):
         owners = {
             "libs/casacore/casa-tables": "casa-tables",
             "dev/casa-test-support": "casa-test-support",
-            "crates/casa-ms": "casa-ms",
+            "libs/casacore/casa-ms": "casa-ms",
         }
         deps = {
             "casa-tables": set(),

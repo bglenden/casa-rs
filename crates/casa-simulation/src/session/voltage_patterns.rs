@@ -7,9 +7,7 @@ use casa_core::{
     quanta::{Quantity, Unit},
 };
 use casa_imaging_runtime::{Admitted, Demand, Reservation, admit};
-use casa_ms::voltage_pattern::{
-    VoltagePatternTable, radial_curve_storage, radial_lookup, radial_pattern,
-};
+use casa_ms::{VoltagePatternTable, radial_curve_storage, radial_lookup, radial_pattern};
 
 use super::{
     Simulator, VoltagePatternSpec,

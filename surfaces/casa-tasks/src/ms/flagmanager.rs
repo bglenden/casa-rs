@@ -4,12 +4,12 @@
 
 use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::CasaValue;
-use casa_ms::flagging::save_disk_flag_version;
-use casa_ms::{
-    FlaggingError, MeasurementSet, delete_flag_version, flag_version_ms_path,
-    initialize_flag_versions, list_flag_versions, rename_flag_version,
-    rename_flag_version_for_task, restore_flag_version,
+use casa_flagging::save_disk_flag_version;
+use casa_flagging::{
+    FlaggingError, delete_flag_version, flag_version_ms_path, initialize_flag_versions,
+    list_flag_versions, rename_flag_version, rename_flag_version_for_task, restore_flag_version,
 };
+use casa_ms::MeasurementSet;
 
 use super::casa_return::flagmanager_list_record;
 use super::front_end::{ms_task_success, task_flag_merge};
@@ -50,7 +50,7 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
 }
 
 fn execute(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, TaskFailure> {
-    let failed = |error: casa_ms::FlaggingError| TaskFailure::execution(error.to_string());
+    let failed = |error: casa_flagging::FlaggingError| TaskFailure::execution(error.to_string());
     let require_version = |message| {
         request
             .versionname
@@ -94,13 +94,13 @@ fn execute(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, Tas
                 .skip(1)
                 .any(|entry| entry.name == name)
             {
-                return Err(
-                    failed(casa_ms::FlaggingError::MissingFlagVersion { version: name })
-                        .at("versionname"),
-                );
+                return Err(failed(casa_flagging::FlaggingError::MissingFlagVersion {
+                    version: name,
+                })
+                .at("versionname"));
             }
             restore_flag_version(&mut ms, &name, request.merge).map_err(|error| match error {
-                casa_ms::FlaggingError::MissingFlagVersion { .. } => {
+                casa_flagging::FlaggingError::MissingFlagVersion { .. } => {
                     failed(error).at("versionname")
                 }
                 error => failed(error),
@@ -143,7 +143,7 @@ fn execute(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, Tas
 /// the new comment onto the renamed version; casa-rs keeps its own (see
 /// `docs/CASA (C++) bugs.md`).
 fn keep_existing_version(ms: &MeasurementSet, name: &str) -> Result<(), TaskFailure> {
-    let failed = |error: casa_ms::FlaggingError| TaskFailure::execution(error.to_string());
+    let failed = |error: casa_flagging::FlaggingError| TaskFailure::execution(error.to_string());
     // `main`, the working copy, is listed but is no saved version.
     let Some(existing) = list_flag_versions(ms)
         .map_err(failed)?

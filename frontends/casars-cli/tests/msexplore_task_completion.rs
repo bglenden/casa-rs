@@ -8,7 +8,7 @@
 //! output format, so the user's `format` decides the summary in `output` and
 //! on the binary's own command line (#836).
 
-#[path = "../../../crates/casa-ms/tests/common/mod.rs"]
+#[path = "../../../libs/casacore/casa-ms/tests/common/mod.rs"]
 mod common;
 
 use std::fs;

@@ -13,8 +13,10 @@ slow-tests = []
 
 [dependencies]
 casa-imageanalysis.workspace = true
-casa-atmosphere = { path = "../casa-atmosphere" }
 casa-components.workspace = true
+casa-flagging.workspace = true
+casa-mstransform.workspace = true
+casa-atmosphere.workspace = true
 casa-coordinates.workspace = true
 casa-images.workspace = true
 casa-lattices.workspace = true
@@ -24,7 +26,7 @@ casa-imaging-operator = { path = "../casa-imaging-operator" }
 casa-imaging-runtime = { path = "../casa-imaging-runtime" }
 casa-imaging-singledish = { path = "../casa-imaging-singledish" }
 casa-measures.workspace = true
-casa-ms = { path = "../casa-ms" }
+casa-ms.workspace = true
 casa-numerics.workspace = true
 casa-tables.workspace = true
 casa-core.workspace = true
@@ -46,8 +48,9 @@ csv-core = "0.1.13"
 libc = "0.2"
 
 [dev-dependencies]
+casa-mstransform = { workspace = true, features = ["msv4"] }
 casa-simulation = { path = "../casa-simulation" }
-casa-ms = { path = "../casa-ms", features = ["msv4"] }
+casa-ms = { workspace = true, features = ["msv4"] }
 casa-observation.workspace = true
 flate2 = "1"
 tar = "0.4"

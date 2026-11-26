@@ -3,7 +3,9 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use casa_ms::{MsError, tool_multims::create_multi_ms_then};
+use casa_ms::MsError;
+
+use casa_mstransform::tool_multims::create_multi_ms_then;
 use casa_tables::table_cache_name;
 use pyo3::prelude::*;
 

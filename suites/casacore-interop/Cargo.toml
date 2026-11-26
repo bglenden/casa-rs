@@ -17,12 +17,15 @@ cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
 workspace = true
 
 [dependencies]
+casa-vla.workspace = true
+casa-observation.workspace = true
+num-complex.workspace = true
 casa-aipsio.workspace = true
 casa-coordinates.workspace = true
 casa-images.workspace = true
 casa-lattices.workspace = true
 casa-measures.workspace = true
-casa-ms = { path = "../../crates/casa-ms" }
+casa-ms.workspace = true
 casa-tables.workspace = true
 casa-test-support = { path = "../../dev/casa-test-support" }
 casa-core.workspace = true
@@ -253,5 +256,54 @@ required-features = ["cpp-interop-tests"]
 
 [dev-dependencies]
 casa-components.workspace = true
-num-complex.workspace = true
 serde_json = { version = "1", features = ["float_roundtrip"] }
+
+[[test]]
+name = "ms_data_interop"
+path = "tests/ms_data_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "ms_full_verify_vs_cpp"
+path = "tests/ms_full_verify_vs_cpp.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "ms_locking_vs_cpp"
+path = "tests/ms_locking_vs_cpp.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "spectral_frame_parity"
+path = "tests/spectral_frame_parity.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "cpp_first_record_parity"
+path = "tests/cpp_first_record_parity.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "cpp_import_ms_parity"
+path = "tests/cpp_import_ms_parity.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "cpp_import_ms_parity_matrix"
+path = "tests/cpp_import_ms_parity_matrix.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "real_importvla_parity"
+path = "tests/real_importvla_parity.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "spectral_conversion_xp1_debug"
+path = "tests/spectral_conversion_xp1_debug.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "cpp_vlafiller_spw_seed_debug"
+path = "tests/cpp_vlafiller_spw_seed_debug.rs"
+required-features = ["cpp-interop-tests"]

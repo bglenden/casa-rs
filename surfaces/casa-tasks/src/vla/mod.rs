@@ -7,7 +7,7 @@
 
 use crate::{ParameterOrigin, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::{ParameterValue, python_repr};
-use casa_ms::TransformTaskHistory;
+use casa_mstransform::TransformTaskHistory;
 use casa_vla::{ImportReport, ImportVlaOptions, VlaError, import_archive_with_history};
 
 pub mod task_contract;
