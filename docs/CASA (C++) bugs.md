@@ -11235,7 +11235,7 @@ producer. The public format catalog describes these exports as PostScript.
 
 Casa-rs writes the requested PostScript encoding. The paired oracle decodes
 both single-page products and compares their visible visibility marks.
-[Paired public PlotMS oracle](../tools/casa-compat/plotms_ms_exports_oracle.py)
+[Paired public PlotMS oracle](https://github.com/bglenden/casa-rs/blob/6f642950ee05c792902fcde050d29e973967ac38/tools/casa-compat/plotms_ms_exports_oracle.py)
 
 ## PlotMS can ignore the requested major grid color
 
@@ -11248,7 +11248,7 @@ the dotted minor grid uses the requested `minorcolor="#338844"`.
 
 Casa-rs applies the requested grid colors. The paired test checks the pinned
 gray major stroke and the requested native major color. Both exports show the
-dotted minor grid with its requested color. [Paired public PlotMS oracle](../tools/casa-compat/plotms_ms_axes_presentation_oracle.py)
+dotted minor grid with its requested color. [Paired public PlotMS oracle](https://github.com/bglenden/casa-rs/blob/6f642950ee05c792902fcde050d29e973967ac38/tools/casa-compat/plotms_ms_axes_presentation_oracle.py)
 
 ## PlotMS SPW averaging can repeat the first window's channel selection
 
@@ -11947,7 +11947,7 @@ Spectral metadata still describes the initialized window, as in CASA
 
 CASA 6.7.6.14 with casaplotms 2.9.1 terminates its PlotMS process with signal 11 for `xaxis='frequency'`, `yaxis=['real','imag']`, `ydatacolumn=['model','corrected']`, `spw='0:0;3;6'` and `showatm=True` on the paired weather fixture. The public task reports a closed RPC connection and leaves no TXT export. The same failure occurs with two stored ordinates. [Pinned overlay setup](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Plots/PlotMSPlot.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
 
-Casa-rs exports both visibility ordinates and the transmission curve. The paired check compares the visibility axes to CASA's two-ordinate export with transmission disabled and the curve to its single-ordinate transmission export on the same channels. Both checks preserve the virtual model reference and stored visibility cells. [Paired public PlotMS oracle](../tools/casa-compat/plotms_ms_atmosphere_oracle.py)
+Casa-rs exports both visibility ordinates and the transmission curve. The paired check compares the visibility axes to CASA's two-ordinate export with transmission disabled and the curve to its single-ordinate transmission export on the same channels. Both checks preserve the virtual model reference and stored visibility cells. [Paired public PlotMS oracle](https://github.com/bglenden/casa-rs/blob/6f642950ee05c792902fcde050d29e973967ac38/tools/casa-compat/plotms_ms_atmosphere_oracle.py)
 
 ## The first MS history write can create HISTORY and then fail
 
