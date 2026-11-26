@@ -44,6 +44,19 @@ pub struct NativeTaskOptions {
     pub imaging: crate::imaging::ImagingExecutionOptions,
 }
 
+impl NativeTaskOptions {
+    pub(crate) fn is_cancelled(&self) -> bool {
+        #[cfg(feature = "imaging")]
+        {
+            self.imaging.cancel.is_cancelled()
+        }
+        #[cfg(not(feature = "imaging"))]
+        {
+            false
+        }
+    }
+}
+
 /// Run a built-in task with explicit overrides and no managed Last state.
 ///
 /// Relative paths resolve against `workspace`, which must be absolute.
@@ -80,8 +93,7 @@ fn run(
     if !workspace.is_absolute() {
         return Err(TaskFailure::validation("task workspace must be absolute"));
     }
-    #[cfg(feature = "imaging")]
-    if options.imaging.cancel.is_cancelled() {
+    if options.is_cancelled() {
         return Err(TaskFailure::interrupted(
             "cancelled before the task started",
         ));

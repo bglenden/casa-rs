@@ -192,7 +192,12 @@ impl ImportVlaOptions {
         }
     }
 
-    pub(crate) fn default_vis_path_in(&self, cwd: &Path) -> Result<PathBuf, VlaError> {
+    /// Derive the output MeasurementSet name from the first archive in
+    /// the supplied workspace.
+    ///
+    /// # Errors
+    /// Returns an error when the first archive has no usable filename.
+    pub fn default_vis_path_in(&self, workspace: &Path) -> Result<PathBuf, VlaError> {
         let first_archive = self
             .require_archivefiles()?
             .first()
@@ -210,7 +215,7 @@ impl ImportVlaOptions {
             })?;
         let mut file_name = stem.to_os_string();
         file_name.push(".ms");
-        Ok(cwd.join(file_name))
+        Ok(workspace.join(file_name))
     }
 }
 

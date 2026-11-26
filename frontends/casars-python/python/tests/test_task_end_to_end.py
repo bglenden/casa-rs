@@ -43,6 +43,20 @@ def small_ms(tmp_path: Path) -> Path:
     return tmp_path / "mssel_test_small.ms"
 
 
+def test_rflag_places_threshold_outputs_in_the_workspace(small_ms, monkeypatch):
+    workspace = small_ms.parent
+    caller = workspace / "caller"
+    caller.mkdir()
+    monkeypatch.chdir(caller)
+    completion = tasks.run("flagdata", vis=small_ms.name, workspace=workspace,
+                           mode="rflag", action="calculate", datacolumn="data",
+                           timedev="time.txt", flagbackup=False)
+    assert completion.successful
+    assert "'timedev'" in (workspace / "time.txt").read_text()
+    assert "'freqdev'" in (workspace / "rflag_output_thresholds_freqdev0.txt").read_text()
+    assert list(caller.iterdir()) == []
+
+
 def test_flagmanager_runs_in_process_and_preserves_last(
     small_ms: Path,
     monkeypatch: pytest.MonkeyPatch,

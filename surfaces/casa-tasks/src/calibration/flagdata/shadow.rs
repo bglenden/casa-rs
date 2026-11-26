@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use crate::{TaskFailure, TaskInvocation};
 use casa_contracts::{ParameterValue, python_repr};
@@ -19,7 +18,7 @@ pub(super) fn parameters(task: &TaskInvocation<'_>) -> Result<ShadowParameters, 
         .map_or_else(|| task.number("tolerance"), Ok)?;
     let (config, command_argument) = match task.value("addantenna") {
         Some(ParameterValue::String(path)) if !path.is_empty() => {
-            let config = read_list(path)?;
+            let config = read_list(task, path)?;
             (config.value, config.command)
         }
         Some(value @ ParameterValue::Table(records)) if !records.is_empty() => (
@@ -115,9 +114,10 @@ pub(super) struct AntennaList {
     pub(super) command: Option<String>,
 }
 
-pub(super) fn read_list(path: &str) -> Result<AntennaList, TaskFailure> {
-    let contents = std::fs::read_to_string(path).map_err(|_| {
-        let message = if Path::new(path).exists() {
+pub(super) fn read_list(task: &TaskInvocation<'_>, path: &str) -> Result<AntennaList, TaskFailure> {
+    let resolved = task.io_path(path);
+    let contents = std::fs::read_to_string(&resolved).map_err(|_| {
+        let message = if resolved.exists() {
             format!("Error opening file {path}")
         } else {
             format!("File {path} not found - please verify the name")

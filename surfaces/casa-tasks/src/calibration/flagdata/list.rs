@@ -161,6 +161,7 @@ pub(super) fn run(task: &TaskInvocation<'_>, action: &str) -> Result<TaskSuccess
                     .then(|| values.get("freqdev"))
                     .flatten();
                 rflag::write_agent_files(
+                    task,
                     thresholds,
                     &format!("Rflag_{index}"),
                     index,
@@ -336,7 +337,7 @@ fn prepare(
             if let Some(value) = values.get_mut(name)
                 && !matches!(value, ParameterValue::Array(_))
             {
-                *value = rflag::list_threshold_value(value, name)?;
+                *value = rflag::list_threshold_value(parent, value, name)?;
             }
         }
     }

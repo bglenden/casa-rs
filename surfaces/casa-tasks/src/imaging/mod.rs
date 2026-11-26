@@ -221,7 +221,16 @@ fn task_request_with_surface(
     let mut resolved = raw.clone();
     task.resolve_file_values(
         &mut resolved,
-        &["vis", "imagename", "outlierfile", "startmodel", "vptable"],
+        &[
+            "vis",
+            "imagename",
+            "outlierfile",
+            "startmodel",
+            "vptable",
+            "cfcache",
+            "native_cf_cache",
+            "evla_surface",
+        ],
     );
     for name in ["mask", "phasecenter"] {
         if let Some(value) = resolved.get_mut(name) {

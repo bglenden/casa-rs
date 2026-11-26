@@ -332,12 +332,18 @@ fn plot_payload(task: &TaskInvocation<'_>) -> Option<PathBuf> {
 }
 
 fn project_fallback_path(task: &TaskInvocation<'_>, project: &Path, name: &str) -> String {
-    let path = task.io_path(name);
-    if !name.is_empty() && !project.join(name).exists() && path.exists() {
-        path.to_string_lossy().into_owned()
-    } else {
-        name.to_owned()
+    if matches!(name, "" | "default") {
+        return name.to_owned();
     }
+    let project_name = project.file_name().unwrap_or_default().to_string_lossy();
+    let name = name.replace("$project", &project_name);
+    let in_project = project.join(&name);
+    let path = if in_project.exists() {
+        in_project
+    } else {
+        task.io_path(name)
+    };
+    path.to_string_lossy().into_owned()
 }
 
 #[cfg(test)]

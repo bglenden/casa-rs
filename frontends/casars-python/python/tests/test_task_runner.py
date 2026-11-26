@@ -13,6 +13,7 @@ import numpy as np
 
 from casars import parameters, tasks, tools
 from casars.parameters import TaskParameters, _native
+from test_image_saved_expression import _manifest
 from test_tools_msmetadata import measures, native_dataset
 
 
@@ -103,7 +104,8 @@ def test_simultaneous_relative_paths_use_each_workspace(native_dataset, tmp_path
     assert Path.cwd() == cwd
 
 
-def test_relative_image_expressions_use_workspace_with_quotes(tmp_path):
+@pytest.mark.parametrize("saved_mask", [False, True])
+def test_relative_image_expressions_use_workspace_with_quotes(tmp_path, saved_mask):
     workspace = tmp_path / "workspace with ' and \""
     workspace.mkdir()
     pixels = np.array([[0, 2], [1, 3]], dtype=np.float32)
@@ -118,12 +120,46 @@ def test_relative_image_expressions_use_workspace_with_quotes(tmp_path):
     np.testing.assert_array_equal(image.getchunk(), pixels * 2)
     assert image.done()
 
+    mask = '"input.im">1'
+    if saved_mask:
+        _manifest(workspace / "cut.im", ImageExpr='"input.im"*2')
+        mask = '"cut.im">2'
     assert tasks.run("imsubimage", workspace=workspace, imagename="input.im",
-                     mask='"input.im">1', outfile="masked.im").successful
+                     mask=mask, outfile="masked.im").successful
     assert image.open(str(workspace / "masked.im"))
     np.testing.assert_array_equal(image.getchunk(getmask=True), pixels > 1)
     assert image.done()
     assert Path.cwd() == cwd
+
+
+def test_flagdata_list_and_threshold_files_use_the_workspace(native_dataset, monkeypatch):
+    workspace = native_dataset.parent
+    caller = workspace / "caller"
+    caller.mkdir()
+    monkeypatch.chdir(caller)
+    (workspace / "commands.txt").write_text("mode='manual'\n")
+    (workspace / "bad-threshold.txt").write_text("invalid threshold file\n")
+    with pytest.raises(tasks.TaskExecutionError, match="devthreshold"):
+        tasks.run("flagdata", workspace=workspace, vis=native_dataset.name,
+                  mode="rflag", action="apply", timedev="bad-threshold.txt", flagbackup=False)
+    result = tasks.run("flagdata", workspace=workspace, vis=native_dataset.name,
+                       mode="list", action="apply", inpfile="commands.txt", flagbackup=False)
+    assert result.successful
+    table = tools.table()
+    assert table.open(str(native_dataset))
+    assert table.getcol("FLAG").all()
+    assert table.done()
+    assert Path.cwd() == caller
+
+
+def test_simanalyze_ignores_visibilities_in_the_callers_directory(native_dataset, monkeypatch):
+    workspace = native_dataset.parent / "workspace"
+    project = workspace / "analysis"
+    project.mkdir(parents=True)
+    monkeypatch.chdir(native_dataset.parent)
+    with pytest.raises(tasks.TaskExecutionError, match="No MS found to image"):
+        tasks.run("simanalyze", workspace=workspace, project=project.name,
+                  vis=native_dataset.name, image=True, graphics="none")
 
 
 def test_sigint_cleans_up_and_second_native_run_succeeds(native_dataset, monkeypatch):

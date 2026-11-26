@@ -11,6 +11,35 @@ use crate::TableError;
 #[cfg(unix)]
 use std::sync::Arc;
 
+#[cfg(unix)]
+fn acquire_interruptibly(
+    lock: &mut LockFile,
+    path: &Path,
+    reservations: Option<&[DelegatedTableWrite]>,
+    cancelled: &dyn Fn() -> bool,
+) -> std::io::Result<LockOutcome> {
+    let mut outcome = lock.acquire_with_reservation(LockType::Write, 1, reservations)?;
+    if outcome == LockOutcome::HeldByAnotherProcess {
+        tracing::warn!(
+            "table {} is locked by another process; waiting for the write lock",
+            path.display()
+        );
+    }
+    while outcome == LockOutcome::HeldByAnotherProcess && !cancelled() {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        if !cancelled() {
+            outcome = lock.acquire_with_reservation(LockType::Write, 1, reservations)?;
+        }
+    }
+    if cancelled() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "task cancelled while acquiring table write lock",
+        ));
+    }
+    Ok(outcome)
+}
+
 /// Casacore's in-use marker for an open table that acquires access locks
 /// separately for its I/O.
 pub struct TableUseLock {
@@ -298,6 +327,8 @@ impl TableWriteLock {
             true,
             #[cfg(unix)]
             None,
+            #[cfg(unix)]
+            None,
         )
     }
 
@@ -320,22 +351,32 @@ impl TableWriteLock {
             false,
             #[cfg(unix)]
             None,
+            #[cfg(unix)]
+            None,
         )
     }
 
-    /// Take a write lock under this task's local reservations, then reread
-    /// the table. The guard retains the reservations until it is released.
+    /// Wait for a write lock under this task's local reservations, then reread
+    /// the table. While waiting, poll the supplied cancellation check. The
+    /// guard retains the reservations until it is released.
     ///
     /// # Errors
     /// As [`Self::acquire_to_reread`]. A different task's reservation
     /// refuses the request even when this process owns the underlying lock.
+    /// Cancellation returns a lock I/O error and releases any acquired lock.
     #[cfg(unix)]
     pub fn acquire_reserved_to_reread(
         table_dir: &Path,
-        nattempts: u32,
         reservations: &Arc<[DelegatedTableWrite]>,
+        cancelled: &dyn Fn() -> bool,
     ) -> Result<Self, TableError> {
-        Self::take(table_dir, nattempts, false, Some(Arc::clone(reservations)))
+        Self::take(
+            table_dir,
+            1,
+            false,
+            Some(Arc::clone(reservations)),
+            Some(cancelled),
+        )
     }
 
     /// Lock a related table, such as an MS subtable, with the same task
@@ -354,6 +395,8 @@ impl TableWriteLock {
             false,
             #[cfg(unix)]
             self.reservations.clone(),
+            #[cfg(unix)]
+            None,
         )
     }
 
@@ -362,6 +405,7 @@ impl TableWriteLock {
         nattempts: u32,
         refuse_stale: bool,
         #[cfg(unix)] reservations: Option<Arc<[DelegatedTableWrite]>>,
+        #[cfg(unix)] cancelled: Option<&dyn Fn() -> bool>,
     ) -> Result<Self, TableError> {
         let path = table_dir.to_path_buf();
         #[cfg(unix)]
@@ -384,9 +428,15 @@ impl TableWriteLock {
                 false,
             )
             .map_err(lock_io)?;
-            let mut outcome = lock_file
-                .acquire_with_reservation(LockType::Write, 1, reservations.as_deref())
-                .map_err(lock_io)?;
+            let mut outcome = match cancelled {
+                Some(cancelled) => {
+                    acquire_interruptibly(&mut lock_file, &path, reservations.as_deref(), cancelled)
+                }
+                None => {
+                    lock_file.acquire_with_reservation(LockType::Write, 1, reservations.as_deref())
+                }
+            }
+            .map_err(lock_io)?;
             if outcome == LockOutcome::HeldByAnotherProcess && nattempts != 1 {
                 let published = published_modify_counter(&lock_file);
                 outcome = lock_file

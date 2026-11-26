@@ -104,11 +104,12 @@ fn acquire_write(
     path: &Path,
 ) -> Result<TableWriteLock, casa_tables::TableError> {
     #[cfg(unix)]
-    if let Some(reservations) = task
-        .native_options()
-        .and_then(|options| options.table_writes.as_ref())
+    if let Some(options) = task.native_options()
+        && let Some(reservations) = options.table_writes.as_ref()
     {
-        return TableWriteLock::acquire_reserved_to_reread(path, 0, reservations);
+        return TableWriteLock::acquire_reserved_to_reread(path, reservations, &|| {
+            options.is_cancelled()
+        });
     }
     let _ = task;
     TableWriteLock::acquire_to_reread(path, 0)
