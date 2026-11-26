@@ -71,13 +71,8 @@ impl OutputLayout {
         }
         let field = indices.field.first().copied().unwrap_or(0);
         let selected = predicate.select_rows(ms)?;
-        let selected = if selected.is_empty() {
-            (0..ms.row_count()).collect::<Vec<_>>()
-        } else {
-            selected
-        };
         if selected.is_empty() {
-            return Err(invalid("Cannot write UVFITS from an empty MeasurementSet"));
+            return Err(invalid("The selected MeasurementSet has zero rows"));
         }
         let descriptions = subtable(ms, SubtableId::DataDescription)?;
         let (rows, used) = load_rows(ms.main_table(), descriptions, &selected)?;

@@ -81,8 +81,15 @@ def test_fromfits_stock_exchange(fits_stock, fixture, tmp_path):
             read(casa, tmp_path / "native.ms" / "ANTENNA", antennas))
 
 
-@pytest.mark.parametrize("selection", [{}, {"spw": "0:1~2", "multisource": True},
-                                       {"spw": [0], "baseline": "0&1", "writesyscal": True}])
+@pytest.mark.parametrize("selection", [
+    {},
+    {"spw": "1:1~2", "multisource": True},
+    {"spw": [1], "baseline": "1", "writesyscal": True},
+    {"combinespw": True},
+    {"combinespw": True, "padwithflags": True},
+    {"field": [0], "taql": "ANTENNA1 == 0", "scan": [5], "time": ">2001/01/01"},
+    {"taql": "ANTENNA1 == 0", "uvrange": "0~1000m", "writestation": True},
+])
 def test_tofits_stock_exchange(fits_stock, tmp_path, selection):
     casa = pinned_casa()
     source = fits_stock / "uvfits_test.ms"
@@ -121,7 +128,38 @@ def test_uvfits_failed_operation_preserves_attachment_and_existing_output(fits_s
             with pytest.raises(RuntimeError):
                 tool.tofits()
             assert output.read_bytes() == payload
+            with pytest.raises(RuntimeError, match="zero rows"):
+                tool.tofits(overwrite=True, taql="FALSE")
+            assert output.read_bytes() == payload
             with pytest.raises(RuntimeError):
                 tool.fromfits(str(tmp_path / "missing.ms"), str(tmp_path / "invalid.fits"))
             assert tool.name() == str(source) and not tool.iswritable()
             assert not (tmp_path / "missing.ms").exists()
+
+
+def test_tofits_wsrt_stride_preserves_frequency_and_itrf_positions(fits_stock, tmp_path):
+    casa = pinned_casa()
+    source = tmp_path / "wsrt.ms"
+    copytree(fits_stock / "uvfits_test.ms", source)
+    with closing(casa.table()) as table:
+        assert table.open(str(source / "OBSERVATION"), nomodify=False)
+        assert table.putcell("TELESCOPE_NAME", 0, "WSRT")
+    with closing(casa.table()) as table:
+        assert table.open(str(source / "SPECTRAL_WINDOW"), nomodify=False)
+        for row in range(table.nrows()):
+            assert table.putcell("MEAS_FREQ_REF", row, 5)
+        expected_frequency = np.mean(table.getcell("CHAN_FREQ", 1)[:2])
+    expected_positions = read(casa, source / "ANTENNA", ["POSITION"])["POSITION"]
+    out = tmp_path / "wsrt.uvfits"
+    with closing(tools.ms()) as writer:
+        assert writer.open(str(source))
+        assert writer.tofits(str(out), spw="1:0~2^2")
+    reread = tmp_path / "wsrt-reread.ms"
+    with closing(casa.ms()) as reader:
+        assert reader.fromfits(str(reread), str(out))
+        assert reader.nrow() == 315
+    spw = read(casa, reread / "SPECTRAL_WINDOW", ["CHAN_FREQ", "MEAS_FREQ_REF"])
+    np.testing.assert_allclose(spw["CHAN_FREQ"], [[expected_frequency]], atol=0.01, rtol=0)
+    np.testing.assert_array_equal(spw["MEAS_FREQ_REF"], [5])
+    positions = read(casa, reread / "ANTENNA", ["POSITION"])["POSITION"]
+    np.testing.assert_allclose(positions, expected_positions, atol=1e-7, rtol=0)

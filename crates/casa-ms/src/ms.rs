@@ -81,6 +81,10 @@ impl MeasurementSet {
         Self::from_schemas(schemas, None)
     }
 
+    pub(crate) fn create_staged(path: &Path, builder: MeasurementSetBuilder) -> MsResult<Self> {
+        Self::from_schemas(builder.build_schemas()?, Some(path.to_owned()))
+    }
+
     /// Create an MS on disk at the given path.
     ///
     /// Creates the main table directory and subtable subdirectories.
@@ -525,37 +529,6 @@ impl MeasurementSet {
     pub fn save_as_standard(&mut self, path: impl AsRef<Path>) -> MsResult<()> {
         self.save_as_using(path.as_ref(), |main, path| {
             main.save(measurement_set_table_options(path))?;
-            Ok(())
-        })
-    }
-
-    pub(crate) fn save_as_with_visibility_tiles(
-        &mut self,
-        path: &Path,
-        visibility_tile: Vec<usize>,
-    ) -> MsResult<()> {
-        self.save_as_using(path, |main, path| {
-            let mut bindings = measurement_set_main_table_bindings(main);
-            let [correlations, channels, rows] = visibility_tile.as_slice() else {
-                return Err(MsError::InvalidInput(
-                    "visibility tiles need three axes".into(),
-                ));
-            };
-            let mut set_shape = |name: &str, shape: Vec<usize>| {
-                if let Some(binding) = bindings.get_mut(name) {
-                    binding.tile_shape = Some(shape);
-                }
-            };
-            for name in ["DATA", "FLAG", "WEIGHT_SPECTRUM"] {
-                set_shape(name, visibility_tile.clone());
-            }
-            set_shape("FLAG_CATEGORY", vec![*correlations, *channels, 1, *rows]);
-            for name in ["WEIGHT", "SIGMA"] {
-                set_shape(name, vec![*correlations, *rows]);
-            }
-            set_shape("UVW", vec![3, 1024]);
-            main.prepare_write()
-                .save_with_bindings(measurement_set_table_options(path), &bindings)?;
             Ok(())
         })
     }
