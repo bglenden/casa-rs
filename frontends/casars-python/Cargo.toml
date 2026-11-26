@@ -16,21 +16,20 @@ crate-type = ["cdylib"]
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]
-casa-aipsio = { path = "../casa-aipsio" }
-casa-atmosphere = { path = "../casa-atmosphere" }
-casa-calibration = { path = "../casa-calibration" }
-casa-components = { path = "../casa-components" }
-casa-coordinates = { path = "../casa-coordinates" }
-casa-images = { path = "../casa-images" }
-casa-lattices = { path = "../casa-lattices" }
-casa-measures-data = { path = "../casa-measures-data" }
-casa-ms = { path = "../casa-ms" }
+casa-atmosphere = { path = "../../crates/casa-atmosphere" }
+casa-calibration = { path = "../../crates/casa-calibration" }
+casa-components = { path = "../../crates/casa-components" }
+casa-coordinates = { path = "../../crates/casa-coordinates" }
+casa-images = { path = "../../crates/casa-images" }
+casa-lattices = { path = "../../crates/casa-lattices" }
+casa-measures-data = { path = "../../crates/casa-measures-data" }
+casa-ms = { path = "../../crates/casa-ms" }
 casa-contracts = { path = "../../surfaces/casa-contracts" }
 casa-plot-data = { path = "../../surfaces/casa-plot-data", features = ["ms", "simulation"] }
-casa-simulation = { path = "../casa-simulation" }
-casa-tables = { path = "../casa-tables" }
+casa-simulation = { path = "../../crates/casa-simulation" }
+casa-tables = { path = "../../crates/casa-tables" }
 casa-tasks = { path = "../../surfaces/casa-tasks", features = ["calibration", "imaging", "images", "ms", "simulation", "vla"] }
-casa-types = { path = "../casa-types" }
+casa-types = { path = "../../crates/casa-types" }
 ndarray.workspace = true
 num-complex.workspace = true
 numpy = "0.28"

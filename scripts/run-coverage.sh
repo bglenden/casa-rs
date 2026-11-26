@@ -59,7 +59,7 @@ run_llvm_cov() {
   # casa-images, task-contract tests, and slow fixture runs, while the remaining
   # direct CLI/workflow plumbing is already checked by functional tests.
   local ignored_files
-  ignored_files='(^|/)src/bin/|(^|/)src/main\.rs$|(^|/)examples/|(^|/)tests/.*perf.*\.rs$|(^|/)surfaces/casa-tasks/src/imaging/mod\.rs$|(^|/)dev/casa-test-support/src/|(^|/)crates/casars-python/src/'
+  ignored_files='(^|/)src/bin/|(^|/)src/main\.rs$|(^|/)examples/|(^|/)tests/.*perf.*\.rs$|(^|/)surfaces/casa-tasks/src/imaging/mod\.rs$|(^|/)dev/casa-test-support/src/|(^|/)frontends/casars-python/src/'
 
   local coverage_args=(--workspace)
   if cargo run -q -p casa-test-support --bin casatestdata-preflight -- \

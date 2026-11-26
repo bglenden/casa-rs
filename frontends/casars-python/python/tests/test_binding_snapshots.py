@@ -9,7 +9,7 @@ checked rather than asserted.
 
 Regenerate the fixture only for an intended change, and review its diff:
 
-    python crates/casars-python/python/tests/test_binding_snapshots.py
+    python frontends/casars-python/python/tests/test_binding_snapshots.py
 
 The current fixture includes optional cVariant domains and dictionary
 defaults and #2123's exact WGS84 flattening. The numerical tolerance and

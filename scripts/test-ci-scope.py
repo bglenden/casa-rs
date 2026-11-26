@@ -14,8 +14,9 @@ class ScopeTests(unittest.TestCase):
     def setUp(self):
         owners = {
             **{f"crates/{name}": name for name in (
-                "casa-calibration", "casars-python", "test-util", "other",
+                "casa-calibration", "test-util", "other",
             )},
+            "frontends/casars-python": "casars-python",
             "surfaces/casa-tasks": "casa-tasks",
         }
         dependencies = {
@@ -70,7 +71,7 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(scope.python, "none")
 
     def test_direct_python_keeps_rust_contract_tests(self):
-        scope = affected_scope(["crates/casars-python/python/casars/tasks.py", "README.md"])
+        scope = affected_scope(["frontends/casars-python/python/casars/tasks.py", "README.md"])
         self.assertEqual(scope.packages, "casars-python")
         self.assertEqual(scope.python, "editable")
         self.assertTrue(scope.docs)

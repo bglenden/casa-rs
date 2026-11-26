@@ -31,7 +31,7 @@ assert version_string() == "6.7.6-14"
 
 METHODS = ("rise", "riseset")
 ROOT = Path(__file__).resolve().parents[2]
-FIXTURE = ROOT / "crates/casars-python/python/tests/data/casa_measures_rise_set.json"
+FIXTURE = ROOT / "frontends/casars-python/python/tests/data/casa_measures_rise_set.json"
 
 
 def set_frame(tool, frame):

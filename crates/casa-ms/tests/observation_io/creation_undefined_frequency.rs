@@ -2,13 +2,14 @@
 use super::*;
 use casa_tables::table_measures::{MeasRefDesc, default_frequency_ref_map};
 
+const CASA_UNDEFINED_FREQUENCY: &str = include_str!(
+    "../../../../frontends/casars-python/python/tests/data/casa_undefined_frequency_ms.json"
+);
+
 #[test]
 fn mapped_spectral_references_survive_msv2_creation() {
     let root = tempfile::tempdir().unwrap();
-    let oracle: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../casars-python/python/tests/data/casa_undefined_frequency_ms.json"
-    ))
-    .unwrap();
+    let oracle: serde_json::Value = serde_json::from_str(CASA_UNDEFINED_FREQUENCY).unwrap();
     for (name, input_code, remapped, output_code) in [
         ("canonical", 64, false, 64),
         ("undefined_remapped", 9, true, 64),
@@ -99,10 +100,7 @@ fn mapped_spectral_references_survive_msv2_creation() {
 #[test]
 fn frequency_references_without_mapping_keywords_match_casa_and_survive_creation() {
     let root = tempfile::tempdir().unwrap();
-    let oracle: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../casars-python/python/tests/data/casa_undefined_frequency_ms.json"
-    ))
-    .unwrap();
+    let oracle: serde_json::Value = serde_json::from_str(CASA_UNDEFINED_FREQUENCY).unwrap();
     for (name, code) in [("unmapped_bary", 3), ("unmapped_undefined", 64)] {
         let input = edited(root.path(), name, 0..0, |ms| {
             let spw = ms.subtable_mut(SubtableId::SpectralWindow).unwrap();

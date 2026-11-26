@@ -25,7 +25,7 @@ pub enum ImheadGetError {
 ///
 /// `path` must name the image from which `summary` was computed. For extrema
 /// keys the summary must include the extrema computed by
-/// [`crate::imhead_extrema`]. Unknown and unsupported fields return an error.
+/// [`casa_images::analysis::imhead_extrema`]. Unknown and unsupported fields return an error.
 ///
 /// # Errors
 ///

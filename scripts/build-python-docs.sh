@@ -10,8 +10,8 @@ tmp_root="$(mktemp -d)"
 site_dir="${1:-$tmp_root/site}"
 cleanup() {
   rm -rf "$tmp_root"
-  rm -rf crates/casars-python/.pytest_cache crates/casars-python/python/casars/__pycache__
-  find crates/casars-python/python/casars -maxdepth 1 \( -name '_core*.so' -o -name '_core*.pyd' \) -delete
+  rm -rf frontends/casars-python/.pytest_cache frontends/casars-python/python/casars/__pycache__
+  find frontends/casars-python/python/casars -maxdepth 1 \( -name '_core*.so' -o -name '_core*.pyd' \) -delete
 }
 trap cleanup EXIT
 
@@ -21,7 +21,7 @@ echo "==> Installing docs dependencies for casa-rs Python docs"
 "$python_bin" -m venv "$docs_venv"
 source "$docs_venv/bin/activate"
 python -m pip install --upgrade pip
-python -m pip install -e 'crates/casars-python[docs]'
+python -m pip install -e 'frontends/casars-python[docs]'
 
 echo "==> Building MkDocs site into $site_dir"
 mkdocs build --strict --site-dir "$site_dir"

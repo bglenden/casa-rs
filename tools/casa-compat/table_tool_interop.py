@@ -6,7 +6,7 @@ casa-rs writes a table; CASA 6.7.6.14 must open it and read what casa-rs
 reads, and the other way round. Subcommands, split by which Python runs them
 (`casars` is imported only by the first group, `casatools` by the second):
 
-With the casa-rs package (a venv with `pip install -e crates/casars-python`):
+With the casa-rs package (a venv with `pip install -e frontends/casars-python`):
 
 `write FIXTURE OUT_TABLE OUT_JSON`
     Copies the python fixture table to OUT_TABLE, replays on it the writes
@@ -132,7 +132,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from table_tool_oracle import encode  # noqa: E402
 
-RECORD = Path(__file__).resolve().parents[2] / "crates/casars-python/python/tests"
+RECORD = Path(__file__).resolve().parents[2] / "frontends/casars-python/python/tests"
 
 
 def dump(tool, path):

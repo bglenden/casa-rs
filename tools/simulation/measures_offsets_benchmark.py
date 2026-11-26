@@ -34,7 +34,7 @@ if args.backend == "casars":
     from casars.tools import measures
 
 root = Path(__file__).resolve().parents[2]
-fixture = root / "crates/casars-python/python/tests/data/casa_measures_offsets.json"
+fixture = root / "frontends/casars-python/python/tests/data/casa_measures_offsets.json"
 oracle = json.loads(fixture.read_text())
 results = {}
 for case in oracle["cases"]:

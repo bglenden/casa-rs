@@ -94,10 +94,7 @@ def affected_scope(paths):
         elif path.startswith(("resources/casa-compat/", "tools/casa-compat/")):
             # The architecture check verifies compatibility references and pins.
             continue
-        elif (
-            parts[:3] == ["crates", "casars-python", "python"]
-            or parts[:3] == ["frontends", "casars-python", "python"]
-        ):
+        elif parts[:3] == ["frontends", "casars-python", "python"]:
             python = True
         elif len(parts) >= 4 and parts[0] in TWO_SEGMENT_ROOTS and parts[2] in CRATE_AREAS:
             cargo_paths.append(("/".join(parts[:2]), parts[2]))

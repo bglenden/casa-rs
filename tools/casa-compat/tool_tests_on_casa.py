@@ -32,7 +32,7 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-TESTS = REPO / "crates" / "casars-python" / "python" / "tests"
+TESTS = REPO / "frontends" / "casars-python" / "python" / "tests"
 STAND_IN = '''"""casatools standing in for casars.tools, to run casa-rs's tests on CASA."""
 from casatools import componentlist, measures, quanta, simulator
 '''

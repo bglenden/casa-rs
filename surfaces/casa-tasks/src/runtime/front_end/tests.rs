@@ -435,7 +435,7 @@ fn json_run_reports_casas_direct_scalar_type_refusals() {
     let workspace = tempfile::tempdir().unwrap();
     let path = workspace.path().join("request.json");
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../../crates/casars-python/python/tests/data/casa_task_scalar_refusals.json"
+        "../../../../../frontends/casars-python/python/tests/data/casa_task_scalar_refusals.json"
     ))
     .unwrap();
     for case in fixture["cases"].as_array().unwrap() {
@@ -465,7 +465,7 @@ fn json_run_reports_casas_direct_vector_type_refusals() {
     let workspace = tempfile::tempdir().unwrap();
     let path = workspace.path().join("request.json");
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../../crates/casars-python/python/tests/data/casa_task_vector_refusals.json"
+        "../../../../../frontends/casars-python/python/tests/data/casa_task_vector_refusals.json"
     ))
     .unwrap();
     for case in fixture["cases"].as_array().unwrap() {
@@ -511,7 +511,7 @@ fn json_run_reports_unambiguous_casa_missing_paths() {
     let directory = workspace.path().to_str().unwrap();
     let path = workspace.path().join("request.json");
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../../crates/casars-python/python/tests/data/casa_task_required_paths.json"
+        "../../../../../frontends/casars-python/python/tests/data/casa_task_required_paths.json"
     ))
     .unwrap();
     for case in fixture["cases"].as_array().unwrap() {
