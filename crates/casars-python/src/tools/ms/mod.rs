@@ -92,14 +92,26 @@ impl AttachedMs {
     fn open(name: PathBuf, writable: bool, lock: bool, check: bool) -> PyResult<Self> {
         let path = name.canonicalize().map_err(runtime_error)?;
         let directory = std::fs::metadata(&path).map_err(runtime_error)?;
-        let sources =
-            casa_calibration::visibility_model_source_paths(&path).map_err(runtime_error)?;
         let main_files = attachment_info::TableFiles::new(&path);
         let main_stamp = main_files.stamp();
         let main = Table::open(TableOptions::new(&path)).map_err(runtime_error)?;
         let original_rows = main.row_count();
         let is_multi_ms = main.info().sub_type == "CONCATENATED";
         let part_names = Table::immediate_part_names(&path, &name).map_err(runtime_error)?;
+        let sources = if is_multi_ms && matches!(part_names, TablePartNames::Reference(_)) {
+            // A saved view can inherit the multi-MS subtype. Its descriptor
+            // holds a row projection, and the view is the logical input.
+            let view = MeasurementSet::open(&path).map_err(runtime_error)?;
+            if view.ms_version() != Some(2.0) {
+                return Err(runtime_error(format!(
+                    "{} is not an MSv2 MeasurementSet",
+                    path.display()
+                )));
+            }
+            vec![path.clone()]
+        } else {
+            casa_calibration::visibility_model_source_paths(&path).map_err(runtime_error)?
+        };
         let plain_rows = matches!(part_names, TablePartNames::Plain(_))
             .then(|| attachment_info::PlainRows::new(&path));
         let mut attached = Self {

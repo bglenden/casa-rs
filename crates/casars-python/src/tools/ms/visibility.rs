@@ -300,21 +300,45 @@ impl VisibilityMain {
                 rows: rows.iter().copied().zip(0..).collect(),
             }]);
         }
-        if let Some(reference) = self
-            .table
-            .reference_write_projection(rows, names)
-            .map_err(runtime_error)?
-        {
+        let projection = if self.reference.is_some() {
+            self.table.reference_write_projection(rows, names)
+        } else {
+            self.table.reference_root_projection(rows, names)
+        }
+        .map_err(runtime_error)?;
+        if let Some(reference) = projection {
+            if self.reference.is_none()
+                && let Some(parts) =
+                    Table::concatenated_source_paths(&reference.path).map_err(runtime_error)?
+            {
+                let members = Self::open_plain_members(parts)?;
+                let root = Table::open(TableOptions::new(reference.path)).map_err(runtime_error)?;
+                return Self::write_member_targets(
+                    &members,
+                    root.row_count(),
+                    &reference.rows,
+                    reference.columns,
+                );
+            }
             return Ok(vec![VisibilityWriteTarget {
                 path: reference.path.canonicalize().map_err(runtime_error)?,
                 names: reference.columns,
                 rows: reference.rows.into_iter().zip(0..).collect(),
             }]);
         }
+        Self::write_member_targets(&self.members, self.table.row_count(), rows, own_names())
+    }
+
+    fn write_member_targets(
+        members: &[Table],
+        row_count: usize,
+        rows: &[usize],
+        names: Vec<String>,
+    ) -> PyResult<Vec<VisibilityWriteTarget>> {
         let mut count = 0;
-        let mut ends = Vec::with_capacity(self.members.len());
-        let mut paths = Vec::with_capacity(self.members.len());
-        for part in &self.members {
+        let mut ends = Vec::with_capacity(members.len());
+        let mut paths = Vec::with_capacity(members.len());
+        for part in members {
             count += part.row_count();
             ends.push(count);
             paths.push(
@@ -324,7 +348,7 @@ impl VisibilityMain {
                     .map_err(runtime_error)?,
             );
         }
-        if ends.is_empty() || count != self.table.row_count() {
+        if ends.is_empty() || count != row_count {
             return Err(runtime_error(
                 "putdata cannot map the physical rows of this concatenation (#1030)",
             ));
@@ -345,7 +369,7 @@ impl VisibilityMain {
             .into_iter()
             .map(|(path, rows)| VisibilityWriteTarget {
                 path: path.to_owned(),
-                names: own_names(),
+                names: names.clone(),
                 rows,
             })
             .collect())

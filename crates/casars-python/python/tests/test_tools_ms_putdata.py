@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from casars import tools
+from test_tools_ms_visibility import same_visibility
 from test_tools_ms_visibility_ifraxis import baseline_fixture
 from test_tools_msmetadata import measures, native_dataset
 
@@ -29,6 +30,71 @@ def make_multi_ms(casa, path, members):
     assert assembly.createmultims(str(path), list(map(str, members)), ["ANTENNA", "DATA_DESCRIPTION", "FEED"])
     assert assembly.done()
     return str(path)
+
+
+def test_ms_visibility_and_writes_in_a_saved_multi_ms_view(
+    baseline_fixture, native_dataset, tmp_path,
+):
+    casa, _, raw = baseline_fixture
+    first = native_dataset
+    second = tmp_path / "second-member.ms"
+    shutil.copytree(first, second)
+    rows_per_member = raw["data"].shape[-1]
+    other = raw["data"].astype(np.complex64) + (17 - 9j)
+    table = casa.table()
+    assert table.open(str(second), nomodify=False)
+    assert table.putcol("DATA", other)
+    assert table.done()
+
+    multi = make_multi_ms(casa, tmp_path / "parent.mms", (first, second))
+    parent = casa.ms()
+    assert parent.open(multi)
+    members = parent.getreferencedtables()
+    assert len(members) == 2 and parent.done()
+    view = str(tmp_path / "saved.ms")
+    rows = np.array([rows_per_member + 13, 2, rows_per_member, 1, rows_per_member + 13])
+    assert table.open(multi)
+    reference = table.selectrows(rows, view)
+    assert reference.done() and table.done()
+
+    wanted = np.concatenate((raw["data"], other), axis=-1)[..., rows]
+    fields = ["data", "time", "antenna1", "axis_info"]
+    results = []
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(view)
+        assert reader.ismultims()
+        assert reader.getreferencedtables() == [multi]
+        assert reader.nrow() == reader.nrow(True) == len(rows)
+        assert reader.selectchannel(nchan=2, start=1, width=1, inc=2)
+        assert reader.selectpolarization(["LL"])
+        result = reader.getdata(fields)
+        np.testing.assert_array_equal(np.sort(result["data"], axis=-1),
+                                      np.sort(wanted[1:2, 1::2, :], axis=-1), strict=True)
+        results.append(result)
+        assert reader.reset()
+        np.testing.assert_array_equal(reader.getdata("data")["data"], wanted, strict=True)
+        assert reader.done()
+    same_visibility(*results[::-1])
+
+    writer = tools.ms()
+    assert writer.open(view, nomodify=False)
+    updates = wanted + np.arange(len(rows)) * (3.5 - 2j)
+    assert writer.putdata({"DATA": updates})
+    assert writer.done()
+    expected = [raw["data"].copy(), other.astype(np.complex128)]
+    for position, row in enumerate(rows):
+        member, physical = divmod(row, rows_per_member)
+        expected[member][..., physical] = updates[..., position]
+    for index, path in enumerate(members):
+        assert_main_columns(casa, path, {"DATA": expected[index], "FLAG": raw["flag"]})
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(view)
+        data = reader.getdata("data")["data"]
+        persisted = np.concatenate(expected, axis=-1)[..., rows].astype(np.complex128)
+        np.testing.assert_array_equal(data, persisted, strict=True)
+        assert reader.done()
 
 
 def test_ms_visibility_scalar_taql_preserves_physical_order(
