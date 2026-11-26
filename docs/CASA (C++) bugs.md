@@ -12361,3 +12361,22 @@ first correlation's weight on 12,855 backing rows. `Reweighter::makeSelection`
 constructs a visibility iterator to create `SORTED_TABLE` and then chooses
 between that table and the attached view. casa-rs fits the attached
 projection and writes only its selected physical rows.
+
+An unnamed selection made by `msselect()` or `selecttaql()` also fails in
+CASA when `Reweighter` tries to reopen its generated `tab…` name from disk.
+A selection of the three rows for baseline `0&1` on a synthetic MS gives
+`Table … does not exist`. casa-rs applies the same named-table reweighting
+to the active selection. An empty active selection returns `False` and
+preserves every weight and sigma.
+
+Two legacy integration edge cases affect scientific output. The triangular
+index in `StatWT::hashFunction` assumes antennas are supplied in ascending
+order. For four antennas, it pools `(3,1)` with `(2,3)`. With four
+unflagged unit visibilities on the first baseline and four visibilities of
+magnitude 2 on the second, `dorms=True` yields a pooled weight of 0.75 on
+both. casa-rs keys the recorded antenna pair and obtains the independent
+weights 1.75 and 0.4375. If a later integration combines incompatible
+correlation types, `StatWT::process` reports failure to `GroupProcessor`,
+whose return value `Reweighter::reweight` discards. CASA returns `True`
+after publishing the earlier integrations. casa-rs raises `RuntimeError`
+and leaves the whole update unpublished.

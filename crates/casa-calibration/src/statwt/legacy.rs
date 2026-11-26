@@ -53,8 +53,7 @@ pub fn reweight_legacy(
         ms.metadata()
             .parse_ms_tool_selection(&request, &mut MsSelectionIndices::default())?;
     }
-    let mut rows = ms.select(&selection).map_err(invalid)?;
-    rows.retain(|row| plan.has_window(row.spectral_window_id));
+    let rows = ms.select(&selection).map_err(invalid)?;
     if rows.is_empty() {
         return Ok(false);
     }
@@ -65,7 +64,7 @@ pub fn reweight_legacy(
             entry.insert(correlation_types_for_ddid(physical, row.data_desc_id).map_err(invalid)?);
         }
     }
-    let column = column_name(&options.data_column)?;
+    let column = column_name(ms.metadata(), &options.data_column)?;
     let models = (column == "MODEL_DATA")
         .then(|| ms.models(&rows))
         .transpose()?;
@@ -124,10 +123,6 @@ impl Windows {
             fit: channels,
             output: output.spw_ids().iter().map(|&id| id as i32).collect(),
         })
-    }
-
-    fn has_window(&self, window: i32) -> bool {
-        self.fit.contains_key(&window) || self.output.contains(&window)
     }
 }
 
@@ -208,6 +203,9 @@ impl ReadRequest<'_> {
             .iter()
             .map(|&slot| self.rows[slot].row_index)
             .collect::<Vec<_>>();
+        if ids.is_empty() {
+            return Ok(Cells::new());
+        }
         let flags = self.ms.array_cells("FLAG", &ids)?;
         let values = self.ms.array_cells(self.column, &ids)?;
         Ok(slots
@@ -281,6 +279,9 @@ impl ReadRequest<'_> {
         }
         match data {
             Some(ArrayValue::Complex32(data)) => Ok(Some(data)),
+            Some(ArrayValue::Float32(data)) if self.column == "FLOAT_DATA" => {
+                Ok(Some(data.mapv(|value| Complex32::new(value, 0.0))))
+            }
             _ => Err(invalid(format!(
                 "{} is undefined at row {}",
                 self.column, row.row_index
@@ -376,12 +377,13 @@ impl IntegrationScatter {
     }
 }
 
-fn column_name(column: &str) -> MsResult<&'static str> {
+fn column_name(ms: &MeasurementSet, column: &str) -> MsResult<&'static str> {
     match column.to_ascii_uppercase().as_str() {
         "CORRECTED" | "CORRECTED_DATA" => Ok("CORRECTED_DATA"),
         "MODEL" | "MODEL_DATA" => Ok("MODEL_DATA"),
         "FLOAT" | "FLOAT_DATA" => Err(invalid("FLOAT_DATA is not supported as a data Cube.")),
         "LAG" | "LAG_DATA" => Err(invalid("LAG_DATA is not supported as a data Cube.")),
+        _ if ms.main_table().column_accessor("FLOAT_DATA").is_ok() => Ok("FLOAT_DATA"),
         _ => Ok("DATA"),
     }
 }

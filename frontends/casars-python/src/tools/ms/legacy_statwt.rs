@@ -84,7 +84,9 @@ impl PyMsTool {
         if let Some(bin) = timebin {
             quantity(bin)?;
         }
-        let path = &ms.path;
+        let link = ms.working_metadata_link();
+        let view = link.working_view().map_err(runtime_error)?;
+        let path = view.path();
         let mut physical = StatWtMs::open_legacy(path).map_err(runtime_error)?;
         let sources = physical.legacy_sources().map_err(runtime_error)?;
         let mut transient = None;
@@ -95,6 +97,7 @@ impl PyMsTool {
             physical = StatWtMs::open_legacy(path).map_err(runtime_error)?;
             transient.insert(locks)
         };
+        link.verify_directory().map_err(runtime_error)?;
         let result = reweight_legacy(&mut physical, options, locks);
         drop(physical);
         if let Some(locks) = transient {

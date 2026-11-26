@@ -25,16 +25,56 @@ pub struct StatWtMs {
     legacy_reference: Option<LegacyReference>,
 }
 
+#[derive(PartialEq, Eq)]
 struct LegacyReference {
     path: PathBuf,
     rows: Vec<usize>,
-    columns: Vec<String>,
+    columns: BTreeMap<String, String>,
+    parts: Vec<(PathBuf, usize)>,
 }
 
 struct Part {
     offset: usize,
     path: PathBuf,
     ms: MeasurementSet,
+}
+
+impl LegacyReference {
+    fn capture(view: &MeasurementSet) -> MsResult<(Self, StatWtMs)> {
+        let table = view.main_table();
+        let names = table
+            .schema()
+            .ok_or_else(|| invalid("missing oldstatwt MAIN schema"))?
+            .columns()
+            .iter()
+            .map(|column| column.name())
+            .collect::<Vec<_>>();
+        let rows = (0..view.row_count()).collect::<Vec<_>>();
+        let projection = table
+            .reference_root_projection(&rows, &names)?
+            .ok_or_else(|| invalid("oldstatwt reference layout changed"))?;
+        let path = projection.path.canonicalize().map_err(invalid)?;
+        let root = StatWtMs::open(&path, false)?;
+        let parts = root
+            .parts
+            .iter()
+            .map(|part| (part.path.clone(), part.ms.row_count()))
+            .collect();
+        let columns = names
+            .into_iter()
+            .map(str::to_owned)
+            .zip(projection.columns)
+            .collect();
+        Ok((
+            Self {
+                path,
+                rows: projection.rows,
+                columns,
+                parts,
+            },
+            root,
+        ))
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -90,22 +130,14 @@ impl StatWtMs {
         }
         let path = path.canonicalize().map_err(invalid)?;
         let ms = MeasurementSet::open(&path)?;
-        let rows = (0..ms.row_count()).collect::<Vec<_>>();
-        let reference = ms
-            .main_table()
-            .reference_root_projection(&rows, &LEGACY_COLUMNS)?
-            .ok_or_else(|| invalid("oldstatwt reference layout changed while opening"))?;
+        let (reference, _) = LegacyReference::capture(&ms)?;
         Ok(Self {
             parts: vec![Part {
                 offset: 0,
                 path,
                 ms,
             }],
-            legacy_reference: Some(LegacyReference {
-                path: reference.path,
-                rows: reference.rows,
-                columns: reference.columns,
-            }),
+            legacy_reference: Some(reference),
         })
     }
 
@@ -113,7 +145,11 @@ impl StatWtMs {
     #[doc(hidden)]
     pub fn legacy_sources(&self) -> MsResult<Vec<PathBuf>> {
         if let Some(reference) = &self.legacy_reference {
-            visibility_model_source_paths(&reference.path)
+            Ok(reference
+                .parts
+                .iter()
+                .map(|(path, _)| path.clone())
+                .collect())
         } else {
             Ok(self.parts.iter().map(|part| part.path.clone()).collect())
         }
@@ -267,36 +303,27 @@ impl StatWtMs {
         updates: Vec<super::legacy::LegacyOutputRow>,
         locks: &mut BTreeMap<PathBuf, TableWriteLock>,
     ) -> MsResult<()> {
+        if updates.is_empty() {
+            return Ok(());
+        }
         if let Some(expected) = &self.legacy_reference {
-            let ids = updates.iter().map(|(row, _)| *row).collect::<Vec<_>>();
-            let current = self
-                .metadata()
-                .main_table()
-                .reference_root_projection(&ids, &LEGACY_COLUMNS)?
-                .ok_or_else(|| invalid("oldstatwt reference layout changed before publication"))?;
-            if current.path != expected.path
-                || current.columns != expected.columns
-                || !current
-                    .rows
-                    .iter()
-                    .copied()
-                    .eq(ids.iter().map(|&row| expected.rows[row]))
-            {
+            let view = MeasurementSet::open(&self.parts[0].path)?;
+            let (current, mut root) = LegacyReference::capture(&view)?;
+            if &current != expected {
                 return Err(invalid(
                     "oldstatwt reference layout changed before publication",
                 ));
             }
-            let updates = current
-                .rows
+            let updates = updates
                 .into_iter()
-                .zip(updates.into_iter().map(|(_, cells)| cells))
+                .map(|(row, cells)| (current.rows[row], cells))
                 .collect::<BTreeMap<_, _>>();
-            let columns = [&current.columns[0][..], &current.columns[1][..]];
-            return Self::open(&current.path, false)?.write_legacy(
-                updates.into_iter(),
-                &columns,
-                locks,
-            );
+            let [weight, sigma] =
+                LEGACY_COLUMNS.map(|name| current.columns.get(name).map(String::as_str));
+            let (Some(weight), Some(sigma)) = (weight, sigma) else {
+                return Err(invalid("saved reference is missing WEIGHT or SIGMA"));
+            };
+            return root.write_legacy(updates.into_iter(), &[weight, sigma], locks);
         }
         self.write_legacy(updates.into_iter(), &LEGACY_COLUMNS, locks)
     }
@@ -307,6 +334,17 @@ impl StatWtMs {
         columns: &[&str; 2],
         locks: &mut BTreeMap<PathBuf, TableWriteLock>,
     ) -> MsResult<()> {
+        for part in &self.parts {
+            if !locks
+                .get(&part.path)
+                .is_some_and(|lock| lock.matches_table_path(&part.path))
+            {
+                return Err(invalid(format!(
+                    "oldstatwt physical table or write lock changed at {}",
+                    part.path.display()
+                )));
+            }
+        }
         let mut remaining = updates.peekable();
         for part in &mut self.parts {
             let table = part.ms.main_table_mut();
@@ -480,4 +518,66 @@ fn row_metadata(table: &Table, rows: &[usize]) -> MsResult<Vec<RowMetadata>> {
 
 fn invalid(error: impl std::fmt::Display) -> MsError {
     MsError::InvalidInput(error.to_string())
+}
+
+#[cfg(test)]
+mod legacy_tests {
+    use super::*;
+
+    use casa_ms::MeasurementSetBuilder;
+    use casa_tables::{TableInfo, TableOptions};
+    use casa_types::{RecordField, RecordValue, Value};
+    use ndarray::{ArrayD, IxDyn};
+
+    #[test]
+    fn rejects_a_changed_concat_order_before_saving_reference_weights() {
+        let scratch = tempfile::tempdir().unwrap();
+        let paths = ["first.ms", "second.ms"].map(|name| scratch.path().join(name));
+        let cell = |value| ArrayValue::Float32(ArrayD::from_elem(IxDyn(&[1]), value));
+        for (path, value) in paths.iter().zip([2.0, 3.0]) {
+            let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
+            let row = LEGACY_COLUMNS.map(|name| RecordField::new(name, Value::Array(cell(value))));
+            ms.main_table_mut()
+                .add_row(RecordValue::new(row.to_vec()))
+                .unwrap();
+            ms.save_as(path).unwrap();
+        }
+        let concat = |path: &Path, order: [usize; 2]| {
+            let members =
+                order.map(|member| Table::open(TableOptions::new(&paths[member])).unwrap());
+            let info = TableInfo {
+                table_type: "MeasurementSet".into(),
+                sub_type: "CONCATENATED".into(),
+                readme: Vec::new(),
+            };
+            Table::concat(Vec::from(members))
+                .unwrap()
+                .save_with_info(TableOptions::new(path), &info)
+                .unwrap();
+        };
+        let root = scratch.path().join("members.mms");
+        let reversed = scratch.path().join("reversed.mms");
+        let reference = scratch.path().join("selection.ms");
+        concat(&root, [0, 1]);
+        concat(&reversed, [1, 0]);
+        let source = Table::open(TableOptions::new(&root)).unwrap();
+        source
+            .select_rows(&[0])
+            .unwrap()
+            .save(TableOptions::new(&reference))
+            .unwrap();
+        let mut view = StatWtMs::open_legacy(&reference).unwrap();
+        let mut locks = StatWtMs::write_locks(&paths).unwrap();
+        std::fs::copy(reversed.join("table.dat"), root.join("table.dat")).unwrap();
+        let failure = view
+            .persist_legacy(vec![(0, [cell(20.0), cell(30.0)])], &mut locks)
+            .unwrap_err();
+        assert!(failure.to_string().contains("reference layout changed"));
+        for (path, value) in paths.iter().zip([2.0, 3.0]) {
+            let base = StatWtMs::open_legacy(path).unwrap();
+            for column in LEGACY_COLUMNS {
+                assert_eq!(base.array_cells(column, &[0]).unwrap(), [Some(cell(value))]);
+            }
+        }
+    }
 }
