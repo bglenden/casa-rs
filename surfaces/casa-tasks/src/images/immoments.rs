@@ -33,7 +33,7 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         chans: task.text("chans")?,
         includepix: pixel_range("includepix", &task.numbers("includepix")?)?,
         excludepix: pixel_range("excludepix", &task.numbers("excludepix")?)?,
-        mask: super::front_end::mask_in_workspace(task)?,
+        mask: task.text("mask")?,
         stretch: task.flag("stretch")?,
         overwrite: task.flag("overwrite")?,
     };

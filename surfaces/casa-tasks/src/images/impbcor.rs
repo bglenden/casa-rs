@@ -38,7 +38,7 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         }
     };
     let region = parse_region_parameter(task.value("region"), false)?;
-    let mask = super::front_end::mask_in_workspace(task)?;
+    let mask = task.text("mask")?;
     // CASA reads stretch only with a mask, and ignores it otherwise.
     let stretch = mask.is_some() && task.flag("stretch")?;
     let request = ImpbcorRequest {

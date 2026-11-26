@@ -9,39 +9,6 @@ use std::collections::BTreeMap;
 
 use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 
-pub(super) fn expression_in_workspace(
-    task: &TaskInvocation<'_>,
-    expression: String,
-    aliases: &[String],
-) -> String {
-    if task.native_options().is_none() {
-        return expression;
-    }
-    casa_images::expr_parser::substitute_image_operands(&expression, |name| {
-        (!aliases.iter().any(|alias| alias == name) && !std::path::Path::new(name).is_absolute())
-            .then(|| task.io_path(name).to_string_lossy().into_owned())
-    })
-    .unwrap_or(expression)
-}
-
-pub(super) fn mask_in_workspace(task: &TaskInvocation<'_>) -> Result<Option<String>, TaskFailure> {
-    Ok(task.text("mask")?.map(|mask| {
-        if task.native_options().is_some() {
-            let operand = task.io_path(mask.trim());
-            if operand.exists() {
-                return operand.to_string_lossy().into_owned();
-            }
-            if let Some((image, name)) = mask.split_once(':')
-                && !mask.contains(['>', '<', '=', '!', '&', '|', '(', ')'])
-                && task.io_path(image).exists()
-            {
-                return format!("mask(\"{}:{name}\")", task.io_path(image).display());
-            }
-        }
-        expression_in_workspace(task, mask, &[])
-    }))
-}
-
 pub(super) fn region_in_workspace(
     task: &TaskInvocation<'_>,
 ) -> Result<Option<String>, TaskFailure> {

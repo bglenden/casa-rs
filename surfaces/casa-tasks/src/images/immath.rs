@@ -39,7 +39,7 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let polithresh = task
         .text("polithresh")?
         .filter(|text| !text.trim().is_empty());
-    let mask = super::front_end::mask_in_workspace(task)?.filter(|text| !text.trim().is_empty());
+    let mask = task.text("mask")?.filter(|text| !text.trim().is_empty());
     let region =
         super::front_end::region_in_workspace(task)?.filter(|text| !text.trim().is_empty());
     let box_pixels = task.text("box")?.filter(|text| !text.trim().is_empty());
@@ -70,8 +70,6 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     };
 
     validate_input_paths(task, &request)?;
-    let aliases = effective_varnames(&request);
-    request.expr = super::front_end::expression_in_workspace(task, request.expr, &aliases);
     if let Some(path) = &mut request.imagemd
         && task.io_path(&*path).exists()
     {

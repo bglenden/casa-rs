@@ -33,7 +33,7 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         region: parse_region_parameter(task.value("region"), true)?,
         chans: task.text("chans")?,
         stokes: task.text("stokes")?,
-        mask: super::front_end::mask_in_workspace(task)?,
+        mask: task.text("mask")?,
         stretch: task.flag("stretch")?,
         overwrite: task.flag("overwrite")?,
     };

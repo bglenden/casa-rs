@@ -9,8 +9,9 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+import numpy as np
 
-from casars import parameters, tasks
+from casars import parameters, tasks, tools
 from casars.parameters import TaskParameters, _native
 from test_tools_msmetadata import measures, native_dataset
 
@@ -99,6 +100,29 @@ def test_simultaneous_relative_paths_use_each_workspace(native_dataset, tmp_path
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert all(result.successful for result in pool.map(calibrate, workspaces))
     assert all((workspace / "output.cal" / "table.dat").is_file() for workspace in workspaces)
+    assert Path.cwd() == cwd
+
+
+def test_relative_image_expressions_use_workspace_with_quotes(tmp_path):
+    workspace = tmp_path / "workspace with ' and \""
+    workspace.mkdir()
+    pixels = np.array([[0, 2], [1, 3]], dtype=np.float32)
+    image = tools.image()
+    assert image.fromarray(str(workspace / "input.im"), pixels)
+    assert image.done()
+    cwd = Path.cwd()
+
+    assert tasks.run("immath", workspace=workspace, mode="evalexpr",
+                     expr='"input.im"*2', outfile="math.im").successful
+    assert image.open(str(workspace / "math.im"))
+    np.testing.assert_array_equal(image.getchunk(), pixels * 2)
+    assert image.done()
+
+    assert tasks.run("imsubimage", workspace=workspace, imagename="input.im",
+                     mask='"input.im">1', outfile="masked.im").successful
+    assert image.open(str(workspace / "masked.im"))
+    np.testing.assert_array_equal(image.getchunk(getmask=True), pixels > 1)
+    assert image.done()
     assert Path.cwd() == cwd
 
 

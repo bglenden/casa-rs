@@ -374,7 +374,7 @@ fn run_imstat(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         niter: task.integer("niter")?,
         axes: axes_list(task)?,
         stokes: task.text("stokes")?,
-        mask: super::front_end::mask_in_workspace(task)?,
+        mask: task.text("mask")?,
         stretch: task.flag("stretch")?,
         logfile: task.file_text("logfile")?,
         append: task.flag("append")?,

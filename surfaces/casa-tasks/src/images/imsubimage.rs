@@ -27,7 +27,7 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         region: super::front_end::region_in_workspace(task)?,
         chans: task.text("chans")?,
         stokes: task.text("stokes")?,
-        mask: super::front_end::mask_in_workspace(task)?,
+        mask: task.text("mask")?,
         dropdeg: task.flag("dropdeg")?,
         overwrite: task.flag("overwrite")?,
         verbose: task.flag("verbose")?,
