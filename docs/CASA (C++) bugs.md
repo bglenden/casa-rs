@@ -12326,6 +12326,62 @@ position wins when multiple positions address the same physical cell, as in
 the CASA monotone case.
 
 
+## `oldstatwt()` can crash, bypass read-only access and overwrite correlation flags
+
+In CASA 6.7.6.14, `ms.oldstatwt()` defaults to `corrected_data` and requests
+that data cube even when `CORRECTED_DATA` is absent. On the stock
+`ngc5921_ut.ms` this terminates the Python process. The same method with
+`datacolumn='data'` updates `WEIGHT` and `SIGMA` when the tool was opened with
+`nomodify=True`. It reopens the attached table with `Table::Update` in the
+`Reweighter` constructor, and the tool reports itself writable afterward.
+
+casa-rs raises `RuntimeError` for an absent input column or a read-only
+attachment. Both errors preserve the attachment and leave the MAIN table
+unchanged. The missing-column case applies to input data required by the fit.
+
+When correlations have different `FLAG` values in the same channel,
+`StatWT::apply_variances` writes the collapsed `VisBuffer::flag()` matrix
+and broadcasts its flags to every correlation. A pinned paired test with
+one flagged correlation confirms that this can flag previously valid
+visibility samples. Changes made in that routine to the cached per-correlation
+flag cube for insufficient samples do not drive this write. casa-rs leaves
+`FLAG` and `FLAG_ROW` intact and marks unavailable estimates through the
+same zero `WEIGHT` and `SIGMA=-1` values.
+
+`VisBuffGroupAcc::fillChanMask` also uses the inclusive range width as the
+number of elements in a strided casacore slice. `fitspw='0:2~7^2'` reads
+channels 2, 4, 6, 8, 10 and 12 instead of 2, 4 and 6. With
+`fitspw='0:0~32^2'` on `ngc5921_ut.ms`, the slice overruns the 63-channel
+window and raises `Unknown exception caught`. casa-rs selects channels
+from the requested start through the inclusive stop, spaced by the step.
+
+CASA can reweight rows outside a saved reference. A four-row RefTable over
+`ngc5921_ut.ms` with `fitspw='0:0~32'` and `datacolumn='data'` changed the
+first correlation's weight on 12,855 backing rows. `Reweighter::makeSelection`
+constructs a visibility iterator to create `SORTED_TABLE` and then chooses
+between that table and the attached view. casa-rs fits the attached
+projection and writes only its selected physical rows.
+
+An unnamed selection made by `msselect()` or `selecttaql()` also fails in
+CASA when `Reweighter` tries to reopen its generated `tab…` name from disk.
+A selection of the three rows for baseline `0&1` on a synthetic MS gives
+`Table … does not exist`. casa-rs applies the same named-table reweighting
+to the active selection. An empty active selection returns `False` and
+preserves every weight and sigma.
+
+Two legacy integration edge cases affect scientific output. The triangular
+index in `StatWT::hashFunction` assumes antennas are supplied in ascending
+order. For four antennas, it pools `(3,1)` with `(2,3)`. With four
+unflagged unit visibilities on the first baseline and four visibilities of
+magnitude 2 on the second, `dorms=True` yields a pooled weight of 0.75 on
+both. casa-rs keys the recorded antenna pair and obtains the independent
+weights 1.75 and 0.4375. If a later integration combines incompatible
+correlation types, `StatWT::process` reports failure to `GroupProcessor`,
+whose return value `Reweighter::reweight` discards. CASA returns `True`
+after publishing the earlier integrations. casa-rs raises `RuntimeError`
+and leaves the whole update unpublished.
+
+
 ## Legacy continuum scratch fitting and failed output publication
 
 CASA 6.7.6.14 `continuumsubold()` obtains a `WEIGHT` cube with axes
