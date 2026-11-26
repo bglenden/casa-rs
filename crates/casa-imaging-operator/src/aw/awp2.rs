@@ -6,8 +6,8 @@
 
 mod w_term;
 
+use casa_core::Correlation;
 use casa_imaging_model::EvlaDishSurface;
-use casa_types::Correlation;
 use num_complex::Complex32;
 
 use super::{EvlaApertureGrid, EvlaApertureModel, native::sky_jones_normalization};

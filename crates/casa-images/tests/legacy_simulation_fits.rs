@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA 6.7.6.14's interpretation of the public ALMA ppdisk tutorial input.
 use casa_coordinates::{Coordinate, CoordinateModel};
+use casa_core::measures::frequency::FrequencyRef;
 use casa_images::{PagedImage, analysis::import_fits, read_fits_image};
-use casa_types::measures::frequency::FrequencyRef;
 use std::path::Path;
 
 #[test]

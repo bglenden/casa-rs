@@ -3,13 +3,13 @@
 
 use std::collections::BTreeMap;
 
+use casa_core::{ArrayValue, PrimitiveType};
 use casa_ms::write_session::TARGET_BATCH_BYTES;
 use casa_ms::{MsError, MsResult};
-use casa_tables::{
-    ColumnSchema, StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType,
-    StreamingTiledShapeWriter, Table, TableError, TableWriteLock,
+use casa_tables::streamed_tiled::{
+    StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType, StreamingTiledShapeWriter,
 };
-use casa_types::{ArrayValue, PrimitiveType};
+use casa_tables::{ColumnSchema, Table, TableError, TableWriteLock};
 
 pub(crate) const WEIGHT_SPECTRUM: &str = "WEIGHT_SPECTRUM";
 pub(crate) const SIGMA_SPECTRUM: &str = "SIGMA_SPECTRUM";

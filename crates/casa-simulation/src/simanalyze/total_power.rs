@@ -11,10 +11,10 @@ use crate::{
     simutil::{analysis, qa},
 };
 use casa_coordinates::{Coordinate, CoordinateModel};
+use casa_core::quanta::Quantity;
 use casa_images::{ImageInterface, PagedImage, RegridMethod, RegridTemplate, regrid};
 use casa_imaging_runtime::{Demand, admit};
 use casa_ms::MeasurementSet;
-use casa_types::quanta::Quantity;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 

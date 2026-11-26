@@ -3,6 +3,7 @@
 //! values, weights and flags, copied once.
 
 use casa_coordinates::DirectionCoordinate;
+use casa_core::measures::MjdHighPrec;
 use casa_imaging_model::{
     AntennaResponseClass, BatchGeometry, CompiledProblem, ContinuumFitRule,
     DirectionCoordinateSpec, FiniteValuePolicy, FrequencyBands, GeometryPlan,
@@ -13,7 +14,6 @@ use casa_imaging_runtime::pass::{
     BlockShape, DomainProjection, NativeBlock, NativeRowHeader, RowAddress, SourceError,
 };
 use casa_observation::{Correlation, PartitionEntry, VisibilityBatch};
-use casa_types::measures::MjdHighPrec;
 use num_complex::Complex32;
 
 use super::keys::StoreKeys;

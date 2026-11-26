@@ -4,10 +4,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use casa_measures_data::{CometTable, MeasuresDataError};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{EpochRef, MeasFrame, MeasureError};
+use casa_measures::{CometTable, MeasuresDataError};
 use casa_tables::table_type_tag;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, MeasFrame, MeasureError};
 use pyo3::prelude::*;
 
 use super::{PyMeasures, State, arguments};

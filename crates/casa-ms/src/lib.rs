@@ -4,7 +4,7 @@
 //!
 //! This crate provides idiomatic Rust APIs for reading and writing
 //! MeasurementSet files — the primary data format for radio interferometry.
-//! It builds on [`casa_tables`] for table I/O and [`casa_types`] for
+//! It builds on [`casa_tables`] for table I/O and [`casa_core`] for
 //! value types, measures, and quanta.
 //!
 //! The on-disk layout is intended to remain interoperable with C++ casacore:
@@ -89,7 +89,7 @@ pub mod write_session;
 pub(crate) mod test_helpers;
 
 pub use builder::{MeasurementSetBuilder, MsSchemas};
-pub use casa_measures_data::PlanetaryEphemeris;
+pub use casa_measures::PlanetaryEphemeris;
 pub use ephemeris::{EphemerisBudget, PhaseCentreEphemeris, PhaseCentreEphemerisError};
 pub use error::{MsError, MsResult};
 pub use flagging::calculate_flagdata_path;
@@ -182,9 +182,9 @@ pub use write_session::{
 
 /// The most heap the provider [`open_measures_runtime`] returns holds while
 /// it loads its catalogs and after
-/// ([`casa_measures_data::MeasuresRuntime::LOAD_BYTES`]), for an application
+/// ([`casa_measures::MeasuresRuntime::LOAD_BYTES`]), for an application
 /// that admits it before its first lookup.
-pub const MEASURES_RUNTIME_BYTES: usize = casa_measures_data::MeasuresRuntime::LOAD_BYTES;
+pub const MEASURES_RUNTIME_BYTES: usize = casa_measures::MeasuresRuntime::LOAD_BYTES;
 
 /// The budget of the process-wide table-read cache every table read in the
 /// process shares ([`casa_tables::table_cache_budget_bytes`]); it fills as
@@ -198,17 +198,17 @@ pub fn table_read_cache_bytes() -> usize {
 ///
 /// Keeping discovery here ensures frontends use the same reference-data authority
 /// as selected-observation resolution and derived-column evaluation.
-pub fn open_measures_runtime()
--> MsResult<std::sync::Arc<dyn casa_types::measures::MeasuresProvider>> {
+pub fn open_measures_runtime() -> MsResult<std::sync::Arc<dyn casa_core::measures::MeasuresProvider>>
+{
     #[cfg(test)]
     {
         Ok(casa_test_support::deterministic_measures_provider())
     }
     #[cfg(not(test))]
     {
-        casa_measures_data::MeasuresRuntime::open_discovered(Default::default())
+        casa_measures::MeasuresRuntime::open_discovered(Default::default())
             .map(|runtime| {
-                let runtime: std::sync::Arc<dyn casa_types::measures::MeasuresProvider> =
+                let runtime: std::sync::Arc<dyn casa_core::measures::MeasuresProvider> =
                     std::sync::Arc::new(runtime);
                 runtime
             })

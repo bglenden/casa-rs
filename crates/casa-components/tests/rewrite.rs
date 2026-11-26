@@ -8,8 +8,8 @@
 //! open re-reads the new list (ADR-0008).
 
 use casa_components::{ComponentList, ComponentShape, Flux, SkyComponent, SpectralModel};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
 
 /// The environment variable naming the table [`hold_the_write_lock`] locks.
 #[cfg(unix)]

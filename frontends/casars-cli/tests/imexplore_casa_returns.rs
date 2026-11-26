@@ -64,8 +64,8 @@ fn write_fromshape(path: &Path, units: &str, masked: bool) {
         DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate, StokesCoordinate,
         StokesType,
     };
-    use casa_types::measures::direction::DirectionRef;
-    use casa_types::measures::frequency::FrequencyRef;
+    use casa_core::measures::direction::DirectionRef;
+    use casa_core::measures::frequency::FrequencyRef;
     let arcmin = std::f64::consts::PI / 180.0 / 60.0;
     let mut coords = CoordinateSystem::new();
     coords.add_coordinate(
@@ -570,7 +570,7 @@ fn imhead_get_reads_metadata_on_complex_images() {
         vec!["pix".into(), "pix".into()],
     ));
     let mut image =
-        casa_images::PagedImage::<casa_types::Complex32>::create(vec![4, 4], coordinates, &path)
+        casa_images::PagedImage::<casa_core::Complex32>::create(vec![4, 4], coordinates, &path)
             .unwrap();
     image
         .set_image_info(&ImageInfo {

@@ -3,11 +3,11 @@
 #[path = "image_frame_combinations/eop.rs"]
 mod eop;
 mod existing_ms_calculations;
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{
     BackendRequest, CasaOutcome, PredictSpec, PredictionOptions, SessionResources, Simulator,
     SimulatorOptions, VoltagePatternSpec,
 };
-use casa_types::measures::{EpochRef, MEpoch};
 use existing_ms_calculations::{copy, predict_support as support};
 use flate2::read::GzDecoder;
 use serde_json::Value;
@@ -158,8 +158,8 @@ fn total_power_sky_inputs_and_kernels_match_casa() {
 }
 
 fn configure_input(path: &Path, data: &Path, name: &str) -> String {
+    use casa_core::{ArrayValue, ScalarValue, Value};
     use casa_tables::{Table, TableOptions};
-    use casa_types::{ArrayValue, ScalarValue, Value};
     if let Some(telescope) = name.strip_prefix("pb_") {
         let mut table = Table::open(TableOptions::new(path.join("OBSERVATION"))).unwrap();
         table

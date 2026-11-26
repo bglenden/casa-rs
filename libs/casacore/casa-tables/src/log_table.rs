@@ -1,0 +1,1082 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! CASA-compatible logging sinks and `tracing` integration.
+//!
+//! The instrumentation facade for workspace code is [`tracing`]. This module
+//! owns the CASA-specific priority model, log-table serialization, and sink
+//! / layer building blocks. CLI flag/environment configuration and global
+//! subscriber initialization belong to `casars-cli`.
+//!
+//! An event's fields follow its message as `name=value`, separated by
+//! spaces: a string value containing whitespace, or an empty one, is
+//! written as a quoted Rust string literal, a `?` value as its `Debug` form
+//! (quoted for strings) and a `%` value as its `Display` form.
+
+use std::fmt::{self, Write as _};
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use crate::{ColumnSchema, ColumnType, DataManagerKind, Table, TableInfo, TableOptions};
+use casa_core::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+use thiserror::Error;
+use tracing::field::{Field, Visit};
+use tracing::level_filters::LevelFilter;
+use tracing::subscriber::Interest;
+use tracing::{Event, Level, Metadata, Subscriber};
+use tracing_subscriber::Layer;
+use tracing_subscriber::layer::{Context, Filter};
+use tracing_subscriber::registry::LookupSpan;
+
+mod replay;
+
+pub use replay::replay_info_record;
+
+const UNIX_EPOCH_MJD_DAYS: f64 = 40587.0;
+const SECONDS_PER_DAY: f64 = 86400.0;
+const LOG_TABLE_README: &str = "Repository for software-generated logging messages";
+const TIME_COLUMN_COMMENT: &str = "MJD in seconds";
+
+/// CASA/casacore log-message priority, in ascending severity order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CasaPriority {
+    Debugging,
+    Debug2,
+    Debug1,
+    Info5,
+    Info4,
+    Info3,
+    Info2,
+    Info1,
+    Info,
+    Warn,
+    Severe,
+}
+
+impl CasaPriority {
+    /// All CASA priorities in ascending severity order.
+    pub const ALL: [Self; 11] = [
+        Self::Debugging,
+        Self::Debug2,
+        Self::Debug1,
+        Self::Info5,
+        Self::Info4,
+        Self::Info3,
+        Self::Info2,
+        Self::Info1,
+        Self::Info,
+        Self::Warn,
+        Self::Severe,
+    ];
+
+    /// Return the exact string persisted by casacore `LogMessage::toString`.
+    pub fn as_casa_str(self) -> &'static str {
+        match self {
+            Self::Debugging => "DEBUGGING",
+            Self::Debug2 => "DEBUG2",
+            Self::Debug1 => "DEBUG1",
+            Self::Info5 => "INFO5",
+            Self::Info4 => "INFO4",
+            Self::Info3 => "INFO3",
+            Self::Info2 => "INFO2",
+            Self::Info1 => "INFO1",
+            Self::Info => "INFO",
+            Self::Warn => "WARN",
+            Self::Severe => "SEVERE",
+        }
+    }
+
+    /// Map a `tracing` level to the default CASA priority.
+    pub fn from_tracing_level(level: &Level) -> Self {
+        match *level {
+            Level::ERROR => Self::Severe,
+            Level::WARN => Self::Warn,
+            Level::INFO => Self::Info,
+            Level::DEBUG => Self::Debug1,
+            Level::TRACE => Self::Debugging,
+        }
+    }
+}
+
+impl fmt::Display for CasaPriority {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_casa_str())
+    }
+}
+
+impl FromStr for CasaPriority {
+    type Err = CasaLoggingError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.to_ascii_uppercase().as_str() {
+            "DEBUGGING" | "TRACE" => Ok(Self::Debugging),
+            "DEBUG2" => Ok(Self::Debug2),
+            "DEBUG1" | "DEBUG" => Ok(Self::Debug1),
+            "INFO5" => Ok(Self::Info5),
+            "INFO4" => Ok(Self::Info4),
+            "INFO3" => Ok(Self::Info3),
+            "INFO2" => Ok(Self::Info2),
+            "INFO1" => Ok(Self::Info1),
+            "INFO" | "NORMAL" => Ok(Self::Info),
+            "WARN" | "WARNING" => Ok(Self::Warn),
+            "SEVERE" | "ERROR" => Ok(Self::Severe),
+            other => Err(CasaLoggingError::InvalidPriority(other.to_string())),
+        }
+    }
+}
+
+/// A CASA log record ready for sink delivery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CasaLogRecord {
+    pub time_mjd_seconds: f64,
+    pub priority: CasaPriority,
+    pub message: String,
+    pub location: String,
+    pub object_id: String,
+}
+
+impl CasaLogRecord {
+    /// Create a record with the current wall-clock timestamp.
+    pub fn new(
+        priority: CasaPriority,
+        message: impl Into<String>,
+        location: impl Into<String>,
+    ) -> Self {
+        Self {
+            time_mjd_seconds: system_time_to_mjd_seconds(SystemTime::now()),
+            priority,
+            message: trim_message(message.into()),
+            location: location.into(),
+            object_id: String::new(),
+        }
+    }
+
+    /// Attach a CASA object id string.
+    pub fn with_object_id(mut self, object_id: impl Into<String>) -> Self {
+        self.object_id = object_id.into();
+        self
+    }
+}
+
+/// Convert `SystemTime` to CASA TableLogSink TIME units: MJD seconds UTC.
+pub fn system_time_to_mjd_seconds(time: SystemTime) -> f64 {
+    match time.duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration_to_unix_seconds(duration) + UNIX_EPOCH_MJD_DAYS * SECONDS_PER_DAY,
+        Err(error) => {
+            UNIX_EPOCH_MJD_DAYS * SECONDS_PER_DAY - duration_to_unix_seconds(error.duration())
+        }
+    }
+}
+
+fn duration_to_unix_seconds(duration: Duration) -> f64 {
+    duration.as_secs() as f64 + f64::from(duration.subsec_nanos()) / 1_000_000_000.0
+}
+
+fn trim_message(mut message: String) -> String {
+    while message.ends_with('\n') || message.ends_with('\r') {
+        message.pop();
+    }
+    message
+}
+
+/// Errors produced by CASA logging setup, sinks, and table serialization.
+#[derive(Debug, Error)]
+pub enum CasaLoggingError {
+    #[error("invalid CASA log priority {0:?}")]
+    InvalidPriority(String),
+    #[error("log table schema is missing required column {0}")]
+    MissingColumn(&'static str),
+    #[error("log table has incompatible TableInfo type {0:?}")]
+    IncompatibleTableInfo(String),
+    #[error("log table column {column} has incompatible type")]
+    IncompatibleColumn { column: &'static str },
+    #[error("sink lock was poisoned")]
+    PoisonedLock,
+    #[error("log write failed: {0}")]
+    Write(#[source] std::io::Error),
+    #[error("table error: {0}")]
+    Table(#[from] crate::TableError),
+}
+
+/// Runtime sink for CASA log records.
+pub trait CasaLogSink: Send + Sync {
+    fn enabled(&self, priority: CasaPriority) -> bool;
+    fn write(&self, record: &CasaLogRecord) -> Result<(), CasaLoggingError>;
+    fn flush(&self) -> Result<(), CasaLoggingError>;
+}
+
+/// Sink that discards every record.
+#[derive(Debug, Default)]
+pub struct NullSink;
+
+impl CasaLogSink for NullSink {
+    fn enabled(&self, _priority: CasaPriority) -> bool {
+        false
+    }
+
+    fn write(&self, _record: &CasaLogRecord) -> Result<(), CasaLoggingError> {
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), CasaLoggingError> {
+        Ok(())
+    }
+}
+
+/// In-memory sink for tests and embedded callers.
+#[derive(Debug)]
+pub struct MemorySink {
+    threshold: CasaPriority,
+    records: Mutex<Vec<CasaLogRecord>>,
+}
+
+impl MemorySink {
+    pub fn new(threshold: CasaPriority) -> Self {
+        Self {
+            threshold,
+            records: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn records(&self) -> Result<Vec<CasaLogRecord>, CasaLoggingError> {
+        Ok(self
+            .records
+            .lock()
+            .map_err(|_| CasaLoggingError::PoisonedLock)?
+            .clone())
+    }
+}
+
+impl CasaLogSink for MemorySink {
+    fn enabled(&self, priority: CasaPriority) -> bool {
+        priority >= self.threshold
+    }
+
+    fn write(&self, record: &CasaLogRecord) -> Result<(), CasaLoggingError> {
+        if self.enabled(record.priority) {
+            self.records
+                .lock()
+                .map_err(|_| CasaLoggingError::PoisonedLock)?
+                .push(record.clone());
+        }
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), CasaLoggingError> {
+        Ok(())
+    }
+}
+
+/// Stderr sink with CASA-like text formatting.
+#[derive(Debug)]
+pub struct StderrSink {
+    threshold: CasaPriority,
+}
+
+impl StderrSink {
+    pub fn new(threshold: CasaPriority) -> Self {
+        Self { threshold }
+    }
+}
+
+impl CasaLogSink for StderrSink {
+    fn enabled(&self, priority: CasaPriority) -> bool {
+        priority >= self.threshold
+    }
+
+    fn write(&self, record: &CasaLogRecord) -> Result<(), CasaLoggingError> {
+        if self.enabled(record.priority) {
+            eprintln!("{}", text_line(record));
+        }
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), CasaLoggingError> {
+        Ok(())
+    }
+}
+
+/// A record as the text sinks write it: priority, location, message.
+fn text_line(record: &CasaLogRecord) -> String {
+    format!(
+        "{} {} {}",
+        record.priority.as_casa_str(),
+        record.location,
+        record.message
+    )
+}
+
+/// Sink writing [`StderrSink`]'s text lines to a writer its owner shares,
+/// such as the standard error a task binary's `main` hands the task front
+/// end, so the owner's own lines and the log interleave in one stream.
+pub struct WriterSink<W> {
+    threshold: CasaPriority,
+    writer: Arc<Mutex<W>>,
+}
+
+impl<W> WriterSink<W> {
+    pub fn new(writer: Arc<Mutex<W>>, threshold: CasaPriority) -> Self {
+        Self { threshold, writer }
+    }
+}
+
+impl<W: std::io::Write + Send> CasaLogSink for WriterSink<W> {
+    fn enabled(&self, priority: CasaPriority) -> bool {
+        priority >= self.threshold
+    }
+
+    fn write(&self, record: &CasaLogRecord) -> Result<(), CasaLoggingError> {
+        if self.enabled(record.priority) {
+            let mut writer = self
+                .writer
+                .lock()
+                .map_err(|_| CasaLoggingError::PoisonedLock)?;
+            let line = text_line(record) + "\n";
+            std::io::Write::write_all(&mut *writer, line.as_bytes())
+                .map_err(CasaLoggingError::Write)?;
+        }
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), CasaLoggingError> {
+        let mut writer = self
+            .writer
+            .lock()
+            .map_err(|_| CasaLoggingError::PoisonedLock)?;
+        std::io::Write::flush(&mut *writer).map_err(CasaLoggingError::Write)
+    }
+}
+
+/// Fan-out sink that writes each record to all child sinks.
+#[derive(Default)]
+pub struct CompositeSink {
+    sinks: Vec<Arc<dyn CasaLogSink>>,
+}
+
+impl CompositeSink {
+    pub fn new(sinks: Vec<Arc<dyn CasaLogSink>>) -> Self {
+        Self { sinks }
+    }
+}
+
+impl CasaLogSink for CompositeSink {
+    fn enabled(&self, priority: CasaPriority) -> bool {
+        self.sinks.iter().any(|sink| sink.enabled(priority))
+    }
+
+    fn write(&self, record: &CasaLogRecord) -> Result<(), CasaLoggingError> {
+        for sink in &self.sinks {
+            if sink.enabled(record.priority) {
+                sink.write(record)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), CasaLoggingError> {
+        for sink in &self.sinks {
+            sink.flush()?;
+        }
+        Ok(())
+    }
+}
+
+/// Open mode for CASA log-table sinks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableLogOpenMode {
+    CreateOrAppend,
+    CreateNew,
+    AppendExisting,
+}
+
+/// Buffered sink that writes casacore `TableLogSink` compatible rows.
+#[derive(Debug)]
+pub struct CasaTableLogSink {
+    path: PathBuf,
+    threshold: CasaPriority,
+    mode: TableLogOpenMode,
+    pending: Mutex<Vec<CasaLogRecord>>,
+}
+
+impl CasaTableLogSink {
+    pub fn new(path: impl Into<PathBuf>, threshold: CasaPriority, mode: TableLogOpenMode) -> Self {
+        Self {
+            path: path.into(),
+            threshold,
+            mode,
+            pending: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn pending_len(&self) -> Result<usize, CasaLoggingError> {
+        Ok(self
+            .pending
+            .lock()
+            .map_err(|_| CasaLoggingError::PoisonedLock)?
+            .len())
+    }
+
+    fn flush_records(&self, records: &[CasaLogRecord]) -> Result<(), CasaLoggingError> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        let mut table = open_or_create_log_table(&self.path, self.mode)?;
+        validate_log_table(&table)?;
+        for record in records {
+            table.add_row(log_record_to_row(record))?;
+        }
+        table.save(log_table_options(&self.path))?;
+        Ok(())
+    }
+}
+
+impl CasaLogSink for CasaTableLogSink {
+    fn enabled(&self, priority: CasaPriority) -> bool {
+        priority >= self.threshold
+    }
+
+    fn write(&self, record: &CasaLogRecord) -> Result<(), CasaLoggingError> {
+        if !self.enabled(record.priority) {
+            return Ok(());
+        }
+        {
+            self.pending
+                .lock()
+                .map_err(|_| CasaLoggingError::PoisonedLock)?
+                .push(record.clone());
+        }
+        if record.priority >= CasaPriority::Warn {
+            self.flush()?;
+        }
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), CasaLoggingError> {
+        let records = {
+            let mut pending = self
+                .pending
+                .lock()
+                .map_err(|_| CasaLoggingError::PoisonedLock)?;
+            if pending.is_empty() {
+                return Ok(());
+            }
+            std::mem::take(&mut *pending)
+        };
+        if let Err(error) = self.flush_records(&records) {
+            let mut pending = self
+                .pending
+                .lock()
+                .map_err(|_| CasaLoggingError::PoisonedLock)?;
+            let mut retry = records;
+            retry.append(&mut *pending);
+            *pending = retry;
+            return Err(error);
+        }
+        Ok(())
+    }
+}
+
+/// Create the canonical CASA log table schema.
+pub fn log_table_schema() -> crate::TableSchema {
+    crate::TableSchema::new(vec![
+        ColumnSchema::scalar("TIME", PrimitiveType::Float64).with_comment(TIME_COLUMN_COMMENT),
+        ColumnSchema::scalar("PRIORITY", PrimitiveType::String).with_max_length(9),
+        ColumnSchema::scalar("MESSAGE", PrimitiveType::String),
+        ColumnSchema::scalar("LOCATION", PrimitiveType::String),
+        ColumnSchema::scalar("OBJECT_ID", PrimitiveType::String),
+    ])
+    .expect("canonical log table schema is valid")
+}
+
+/// Build a new empty CASA-compatible log table.
+pub fn create_log_table() -> Table {
+    let mut table = Table::with_schema(log_table_schema());
+    table.set_info(TableInfo {
+        table_type: "LOG".to_string(),
+        sub_type: String::new(),
+        readme: vec![LOG_TABLE_README.to_string()],
+    });
+    table.set_column_keywords("TIME", time_column_keywords());
+    table
+}
+
+fn time_column_keywords() -> RecordValue {
+    RecordValue::new(vec![
+        RecordField::new("UNIT", Value::Scalar(ScalarValue::String("s".to_string()))),
+        RecordField::new(
+            "MEASURE_TYPE",
+            Value::Scalar(ScalarValue::String("EPOCH".to_string())),
+        ),
+        RecordField::new(
+            "MEASURE_REFERENCE",
+            Value::Scalar(ScalarValue::String("UTC".to_string())),
+        ),
+    ])
+}
+
+fn open_or_create_log_table(
+    path: &Path,
+    mode: TableLogOpenMode,
+) -> Result<Table, CasaLoggingError> {
+    match mode {
+        TableLogOpenMode::CreateNew => Ok(create_log_table()),
+        TableLogOpenMode::AppendExisting => {
+            Table::open(TableOptions::new(path)).map_err(Into::into)
+        }
+        TableLogOpenMode::CreateOrAppend => {
+            if path.exists() {
+                Table::open(TableOptions::new(path)).map_err(Into::into)
+            } else {
+                Ok(create_log_table())
+            }
+        }
+    }
+}
+
+fn log_table_options(path: &Path) -> TableOptions {
+    TableOptions::new(path)
+        .with_data_manager(DataManagerKind::StandardStMan)
+        .with_data_manager_group("SSM")
+}
+
+/// Validate that a table can receive canonical CASA log rows.
+pub fn validate_log_table(table: &Table) -> Result<(), CasaLoggingError> {
+    let table_type = table.info().table_type.as_str();
+    if !matches!(table_type, "LOG" | "Log message") {
+        return Err(CasaLoggingError::IncompatibleTableInfo(
+            table.info().table_type.clone(),
+        ));
+    }
+    let schema = table
+        .schema()
+        .ok_or(CasaLoggingError::MissingColumn("TIME"))?;
+    for (name, primitive) in [
+        ("TIME", PrimitiveType::Float64),
+        ("PRIORITY", PrimitiveType::String),
+        ("MESSAGE", PrimitiveType::String),
+        ("LOCATION", PrimitiveType::String),
+        ("OBJECT_ID", PrimitiveType::String),
+    ] {
+        let column = schema
+            .column(name)
+            .ok_or(CasaLoggingError::MissingColumn(name))?;
+        if !matches!(column.column_type(), ColumnType::Scalar)
+            || column.data_type() != Some(primitive)
+        {
+            return Err(CasaLoggingError::IncompatibleColumn { column: name });
+        }
+    }
+    Ok(())
+}
+
+fn log_record_to_row(record: &CasaLogRecord) -> RecordValue {
+    RecordValue::new(vec![
+        RecordField::new(
+            "TIME",
+            Value::Scalar(ScalarValue::Float64(record.time_mjd_seconds)),
+        ),
+        RecordField::new(
+            "PRIORITY",
+            Value::Scalar(ScalarValue::String(
+                record.priority.as_casa_str().to_string(),
+            )),
+        ),
+        RecordField::new(
+            "MESSAGE",
+            Value::Scalar(ScalarValue::String(record.message.clone())),
+        ),
+        RecordField::new(
+            "LOCATION",
+            Value::Scalar(ScalarValue::String(record.location.clone())),
+        ),
+        RecordField::new(
+            "OBJECT_ID",
+            Value::Scalar(ScalarValue::String(record.object_id.clone())),
+        ),
+    ])
+}
+
+/// `tracing_subscriber` layer that converts events into CASA log records.
+pub struct CasaLogLayer {
+    sink: Arc<dyn CasaLogSink>,
+}
+
+impl CasaLogLayer {
+    /// The layer writing to `sink`, behind its own per-layer filter: an
+    /// event below every sink's threshold is disabled for this layer alone,
+    /// so it is never formatted here and other layers stacked with it still
+    /// receive it. The filter's level hint is the most verbose level a sink
+    /// takes, so when no other layer asks for more, the `tracing` macros
+    /// skip lower events before building them and `tracing::enabled!`
+    /// reports them off. A `casa.priority` field sets the record's priority
+    /// but cannot bring in an event below that level.
+    pub fn filtered<S>(sink: Arc<dyn CasaLogSink>) -> impl Layer<S> + Send + Sync + 'static
+    where
+        S: Subscriber + for<'a> LookupSpan<'a>,
+    {
+        Self { sink: sink.clone() }.with_filter(SinkThreshold { sink })
+    }
+}
+
+/// A [`CasaLogLayer`]'s filter: its sinks' thresholds.
+struct SinkThreshold {
+    sink: Arc<dyn CasaLogSink>,
+}
+
+impl<S> Filter<S> for SinkThreshold {
+    fn enabled(&self, metadata: &Metadata<'_>, _cx: &Context<'_, S>) -> bool {
+        // Spans only name an event's location. `tracing::enabled!` asks with
+        // a hint, which is not an event but is filtered as one.
+        metadata.is_span()
+            || metadata.fields().field("casa.priority").is_some()
+            || self
+                .sink
+                .enabled(CasaPriority::from_tracing_level(metadata.level()))
+    }
+
+    // Sinks keep their thresholds for the process, but tests install
+    // subscribers with others, so interest is decided per event.
+    fn callsite_enabled(&self, _metadata: &'static Metadata<'static>) -> Interest {
+        Interest::sometimes()
+    }
+
+    // The registry reports an event enabled while any per-layer filter's
+    // bit is clear, so only the level hint turns `tracing::enabled!` off.
+    fn max_level_hint(&self) -> Option<LevelFilter> {
+        let levels = [
+            Level::TRACE,
+            Level::DEBUG,
+            Level::INFO,
+            Level::WARN,
+            Level::ERROR,
+        ];
+        Some(
+            levels
+                .into_iter()
+                .find(|level| self.sink.enabled(CasaPriority::from_tracing_level(level)))
+                .map_or(LevelFilter::OFF, LevelFilter::from_level),
+        )
+    }
+}
+
+impl<S> Layer<S> for CasaLogLayer
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
+        let metadata = event.metadata();
+        let mut visitor = EventVisitor::default();
+        event.record(&mut visitor);
+        let priority = visitor
+            .priority
+            .and_then(|value| CasaPriority::from_str(&value).ok())
+            .unwrap_or_else(|| CasaPriority::from_tracing_level(metadata.level()));
+        if !self.sink.enabled(priority) {
+            return;
+        }
+        // Structured fields follow the message as `name=value`, so a log
+        // line carries what the event recorded.
+        let message = match visitor.message {
+            Some(message) if visitor.fields.is_empty() => message,
+            Some(message) => format!("{} {}", trim_message(message), visitor.fields),
+            None => visitor.fields,
+        };
+        let location = visitor.location.unwrap_or_else(|| {
+            event_location(
+                metadata.target(),
+                metadata.file(),
+                metadata.line(),
+                ctx.lookup_current().map(|span| span.name()),
+            )
+        });
+        let record = CasaLogRecord {
+            time_mjd_seconds: visitor
+                .time_mjd_seconds
+                .unwrap_or_else(|| system_time_to_mjd_seconds(SystemTime::now())),
+            priority,
+            message: trim_message(message),
+            location,
+            object_id: visitor.object_id.unwrap_or_default(),
+        };
+        if let Err(error) = self.sink.write(&record) {
+            eprintln!("casa logging sink error: {error}");
+        }
+    }
+}
+
+fn event_location(
+    target: &str,
+    file: Option<&str>,
+    line: Option<u32>,
+    span: Option<&str>,
+) -> String {
+    let mut location = String::new();
+    if let Some(span) = span {
+        let _ = write!(location, "{span}::");
+    }
+    location.push_str(target);
+    if let Some(file) = file {
+        match line {
+            Some(line) => {
+                let _ = write!(location, " (file {file}, line {line})");
+            }
+            None => {
+                let _ = write!(location, " (file {file})");
+            }
+        }
+    }
+    location
+}
+
+#[derive(Default)]
+struct EventVisitor {
+    message: Option<String>,
+    priority: Option<String>,
+    location: Option<String>,
+    object_id: Option<String>,
+    time_mjd_seconds: Option<f64>,
+    fields: String,
+}
+
+impl EventVisitor {
+    fn push_field(&mut self, name: &str, value: impl fmt::Display) {
+        if !self.fields.is_empty() {
+            self.fields.push(' ');
+        }
+        let _ = write!(self.fields, "{name}={value}");
+    }
+}
+
+impl Visit for EventVisitor {
+    fn record_f64(&mut self, field: &Field, value: f64) {
+        if field.name() == "casa.time_mjd_seconds" {
+            self.time_mjd_seconds = Some(value);
+        } else {
+            self.push_field(field.name(), format_args!("{value:?}"));
+        }
+    }
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        let rendered = format!("{value:?}");
+        match field.name() {
+            "message" => self.message = Some(rendered.trim_matches('"').to_string()),
+            "casa.priority" => self.priority = Some(rendered.trim_matches('"').to_string()),
+            "casa.location" => self.location = Some(rendered.trim_matches('"').to_string()),
+            "casa.object_id" => self.object_id = Some(rendered.trim_matches('"').to_string()),
+            name => self.push_field(name, rendered),
+        }
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        match field.name() {
+            "message" => self.message = Some(value.to_string()),
+            "casa.priority" => self.priority = Some(value.to_string()),
+            "casa.location" => self.location = Some(value.to_string()),
+            "casa.object_id" => self.object_id = Some(value.to_string()),
+            name if value.is_empty() || value.contains(char::is_whitespace) => {
+                self.push_field(name, format_args!("{value:?}"));
+            }
+            name => self.push_field(name, value),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    // Tracing callsite interest is process-global.
+    fn global_state_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    #[test]
+    fn a_writer_sink_writes_the_stderr_lines_to_its_shared_writer() {
+        let writer = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let sink = WriterSink::new(writer.clone(), CasaPriority::Warn);
+        sink.write(&CasaLogRecord::new(CasaPriority::Info, "quiet", "here"))
+            .unwrap();
+        sink.write(&CasaLogRecord::new(CasaPriority::Severe, "loud", "here"))
+            .unwrap();
+        sink.flush().unwrap();
+        assert_eq!(
+            String::from_utf8(writer.lock().unwrap().clone()).unwrap(),
+            "SEVERE here loud\n"
+        );
+    }
+
+    #[test]
+    fn priority_strings_round_trip() {
+        for priority in CasaPriority::ALL {
+            assert_eq!(
+                CasaPriority::from_str(priority.as_casa_str()).unwrap(),
+                priority
+            );
+        }
+    }
+
+    #[test]
+    fn priority_threshold_order_matches_casa() {
+        assert!(CasaPriority::Warn >= CasaPriority::Info);
+        assert!(CasaPriority::Severe >= CasaPriority::Warn);
+        assert!(CasaPriority::Info < CasaPriority::Severe);
+        assert!(CasaPriority::Debugging < CasaPriority::Debug2);
+    }
+
+    #[test]
+    fn tracing_level_default_mapping() {
+        assert_eq!(
+            CasaPriority::from_tracing_level(&Level::ERROR),
+            CasaPriority::Severe
+        );
+        assert_eq!(
+            CasaPriority::from_tracing_level(&Level::WARN),
+            CasaPriority::Warn
+        );
+        assert_eq!(
+            CasaPriority::from_tracing_level(&Level::INFO),
+            CasaPriority::Info
+        );
+        assert_eq!(
+            CasaPriority::from_tracing_level(&Level::DEBUG),
+            CasaPriority::Debug1
+        );
+        assert_eq!(
+            CasaPriority::from_tracing_level(&Level::TRACE),
+            CasaPriority::Debugging
+        );
+    }
+
+    #[test]
+    fn unix_epoch_mjd_seconds_matches_casa_units() {
+        assert_eq!(
+            system_time_to_mjd_seconds(UNIX_EPOCH),
+            UNIX_EPOCH_MJD_DAYS * SECONDS_PER_DAY
+        );
+    }
+
+    #[test]
+    fn message_trims_trailing_newlines() {
+        let record = CasaLogRecord::new(CasaPriority::Info, "hello\n\n", "test");
+        assert_eq!(record.message, "hello");
+    }
+
+    #[test]
+    fn creates_and_reads_canonical_log_table() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("casa.log");
+        let sink =
+            CasaTableLogSink::new(&path, CasaPriority::Info, TableLogOpenMode::CreateOrAppend);
+        let record = CasaLogRecord::new(CasaPriority::Info, "Task started", "test::task")
+            .with_object_id("object-1");
+        sink.write(&record).unwrap();
+        sink.flush().unwrap();
+        let append_sink =
+            CasaTableLogSink::new(&path, CasaPriority::Info, TableLogOpenMode::CreateOrAppend);
+        append_sink
+            .write(&CasaLogRecord::new(
+                CasaPriority::Warn,
+                "Task warning",
+                "test::task",
+            ))
+            .unwrap();
+        append_sink.flush().unwrap();
+
+        let reopened = Table::open(TableOptions::new(&path)).unwrap();
+        validate_log_table(&reopened).unwrap();
+        assert_eq!(reopened.info().table_type, "LOG");
+        assert_eq!(reopened.info().readme, vec![LOG_TABLE_README.to_string()]);
+        let schema = reopened.schema().unwrap();
+        assert_eq!(
+            schema.column("TIME").unwrap().comment(),
+            TIME_COLUMN_COMMENT
+        );
+        assert_eq!(schema.column("PRIORITY").unwrap().max_length(), 9);
+        let time_keywords = reopened.column_keywords("TIME").unwrap();
+        assert!(matches!(
+            time_keywords.get("UNIT"),
+            Some(Value::Scalar(ScalarValue::String(unit))) if unit == "s"
+        ));
+        assert_eq!(reopened.row_count(), 2);
+    }
+
+    #[test]
+    fn rejects_missing_required_log_column() {
+        let schema =
+            crate::TableSchema::new(vec![ColumnSchema::scalar("TIME", PrimitiveType::Float64)])
+                .unwrap();
+        let mut table = Table::with_schema(schema);
+        table.set_info(TableInfo {
+            table_type: "LOG".to_string(),
+            sub_type: String::new(),
+            readme: Vec::new(),
+        });
+        let err = validate_log_table(&table).unwrap_err();
+        assert!(matches!(err, CasaLoggingError::MissingColumn("PRIORITY")));
+    }
+
+    #[test]
+    fn rejects_non_log_table_info() {
+        let mut table = create_log_table();
+        table.set_info(TableInfo {
+            table_type: "MeasurementSet".to_string(),
+            sub_type: String::new(),
+            readme: Vec::new(),
+        });
+        let err = validate_log_table(&table).unwrap_err();
+        assert!(matches!(
+            err,
+            CasaLoggingError::IncompatibleTableInfo(table_type) if table_type == "MeasurementSet"
+        ));
+    }
+
+    #[test]
+    fn memory_sink_filters_by_threshold() {
+        let sink = MemorySink::new(CasaPriority::Warn);
+        sink.write(&CasaLogRecord::new(CasaPriority::Info, "skip", "test"))
+            .unwrap();
+        sink.write(&CasaLogRecord::new(CasaPriority::Severe, "keep", "test"))
+            .unwrap();
+        let records = sink.records().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].priority, CasaPriority::Severe);
+    }
+
+    #[test]
+    fn a_debug_sink_enables_debug_profiles() {
+        let _guard = global_state_lock();
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let sink = Arc::new(MemorySink::new(CasaPriority::Debug1));
+        let subscriber = tracing_subscriber::registry().with(CasaLogLayer::filtered(sink.clone()));
+        tracing::subscriber::with_default(subscriber, || {
+            assert!(tracing::enabled!(target: "casa_tables::profile", tracing::Level::DEBUG));
+            assert!(!tracing::enabled!(target: "casa_tables::profile", tracing::Level::TRACE));
+            tracing::debug!(target: "casa_tables::profile", rows = 3_u64, "profile");
+        });
+        assert_eq!(sink.records().unwrap()[0].message, "profile rows=3");
+    }
+
+    #[test]
+    fn an_event_logs_its_fields_after_its_message() {
+        let _guard = global_state_lock();
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let sink = Arc::new(MemorySink::new(CasaPriority::Info));
+        let subscriber = tracing_subscriber::registry().with(CasaLogLayer::filtered(sink.clone()));
+        tracing::subscriber::with_default(subscriber, || {
+            assert!(tracing::enabled!(tracing::Level::INFO));
+            assert!(!tracing::enabled!(tracing::Level::DEBUG));
+            tracing::debug!("below the threshold");
+            tracing::info!("plain\n");
+            tracing::info!(phase = ?"major cycle 1", seconds = 0.5, "imaging phase\n");
+            tracing::info!(bytes = 7_u64);
+            tracing::info!(elapsed = 2.0_f64, "elapsed time");
+            tracing::info!(path = "/My Data/x.ms", empty = "", name = "x.ms", "opened");
+        });
+        let messages = sink
+            .records()
+            .unwrap()
+            .into_iter()
+            .map(|record| record.message)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            messages,
+            [
+                "plain",
+                "imaging phase phase=\"major cycle 1\" seconds=0.5",
+                "bytes=7",
+                "elapsed time elapsed=2.0",
+                "opened path=\"/My Data/x.ms\" empty=\"\" name=x.ms"
+            ]
+        );
+    }
+
+    #[test]
+    fn an_event_can_replay_a_casa_history_timestamp() {
+        let _guard = global_state_lock();
+        use tracing_subscriber::layer::SubscriberExt;
+        let sink = Arc::new(MemorySink::new(CasaPriority::Info));
+        let subscriber = tracing_subscriber::registry().with(CasaLogLayer::filtered(sink.clone()));
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(
+                casa.time_mjd_seconds = 42.25_f64,
+                casa.location = "::origin",
+                "original"
+            );
+        });
+        let records = sink.records().unwrap();
+        assert_eq!(records[0].time_mjd_seconds, 42.25);
+        assert_eq!(records[0].location, "::origin");
+        assert_eq!(records[0].message, "original");
+    }
+
+    /// Counts the events it receives, as an independent collector would.
+    struct Counting(Arc<std::sync::atomic::AtomicUsize>);
+
+    impl<S: Subscriber> Layer<S> for Counting {
+        fn on_event(&self, _event: &Event<'_>, _ctx: Context<'_, S>) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    fn debug_event() {
+        tracing::debug!(target: "casa_tables::log_table::law", "below an INFO sink");
+    }
+
+    #[test]
+    fn a_casa_sink_filters_only_its_own_layer() {
+        let _guard = global_state_lock();
+        use tracing::subscriber::with_default;
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let sink = Arc::new(MemorySink::new(CasaPriority::Info));
+        let alone = tracing_subscriber::registry().with(CasaLogLayer::filtered(sink.clone()));
+        with_default(alone, || {
+            assert!(!tracing::enabled!(target: "casa_tables::log_table::law", Level::DEBUG));
+        });
+        for casa_first in [true, false] {
+            let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let collector = Counting(count.clone());
+            let registry = tracing_subscriber::registry();
+            if casa_first {
+                let stack = registry
+                    .with(CasaLogLayer::filtered(sink.clone()))
+                    .with(collector);
+                with_default(stack, debug_event);
+            } else {
+                let stack = registry
+                    .with(collector)
+                    .with(CasaLogLayer::filtered(sink.clone()));
+                with_default(stack, debug_event);
+            }
+            assert_eq!(
+                count.load(std::sync::atomic::Ordering::Relaxed),
+                1,
+                "the collector receives the event whether the CASA layer is first or not \
+                 (first: {casa_first})"
+            );
+        }
+        assert!(sink.records().unwrap().is_empty());
+    }
+
+    #[test]
+    fn each_subscriber_applies_its_own_sink_threshold() {
+        let _guard = global_state_lock();
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let records = |priority| {
+            let sink = Arc::new(MemorySink::new(priority));
+            let subscriber =
+                tracing_subscriber::registry().with(CasaLogLayer::filtered(sink.clone()));
+            tracing::subscriber::with_default(subscriber, debug_event);
+            sink.records().unwrap().len()
+        };
+        assert_eq!(records(CasaPriority::Debug1), 1);
+        assert_eq!(records(CasaPriority::Info), 0);
+        assert_eq!(records(CasaPriority::Debug1), 1);
+    }
+}

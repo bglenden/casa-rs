@@ -229,7 +229,7 @@ fn the_batch_source_holds_at_most_its_charge() {
     let save = json!({ "savemodel": "modelcolumn", "niter": 10 });
     // A TOPO cube of TOPO rows, whose edge channels drift out of its band:
     // the writing pass keeps which channels each time reads.
-    use casa_types::measures::frequency::FrequencyRef;
+    use casa_core::measures::frequency::FrequencyRef;
     let topo = observation(&directory("topo"), 16);
     let mut ms = casa_ms::MeasurementSet::open(&topo).expect("the fixture");
     ms.spectral_window_mut()

@@ -25,8 +25,8 @@
 use std::f64::consts::{PI, TAU};
 use std::sync::Arc;
 
+use casa_core::measures::radial_velocity::RadialVelocityRef;
 use casa_observation::{FieldEntry, FieldEphemeris, FieldId, ObservationError};
-use casa_types::measures::radial_velocity::RadialVelocityRef;
 use zarrs::filesystem::FilesystemStore;
 
 use super::metadata::{
@@ -536,7 +536,7 @@ fn same_sample(a: &Sample, b: &Sample) -> bool {
 /// Whether the angles `a` and `b` (longitude, latitude) are one, to the
 /// store's resolution ([`OFFSET_RESOLUTION_RAD`]), whatever turn each is
 /// stated in: a recovered offset is wrapped to [-π, π), and
-/// [`MDirection::as_angles`](casa_types::measures::direction::MDirection::as_angles)
+/// [`MDirection::as_angles`](casa_core::measures::direction::MDirection::as_angles)
 /// states a longitude in [0, 2π).
 pub(super) fn same_angles(a: [f64; 2], b: [f64; 2]) -> bool {
     (0..2).all(|axis| wrap_to_pi(a[axis] - b[axis]).abs() <= OFFSET_RESOLUTION_RAD)
@@ -544,7 +544,7 @@ pub(super) fn same_angles(a: [f64; 2], b: [f64; 2]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use casa_types::measures::direction::DirectionRef;
+    use casa_core::measures::direction::DirectionRef;
 
     use super::*;
 
@@ -645,7 +645,7 @@ mod tests {
     fn following(name: &str, ephemeris: &Arc<FieldEphemeris>) -> FieldEntry {
         FieldEntry {
             name: name.to_string(),
-            phase_centre: casa_types::measures::direction::MDirection::from_angles(
+            phase_centre: casa_core::measures::direction::MDirection::from_angles(
                 0.0,
                 0.0,
                 DirectionRef::ICRS,

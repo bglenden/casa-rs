@@ -33,8 +33,8 @@ trap cleanup EXIT
 if [[ -z "${CASA_RS_MEASURESPATH:-}" ]]; then
   measures_root="$tmp_root/casa-measures"
   mkdir -p "$measures_root"
-  tar -xzf crates/casa-measures-data/data/casa-measures-runtime.tar.gz -C "$measures_root"
-  cp crates/casa-measures-data/data/casa-measures-runtime.provenance.json \
+  tar -xzf libs/casacore/casa-measures/data/casa-measures-runtime.tar.gz -C "$measures_root"
+  cp libs/casacore/casa-measures/data/casa-measures-runtime.provenance.json \
     "$measures_root/.casa-rs-measures-provenance.json"
   export CASA_RS_MEASURESPATH="$measures_root"
 fi

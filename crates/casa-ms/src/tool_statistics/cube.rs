@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_core::ArrayValue;
 use casa_tables::{Table, TableError};
-use casa_types::ArrayValue;
 use ndarray::ArrayD;
 use num_complex::Complex32;
 

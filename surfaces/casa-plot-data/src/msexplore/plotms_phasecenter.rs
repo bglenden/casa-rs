@@ -4,13 +4,13 @@
 use std::collections::{HashMap, hash_map::Entry};
 use std::f64::consts::TAU;
 
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::epoch::{EpochRef, MEpoch};
+use casa_core::{Complex32, Complex64};
 use casa_ms::MeasurementSet;
 use casa_ms::columns::frequency_columns::ChanFreqColumn;
 use casa_ms::derived::engine::{UvwRotation, detect_epoch_reference, raw_field_phase_direction};
 use casa_ms::subtables::SubTable;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::epoch::{EpochRef, MEpoch};
-use casa_types::{Complex32, Complex64};
 
 use super::ComplexGrid;
 

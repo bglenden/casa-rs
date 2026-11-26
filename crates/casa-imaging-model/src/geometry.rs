@@ -4,7 +4,7 @@
 
 use std::{cmp::Ordering, collections::BTreeSet, f64::consts::TAU};
 
-use casa_types::measures::PreparedFrequencyConversion;
+use casa_core::measures::PreparedFrequencyConversion;
 use thiserror::Error;
 
 use crate::sky_projection::Projection;

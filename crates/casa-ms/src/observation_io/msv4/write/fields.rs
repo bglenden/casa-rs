@@ -8,11 +8,11 @@
 use std::ops::Range;
 use std::sync::Arc;
 
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::radial_velocity::RadialVelocityRef;
 use casa_observation::{
     Catalogue, FieldEntry, FieldEphemeris, FieldId, ObservationError, TimeBaselineGrid,
 };
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::radial_velocity::RadialVelocityRef;
 use serde_json::{Value, json};
 use zarrs::array::ArraySubset;
 use zarrs::filesystem::FilesystemStore;
@@ -237,7 +237,7 @@ fn moving_fields(
     let samples = sample_times.len() as u64;
     // XRADIO's schema types the axis by its name (its converter writes
     // `time`, which its own schema check refuses).
-    let mut time = time_attributes(casa_types::measures::EpochRef::UTC)?;
+    let mut time = time_attributes(casa_core::measures::EpochRef::UTC)?;
     time.insert("type".into(), "time_ephemeris".into());
     coordinate(
         store,

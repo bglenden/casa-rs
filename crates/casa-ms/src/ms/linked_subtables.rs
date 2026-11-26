@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use casa_core::{ScalarValue, Value};
 use casa_tables::{Table, TableOptions, TablePartNames};
-use casa_types::{ScalarValue, Value};
 
 use super::{MeasurementSet, MsError, MsResult, SubtableId, subtable_path_from_main};
 

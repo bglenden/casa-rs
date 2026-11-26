@@ -15,9 +15,9 @@ use std::path::Path;
 
 use casa_components::ComponentList;
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::quanta::{Quantity, Unit, UnitVal};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::quanta::{Quantity, Unit, UnitVal};
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::analysis::lel_mask::PreparedMask;
 use crate::{ImageBeamSet, ImageError, ImageInterface, ImagePixel};

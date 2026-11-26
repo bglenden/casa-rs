@@ -6,9 +6,9 @@ mod common;
 use casa_calibration::{
     ApplyCalibrationTableSpec, ApplyMode, ApplyPlanRequest, execute_apply_from_path,
 };
+use casa_core::{ArrayValue, Complex32, PrimitiveType, Value};
 use casa_ms::{MeasurementSet, MsSelection};
 use casa_tables::ColumnSchema;
-use casa_types::{ArrayValue, Complex32, PrimitiveType, Value};
 use ndarray::{ArrayD, IxDyn};
 
 #[test]
@@ -246,9 +246,9 @@ fn selected_bandpass_channel_uses_its_original_grid_position() {
 #[test]
 fn descending_ms_bandpass_is_independent_of_calwt_after_frequency_resampling() {
     use casa_calibration::ApplyInterpolationMode;
+    use casa_core::ScalarValue;
     use casa_ms::schema::SubtableId;
     use casa_tables::{Table, TableOptions};
-    use casa_types::ScalarValue;
     for calwt in [false, true] {
         let dir = tempfile::tempdir().unwrap();
         let path = common::create_apply_fixture_ms(dir.path(), false);

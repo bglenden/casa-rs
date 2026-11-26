@@ -6,8 +6,8 @@ use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::{
     CasaValue, ParameterValue, casacore_value_to_casa, parameter_value_to_casacore,
 };
+use casa_core::Value;
 use casa_images::{ImageError, ImregridOutcome, ImregridRequest, ImregridTemplate, imregrid};
-use casa_types::Value;
 
 use super::front_end::{image_task_front_end, image_task_returning};
 use super::task_contract::{ImageAnalysisTaskResult, ImregridTaskOutcome};

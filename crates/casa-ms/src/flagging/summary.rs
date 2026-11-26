@@ -13,7 +13,7 @@
 
 use std::collections::BTreeMap;
 
-use casa_types::ArrayValue;
+use casa_core::ArrayValue;
 use ndarray::ArrayD;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

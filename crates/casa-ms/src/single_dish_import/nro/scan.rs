@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! NOSTAR scan time, array coordinates and integration metadata.
 
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::quanta::{Quantity, Unit};
 
 use super::binary::{Record, invalid};
 use super::header::{Array, Header};

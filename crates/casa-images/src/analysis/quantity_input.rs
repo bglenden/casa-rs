@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Quantity values accepted by CASA image metadata operations.
 
-use casa_types::quanta::{Quantity, Unit};
-use casa_types::{ScalarValue, Value};
+use casa_core::quanta::{Quantity, Unit};
+use casa_core::{ScalarValue, Value};
 
 use super::imhead_value::ImheadValue;
 use super::projection_header::cpp_number_precision;
@@ -40,7 +40,7 @@ pub(super) fn parse(value: &ImheadValue) -> Result<(Quantity, String), ImageErro
                 }
                 _ => return Err(invalid("Illegal Quantity record".into())),
             };
-            let unit_value = casa_types::quanta::casacore::casacore_unit(unit)
+            let unit_value = casa_core::quanta::casacore::casacore_unit(unit)
                 .map_err(|error| invalid(error.to_string()))?;
             let quantity = Quantity::with_unit(number, unit_value);
             let rendered = if record.fields().len() == 2 {
@@ -60,7 +60,7 @@ pub(super) fn in_unit(quantity: &Quantity, unit: &str) -> Result<f64, ImageError
         return Ok(quantity.value());
     }
     let unit = Unit::new(unit).map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
-    casa_types::quanta::casacore::get_conformant_value(quantity, &unit)
+    casa_core::quanta::casacore::get_conformant_value(quantity, &unit)
         .map_err(|error| ImageError::InvalidMetadata(error.to_string()))
 }
 
@@ -71,5 +71,5 @@ pub(super) fn in_axis_unit(quantity: &Quantity, unit: &str) -> Result<f64, Image
         return Ok(quantity.value());
     }
     let unit = Unit::new(unit).map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
-    Ok(casa_types::quanta::casacore::get_value(quantity, &unit))
+    Ok(casa_core::quanta::casacore::get_value(quantity, &unit))
 }

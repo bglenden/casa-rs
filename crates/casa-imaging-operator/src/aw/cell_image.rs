@@ -10,9 +10,9 @@ use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, LinearCoordinate, SpectralCoordinate,
     StokesCoordinate, StokesType,
 };
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::{RecordField, RecordValue, ScalarValue, Value};
 use casa_images::{PagedImage, regrid::regrid_complex_plane};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 use num_complex::Complex32;
 
 use super::rotation::pixel_rotation;

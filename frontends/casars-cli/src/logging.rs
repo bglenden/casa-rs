@@ -9,7 +9,7 @@ use std::process::ExitCode;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use casa_logging::{
+use casa_tables::log_table::{
     CasaLogLayer, CasaLogSink, CasaLoggingError, CasaPriority, CasaTableLogSink, CompositeSink,
     NullSink, TableLogOpenMode, WriterSink,
 };

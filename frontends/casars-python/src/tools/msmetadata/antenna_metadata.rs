@@ -2,11 +2,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use casa_core::measures::PositionRef;
+use casa_core::quanta::{Dimension, UnitDim};
+use casa_measures::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_ms::subtables::antenna_observatory_offsets;
 use casa_ms::{MeasurementSet, MsAntenna, MsError, MsResult, SubTable};
-use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
-use casa_types::measures::PositionRef;
-use casa_types::quanta::{Dimension, UnitDim};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;

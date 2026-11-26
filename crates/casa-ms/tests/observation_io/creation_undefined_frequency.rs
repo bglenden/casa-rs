@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use super::*;
-use casa_tables::table_measures::{MeasRefDesc, default_frequency_ref_map};
+use casa_measures::table_measures::{MeasRefDesc, default_frequency_ref_map};
 
 const CASA_UNDEFINED_FREQUENCY: &str = include_str!(
     "../../../../frontends/casars-python/python/tests/data/casa_undefined_frequency_ms.json"
@@ -154,8 +154,8 @@ fn frequency_references_without_mapping_keywords_match_casa_and_survive_creation
 
 #[test]
 fn an_incomplete_frequency_descriptor_keeps_the_visibility_measurement_frame() {
+    use casa_core::measures::frequency::FrequencyRef;
     use casa_ms::observation_io::Msv2Observation;
-    use casa_types::measures::frequency::FrequencyRef;
 
     let root = tempfile::tempdir().unwrap();
     let input = edited(root.path(), "incomplete", 0..0, |ms| {

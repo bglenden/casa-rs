@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's 96-sample elevation curve, transit and observation time range.
 
-use casa_ms::MeasurementSet;
-use casa_simulation::{SimobservePlotInput, simobserve::SimobserveError, simutil::direction};
-use casa_types::ArrayValue;
-use casa_types::measures::{
+use casa_core::ArrayValue;
+use casa_core::measures::{
     EpochRef, MEpoch, MeasFrame,
     direction::{DirectionRef, MDirection},
 };
-use casa_types::quanta::MvTime;
+use casa_core::quanta::MvTime;
+use casa_ms::MeasurementSet;
+use casa_simulation::{SimobservePlotInput, simobserve::SimobserveError, simutil::direction};
 
 use super::document::{layer, panel};
 use super::failure;

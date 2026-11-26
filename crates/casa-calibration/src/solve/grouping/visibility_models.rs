@@ -3,8 +3,8 @@
 
 use std::collections::BTreeMap;
 
+use casa_core::{ArrayValue, Complex32, ScalarValue};
 use casa_ms::{MeasurementSet, ResolvedMsSelectionRow, VirtualModelEntry, scratch_columns};
-use casa_types::{ArrayValue, Complex32, ScalarValue};
 use ndarray::ArrayD;
 
 use crate::ft::PreparedVoltagePattern;

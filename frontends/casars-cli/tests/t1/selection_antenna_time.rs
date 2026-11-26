@@ -7,9 +7,9 @@
 //! (`casa-imaging-application/tests/selection_casa_oracle.rs`) checks
 //! CASA's own rows on a real MeasurementSet.
 
+use casa_core::ScalarValue;
+use casa_core::quanta::MvTime;
 use casa_ms::MeasurementSet;
-use casa_types::ScalarValue;
-use casa_types::quanta::MvTime;
 use serde_json::json;
 
 use super::fixture::{Component, Observation};

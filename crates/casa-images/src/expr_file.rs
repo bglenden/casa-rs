@@ -48,8 +48,8 @@ use std::fs;
 use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
+use casa_core::{ArrayD, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_lattices::{Lattice, LatticeError};
-use casa_types::{ArrayD, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use serde_json::Value as Json;
 
 use crate::error::ImageError;

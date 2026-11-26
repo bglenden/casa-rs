@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Numerical preparation of selected bandpass spectra and channel derivatives.
 
-use casa_types::{ArrayValue, Complex32, Complex64};
+use casa_core::{ArrayValue, Complex32, Complex64};
 
 use super::table::Spectrum;
 

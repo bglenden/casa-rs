@@ -3,7 +3,7 @@
 mod polynomial;
 
 use casa_coordinates::CoordinateType;
-use casa_types::{ArrayD, RecordValue};
+use casa_core::{ArrayD, RecordValue};
 use ndarray::{Axis, IxDyn, Zip};
 
 use crate::{ImageError, ImageInterface, MutableImageInterface};

@@ -5,13 +5,13 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use casa_coordinates::{Coordinate, CoordinateModel, StokesType};
+use casa_core::measures::direction::MDirection;
+use casa_core::{ArrayValue, Complex32};
 use casa_imaging_model::GridFtProjection;
 use casa_imaging_runtime::HostResources;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow};
 use casa_tables::RequiredScalarColumnValues;
-use casa_types::measures::direction::MDirection;
-use casa_types::{ArrayValue, Complex32};
 use ndarray::ArrayD;
 
 use super::degrid::PointingSample;

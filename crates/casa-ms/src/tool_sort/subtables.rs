@@ -4,8 +4,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use casa_core::{RecordValue, ScalarValue, Value};
 use casa_tables::{Table, TableOptions, TablePartNames, add_directory, strip_directory};
-use casa_types::{RecordValue, ScalarValue, Value};
 
 use crate::ms::subtable_path_from_main;
 use crate::{MsError, MsResult, SubtableId};

@@ -7,10 +7,10 @@ use crate::{
     simutil::{analysis, qa},
 };
 use casa_coordinates::{Coordinate, CoordinateModel};
+use casa_core::{ScalarValue, quanta::Quantity};
 use casa_images::PagedImage;
 use casa_ms::columns::uvw_column::UvwColumn;
 use casa_ms::{MeasurementSet, SubtableId};
-use casa_types::{ScalarValue, quanta::Quantity};
 use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
 

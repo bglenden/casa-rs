@@ -3,8 +3,8 @@
 use std::f64::consts::{LN_2, PI};
 
 use casa_coordinates::CoordinateType;
+use casa_core::{ArrayD, ArrayValue, Value, quanta::Quantity};
 use casa_lattices::{TraversalCursorIter, TraversalSpec};
-use casa_types::{ArrayD, ArrayValue, Value, quanta::Quantity};
 use ndarray::{IxDyn, ShapeBuilder, Zip};
 
 use crate::analysis::axes::{StridedSection, direction_plane_axes};

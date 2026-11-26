@@ -7,10 +7,10 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use casa_coordinates::ProjectionType;
-use casa_imaging_model::InstrumentModel;
-use casa_types::measures::{
+use casa_core::measures::{
     direction::DirectionRef, doppler::DopplerRef, epoch::EpochRef, frequency::FrequencyRef,
 };
+use casa_imaging_model::InstrumentModel;
 
 /// Why a request could not be compiled against its MeasurementSet, or the
 /// compiled run could not be deployed.
@@ -98,7 +98,7 @@ pub enum PrepareError {
     Ephemeris(#[from] casa_ms::PhaseCentreEphemerisError),
     /// A direction could not be converted between frames.
     #[error(transparent)]
-    Measures(#[from] casa_types::measures::MeasureError),
+    Measures(#[from] casa_core::measures::MeasureError),
     /// A mask box, mask plan or mask reprojection is invalid.
     #[error(transparent)]
     Mask(#[from] casa_imaging_deconvolution::MaskError),
@@ -173,7 +173,7 @@ pub enum PrepareError {
     )]
     ReferenceFrequencyOutsideLsrk {
         /// The requested output frame.
-        outframe: casa_types::measures::frequency::FrequencyRef,
+        outframe: casa_core::measures::frequency::FrequencyRef,
     },
     /// A `timerange` selects an MSv4 processing set's times: CASA's time
     /// grammar takes a partial time's defaults from the first MAIN row the

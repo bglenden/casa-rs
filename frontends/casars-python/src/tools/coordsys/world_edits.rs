@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_coordinates::tabular::TabularEdit;
+use casa_coordinates::TabularEdit;
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::quanta::{Quantity, Unit};
 use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PySystemError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyString, PyTuple};

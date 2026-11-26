@@ -6,8 +6,8 @@
 //!
 //! Cf. C++ `MSFieldColumns`.
 
+use casa_core::{ArrayValue, ScalarValue};
 use casa_tables::Table;
-use casa_types::{ArrayValue, ScalarValue};
 
 use crate::column_def::ColumnDef;
 use crate::error::MsResult;
@@ -176,7 +176,7 @@ impl SubTable for MsFieldMut<'_> {
 mod tests {
     use super::*;
     use crate::column_def::build_table_schema;
-    use casa_types::{RecordField, RecordValue, Value};
+    use casa_core::{RecordField, RecordValue, Value};
     use ndarray::ArrayD;
 
     fn make_field_table() -> Table {
@@ -196,27 +196,24 @@ mod tests {
         let row = RecordValue::new(vec![
             RecordField::new(
                 "CODE",
-                Value::Scalar(casa_types::ScalarValue::String("T".to_string())),
+                Value::Scalar(casa_core::ScalarValue::String("T".to_string())),
             ),
             RecordField::new("DELAY_DIR", Value::Array(dir.clone())),
             RecordField::new(
                 "FLAG_ROW",
-                Value::Scalar(casa_types::ScalarValue::Bool(false)),
+                Value::Scalar(casa_core::ScalarValue::Bool(false)),
             ),
             RecordField::new(
                 "NAME",
-                Value::Scalar(casa_types::ScalarValue::String("3C286".to_string())),
+                Value::Scalar(casa_core::ScalarValue::String("3C286".to_string())),
             ),
-            RecordField::new("NUM_POLY", Value::Scalar(casa_types::ScalarValue::Int32(0))),
+            RecordField::new("NUM_POLY", Value::Scalar(casa_core::ScalarValue::Int32(0))),
             RecordField::new("PHASE_DIR", Value::Array(dir.clone())),
             RecordField::new("REFERENCE_DIR", Value::Array(dir)),
-            RecordField::new(
-                "SOURCE_ID",
-                Value::Scalar(casa_types::ScalarValue::Int32(0)),
-            ),
+            RecordField::new("SOURCE_ID", Value::Scalar(casa_core::ScalarValue::Int32(0))),
             RecordField::new(
                 "TIME",
-                Value::Scalar(casa_types::ScalarValue::Float64(4.8e9)),
+                Value::Scalar(casa_core::ScalarValue::Float64(4.8e9)),
             ),
         ]);
         table.add_row(row).unwrap();

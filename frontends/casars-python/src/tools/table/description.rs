@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
+use casa_core::{RecordValue, Value};
 use casa_tables::{StoredTableDescription, Table, TableOptions};
-use casa_types::{RecordValue, Value};
 use pyo3::prelude::*;
 
 use super::state::{Fail, State, no_table, no_table_specified};

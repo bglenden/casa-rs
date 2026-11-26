@@ -8,10 +8,10 @@ mod predict_support;
 mod support;
 
 use casa_calibration::{GencalRequest, GencalType, gencal};
+use casa_core::measures::{EpochRef, MEpoch};
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_simulation::{ApplySpec, Simulator, SimulatorOptions};
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::{EpochRef, MEpoch};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use flate2::read::GzDecoder;
 use ndarray::{ArrayD, IxDyn};
 use serde_json::Value as Json;
@@ -194,7 +194,7 @@ fn time_axis(path: &Path, case: &Json) {
     table.save(TableOptions::new(path)).unwrap();
 }
 
-fn run(case: &Json, workers: usize) -> Vec<Vec<casa_types::Complex32>> {
+fn run(case: &Json, workers: usize) -> Vec<Vec<casa_core::Complex32>> {
     let export = std::env::var_os("CASA_RS_APPLY_PRIORS_OUT");
     let root = if let Some(out) = &export {
         std::fs::create_dir_all(out).unwrap();

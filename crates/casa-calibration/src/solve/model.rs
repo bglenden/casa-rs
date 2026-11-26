@@ -11,16 +11,16 @@ use std::path::Path;
 use std::sync::Arc;
 
 use casa_components::{ComponentList, Polarisation};
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::{MEpoch, MeasFrame, UvwMachine};
+use casa_core::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
 use casa_ms::columns::direction_columns::DirectionColumn;
 use casa_ms::derived::engine::{MsCalEngine, raw_field_phase_direction};
 use casa_ms::{
     MeasurementSet, MsError, SubTable, SubtableId, VirtualModelEntry, VirtualModelKind,
     virtual_model,
 };
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::{MEpoch, MeasFrame, UvwMachine};
-use casa_types::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use num_complex::Complex64;
 

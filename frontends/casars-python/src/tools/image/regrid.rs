@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use casa_core::RecordValue;
 use casa_images::{
     ImageInterface,
     analysis::{
@@ -11,7 +12,6 @@ use casa_images::{
     image::image_history_rows,
     regrid::RegridPixel,
 };
-use casa_types::RecordValue;
 use pyo3::exceptions::{PyOverflowError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;

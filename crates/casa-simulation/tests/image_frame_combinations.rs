@@ -3,11 +3,11 @@
 #[path = "image_frame_combinations/eop.rs"]
 mod eop;
 mod existing_ms_calculations;
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{
     BackendRequest, PredictSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions,
     VoltagePatternSpec,
 };
-use casa_types::measures::{EpochRef, MEpoch};
 use existing_ms_calculations::{copy, predict_support as support};
 use flate2::read::GzDecoder;
 use serde_json::Value;
@@ -135,8 +135,8 @@ fn compare_frames(bytes: &[u8]) {
 
 #[test]
 fn reference_earth_orientation_matches_casa_hour_angle() {
-    use casa_types::measures::direction::{DirectionRef, MDirection};
-    use casa_types::measures::{MPosition, MeasFrame};
+    use casa_core::measures::direction::{DirectionRef, MDirection};
+    use casa_core::measures::{MPosition, MeasFrame};
     let fixture: Value = serde_json::from_reader(GzDecoder::new(
         &include_bytes!("data/sm_image_frames_casa.json.gz")[..],
     ))

@@ -12,8 +12,8 @@
 use casa_coordinates::{
     CoordinateSystem, LinearCoordinate, SpectralCoordinate, StokesCoordinate, StokesType,
 };
+use casa_core::measures::frequency::FrequencyRef;
 use casa_images::{GaussianBeam, Image, ImageBeamSet, ImageInfo, ImageType};
-use casa_types::measures::frequency::FrequencyRef;
 
 fn main() {
     let dir = tempfile::tempdir().expect("create temp dir");

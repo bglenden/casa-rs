@@ -6,9 +6,9 @@ use std::collections::btree_map::Entry;
 use std::path::{Path, PathBuf};
 
 use casa_components::ComponentList;
+use casa_core::RecordValue;
 use casa_images::PagedImage;
 use casa_ms::MsResult;
-use casa_types::RecordValue;
 
 use super::invalid;
 

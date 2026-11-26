@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeMap, mem::size_of};
 
-use casa_types::measures::direction::MDirection;
+use casa_core::measures::direction::MDirection;
 
 use crate::columns::direction_columns::DirectionColumn;
 use crate::derived::engine::{MsCalEngine, raw_field_phase_direction};

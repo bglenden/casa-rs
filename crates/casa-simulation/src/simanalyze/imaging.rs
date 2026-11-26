@@ -2,6 +2,7 @@
 //! Sequential native applications used by simanalyze.
 use super::{Parameters, failure, plan::Plan, preflight, total_power};
 use crate::{SessionResources, simobserve::SimobserveError, simutil::analysis};
+use casa_core::ScalarValue;
 use casa_images::{ImageInterface, PagedImage};
 use casa_imaging_application::{Cancel, ImagingRequest, RunContext};
 use casa_imaging_runtime::{Demand, admit};
@@ -9,7 +10,6 @@ use casa_ms::{
     MeasurementSet, SubtableId,
     concat::{ConcatRequest, concat_with_memory},
 };
-use casa_types::ScalarValue;
 use serde_json::json;
 use std::path::PathBuf;
 

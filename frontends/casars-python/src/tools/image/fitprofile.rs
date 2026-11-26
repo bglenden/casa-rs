@@ -2,13 +2,13 @@
 
 use std::path::Path;
 
+use casa_core::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use casa_images::analysis::{
     ImageProfileFit, ImageProfileFitResult, ProfileDivisor, ProfileEstimates, ProfileFitOptions,
     ProfileLineReport, ProfileOutputNames, ProfilePeaks, ProfileRegion, ProfileSigma,
     SubimageRegion, ensure_artifacts_do_not_overlap,
 };
 use casa_images::{Image, ImageInterface};
-use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{Dimension, IxDyn, ShapeBuilder};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;

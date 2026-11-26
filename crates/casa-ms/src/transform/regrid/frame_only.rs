@@ -7,14 +7,14 @@ use std::sync::Arc;
 use std::time::Instant;
 use std::{fs, io};
 
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use casa_tables::publication::{
     copy_locked_table_tree_with_shared_files, private_table_file_metadata,
     replace_private_int32_column, table_manager_file_sequence,
     write_private_table_preserving_modes,
 };
 use casa_tables::{RequiredScalarColumnValues, Table, TableOptions, TablePartNames};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Array1;
 
 use crate::subtables::{MsDataDescription, MsSpectralWindow, get_i32};

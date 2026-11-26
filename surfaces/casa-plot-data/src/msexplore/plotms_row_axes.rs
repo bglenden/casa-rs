@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use casa_types::measures::position::MPosition;
+use casa_core::measures::position::MPosition;
 
 use super::plotms_ordinates::PointDimensions;
 use super::{

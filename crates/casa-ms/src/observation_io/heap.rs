@@ -6,12 +6,12 @@
 //! hold with these before they build it, and creation plans charge their
 //! catalogues by them.
 
+use casa_core::quanta::Quantity;
 use casa_observation::{
     AntennaEntry, AntennaId, Catalogue, DataGroupEntry, FieldEntry, ObservationEntry,
     PartitionEntry, ProcessorEntry, Receptors, ScanEntry, SourceEntry, SourceRecord, StateEntry,
     VisibilityUnits, WindowEntry,
 };
-use casa_types::quanta::Quantity;
 
 /// The heap `catalogue` holds ([`Catalogue::ephemeris_bytes`] for its
 /// ephemerides).
@@ -180,7 +180,7 @@ fn record_bytes(record: &SourceRecord) -> usize {
         systemic_velocities,
     } = record;
     model.as_ref().map_or(0, |record| {
-        size_of::<casa_types::RecordValue>()
+        size_of::<casa_core::RecordValue>()
             + 2 * size_of::<usize>()
             + record.retained_heap_bytes().unwrap_or(usize::MAX)
     }) + optional(code)
@@ -220,7 +220,7 @@ pub(crate) fn partition_bytes(partition: &PartitionEntry) -> usize {
         + plain(scans)
         + plain(baselines)
         + entries(data_groups, group_bytes)
-        + casa_types::memory::btree_node_bytes::<AntennaId, Receptors>(receptors.len())
+        + casa_core::memory::btree_node_bytes::<AntennaId, Receptors>(receptors.len())
         + receptors.values().map(receptors_bytes).sum::<usize>()
         + plain(states)
 }

@@ -3,9 +3,9 @@
 
 use std::f64::consts::TAU;
 
+use casa_core::ArrayValue;
 use casa_fft::Fft2;
 use casa_tables::TableError;
-use casa_types::ArrayValue;
 use ndarray::Ix2;
 use num_complex::Complex32;
 

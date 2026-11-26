@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Count stored integration groups before allocating their retained state.
 use super::{SimulatorError, SimulatorResult};
+use casa_core::ScalarValue;
 use casa_imaging_runtime::{Demand, admit};
 use casa_ms::MeasurementSet;
-use casa_types::ScalarValue;
 
 pub(super) fn count(
     ms: &MeasurementSet,

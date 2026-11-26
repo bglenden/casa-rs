@@ -4,11 +4,11 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use casa_core::{ArrayValue, PrimitiveType, RecordField, ScalarValue, Value};
 use casa_tables::{
     ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema, TableWriteLock,
     strip_directory,
 };
-use casa_types::{ArrayValue, PrimitiveType, RecordField, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::compute::{Gain, Metadata, Tsys, message};

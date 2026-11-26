@@ -3,17 +3,17 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use casa_ms::{MeasurementSet, MsError, MsResult, subtables::SubTable};
-use casa_tables::RequiredScalarColumnValues::{Float64, Int32};
-use casa_types::measures::{
+use casa_core::measures::{
     epoch::{EpochRef, MEpoch},
     frame::MeasFrame,
 };
-use casa_types::quanta::{
+use casa_core::quanta::{
     Quantity,
     format::{FITS, format_time},
 };
-use casa_types::{ArrayValue, ScalarValue, Value};
+use casa_core::{ArrayValue, ScalarValue, Value};
+use casa_ms::{MeasurementSet, MsError, MsResult, subtables::SubTable};
+use casa_tables::RequiredScalarColumnValues::{Float64, Int32};
 
 pub(super) struct QueryMetadata {
     pub(super) date: String,

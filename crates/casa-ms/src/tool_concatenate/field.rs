@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use casa_types::{
+use casa_core::{
     ArrayValue, RecordValue, ScalarValue, Value,
     measures::{
         MeasFrame,

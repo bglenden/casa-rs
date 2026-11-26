@@ -12,7 +12,7 @@
 
 use std::sync::mpsc;
 
-use casa_tables::StreamingTiledPrimitiveWriter;
+use casa_tables::streamed_tiled::StreamingTiledPrimitiveWriter;
 use num_complex::Complex32;
 
 use super::{

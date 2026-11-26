@@ -3,9 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_ms::MeasurementSet;
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, ScalarValue, Value};
 
 use super::{
     COL_GAIN, COL_TIME, GencalError, POWER_CURVE_TERMS, PriorCalRow, f32_column,

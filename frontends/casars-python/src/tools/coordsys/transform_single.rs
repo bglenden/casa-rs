@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, StokesType};
-use casa_types::measures::{
+use casa_core::measures::{
     MeasFrame,
     direction::{DirectionRef, MDirection, casa_direction_frame_name},
     direction_from_record,
     frequency::CasaFrequencyFrame,
     frequency_from_record,
 };
-use casa_types::quanta::casacore::{get_value, mvangle_radians};
-use casa_types::quanta::{Quantity, Unit};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+use casa_core::quanta::casacore::{get_value, mvangle_radians};
+use casa_core::quanta::{Quantity, Unit};
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;

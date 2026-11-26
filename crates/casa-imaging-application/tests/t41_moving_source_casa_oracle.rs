@@ -10,12 +10,12 @@ use std::{
 };
 
 use casa_coordinates::CoordinateModel;
+use casa_core::Correlation;
+use casa_core::measures::frequency::FrequencyRef;
 use casa_images::PagedImage;
 use casa_imaging_application::execute;
 use casa_imaging_application::store_law::row_pointing;
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
-use casa_types::Correlation;
-use casa_types::measures::frequency::FrequencyRef;
 use serde::Deserialize;
 use serde_json::json;
 

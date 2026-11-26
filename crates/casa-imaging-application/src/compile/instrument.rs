@@ -7,6 +7,7 @@
 use std::collections::BTreeSet;
 use std::ops::Range;
 
+use casa_core::quanta::Unit;
 use casa_imaging_model::{
     AntennaResponseClass, InstrumentModel, MissingPointingPolicy, ObservationPointingLaw,
     PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
@@ -14,7 +15,6 @@ use casa_imaging_model::{
 };
 use casa_imaging_products::AnalyticPrimaryBeamModel;
 use casa_observation::Catalogue;
-use casa_types::quanta::Unit;
 
 use super::PrepareError;
 use crate::Gridder;
@@ -324,9 +324,9 @@ mod tests {
     }
 
     fn catalogue(telescope: &str, dishes_m: &[f64]) -> Catalogue {
+        use casa_core::measures::position::MPosition;
+        use casa_core::quanta::Quantity;
         use casa_observation::{AntennaEntry, ObservationEntry};
-        use casa_types::measures::position::MPosition;
-        use casa_types::quanta::Quantity;
         Catalogue {
             observations: vec![ObservationEntry {
                 telescope: telescope.to_string(),

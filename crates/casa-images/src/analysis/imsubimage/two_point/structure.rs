@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_core::Complex64;
 use casa_fft::Fft2;
-use casa_types::Complex64;
 use ndarray::{Array2, ArrayView2, Zip};
 
 use crate::ImageError;

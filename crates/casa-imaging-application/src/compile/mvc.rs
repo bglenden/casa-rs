@@ -272,8 +272,8 @@ pub(super) fn check_execution_scope(
     request: &ImagingRequest,
     selected_fields: usize,
 ) -> Result<(), super::PrepareError> {
+    use casa_core::measures::frequency::FrequencyRef;
     use casa_imaging_model::RestoringBeamPolicy;
-    use casa_types::measures::frequency::FrequencyRef;
     let field_limit = if matches!(
         request.gridder,
         crate::Gridder::Awp2 { computepastep, .. } if computepastep < 180.0
@@ -585,8 +585,8 @@ mod tests {
 
     #[test]
     fn native_mvc_refuses_unimplemented_execution_modes() {
+        use casa_core::measures::frequency::FrequencyRef;
         use casa_imaging_model::RestoringBeamPolicy;
-        use casa_types::measures::frequency::FrequencyRef;
         let parent = request(json!({
             "specmode": "mfs", "deconvolver": "mtmfs", "nterms": 2,
             "niter": 0, "weighting": "natural",

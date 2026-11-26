@@ -15,9 +15,9 @@
 
 use std::path::Path;
 
+use casa_core::{RecordValue, ScalarValue, Value};
 use casa_lattices::PagedArray;
 use casa_tables::{Table, TableOptions};
-use casa_types::{RecordValue, ScalarValue, Value};
 
 /// The field of a mask region record that names its mask table.
 const MASK_TABLE_FIELD: &str = "mask";
@@ -70,7 +70,7 @@ pub(crate) fn point_mask_references_inside(masks: &mut RecordValue) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use casa_types::RecordField;
+    use casa_core::RecordField;
 
     fn region(stored: Value) -> Value {
         Value::Record(RecordValue::new(vec![RecordField::new(

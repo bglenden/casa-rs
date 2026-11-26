@@ -39,10 +39,10 @@ pub(super) use transform_single::{WorldArgument, image_pixel_argument};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, ObsInfo, defaults};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, MEpoch, MPosition};
-use casa_types::measures::{direction_to_record, epoch_to_record, position_to_record};
-use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{EpochRef, MEpoch, MPosition};
+use casa_core::measures::{direction_to_record, epoch_to_record, position_to_record};
+use casa_core::{RecordField, RecordValue, ScalarValue, Value};
 use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_core::ArrayValue;
 use casa_ms::MeasurementSet;
 use casa_test_support::casatestdata_path;
-use casa_types::ArrayValue;
 
 fn papersky_mosaic_ms_path() -> Option<std::path::PathBuf> {
     casatestdata_path("measurementset/evla/papersky_mosaic.ms").filter(|path| path.exists())

@@ -16,10 +16,10 @@
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
+use casa_core::{ScalarValue, Value as TableValue};
 use casa_imaging_application::ImagingRequest;
 use casa_imaging_application::store_law::row_pointing;
 use casa_ms::{MeasurementSet, SubtableId};
-use casa_types::{ScalarValue, Value as TableValue};
 use flate2::read::GzDecoder;
 use serde_json::{Value, json};
 

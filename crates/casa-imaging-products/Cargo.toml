@@ -16,13 +16,13 @@ workspace = true
 
 [dependencies]
 tracing.workspace = true
-casa-coordinates = { path = "../casa-coordinates" }
-casa-fft = { path = "../casa-fft" }
+casa-coordinates.workspace = true
+casa-fft.workspace = true
 casa-images = { path = "../casa-images" }
 casa-imaging-deconvolution = { path = "../casa-imaging-deconvolution" }
 casa-imaging-model = { path = "../casa-imaging-model" }
-casa-numerics = { path = "../casa-numerics" }
-casa-types = { path = "../casa-types" }
+casa-numerics.workspace = true
+casa-core.workspace = true
 libc = "0.2"
 ndarray.workspace = true
 num-complex.workspace = true

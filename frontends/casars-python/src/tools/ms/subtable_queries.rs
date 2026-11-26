@@ -5,13 +5,13 @@ use std::cell::{Ref, RefCell};
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 
+use casa_core::ScalarValue;
 use casa_ms::subtables::{
     FieldDirectionColumn, MetadataDirection, MsDataDescription, MsField, MsPolarization,
     MsSpectralWindow, linked_subtable_row,
 };
 use casa_ms::{MeasurementSet, MsError, MsResult, SubtableId};
 use casa_tables::{Table, TableOptions, TablePartNames};
-use casa_types::ScalarValue;
 use pyo3::prelude::*;
 
 #[cfg(unix)]

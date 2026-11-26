@@ -4,8 +4,8 @@
 use std::ops::Range;
 use std::path::Path;
 
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use ndarray::{Axis, Slice};
 
 use super::super::{

@@ -59,13 +59,13 @@ impl MetalBackend<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casa_core::Correlation;
     use casa_imaging_model::PolarizationCoordinate;
     use casa_imaging_operator::{
         Basis, CfKey, GridBackend, GridGeometry, GridPadding, GridPrecision, ImageExtent,
         MeasurementOperator, Mode, ModeSet, Placement, PlaneRange, PolarizationRouting,
         SampleBuffer, Spheroidal, Work,
     };
-    use casa_types::Correlation;
     use num_complex::Complex32;
     use objc2_metal::MTLCommandBufferStatus;
 

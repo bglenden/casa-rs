@@ -42,12 +42,12 @@ use casa_components::{ComponentList, PixelGrid, ShapeKind, SkyComponent};
 use casa_coordinates::{
     Coordinate, CoordinateError, CoordinateModel, CoordinateType, DirectionCoordinate,
 };
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::frame::MeasFrame;
+use casa_core::measures::frequency::FrequencyRef;
 use casa_images::analysis::{SubimagePlan, SubimageRegion};
 use casa_images::{ImageError, ImageInfo, MutableImageInterface, PagedImage, SubImageMut};
 use casa_lattices::{Lattice, LatticeMut, ScratchSpace, TempLattice, TempStoragePolicy};
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::frame::MeasFrame;
-use casa_types::measures::frequency::FrequencyRef;
 use ndarray::{Array3, ArrayD, IxDyn, Slice};
 
 use super::{SkyModelError, pixel_axes, require_native_direction_frame};
@@ -605,9 +605,9 @@ fn usable_frame(frame: &MeasFrame) -> bool {
 
 /// Hz per unit of a spectral axis in `unit`.
 fn qa_value_in_hz(unit: &str) -> Result<f64, SkyModelError> {
-    let one = casa_types::quanta::Quantity::with_unit(
+    let one = casa_core::quanta::Quantity::with_unit(
         1.0,
-        casa_types::quanta::casacore::casacore_unit(unit).map_err(SimutilError::from)?,
+        casa_core::quanta::casacore::casacore_unit(unit).map_err(SimutilError::from)?,
     );
     Ok(qa::value_in(&one, "Hz")?)
 }

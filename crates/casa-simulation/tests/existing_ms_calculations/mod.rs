@@ -7,10 +7,10 @@
 #[path = "../predict_support/mod.rs"]
 pub(super) mod predict_support;
 
+use casa_core::measures::{EpochRef, MEpoch};
+use casa_core::{ArrayValue, ScalarValue};
 use casa_simulation::{ApplySpec, BackendRequest, PredictSpec, Simulator, SimulatorOptions};
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::{EpochRef, MEpoch};
-use casa_types::{ArrayValue, ScalarValue};
 use flate2::read::GzDecoder;
 use serde_json::Value;
 use std::path::Path;

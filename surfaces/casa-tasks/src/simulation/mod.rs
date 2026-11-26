@@ -151,7 +151,7 @@ pub fn resolve_request(
 /// CASA's data directories: the measures data's candidates, which hold
 /// `alma/simmos` in a CASA data tree.
 pub(crate) fn data_roots() -> Result<Vec<PathBuf>, String> {
-    casa_measures_data::MeasuresRuntime::discover_candidates()
+    casa_measures::MeasuresRuntime::discover_candidates()
         .map(|candidates| {
             candidates
                 .into_iter()

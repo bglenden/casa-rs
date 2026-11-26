@@ -2,8 +2,8 @@
 //! Reconcile the MeasurementSet identities whose matching is independent of
 //! spectral windows, feed mappings, and field source IDs.
 
+use casa_core::{RecordValue, ScalarValue, Value};
 use casa_tables::{Table, table_quantum::ScalarQuantColumn};
-use casa_types::{RecordValue, ScalarValue, Value};
 
 use crate::MsResult;
 

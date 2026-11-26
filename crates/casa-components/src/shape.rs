@@ -31,8 +31,8 @@
 
 use std::f64::consts::PI;
 
-use casa_types::measures::direction::MDirection;
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::measures::direction::MDirection;
+use casa_core::quanta::{Quantity, Unit};
 
 use crate::component_type::ShapeType;
 use crate::error::ComponentError;
@@ -471,7 +471,7 @@ fn check_angle_error(what: &'static str, error: &Quantity) -> Result<(), Compone
 
 #[cfg(test)]
 mod tests {
-    use casa_types::measures::direction::DirectionRef;
+    use casa_core::measures::direction::DirectionRef;
 
     use super::*;
 

@@ -5,11 +5,11 @@ use std::fmt::Write;
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, SpectralCoordinate,
 };
+use casa_core::measures::doppler::DopplerRef;
+use casa_core::quanta::{Quantity, Unit, casacore};
+use casa_core::{RecordValue, ScalarValue, Value};
 use casa_images::beam::wrap_position_angle;
 use casa_images::{GaussianBeam, ImageBeamSet};
-use casa_types::measures::doppler::DopplerRef;
-use casa_types::quanta::{Quantity, Unit, casacore};
-use casa_types::{RecordValue, ScalarValue, Value};
 use pyo3::PyResult;
 
 use crate::tools::coordsys::world_reference::spectral_text;

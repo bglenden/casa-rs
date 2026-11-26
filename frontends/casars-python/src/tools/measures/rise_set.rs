@@ -3,10 +3,10 @@
 
 use std::f64::consts::{PI, TAU};
 
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, MEpoch, MeasFrame, MeasureError};
-use casa_types::quanta::format::{TIME, YMD, format_angle, format_time};
-use casa_types::quanta::{Dimension, UnitDim};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{EpochRef, MEpoch, MeasFrame, MeasureError};
+use casa_core::quanta::format::{TIME, YMD, format_angle, format_time};
+use casa_core::quanta::{Dimension, UnitDim};
 use pyo3::prelude::*;
 
 use super::{PyMeasures, State, frame, no_measures, record::Measures};

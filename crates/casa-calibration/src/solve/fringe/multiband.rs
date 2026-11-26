@@ -3,8 +3,8 @@
 
 use std::f64::consts::TAU;
 
+use casa_core::Complex32;
 use casa_fft::Fft2;
-use casa_types::Complex32;
 
 use super::search::{FringePeak, GridSpec, NoiseWeights};
 use super::{FringeParameters, FringeSample, Window, error};

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_core::ArrayD;
 use casa_lattices::{Lattice, LatticeMut, ScratchSpace, TempLattice, TempStoragePolicy};
-use casa_types::ArrayD;
 use ndarray::IxDyn;
 
 use crate::ImageError;

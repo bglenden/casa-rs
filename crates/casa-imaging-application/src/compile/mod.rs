@@ -51,6 +51,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use casa_core::measures::frame::MeasFrame;
+use casa_core::measures::frequency::FrequencyRef;
 use casa_imaging_deconvolution::ImageDomainReconstructionMaskPlans;
 use casa_imaging_model::{
     CentreLaws, DensityFieldKeys, FlagPolicy, GeometryInput, ModelBounds,
@@ -68,8 +70,6 @@ use casa_ms::PhaseCentreEphemeris;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::observation_io::Msv2Observation;
 use casa_observation::Catalogue;
-use casa_types::measures::frame::MeasFrame;
-use casa_types::measures::frequency::FrequencyRef;
 
 use crate::native::OpenedObservation;
 use crate::{
@@ -401,7 +401,7 @@ fn virtual_model_plans(
     request: &ImagingRequest,
     stores: &[stores::SurveyedStore],
     coordinates: &casa_coordinates::CoordinateSystem,
-    measures: &Arc<dyn casa_types::measures::MeasuresProvider>,
+    measures: &Arc<dyn casa_core::measures::MeasuresProvider>,
 ) -> Result<Vec<crate::virtual_model::VirtualModelPlan>, PrepareError> {
     stores
         .iter()

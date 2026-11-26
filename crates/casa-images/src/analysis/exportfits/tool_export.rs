@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::FitsValue;
-use casa_types::RecordValue;
+use casa_core::RecordValue;
 
 use crate::analysis::{
     ExportFitsRequest, FitsExportSummary, SPEED_OF_LIGHT_M_S, SubimageOptions, SubimagePlan,

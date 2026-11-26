@@ -9,6 +9,12 @@ use std::path::Path;
 use casa_coordinates::{
     CoordinateSystem, CoordinateType, ObsInfo, SpectralCoordinate, StokesCoordinate, StokesType,
 };
+use casa_core::measures::{
+    MeasFrame,
+    direction::{DirectionRef, MDirection},
+    epoch::MEpoch,
+    frequency::FrequencyRef,
+};
 use casa_imaging_model::{
     DirectionCoordinateSpec, DirectionFrame, PhaseCentreLaw, PolarizationCoordinate, Projection,
     SkyDirection,
@@ -16,12 +22,6 @@ use casa_imaging_model::{
 use casa_imaging_products::PrimaryBeamCentres;
 use casa_ms::{EphemerisBudget, PhaseCentreEphemeris};
 use casa_observation::Catalogue;
-use casa_types::measures::{
-    MeasFrame,
-    direction::{DirectionRef, MDirection},
-    epoch::MEpoch,
-    frequency::FrequencyRef,
-};
 
 use super::PrepareError;
 use super::domains::PreparedImageDomain;
@@ -325,9 +325,9 @@ fn shifted_angles(
 
 /// Whether a `PHASE_DIR` polynomial, shaped `[2, NUM_POLY + 1]`, has a
 /// nonzero rate term. A zero rate is the constant direction exactly.
-fn phase_direction_varies(coefficients: &casa_types::ArrayValue) -> bool {
+fn phase_direction_varies(coefficients: &casa_core::ArrayValue) -> bool {
     match coefficients {
-        casa_types::ArrayValue::Float64(coefficients) => coefficients
+        casa_core::ArrayValue::Float64(coefficients) => coefficients
             .indexed_iter()
             .any(|(index, value)| index[1] > 0 && *value != 0.0),
         _ => false,
@@ -954,7 +954,7 @@ mod tests {
         use ndarray::ShapeBuilder as _;
         // Fortran order, as casacore stores it: lon0, lat0, lon1, lat1, ...
         let polynomial = |coefficients: &[f64]| {
-            casa_types::ArrayValue::Float64(
+            casa_core::ArrayValue::Float64(
                 ndarray::ArrayD::from_shape_vec(
                     ndarray::IxDyn(&[2, coefficients.len() / 2]).f(),
                     coefficients.to_vec(),

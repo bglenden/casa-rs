@@ -58,6 +58,9 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use casa_core::measures::MjdHighPrec;
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::frequency::FrequencyRef;
 use casa_ms::observation_io::{GroupClosure, Msv2Observation, Msv4Observation, OpenOptions};
 use casa_observation::{
     AccessRequest, BatchBuffers, BindingTolerance, BufferPool, Catalogue, Correlation,
@@ -65,9 +68,6 @@ use casa_observation::{
     Observation, ObservationError, ObservationId, OwnedEvent, PartitionId, ReadEvent, Roles,
     ScanId, Shared, TimeSelection, Traversal, WeightRequest,
 };
-use casa_types::measures::MjdHighPrec;
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::frequency::FrequencyRef;
 use flate2::read::GzDecoder;
 use num_complex::Complex32;
 use tar::Archive;
@@ -94,7 +94,7 @@ pub(crate) fn three_scans(path: &Path) {
             .fill_column_range(
                 "SCAN_NUMBER",
                 casa_tables::RowRange::new(rows.start, rows.end),
-                casa_types::Value::Scalar(casa_types::ScalarValue::Int32(scan)),
+                casa_core::Value::Scalar(casa_core::ScalarValue::Int32(scan)),
             )
             .expect("scan");
     }
@@ -123,10 +123,8 @@ pub(crate) fn follow_ephemerides(path: &Path, ids: &[i32]) {
     let field = ms.subtable_mut(casa_ms::SubtableId::Field).expect("FIELD");
     field
         .add_column(
-            casa_tables::ColumnSchema::scalar("EPHEMERIS_ID", casa_types::PrimitiveType::Int32),
-            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(
-                -1,
-            ))),
+            casa_tables::ColumnSchema::scalar("EPHEMERIS_ID", casa_core::PrimitiveType::Int32),
+            Some(casa_core::Value::Scalar(casa_core::ScalarValue::Int32(-1))),
         )
         .expect("EPHEMERIS_ID");
     for (row, id) in ids.iter().enumerate() {
@@ -135,7 +133,7 @@ pub(crate) fn follow_ephemerides(path: &Path, ids: &[i32]) {
                 .fill_column_range(
                     "TIME",
                     casa_tables::RowRange::new(row, row + 1),
-                    casa_types::Value::Scalar(reference_time.clone()),
+                    casa_core::Value::Scalar(reference_time.clone()),
                 )
                 .unwrap();
         }
@@ -143,7 +141,7 @@ pub(crate) fn follow_ephemerides(path: &Path, ids: &[i32]) {
             .fill_column_range(
                 "EPHEMERIS_ID",
                 casa_tables::RowRange::new(row, row + 1),
-                casa_types::Value::Scalar(casa_types::ScalarValue::Int32(*id)),
+                casa_core::Value::Scalar(casa_core::ScalarValue::Int32(*id)),
             )
             .expect("an ephemeris id");
     }
@@ -1194,7 +1192,7 @@ fn flag_row_is_folded_into_the_flags() {
         .fill_column_range(
             "FLAG_ROW",
             casa_tables::RowRange::new(5, 6),
-            casa_types::Value::Scalar(casa_types::ScalarValue::Bool(true)),
+            casa_core::Value::Scalar(casa_core::ScalarValue::Bool(true)),
         )
         .expect("set FLAG_ROW");
     ms.save().expect("save");

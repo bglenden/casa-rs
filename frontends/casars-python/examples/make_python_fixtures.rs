@@ -7,13 +7,13 @@ use casa_coordinates::{
     CoordinateSystem, DirectionCoordinate, LinearCoordinate, Projection, ProjectionType,
     SpectralCoordinate, StokesCoordinate, StokesType,
 };
-use casa_images::{GaussianBeam, Image, ImageBeamSet, ImageInfo, ImageType};
-use casa_tables::{ColumnSchema, EndianFormat, Table, TableOptions, TableSchema};
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::{
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::{
     ArrayD, ArrayValue, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
+use casa_images::{GaussianBeam, Image, ImageBeamSet, ImageInfo, ImageType};
+use casa_tables::{ColumnSchema, EndianFormat, Table, TableOptions, TableSchema};
 use ndarray::IxDyn;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

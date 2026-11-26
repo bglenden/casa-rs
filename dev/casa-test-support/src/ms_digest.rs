@@ -16,8 +16,8 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use casa_core::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use casa_tables::{ColumnType, Table, TableOptions};
-use casa_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 
 /// The subtables every MeasurementSet has, in manifest order.
 const REQUIRED_SUBTABLES: [&str; 12] = [

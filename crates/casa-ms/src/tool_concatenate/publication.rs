@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use casa_core::{PrimitiveType, RecordValue, ScalarValue, Value};
 use casa_tables::{
     ColumnAddition, ColumnSchema, PreparedTableEdit, Table, TableOptions, TablePartNames,
     TableWriteLock,
@@ -14,7 +15,6 @@ use casa_tables::{
         lock_table_tree_for_replacement_with_held,
     },
 };
-use casa_types::{PrimitiveType, RecordValue, ScalarValue, Value};
 use rayon::prelude::*;
 use tempfile::TempDir;
 

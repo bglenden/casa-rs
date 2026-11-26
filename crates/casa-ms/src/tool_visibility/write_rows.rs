@@ -3,10 +3,10 @@
 
 use std::collections::HashMap;
 
+use casa_core::{ArrayValue, RecordValue, ScalarValue};
 use casa_tables::{
     ArrayShapeContract, ColumnType, RequiredScalarColumnValues, Table, TableWriteLock,
 };
-use casa_types::{ArrayValue, RecordValue, ScalarValue};
 use ndarray::{ArrayD, ArrayViewD, Axis, IxDyn};
 
 use super::polarization_axis::WritePolarization;

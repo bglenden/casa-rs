@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::LazyLock;
 
+use casa_core::{ScalarValue, Value};
 use casa_tables::TableOptions;
-use casa_types::{ScalarValue, Value};
 use regex::Regex;
 
 use super::{

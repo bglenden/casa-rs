@@ -4,7 +4,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Array2;
 
 use super::{

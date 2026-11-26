@@ -8,8 +8,8 @@
 
 use std::collections::HashMap;
 
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_tables::Table;
-use casa_types::{ArrayValue, ScalarValue, Value};
 
 use crate::MeasurementSet;
 use crate::column_def::ColumnDef;

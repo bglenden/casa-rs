@@ -4,6 +4,8 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 
+use casa_core::RecordValue;
+use casa_core::quanta::Quantity;
 use casa_images::{
     ImageInterface, MutableImageInterface, PagedImage,
     analysis::{
@@ -12,8 +14,6 @@ use casa_images::{
     },
 };
 use casa_lattices::TiledShape;
-use casa_types::RecordValue;
-use casa_types::quanta::Quantity;
 use pyo3::prelude::*;
 use pyo3::types::PyBool;
 

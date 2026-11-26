@@ -3,13 +3,13 @@
 
 use std::sync::Arc;
 
-use casa_measures_data::PlanetaryTable;
+use casa_core::ScalarValue;
+use casa_core::measures::MeasFrame;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::position::MPosition;
+use casa_measures::PlanetaryTable;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection};
-use casa_types::ScalarValue;
-use casa_types::measures::MeasFrame;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::position::MPosition;
 
 use super::invalid;
 

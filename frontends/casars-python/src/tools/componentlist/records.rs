@@ -5,10 +5,10 @@ mod measures;
 mod spectrum;
 
 use casa_components::{ComponentShape, Flux, ShapeType, SkyComponent, SpectralKind, SpectralModel};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::quanta::{Quantity, Unit};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::quanta::{Quantity, Unit};
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use num_complex::Complex64;
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
@@ -249,7 +249,7 @@ fn flux(input: &RecordValue, lines: &mut Vec<LogLine>) -> Result<RecordValue, St
             values.try_into().expect("four errors")
         }
     };
-    let parsed = casa_types::quanta::casacore::casacore_unit(unit).map_err(|e| e.to_string())?;
+    let parsed = casa_core::quanta::casacore::casacore_unit(unit).map_err(|e| e.to_string())?;
     if !parsed.conformant(&Unit::new("Jy").expect("Jy"))
         && !parsed.conformant(&Unit::new("K.rad.rad").expect("K.rad.rad"))
     {
@@ -321,7 +321,7 @@ fn shape(
     let kind = ShapeType::parse_casa(name).map_err(|_| unknown)?;
     let mut record = input.clone();
     let direction = match input.get("direction") {
-        None => casa_types::measures::direction_to_record(&MDirection::from_angles(
+        None => casa_core::measures::direction_to_record(&MDirection::from_angles(
             0.0,
             std::f64::consts::FRAC_PI_2,
             DirectionRef::J2000,
@@ -409,7 +409,7 @@ fn spectrum(input: &RecordValue, lines: &mut Vec<LogLine>) -> Result<RecordValue
     match input.get("frequency") {
         None=>return Err("The 'frequency' field does not exist\n".into()),
         Some(Value::Scalar(ScalarValue::String(value))) if value=="current"=>{
-            replace(&mut record,"frequency",Value::Record(casa_types::measures::frequency_to_record(&MFrequency::new(1e9,FrequencyRef::LSRK))));
+            replace(&mut record,"frequency",Value::Record(casa_core::measures::frequency_to_record(&MFrequency::new(1e9,FrequencyRef::LSRK))));
         }
         Some(Value::Record(frequency))=>{
             let frequency = measures::normalize(frequency, crate::convert::holder::MeasureKind::Frequency, lines)

@@ -2,8 +2,8 @@
 //! Prepare CASA component shape updates before mutating the list.
 
 use casa_components::{ComponentShape, Ellipse, EllipseErrors, ShapeKind, ShapeType};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::quanta::{Dimension, Quantity, Unit, UnitDim};
 use pyo3::exceptions::{PyOverflowError, PySystemError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyFloat, PyInt, PyList, PyString, PyTuple};

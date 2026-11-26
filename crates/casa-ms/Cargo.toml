@@ -18,14 +18,14 @@ msv4 = ["dep:zarrs", "dep:zarrs_filesystem", "dep:bytemuck", "dep:unsafe_cell_sl
 
 [dependencies]
 casa-atmosphere = { path = "../casa-atmosphere" }
-casa-coordinates = { path = "../casa-coordinates" }
-casa-fft = { path = "../casa-fft" }
-casa-measures-data = { path = "../casa-measures-data" }
-casa-numerics = { path = "../casa-numerics" }
-casa-observation = { path = "../casa-observation" }
+casa-coordinates.workspace = true
+casa-fft.workspace = true
+casa-measures.workspace = true
+casa-numerics.workspace = true
+casa-observation.workspace = true
 casa-components = { path = "../casa-components" }
-casa-tables = { path = "../casa-tables" }
-casa-types = { path = "../casa-types" }
+casa-tables.workspace = true
+casa-core.workspace = true
 libc = "0.2"
 libm = "0.2"
 ndarray.workspace = true
@@ -53,7 +53,7 @@ quick-xml = { version = "0.42", default-features = false }
 
 [dev-dependencies]
 casa-simulation = { path = "../casa-simulation" }
-casa-observation = { path = "../casa-observation" }
+casa-observation.workspace = true
 casa-test-support = { path = "../../dev/casa-test-support" }
 flate2 = "1"
 tar = "0.4"

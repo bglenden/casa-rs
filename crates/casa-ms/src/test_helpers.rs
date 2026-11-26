@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Shared test helpers for casa-ms tests.
 
-use casa_types::{ArrayValue, ScalarValue, Value};
+use casa_core::{ArrayValue, ScalarValue, Value};
 use ndarray::ArrayD;
 
 use crate::column_def::{ColumnDef, ColumnKind};
@@ -28,10 +28,10 @@ pub fn default_value(col_name: &str) -> Value {
 pub fn default_value_for_def(c: &ColumnDef) -> Value {
     match c.column_kind {
         ColumnKind::Scalar => match c.data_type {
-            casa_types::PrimitiveType::Int32 => Value::Scalar(ScalarValue::Int32(0)),
-            casa_types::PrimitiveType::Float64 => Value::Scalar(ScalarValue::Float64(0.0)),
-            casa_types::PrimitiveType::Bool => Value::Scalar(ScalarValue::Bool(false)),
-            casa_types::PrimitiveType::String => Value::Scalar(ScalarValue::String(String::new())),
+            casa_core::PrimitiveType::Int32 => Value::Scalar(ScalarValue::Int32(0)),
+            casa_core::PrimitiveType::Float64 => Value::Scalar(ScalarValue::Float64(0.0)),
+            casa_core::PrimitiveType::Bool => Value::Scalar(ScalarValue::Bool(false)),
+            casa_core::PrimitiveType::String => Value::Scalar(ScalarValue::String(String::new())),
             _ => Value::Scalar(ScalarValue::Float64(0.0)),
         },
         ColumnKind::FixedArray { shape } => {
@@ -44,10 +44,10 @@ pub fn default_value_for_def(c: &ColumnDef) -> Value {
             let shape: Vec<usize> = vec![1; ndim];
             let total: usize = shape.iter().product();
             match c.data_type {
-                casa_types::PrimitiveType::Bool => Value::Array(ArrayValue::Bool(
+                casa_core::PrimitiveType::Bool => Value::Array(ArrayValue::Bool(
                     ArrayD::from_shape_vec(shape, vec![false; total]).unwrap(),
                 )),
-                casa_types::PrimitiveType::Float32 => Value::Array(ArrayValue::Float32(
+                casa_core::PrimitiveType::Float32 => Value::Array(ArrayValue::Float32(
                     ArrayD::from_shape_vec(shape, vec![1.0; total]).unwrap(),
                 )),
                 _ => Value::Array(ArrayValue::Float64(

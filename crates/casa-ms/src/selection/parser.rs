@@ -3,7 +3,7 @@
 
 use std::{borrow::Cow, collections::BTreeMap};
 
-use casa_types::quanta::MvTime;
+use casa_core::quanta::MvTime;
 
 use super::intent::MatchMode;
 use crate::selection::antenna_expr::regex::FieldRegex;

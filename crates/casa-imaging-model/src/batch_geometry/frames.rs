@@ -8,13 +8,13 @@ use std::collections::HashMap;
 use std::mem::size_of;
 use std::sync::{Arc, Mutex};
 
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::ephemeris::{offset_true_angle, topocentric_j2000};
+use casa_core::measures::epoch::{EpochRef, MEpoch};
+use casa_core::measures::radial_velocity::MRadialVelocity;
+use casa_core::measures::{MPosition, MeasFrame, MeasureError, MeasuresProvider};
+use casa_core::quanta::Unit;
 use casa_observation::{AntennaId, Catalogue, FieldEphemeris, FieldId};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::ephemeris::{offset_true_angle, topocentric_j2000};
-use casa_types::measures::epoch::{EpochRef, MEpoch};
-use casa_types::measures::radial_velocity::MRadialVelocity;
-use casa_types::measures::{MPosition, MeasFrame, MeasureError, MeasuresProvider};
-use casa_types::quanta::Unit;
 
 use super::BatchGeometryError;
 use crate::sample_antennas::AntennaResponseClass;

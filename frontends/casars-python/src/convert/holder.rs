@@ -32,12 +32,12 @@
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::doppler::{DopplerRef, MDoppler};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::measures::radial_velocity::MRadialVelocity;
-use casa_types::measures::{EpochRef, MEpoch, MPosition, MjdHighPrec, PositionRef};
-use casa_types::quanta::{Dimension, Quantity, UnitDim, unique_prefix_index};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::doppler::{DopplerRef, MDoppler};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::measures::radial_velocity::MRadialVelocity;
+use casa_core::measures::{EpochRef, MEpoch, MPosition, MjdHighPrec, PositionRef};
+use casa_core::quanta::{Dimension, Quantity, UnitDim, unique_prefix_index};
 
 use super::value::CasaValue;
 use super::{Variant, quantity_record};
@@ -108,9 +108,7 @@ pub(crate) fn resolve_epoch_code(input: &str) -> Option<&'static str> {
 }
 
 /// Interpret a canonical epoch code stored in a measure record.
-pub(crate) fn epoch_ref(
-    code: &str,
-) -> Result<(EpochRef, bool), casa_types::measures::MeasureError> {
+pub(crate) fn epoch_ref(code: &str) -> Result<(EpochRef, bool), casa_core::measures::MeasureError> {
     let base = code.strip_prefix("R_");
     Ok((EpochRef::from_str(base.unwrap_or(code))?, base.is_some()))
 }
@@ -242,7 +240,7 @@ pub(crate) const C_MPS: f64 = 299_792_458.0;
 pub(crate) fn doppler_ref(code: &str) -> Result<DopplerRef, String> {
     (if code == "TRUE" { "BETA" } else { code })
         .parse()
-        .map_err(|e: casa_types::measures::MeasureError| e.to_string())
+        .map_err(|e: casa_core::measures::MeasureError| e.to_string())
 }
 
 /// CASA geometry reference codes and aliases.
@@ -703,7 +701,7 @@ fn spatial_value(values: &[Quantity], magnetic: bool) -> Result<[f64; 3], Holder
         return Err(illegal_quantity());
     };
     let magnitude = if magnetic {
-        casa_types::quanta::Unit::new("T").expect("tesla").val().dim
+        casa_core::quanta::Unit::new("T").expect("tesla").val().dim
     } else {
         UnitDim::basis(Dimension::Length)
     };
@@ -873,7 +871,7 @@ fn frequency_value(values: &[Quantity]) -> Result<MeasureValue, HolderError> {
     }
 }
 
-pub(crate) use casa_types::quanta::casacore::frequency_hz;
+pub(crate) use casa_core::quanta::casacore::frequency_hz;
 
 fn norm(xyz: [f64; 3]) -> f64 {
     (xyz[0] * xyz[0] + xyz[1] * xyz[1] + xyz[2] * xyz[2]).sqrt()

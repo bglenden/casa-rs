@@ -3,8 +3,8 @@
 //! 6.7.6 `sm` probes (2026-10-21): the SOURCE TIME, FIELD PHASE_DIR and
 //! ANTENNA POSITION each argument produced.
 
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::{NamedSourceDirection, ObservatoryPosition};
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::{NamedSourceDirection, ObservatoryPosition};
 
 use super::*;
 
@@ -274,7 +274,7 @@ fn positions_read_as_casa_reads_them() {
         ],
     );
     let wgs84 = position(&record, &catalogue()).unwrap().unwrap();
-    assert_eq!(wgs84.refer(), casa_types::measures::PositionRef::WGS84);
+    assert_eq!(wgs84.refer(), casa_core::measures::PositionRef::WGS84);
     let itrf = wgs84.as_itrf();
     assert_xyz(itrf, [-1_599_737.633_737, -5_043_011.986_449, itrf[2]]);
 }

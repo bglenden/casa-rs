@@ -5,9 +5,9 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use casa_coordinates::{CoordinateSystem, SpectralCoordinate};
+use casa_core::measures::frequency::FrequencyRef;
 use casa_imaging_model::ImageDomainRole;
 use casa_imaging_products::CasaImageWriter;
-use casa_types::measures::frequency::FrequencyRef;
 
 #[global_allocator]
 static HEAP: CountingHeap = CountingHeap;

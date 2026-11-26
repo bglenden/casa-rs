@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Selected MAIN-table column reads used by the selection planner.
 
+use casa_core::ArrayValue;
 use casa_tables::{
     ColumnType, RequiredScalarColumnDestination, RequiredScalarColumnValuesMut,
     SelectedArray1DCells, Table,
 };
-use casa_types::ArrayValue;
 
 use crate::error::{MsError, MsResult};
 
@@ -143,7 +143,7 @@ pub(super) fn load_i32_column(table: &Table, column: &str, rows: &[usize]) -> Ms
         .into_iter()
         .zip(rows.iter().copied())
         .map(|(value, row)| match value {
-            Some(casa_types::ScalarValue::Int32(v)) => Ok(v),
+            Some(casa_core::ScalarValue::Int32(v)) => Ok(v),
             Some(other) => Err(MsError::ColumnTypeMismatch {
                 column: column.to_string(),
                 table: "MAIN".to_string(),
@@ -174,7 +174,7 @@ pub(super) fn load_f64_column(table: &Table, column: &str, rows: &[usize]) -> Ms
         .into_iter()
         .zip(rows.iter().copied())
         .map(|(value, row)| match value {
-            Some(casa_types::ScalarValue::Float64(v)) => Ok(v),
+            Some(casa_core::ScalarValue::Float64(v)) => Ok(v),
             Some(other) => Err(MsError::ColumnTypeMismatch {
                 column: column.to_string(),
                 table: "MAIN".to_string(),
@@ -196,7 +196,7 @@ fn load_bool_column(table: &Table, column: &str, rows: &[usize]) -> MsResult<Vec
         .into_iter()
         .zip(rows.iter().copied())
         .map(|(value, row)| match value {
-            Some(casa_types::ScalarValue::Bool(v)) => Ok(v),
+            Some(casa_core::ScalarValue::Bool(v)) => Ok(v),
             Some(other) => Err(MsError::ColumnTypeMismatch {
                 column: column.to_string(),
                 table: "MAIN".to_string(),
@@ -215,8 +215,8 @@ fn load_bool_column(table: &Table, column: &str, rows: &[usize]) -> MsResult<Vec
 mod tests {
     use std::path::Path;
 
+    use casa_core::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
     use casa_tables::{ColumnOptions, ColumnSchema, DataManagerKind, TableOptions, TableSchema};
-    use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
     use super::*;
 

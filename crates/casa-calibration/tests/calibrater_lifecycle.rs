@@ -10,9 +10,9 @@ use casa_calibration::{
     GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest, GainType,
     RefAntSelector,
 };
+use casa_core::{ArrayValue, Complex32, Value};
 use casa_ms::{MeasurementSet, MsSelection};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, Complex32, Value};
 use ndarray::{ArrayD, IxDyn};
 
 fn select_field(field: &str) -> MsSelection {

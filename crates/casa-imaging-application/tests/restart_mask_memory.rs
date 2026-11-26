@@ -8,10 +8,10 @@ use casa_coordinates::{
     CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate,
     StokesCoordinate, StokesType,
 };
+use casa_core::measures::{direction::DirectionRef, frequency::FrequencyRef};
 use casa_images::PagedImage;
 use casa_imaging_application::restart_mask_law::Input;
 use casa_imaging_deconvolution::MaskPlanes;
-use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
 use ndarray::{ArrayD, IxDyn};
 
 #[global_allocator]

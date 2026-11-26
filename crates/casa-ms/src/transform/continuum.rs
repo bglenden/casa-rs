@@ -3,8 +3,8 @@
 
 use std::collections::BTreeMap;
 
+use casa_core::{ArrayValue, Complex32};
 use casa_numerics::solve_weighted_least_squares;
-use casa_types::{ArrayValue, Complex32};
 use ndarray::{Array1, ArrayD, Ix2, s};
 
 use super::{MainArrayBlock, MsTransformError, TransformChannelSelection, VisibilityColumns};

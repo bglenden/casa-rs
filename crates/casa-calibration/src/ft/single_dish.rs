@@ -6,6 +6,8 @@ use std::path::Path;
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, StokesCoordinate,
 };
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use casa_images::PagedImage;
 use casa_imaging_operator::PolarizationRouting;
 use casa_imaging_runtime::{Demand, HostResources, ResourcePolicy, admit};
@@ -17,8 +19,6 @@ use casa_ms::{
     convert_frequency_to_frame_with_frame,
 };
 use casa_numerics::{BeamPattern, PrimaryBeam};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::image::{

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Original T/Tf noise-scale solutions, shared by output and later observations.
 use casa_calibration::{SimulatedJones, SimulatedSolution, SolutionValues, simulated_table_bytes};
+use casa_core::Complex32;
 use casa_imaging_runtime::Reservation;
-use casa_types::Complex32;
 
 #[derive(Debug)]
 pub(crate) struct Chunk {

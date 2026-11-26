@@ -4,8 +4,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use casa_core::measures::frequency::CasaFrequencyFrame;
 use casa_tables::Table;
-use casa_types::measures::frequency::CasaFrequencyFrame;
 
 use super::super::{Antenna, ImportHeader, Window, antenna_diameter};
 use super::asap_row::{doubles, flags, integer, invalid, number, string, subtable};

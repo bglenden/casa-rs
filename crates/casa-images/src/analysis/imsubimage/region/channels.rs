@@ -2,7 +2,7 @@
 //! Channel ranges for image regions.
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::quanta::{Quantity, Unit};
 
 use crate::analysis::{ChannelSpan, parse_image_channel_spans};
 use crate::{ImageError, ImageInterface, ImagePixel};

@@ -12,13 +12,13 @@ use std::f64::consts::{PI, TAU};
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::CoordinateModel;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::ephemeris::offset_true_angle;
+use casa_core::{ArrayValue, PrimitiveType, ScalarValue, Value};
 use casa_ms::{MeasurementSet, SubtableId};
 use casa_test_support::ephemeris_table::{
     EphemerisRow, write_ephemeris_table, write_field_ephemeris,
 };
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::ephemeris::offset_true_angle;
-use casa_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
 use serde_json::json;
 
 use super::fixture::{Component, Observation, PHASE_CENTER_RAD};
@@ -142,7 +142,7 @@ fn moving_aw_cube(channels: usize) -> (Observation, serde_json::Value) {
         .set_i32(
             0,
             "MEAS_FREQ_REF",
-            casa_types::measures::frequency::FrequencyRef::TOPO.casacore_code(),
+            casa_core::measures::frequency::FrequencyRef::TOPO.casacore_code(),
         )
         .expect("declare TOPO input");
     ms.save().expect("save TOPO input");
@@ -199,7 +199,7 @@ fn aw_nearest_images_a_multichannel_rest_cube() {
         .expect("spectral coordinate");
     assert_eq!(
         coordinate.frequency_ref(),
-        casa_types::measures::frequency::FrequencyRef::REST
+        casa_core::measures::frequency::FrequencyRef::REST
     );
 
     let selected_coordinate = selected

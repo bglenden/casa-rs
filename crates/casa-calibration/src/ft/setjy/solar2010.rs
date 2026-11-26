@@ -4,15 +4,15 @@
 use std::path::{Path, PathBuf};
 
 use casa_components::{ComponentShape, ShapeType, SkyComponent};
-use casa_measures_data::MeasuresRuntime;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::epoch::{EpochRef, MEpoch};
+use casa_core::measures::frame::MeasFrame;
+use casa_core::measures::frequency::MFrequency;
+use casa_core::quanta::{Quantity, Unit};
+use casa_core::{ScalarValue, Value};
+use casa_measures::MeasuresRuntime;
 use casa_ms::{MsError, MsResult};
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::epoch::{EpochRef, MEpoch};
-use casa_types::measures::frame::MeasFrame;
-use casa_types::measures::frequency::MFrequency;
-use casa_types::quanta::{Quantity, Unit};
-use casa_types::{ScalarValue, Value};
 
 use crate::ft::{invalid, setjy::sampled_shape};
 

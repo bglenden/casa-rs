@@ -4,8 +4,8 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use casa_core::Value;
 use casa_tables::{Table, TableWriteLock};
-use casa_types::Value;
 
 use crate::schema::SubtableId;
 use crate::scratch_columns::{Write, change_in_place};

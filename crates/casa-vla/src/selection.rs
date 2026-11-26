@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's per-record project, epoch and receiver-band tests.
 
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::quanta::{Quantity, Unit};
 
 use crate::disk::LogicalRecord;
 use crate::record::CdaId;

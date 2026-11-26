@@ -11,9 +11,9 @@
 
 use std::path::PathBuf;
 
+use casa_core::{ArrayValue, PrimitiveType, ScalarValue, Value};
 use casa_tables::{ColumnSchema, RowRange};
 use casa_test_support::ephemeris_table::{EphemerisFrame, EphemerisRow, write_field_ephemeris_in};
-use casa_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
 
 /// The field's offset from the body, radians.
 const OFFSET_RAD: [f64; 2] = [1.0e-5, -5.0e-6];

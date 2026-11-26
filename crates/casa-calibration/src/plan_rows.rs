@@ -185,7 +185,7 @@ pub(super) fn load_i32_column_rows(
         .into_iter()
         .enumerate()
         .map(|(selected_idx, value)| match value {
-            Some(casa_types::ScalarValue::Int32(v)) => Ok(Some(v)),
+            Some(casa_core::ScalarValue::Int32(v)) => Ok(Some(v)),
             Some(other) => Err(ApplyPlanError::ScalarTypeMismatch {
                 context: format!("{column} selected row {selected_idx}"),
                 expected: "Int32",
@@ -210,7 +210,7 @@ fn load_f64_column_rows(
         .into_iter()
         .enumerate()
         .map(|(selected_idx, value)| match value {
-            Some(casa_types::ScalarValue::Float64(v)) => Ok(Some(v)),
+            Some(casa_core::ScalarValue::Float64(v)) => Ok(Some(v)),
             Some(other) => Err(ApplyPlanError::ScalarTypeMismatch {
                 context: format!("{column} selected row {selected_idx}"),
                 expected: "Float64",

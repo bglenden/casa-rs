@@ -130,7 +130,7 @@ impl Prediction {
                 .get(field)
                 .ok_or_else(|| SimulatorError::raised("image-beam pointing was not prepared"))?;
             let frame = held.observer_position_itrf_m.map(|[x, y, z]| {
-                use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
+                use casa_core::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
                 MeasFrame::new()
                     .with_measures(self.frame_measures.clone())
                     .with_position(MPosition::new_itrf(x, y, z))

@@ -2,8 +2,8 @@
 //! Physical Jones factors from interpolated, signed FPARAM values.
 use super::*;
 use casa_calibration::ComplexSolution;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
 
 pub(super) struct Geometry {
     elevations: Vec<f64>,
@@ -44,7 +44,7 @@ impl Geometry {
                 .with_position(MPosition::new_itrf(x, y, z))
                 .with_measures(sm.options.measures.clone());
             if matches!(kind, AppliedKind::IonosphereLinear) {
-                let field = casa_types::measures::earth_magnetic::calculate_igrf(
+                let field = casa_core::measures::earth_magnetic::calculate_igrf(
                     ionosphere_height_m,
                     &direction,
                     &frame,

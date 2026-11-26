@@ -26,11 +26,11 @@
 //! The model grids `predict` prepared were admitted by it, and are held.
 //! A refusal is a typed [`Admission`] carried by the session error.
 
+use casa_core::Complex32;
 use casa_imaging_runtime::pass::BackendChoice;
 use casa_imaging_runtime::{Admission, CoreAllocation, Demand, Reservation, admit, free_memory};
 use casa_ms::{MeasurementSetWriteError, MeasurementSetWritePlan, MeasurementSetWriteResources};
-use casa_tables::STREAMING_TILED_COLUMN_BUFFER_BYTES;
-use casa_types::Complex32;
+use casa_tables::streamed_tiled::STREAMING_TILED_COLUMN_BUFFER_BYTES;
 
 use super::data::DataStage;
 use super::geometry::RowGeometry;

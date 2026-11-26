@@ -6,9 +6,9 @@ use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 use casa_components::ComponentList;
 use casa_coordinates::CoordinateSystem;
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use casa_lattices::Lattice;
 use casa_tables::{Table, TableInfo, TableOptions, TableWriteLock};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::mask_reference::subtable_reference;
 use crate::{ImageError, ImageInfo, PagedImage};

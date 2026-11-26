@@ -98,7 +98,7 @@ fn run_c_array(block: bool) {
     assert_eq!(spectral.num_chan(0).unwrap(), 512);
     assert_eq!(
         spectral.meas_freq_ref(0).unwrap(),
-        casa_types::measures::frequency::FrequencyRef::LSRK.casacore_code()
+        casa_core::measures::frequency::FrequencyRef::LSRK.casacore_code()
     );
     assert_eq!(
         spectral.chan_freq(0).unwrap()[channel as usize],

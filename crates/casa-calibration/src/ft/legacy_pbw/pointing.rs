@@ -3,10 +3,10 @@
 
 use std::path::Path;
 
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection};
 use casa_tables::{Table, TableOptions, add_directory};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::invalid;

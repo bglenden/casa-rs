@@ -15,6 +15,7 @@ use casa_contracts::{
     CasaFloat, CasaValue, DefaultSpec, FloatDtype, NumpyScalarType, ParameterValue,
     TaskFailureKind, python_repr,
 };
+use casa_core::quanta::Quantity;
 use casa_ms::flagging::{
     AntennaIntegrationOptions, RFlagThresholdReport, ShadowOptions, flagdata_path_with_model,
 };
@@ -24,7 +25,6 @@ use casa_ms::{
     FlagSummaryOptions, FlaggingError, MeasurementSet, QuackMode, TransformTaskHistory,
     append_flag_command, append_task_history, save_next_casa_flag_backup,
 };
-use casa_types::quanta::Quantity;
 
 #[path = "flagdata/automatic.rs"]
 mod automatic;

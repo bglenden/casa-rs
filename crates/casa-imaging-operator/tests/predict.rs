@@ -8,13 +8,13 @@
 
 mod common;
 
+use casa_core::Correlation;
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, CpuBackend, GridBackend, GridPrecision, MeasurementOperator, ModelImages, ModelPlane,
     ModelPrescale, NativeRow, PlaneRange, PredictionScratch, PreparedModelGrids, RowContext,
     SampleBuffer, SpectralAxis, SpectralKernel, SpectralResampler, WeightingGeneration, Work,
 };
-use casa_types::Correlation;
 use common::{IMAGE, operator};
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};

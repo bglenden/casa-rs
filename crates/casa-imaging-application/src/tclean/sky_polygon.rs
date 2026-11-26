@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::quanta::{Quantity, Unit};
 use serde::{Deserialize, Serialize};
 
 use super::TcleanRefusal;

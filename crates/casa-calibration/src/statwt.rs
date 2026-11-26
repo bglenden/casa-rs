@@ -11,10 +11,10 @@ mod storage;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use casa_core::quanta::{Quantity, Unit};
+use casa_core::{ArrayValue, Complex32, ScalarValue, Value};
 use casa_ms::{MsError, MsResult, ResolvedMsSelectionRow};
 use casa_tables::{Table, TableWriteLock};
-use casa_types::quanta::{Quantity, Unit};
-use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, IxDyn, ShapeBuilder};
 
 use channels::Channels;

@@ -20,10 +20,10 @@ use casa_calibration::{
     GainSolveMode, GainSolveModelSource, GainSolveReport, GainSolveRequest, GainType,
     RefAntSelector, execute_apply_from_path, solve_calibration,
 };
+use casa_core::{ArrayValue, Complex32, ScalarValue, Value};
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use common::{SyntheticGainFixtureKind, SyntheticGainSolutionRow, SyntheticGainTimeCluster};
 use ndarray::ArrayD;
 use tempfile::TempDir;

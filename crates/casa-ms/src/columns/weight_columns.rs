@@ -3,8 +3,8 @@
 //!
 //! Cf. C++ `MSMainColumns::weight()`, `sigma()`, etc.
 
+use casa_core::ArrayValue;
 use casa_tables::Table;
-use casa_types::ArrayValue;
 
 use crate::error::{MsError, MsResult};
 use crate::subtables::{get_array, has_column};

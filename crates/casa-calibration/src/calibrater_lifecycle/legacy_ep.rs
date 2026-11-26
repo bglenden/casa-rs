@@ -12,6 +12,8 @@ use std::sync::Arc;
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, StokesCoordinate, StokesType,
 };
+use casa_core::Complex32;
+use casa_core::quanta::{Quantity, Unit};
 use casa_images::PagedImage;
 use casa_imaging_model::EvlaDishSurface;
 use casa_imaging_operator::{
@@ -21,8 +23,6 @@ use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, a
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow};
 use casa_tables::RequiredScalarColumnValues;
-use casa_types::Complex32;
-use casa_types::quanta::{Quantity, Unit};
 
 use super::ep_cache::{EpCache, EpCacheProducts, invalid};
 use crate::{AttachmentError, CalibrationAttachment, CalibrationOutputMode, RefAntSelector};
@@ -441,7 +441,7 @@ pub(crate) fn legacy_vla_surface() -> MsResult<EvlaDishSurface> {
 
 #[cfg(test)]
 mod tests {
-    use casa_types::ArrayValue;
+    use casa_core::ArrayValue;
 
     use crate::CalibraterLifecycle;
     use crate::calibrater_lifecycle::ConfiguredSolve;

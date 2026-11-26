@@ -48,7 +48,7 @@ use std::ffi::CString;
 use std::str::FromStr;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use casa_types::measures::direction::DirectionRef;
+use casa_core::measures::direction::DirectionRef;
 use pyo3::exceptions::{
     PyNotImplementedError, PyOverflowError, PyRuntimeWarning, PySystemError, PyTypeError,
 };
@@ -163,7 +163,7 @@ impl PyComponentList {
     ) -> PyResult<Py<PyAny>> {
         let mut lines = Vec::new();
         let result = py.detach(|| {
-            casa_types::quanta::registry::global_registry()
+            casa_core::quanta::registry::global_registry()
                 .with_locked_units(|| work(&mut self.lock(), &mut lines))
         });
         emit(py, LOGGER, &lines)?;
@@ -186,8 +186,7 @@ impl Drop for PyComponentList {
         let state = self.state.get_mut().unwrap_or_else(PoisonError::into_inner);
         Python::attach(|py| {
             if let Err(message) = py.detach(|| {
-                casa_types::quanta::registry::global_registry()
-                    .with_locked_units(|| state.release())
+                casa_core::quanta::registry::global_registry().with_locked_units(|| state.release())
             }) {
                 let category = py.get_type::<PyRuntimeWarning>();
                 let message = CString::new(message).unwrap_or_default();

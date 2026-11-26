@@ -14,19 +14,19 @@ slow-tests = []
 [dependencies]
 casa-atmosphere = { path = "../casa-atmosphere" }
 casa-components = { path = "../casa-components" }
-casa-coordinates = { path = "../casa-coordinates" }
+casa-coordinates.workspace = true
 casa-images = { path = "../casa-images" }
-casa-lattices = { path = "../casa-lattices" }
-casa-fft = { path = "../casa-fft" }
+casa-lattices.workspace = true
+casa-fft.workspace = true
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-operator = { path = "../casa-imaging-operator" }
 casa-imaging-runtime = { path = "../casa-imaging-runtime" }
 casa-imaging-singledish = { path = "../casa-imaging-singledish" }
-casa-measures-data = { path = "../casa-measures-data" }
+casa-measures.workspace = true
 casa-ms = { path = "../casa-ms" }
-casa-numerics = { path = "../casa-numerics" }
-casa-tables = { path = "../casa-tables" }
-casa-types = { path = "../casa-types" }
+casa-numerics.workspace = true
+casa-tables.workspace = true
+casa-core.workspace = true
 libm = "0.2"
 ndarray.workspace = true
 num-complex.workspace = true
@@ -47,7 +47,7 @@ libc = "0.2"
 [dev-dependencies]
 casa-simulation = { path = "../casa-simulation" }
 casa-ms = { path = "../casa-ms", features = ["msv4"] }
-casa-observation = { path = "../casa-observation" }
+casa-observation.workspace = true
 flate2 = "1"
 tar = "0.4"
 casa-test-support = { path = "../../dev/casa-test-support" }

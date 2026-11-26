@@ -5,12 +5,12 @@
 
 mod common;
 
+use casa_core::Correlation;
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, CpuBackend, GridBackend, GridPrecision, GridStorage, Mode, ModeSet, ModelImages,
     ModelPlane, ModelPrescale, NormalImages, Placement, PlaneRange, Tile, Work,
 };
-use casa_types::Correlation;
 use common::{
     IMAGE, INCREMENT_RAD, Rng, buffer, geometry, geometry_of, max_abs, operator, operator_on,
     placements, samples,

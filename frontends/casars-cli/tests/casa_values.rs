@@ -140,8 +140,8 @@ fn write_spectrum_cube(path: &Path, spectrum: &[f32]) {
     use casa_coordinates::{
         CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate,
     };
-    use casa_types::measures::direction::DirectionRef;
-    use casa_types::measures::frequency::FrequencyRef;
+    use casa_core::measures::direction::DirectionRef;
+    use casa_core::measures::frequency::FrequencyRef;
     use ndarray::{ArrayD, IxDyn};
     let mut coordinates = CoordinateSystem::new();
     coordinates.add_coordinate(DirectionCoordinate::new(

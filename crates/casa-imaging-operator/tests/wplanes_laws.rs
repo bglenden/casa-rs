@@ -6,6 +6,7 @@
 
 mod common;
 
+use casa_core::Correlation;
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridBackend, GridPrecision,
@@ -14,7 +15,6 @@ use casa_imaging_operator::{
     Spheroidal, TapLayout, WPlaneCount, WPlanes, Work,
 };
 use casa_imaging_operator::{CellLocation, GridGeometry, GridPadding, ImageExtent, PaddingFactor};
-use casa_types::Correlation;
 use common::{IMAGE, Rng, buffer, placements, samples};
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};

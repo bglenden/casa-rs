@@ -15,6 +15,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use casa_core::Correlation;
 use casa_imaging_model::{
     EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequestInput, NativeAwTerms,
     PolarizationCoordinate,
@@ -27,7 +28,6 @@ use casa_imaging_operator::{
     RowContext, SampleBuffer, Spheroidal, TapLayout, WPlaneCount, WPlanes, Work,
 };
 use casa_numerics::PrimaryBeam;
-use casa_types::Correlation;
 use num_complex::Complex32;
 
 #[global_allocator]
@@ -552,7 +552,7 @@ fn legacy_aw_generation_holds_at_most_its_charge() {
     }
     let workers = 2;
     let spectral = casa_coordinates::SpectralCoordinate::new(
-        casa_types::measures::frequency::FrequencyRef::TOPO,
+        casa_core::measures::frequency::FrequencyRef::TOPO,
         1.4e9,
         2.4e4,
         0.,
@@ -635,7 +635,7 @@ fn a_legacy_multi_pa_catalog_holds_at_most_its_charge() {
     request.pa_values = vec![0.45, -0.2];
     request.maximum_cells *= 2;
     let spectral = casa_coordinates::SpectralCoordinate::new(
-        casa_types::measures::frequency::FrequencyRef::TOPO,
+        casa_core::measures::frequency::FrequencyRef::TOPO,
         1.4e9,
         2.4e4,
         0.,

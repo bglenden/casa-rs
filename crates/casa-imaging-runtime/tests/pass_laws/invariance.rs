@@ -2,6 +2,7 @@
 //! Partition and worker-count invariance, the streamed density grid,
 //! cancellation and the point-source law.
 
+use casa_core::Correlation;
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, CellHold, DensityCellRule, DensityGridShape, GridGeometry, GridPadding, GridPrecision,
@@ -15,7 +16,6 @@ use casa_imaging_runtime::pass::{
     SampleContent, SourceError, VisibilitySink, WEIGHT_SUM_WORK, WeightCache, WorkerTeam,
     needs_row_work, run_density_pass, run_major_cycle, run_row_work_pass,
 };
-use casa_types::Correlation;
 use num_complex::Complex32;
 
 use crate::fixture::{

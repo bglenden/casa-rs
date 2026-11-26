@@ -7,8 +7,8 @@ mod spectral;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use casa_core::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use casa_ms::{MeasurementSet, ResolvedMsSelection};
-use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, IxDyn};
 
 use super::edges::{self, Integration};

@@ -12,6 +12,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use casa_core::{ScalarValue, Value};
 use casa_ms::MeasurementSet;
 use casa_ms::observation_io::{Msv2Observation, OpenOptions};
 use casa_observation::{
@@ -20,7 +21,6 @@ use casa_observation::{
 use casa_simulation::synthetic::{
     Field, ObservationRequest, generate_unflagged, tutorial_vla_a_antennas,
 };
-use casa_types::{ScalarValue, Value};
 
 #[global_allocator]
 static HEAP: CountingHeap = CountingHeap;
@@ -168,7 +168,7 @@ fn partially_filled_tree_nodes_fit_their_bound() {
                 }
             }
             let held = LIVE.load(Ordering::Relaxed).saturating_sub(before);
-            let bound = casa_types::memory::btree_node_bytes::<u32, [usize; 6]>(map.len().max(1));
+            let bound = casa_core::memory::btree_node_bytes::<u32, [usize; 6]>(map.len().max(1));
             assert!(
                 held <= bound as u64,
                 "{count} entries, removed {removed}: {held} > {bound}"

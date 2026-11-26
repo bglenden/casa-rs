@@ -13,11 +13,11 @@ use casa_coordinates::{
     Coordinate, CoordinateError, CoordinateModel, CoordinateSystem, CoordinateType,
     DirectionCoordinate, SpectralCoordinate, StokesType,
 };
+use casa_core::RecordValue;
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::frame::MeasFrame;
+use casa_core::measures::frequency::FrequencyRef;
 use casa_lattices::{Lattice, LatticeError};
-use casa_types::RecordValue;
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::frame::MeasFrame;
-use casa_types::measures::frequency::FrequencyRef;
 use ndarray::{Array3, ArrayD, Axis, IxDyn, ShapeBuilder};
 
 use crate::{ImageError, ImageInfo, ImageInterface};

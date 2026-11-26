@@ -410,7 +410,7 @@ fn flag_changes_keep_row_flags_and_padding() {
         .fill_column_range(
             "FLAG_ROW",
             casa_tables::RowRange::new(5, 6),
-            casa_types::Value::Scalar(casa_types::ScalarValue::Bool(true)),
+            casa_core::Value::Scalar(casa_core::ScalarValue::Bool(true)),
         )
         .expect("set FLAG_ROW");
     ms.main_table_mut().remove_rows(&[7]).expect("pad a cell");
@@ -1131,12 +1131,12 @@ fn a_partial_model_pass_creates_model_data_over_casas_initial_model() {
 /// field 0 (written as CASA writes them into an MS without SOURCE rows).
 fn as_casa_left_it(path: &std::path::Path) {
     let text =
-        |value: &str| casa_types::Value::Scalar(casa_types::ScalarValue::String(value.to_string()));
+        |value: &str| casa_core::Value::Scalar(casa_core::ScalarValue::String(value.to_string()));
     let mut ms = casa_ms::MeasurementSet::open(path).expect("open");
     let keywords = ms.main_table_mut().keywords_mut();
     keywords.upsert(
         "SORT_COLUMNS",
-        casa_types::Value::Array(casa_types::ArrayValue::String(
+        casa_core::Value::Array(casa_core::ArrayValue::String(
             ndarray::ArrayD::from_shape_vec(vec![1], vec!["TIME".to_string()]).expect("shape"),
         )),
     );
@@ -1144,10 +1144,10 @@ fn as_casa_left_it(path: &std::path::Path) {
     keywords.upsert("definedmodel_field_0", text("model_0"));
     keywords.upsert(
         "model_0",
-        casa_types::Value::Record(casa_types::RecordValue::new(vec![
-            casa_types::RecordField::new(
+        casa_core::Value::Record(casa_core::RecordValue::new(vec![
+            casa_core::RecordField::new(
                 "numcl",
-                casa_types::Value::Scalar(casa_types::ScalarValue::Int32(0)),
+                casa_core::Value::Scalar(casa_core::ScalarValue::Int32(0)),
             ),
         ])),
     );

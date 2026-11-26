@@ -36,6 +36,7 @@ mod tests;
 
 use std::time::Instant;
 
+use casa_core::ScalarValue;
 use casa_imaging_runtime::ReservationWindow;
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_ms::schema::SubtableId;
@@ -45,7 +46,6 @@ use casa_ms::{
     VisibilityColumns,
 };
 use casa_tables::{ColumnOverrides, StreamedScalarValues, TableInfo};
-use casa_types::ScalarValue;
 
 use crate::session::Simulator;
 use crate::session::error::{SimulatorError, SimulatorResult};

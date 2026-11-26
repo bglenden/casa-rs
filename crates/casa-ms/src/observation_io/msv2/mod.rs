@@ -23,6 +23,7 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 
+use casa_core::measures::{EpochRef, MjdHighPrec};
 use casa_observation::{
     AccessRequest, AntennaId, BoundCursor, Catalogue, DataGroupEntry, Estimate, FieldId,
     FieldSelection, GroupKey, Grouping, NaturalBlocks, Observation, ObservationError,
@@ -32,7 +33,6 @@ use casa_observation::{
     WindowId, times_per_batch,
 };
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
-use casa_types::measures::{EpochRef, MjdHighPrec};
 
 use super::{OpenOptions, heap};
 use crate::{MeasurementSet, MsError};
@@ -1123,7 +1123,7 @@ fn entry_bytes(
         + size_of_val(grid.baselines.as_slice())
         + grid.states.len() * size_of::<StateId>()
         + groups
-        + casa_types::memory::btree_node_bytes::<AntennaId, Receptors>(receptor_count)
+        + casa_core::memory::btree_node_bytes::<AntennaId, Receptors>(receptor_count)
         + receptor_count * receptors
 }
 
@@ -1368,7 +1368,7 @@ mod tests {
         DataGroupEntry, SigmaFallback, UvwFrame, VisibilityUnits, WeightRequest, WeightRule,
     };
 
-    use casa_types::measures::direction::DirectionRef;
+    use casa_core::measures::direction::DirectionRef;
 
     use super::weight_source;
 

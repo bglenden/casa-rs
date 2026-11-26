@@ -3,8 +3,8 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_tables::{RequiredScalarColumnValues, Table};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use rayon::prelude::*;
 
 use super::{

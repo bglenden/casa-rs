@@ -200,8 +200,8 @@ fn mvc_compiles_both_views_from_one_survey_with_distinct_taylor_reference() {
 #[test]
 fn mvc_taylor_header_uses_the_published_cube_axis() {
     use casa_coordinates::CoordinateType;
+    use casa_core::measures::frequency::FrequencyRef;
     use casa_ms::MeasurementSet;
-    use casa_types::measures::frequency::FrequencyRef;
 
     let root = tempfile::tempdir().unwrap();
     let path = synthetic_observation::two_window_observation(root.path(), 6);

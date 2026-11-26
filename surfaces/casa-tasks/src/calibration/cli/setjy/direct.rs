@@ -4,9 +4,9 @@
 use std::path::PathBuf;
 
 use casa_contracts::CasaValue;
+use casa_core::measures::frequency::MFrequency;
 use casa_ms::{MeasurementSet, MsError, MsSelection};
 use casa_tables::TableWriteLock;
-use casa_types::measures::frequency::MFrequency;
 
 use super::{
     FluxParameters, ManualFlux, PreparedModels, prepare, record_manual_spectrum, requested_windows,

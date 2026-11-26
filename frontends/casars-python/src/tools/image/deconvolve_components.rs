@@ -2,9 +2,9 @@
 
 use casa_components::ShapeType;
 use casa_coordinates::CoordinateSystem;
+use casa_core::RecordValue;
+use casa_core::quanta::{Quantity, Unit, casacore};
 use casa_images::{BeamComponent, GaussianBeam};
-use casa_types::RecordValue;
-use casa_types::quanta::{Quantity, Unit, casacore};
 use pyo3::exceptions::{PySystemError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyFloat, PyList, PyString};

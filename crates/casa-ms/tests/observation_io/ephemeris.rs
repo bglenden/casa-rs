@@ -10,13 +10,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::radial_velocity::RadialVelocityRef;
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_ms::observation_io::convert::{LossKind, to_msv2, to_msv4};
 use casa_ms::observation_io::{OpenOptions, open};
 use casa_observation::{Catalogue, FieldEntry, FieldEphemeris, FieldId, ObservationError};
 use casa_test_support::ephemeris_table::{EphemerisFrame, EphemerisRow, write_field_ephemeris_in};
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::radial_velocity::RadialVelocityRef;
-use casa_types::{ArrayValue, ScalarValue, Value};
 
 use super::fixture;
 

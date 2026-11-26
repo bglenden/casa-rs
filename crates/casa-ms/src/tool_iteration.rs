@@ -3,8 +3,8 @@
 
 use std::cmp::Ordering;
 
+use casa_core::{ArrayValue, Value};
 use casa_tables::{ColumnType, PlainReferenceRead, RequiredScalarColumnValues, Table};
-use casa_types::{ArrayValue, Value};
 
 use crate::error::{MsError, MsResult};
 use crate::grouping::DEFAULT_SORT_COLUMNS;

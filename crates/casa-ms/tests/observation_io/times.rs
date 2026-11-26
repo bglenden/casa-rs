@@ -7,13 +7,13 @@
 
 use std::collections::BTreeMap;
 
+use casa_core::measures::{EpochRef, MjdHighPrec};
 use casa_ms::observation_io::{OpenOptions, open_update};
 use casa_observation::{
     AccessRequest, BatchBuffers, FragmentPosition, GroupKey, Grouping, Observation,
     ObservationError, PartitionId, PatchValues, ReadEvent, TimeRange, TimeRuns, TimeSelection,
     UpdateTarget, WritableRole,
 };
-use casa_types::measures::{EpochRef, MjdHighPrec};
 use ndarray::Array3;
 
 use super::{Key, Sample, by_scan, fixture, open_both, per_times, request, samples, three_scans};

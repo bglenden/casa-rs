@@ -2,10 +2,10 @@
 //! Metadata and visibility ranges over the public MS tool's selected rows.
 
 use casa_coordinates::StokesType;
-use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
+use casa_core::measures::direction::DirectionRef;
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_measures::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_tables::{PlainReferenceRead, RequiredScalarColumnValues, Table};
-use casa_types::measures::direction::DirectionRef;
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{Array1, ArrayD, IxDyn, ShapeBuilder};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Deref;

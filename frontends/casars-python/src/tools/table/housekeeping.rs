@@ -14,8 +14,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::TryLockError;
 
+use casa_core::{RecordValue, Value};
 use casa_tables::{EndianFormat, LockType, Table, TableOptions, add_directory};
-use casa_types::{RecordValue, Value};
 use pyo3::prelude::*;
 
 use super::registry;

@@ -4,7 +4,7 @@ mod coordinates;
 
 use std::path::Path;
 
-use casa_types::{RecordValue, quanta::Quantity};
+use casa_core::{RecordValue, quanta::Quantity};
 
 use crate::{ImageError, ImageInterface};
 

@@ -46,7 +46,7 @@ use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate,
     ProjectionType,
 };
-use casa_types::ArrayD;
+use casa_core::ArrayD;
 
 use ndarray::{IxDyn, ShapeBuilder};
 use num_complex::Complex32;
@@ -1046,7 +1046,7 @@ mod tests {
     #[test]
     fn regrid_shifts_longitude_on_an_interleaved_plane() {
         use casa_coordinates::{Projection, SpectralCoordinate};
-        use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
+        use casa_core::measures::{direction::DirectionRef, frequency::FrequencyRef};
 
         let direction = DirectionCoordinate::new(
             DirectionRef::J2000,
@@ -1119,7 +1119,7 @@ mod tests {
     #[test]
     fn identity_regrid_uses_replacements_for_hidden_local_pixels() {
         use casa_coordinates::{LinearCoordinate, Projection};
-        use casa_types::measures::direction::DirectionRef;
+        use casa_core::measures::direction::DirectionRef;
 
         let mut coordinates = CoordinateSystem::new();
         coordinates.add_coordinate(DirectionCoordinate::new(
@@ -1153,7 +1153,7 @@ mod tests {
     #[test]
     fn affine_regrid_preserves_a_shared_plane_through_one_step_of_header_rounding() {
         use casa_coordinates::Projection;
-        use casa_types::measures::direction::DirectionRef;
+        use casa_core::measures::direction::DirectionRef;
 
         let declination = 0.710_938_054_184_240_3_f64;
         let coordinate = |latitude, x, latitude_selector: f64| {
@@ -1199,7 +1199,7 @@ mod tests {
     #[test]
     fn regrid_rejects_distinct_direction_conversion_frames() {
         use casa_coordinates::{Projection, ProjectionType};
-        use casa_types::measures::direction::DirectionRef;
+        use casa_core::measures::direction::DirectionRef;
         let direction = DirectionCoordinate::new(
             DirectionRef::J2000,
             Projection::new(ProjectionType::SIN),
@@ -1236,7 +1236,7 @@ mod tests {
     #[test]
     fn positions_on_a_shared_tangent_plane_are_those_of_the_full_conversion() {
         use casa_coordinates::{Projection, ProjectionType};
-        use casa_types::measures::direction::DirectionRef;
+        use casa_core::measures::direction::DirectionRef;
         let arcsec = std::f64::consts::PI / 648_000.0;
         let input = DirectionCoordinate::new(
             DirectionRef::J2000,
@@ -1266,7 +1266,7 @@ mod tests {
         // a 33 × 33 grid lie beyond the projection's disk and have no sky
         // position. The affine map would give them one; they stay unsampled.
         use casa_coordinates::{Projection, ProjectionType};
-        use casa_types::measures::direction::DirectionRef;
+        use casa_core::measures::direction::DirectionRef;
         let input = DirectionCoordinate::new(
             DirectionRef::J2000,
             Projection::new(ProjectionType::SIN),
@@ -1283,7 +1283,7 @@ mod tests {
 
     fn image_with_stokes(stokes: &[casa_coordinates::StokesType]) -> crate::TempImage<f32> {
         use casa_coordinates::{Projection, ProjectionType, StokesCoordinate};
-        use casa_types::measures::direction::DirectionRef;
+        use casa_core::measures::direction::DirectionRef;
         let mut coordinates = CoordinateSystem::new();
         coordinates.add_coordinate(DirectionCoordinate::new(
             DirectionRef::J2000,

@@ -152,6 +152,6 @@ fn parse_time(value: &str) -> Option<f64> {
         clock.next()?.parse().ok()?,
         clock.next()?.parse().ok()?,
     );
-    casa_types::quanta::time::MvTime::from_ymd_hms_utc(year, month, day, hour, minute, second)
+    casa_core::quanta::time::MvTime::from_ymd_hms_utc(year, month, day, hour, minute, second)
         .map(|time| time.as_mjd_seconds())
 }

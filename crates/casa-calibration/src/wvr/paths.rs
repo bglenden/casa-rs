@@ -3,7 +3,7 @@
 
 use std::f64::consts::TAU;
 
-use casa_types::Complex32;
+use casa_core::Complex32;
 
 use super::data::Temperatures;
 

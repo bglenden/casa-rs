@@ -21,13 +21,13 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use casa_core::ScalarValue;
 use casa_ms::{
     MeasurementSet, MeasurementSetColumnStorage, MeasurementSetColumnWriteMode,
     MeasurementSetMutationBatch, MeasurementSetMutationColumnBatch,
     MeasurementSetMutationColumnValues, MeasurementSetWriteColumnPlan, MeasurementSetWritePlan,
     MeasurementSetWriteResources, MeasurementSetWriteSession,
 };
-use casa_types::ScalarValue;
 
 use super::{
     ALLOWANCE_BYTES, BUDGET_32, Closed, EpochRef, MEASURED_RUNS, MEpoch, MeasuresProvider,

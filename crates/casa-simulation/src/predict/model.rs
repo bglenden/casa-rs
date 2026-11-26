@@ -8,11 +8,11 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate,
 };
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::{MeasFrame, direction::MDirection};
+use casa_core::quanta::{Quantity, Unit};
 use casa_images::PagedImage;
 use casa_imaging_model::PolarizationCoordinate;
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::{MeasFrame, direction::MDirection};
-use casa_types::quanta::{Quantity, Unit};
 use ndarray::{Array2, IxDyn};
 
 use super::PredictError;
@@ -295,24 +295,24 @@ impl SkyModel {
         let tangent =
             MDirection::from_angles(centre[0], centre[1], direction.conversion_direction_ref());
         let distance_m = match image.misc_info().get("distance") {
-            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Float64(value))) => *value,
-            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Float32(value))) => {
+            Some(casa_core::Value::Scalar(casa_core::ScalarValue::Float64(value))) => *value,
+            Some(casa_core::Value::Scalar(casa_core::ScalarValue::Float32(value))) => {
                 f64::from(*value)
             }
-            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Int64(value))) => *value as f64,
-            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(value))) => {
+            Some(casa_core::Value::Scalar(casa_core::ScalarValue::Int64(value))) => *value as f64,
+            Some(casa_core::Value::Scalar(casa_core::ScalarValue::Int32(value))) => {
                 f64::from(*value)
             }
-            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Int16(value))) => {
+            Some(casa_core::Value::Scalar(casa_core::ScalarValue::Int16(value))) => {
                 f64::from(*value)
             }
-            Some(casa_types::Value::Scalar(casa_types::ScalarValue::UInt32(value))) => {
+            Some(casa_core::Value::Scalar(casa_core::ScalarValue::UInt32(value))) => {
                 f64::from(*value)
             }
-            Some(casa_types::Value::Scalar(casa_types::ScalarValue::UInt16(value))) => {
+            Some(casa_core::Value::Scalar(casa_core::ScalarValue::UInt16(value))) => {
                 f64::from(*value)
             }
-            Some(casa_types::Value::Scalar(casa_types::ScalarValue::UInt8(value))) => {
+            Some(casa_core::Value::Scalar(casa_core::ScalarValue::UInt8(value))) => {
                 f64::from(*value)
             }
             Some(_) => {
@@ -617,7 +617,7 @@ mod axis_map_tests {
     use casa_coordinates::{
         Projection, ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
     };
-    use casa_types::measures::frequency::FrequencyRef;
+    use casa_core::measures::frequency::FrequencyRef;
 
     #[test]
     fn native_model_uses_local_direction_and_spectral_values() {

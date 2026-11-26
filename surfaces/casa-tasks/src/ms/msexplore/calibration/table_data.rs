@@ -4,8 +4,8 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_tables::{Table, TableOptions, add_directory};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use num_complex::Complex64;
 
 use super::axis::SampleCoordinates;

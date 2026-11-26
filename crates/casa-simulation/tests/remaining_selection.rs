@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Remaining simulator selection forms against actual CASA calculations.
 mod existing_ms_calculations;
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{CasaOutcome, PredictSpec, Simulator, SimulatorOptions};
-use casa_types::measures::{EpochRef, MEpoch};
 use existing_ms_calculations::{copy, predict_support};
 use flate2::read::GzDecoder;
 use serde_json::Value;

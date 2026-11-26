@@ -32,10 +32,10 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use casa_core::{ArrayValue, PrimitiveType, ScalarValue, Value};
 use casa_tables::{
     ColumnType, EndianFormat, LockMode, LockOptions, Table, TableOptions, TableSchema,
 };
-use casa_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
 
 use super::cell_convert;
 use super::housekeeping::has_subtables;

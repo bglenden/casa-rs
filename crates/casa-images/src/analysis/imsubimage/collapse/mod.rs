@@ -6,8 +6,8 @@ mod statistics;
 use std::path::Path;
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_core::{ArrayD, RecordValue};
 use casa_lattices::{TraversalCursorIter, TraversalSpec};
-use casa_types::{ArrayD, RecordValue};
 use ndarray::{Axis, Dimension, IxDyn, Zip};
 
 use crate::{ImageError, ImageInterface, MutableImageInterface};

@@ -3,9 +3,9 @@
 //! -022.59.59.600000'`, an epoch, a longitude in `qa.formxxx`'s `hms` and a
 //! latitude in its `dms`, both at precision 5.
 
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::quanta::Quantity;
-use casa_types::quanta::casacore::casacore_unit;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::quanta::Quantity;
+use casa_core::quanta::casacore::casacore_unit;
 
 use super::{SimutilError, qa};
 use crate::readantenna::parse::python_split;

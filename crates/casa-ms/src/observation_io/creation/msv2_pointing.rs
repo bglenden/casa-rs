@@ -14,10 +14,10 @@
 
 use std::mem::size_of;
 
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::{EpochView, MjdHighPrec};
+use casa_measures::table_measures::{MeasureType, TableMeasDesc};
 use casa_observation::{AntennaId, Observation, ObservationError, PointingSeries};
-use casa_tables::table_measures::{MeasureType, TableMeasDesc};
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::{EpochView, MjdHighPrec};
 use ndarray::ArrayView1;
 
 use super::pointing_plan::PointingPlan;
@@ -118,7 +118,7 @@ fn copy_msv2(ms: &mut MeasurementSet, input: &Pointed<'_>) -> Result<(), Observa
     for row in source.rows().map_err(storage)? {
         let mut row = row.clone();
         let antenna = match row.get("ANTENNA_ID") {
-            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(id))) => *id,
+            Some(casa_core::Value::Scalar(casa_core::ScalarValue::Int32(id))) => *id,
             _ => {
                 return Err(crate::observation_io::update::request_error(
                     "POINTING ANTENNA_ID is not int32",

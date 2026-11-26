@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Input arrays for selected MeasurementSet visibility writes.
 
+use casa_core::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
 use casa_tables::Table;
-use casa_types::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
 
 use super::{VisibilityChannels, input};
 use crate::MsResult;

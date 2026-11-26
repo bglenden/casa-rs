@@ -6,19 +6,16 @@ members = [
     "surfaces/casa-tasks",
     "frontends/casars-cli",
     "frontends/casars-python",
-    "crates/casa-types",
+    "libs/casacore/casa-core",
     "crates/casa-vla",
-    "crates/casa-values",
-    "crates/casa-aipsio",
-    "crates/casa-logging",
-    "crates/casa-numerics",
-    "crates/casa-fft",
+    "libs/casacore/casa-aipsio",
+    "libs/casacore/casa-numerics",
+    "libs/casacore/casa-fft",
     "crates/casa-calibration",
     "crates/casa-components",
-    "crates/casa-measures-tools",
-    "crates/casa-tables",
-    "crates/casa-lattices",
-    "crates/casa-coordinates",
+    "libs/casacore/casa-tables",
+    "libs/casacore/casa-lattices",
+    "libs/casacore/casa-coordinates",
     "crates/casa-images",
     "crates/casa-imaging-model",
     "crates/casa-imaging-operator",
@@ -30,9 +27,9 @@ members = [
     "crates/casa-imaging-metal",
     "crates/casa-simulation",
     "crates/casa-atmosphere",
-    "crates/casa-measures-data",
+    "libs/casacore/casa-measures",
     "crates/casa-ms",
-    "crates/casa-observation",
+    "libs/casacore/casa-observation",
     "dev/casa-test-support",
     "dev/casa-dev-tools",
     "suites/casacore-interop",
@@ -49,6 +46,15 @@ description = "Rust implementation of casacore-compatible persistent data I/O"
 repository = "https://github.com/bglenden/casa-rs"
 
 [workspace.dependencies]
+casa-aipsio = { path = "libs/casacore/casa-aipsio", version = "0.27.0" }
+casa-coordinates = { path = "libs/casacore/casa-coordinates", version = "0.27.0" }
+casa-core = { path = "libs/casacore/casa-core", version = "0.27.0" }
+casa-fft = { path = "libs/casacore/casa-fft", version = "0.27.0" }
+casa-lattices = { path = "libs/casacore/casa-lattices", version = "0.27.0" }
+casa-measures = { path = "libs/casacore/casa-measures", version = "0.27.0" }
+casa-numerics = { path = "libs/casacore/casa-numerics", version = "0.27.0" }
+casa-observation = { path = "libs/casacore/casa-observation", version = "0.27.0" }
+casa-tables = { path = "libs/casacore/casa-tables", version = "0.27.0" }
 nalgebra = "0.33"
 ndarray = "0.17"
 num-complex = "0.4"
@@ -70,7 +76,7 @@ codegen-units = 1
 # their key dependencies so perf comparisons are apples-to-apples.
 [profile.test.package.sofars]
 opt-level = 2
-[profile.test.package.casa-types]
+[profile.test.package.casa-core]
 opt-level = 2
 [profile.test.package.casa-tables]
 opt-level = 2

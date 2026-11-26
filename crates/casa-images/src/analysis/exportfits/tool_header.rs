@@ -7,10 +7,10 @@ use casa_coordinates::{
     CoordinateModel, CoordinateSystem, FitsKeyword, FitsValue, ProjectionType, StokesCoordinate,
     fits::{coordinate_util::fits_stokes_axis, try_to_fits_header},
 };
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::position::PositionRef;
-use casa_types::quanta::format::{FITS, format_time};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::position::PositionRef;
+use casa_core::quanta::format::{FITS, format_time};
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::image::ImageHistoryEntry;
 use crate::{ImageError, ImageInfo, ImageInterface, ImagePixel, ImageType, StoredGaussianBeam};

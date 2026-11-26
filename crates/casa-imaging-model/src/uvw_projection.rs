@@ -3,9 +3,9 @@
 //! observation direction, carried to an image's tangent point, with the
 //! phase shift the gridder applies.
 
-use casa_types::measures::UvwMachine;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{MeasFrame, MeasureError};
+use casa_core::measures::UvwMachine;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{MeasFrame, MeasureError};
 
 /// One of CASA's reprojections of rows from one phase centre to an image's
 /// tangent point, built once and applied to every row:
@@ -294,8 +294,8 @@ fn girar(frame: UvwMachine, phase: UvwMachine, casa_uvw_m: [f64; 3]) -> ([f64; 3
 
 #[cfg(test)]
 mod tests {
-    use casa_types::measures::UvwMachine;
-    use casa_types::measures::direction::{DirectionRef, MDirection};
+    use casa_core::measures::UvwMachine;
+    use casa_core::measures::direction::{DirectionRef, MDirection};
 
     use super::GridFtProjection;
 

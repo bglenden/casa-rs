@@ -4,8 +4,8 @@
 use std::collections::BTreeMap;
 
 use casa_components::{ComponentList, ShapeType};
-use casa_types::RecordValue;
-use casa_types::quanta::Quantity;
+use casa_core::RecordValue;
+use casa_core::quanta::Quantity;
 
 use crate::convert::value::CasaValue;
 use crate::convert::{ConvertError, ConvertResult};
@@ -32,7 +32,7 @@ pub(in crate::tools) fn image_component_records<'a>(
     Ok((0..components.length() as usize).map(move |index| {
         let shape = components.checked(index as i64)?.shape().shape_type();
         let gaussian_axes = if shape == ShapeType::Gaussian {
-            let Some(casa_types::Value::Record(raw_shape)) =
+            let Some(casa_core::Value::Record(raw_shape)) =
                 records::item(record, index)?.get("shape")
             else {
                 unreachable!("validated Gaussian record");

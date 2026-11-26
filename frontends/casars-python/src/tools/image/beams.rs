@@ -3,11 +3,11 @@
 use std::collections::HashMap;
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
+use casa_core::quanta::{Unit, casacore};
+use casa_core::{RecordValue, Value};
 use casa_images::{
     BeamComponent, GaussianBeam, ImageBeamSet, ImageError, ImageInfo, StoredGaussianBeam,
 };
-use casa_types::quanta::{Unit, casacore};
-use casa_types::{RecordValue, Value};
 use pyo3::prelude::*;
 
 use crate::convert::value::CasaValue;

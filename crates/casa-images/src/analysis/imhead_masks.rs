@@ -4,8 +4,8 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use casa_core::{RecordValue, ScalarValue, Value};
 use casa_tables::{Table, TableOptions, TableWriteLock, add_directory};
-use casa_types::{RecordValue, ScalarValue, Value};
 
 use crate::ImageError;
 use crate::mask_reference::is_paged_mask_table;
@@ -98,7 +98,7 @@ fn image_io(error: std::io::Error) -> ImageError {
 #[cfg(test)]
 mod tests {
     use casa_coordinates::{CoordinateSystem, LinearCoordinate};
-    use casa_types::ArrayValue;
+    use casa_core::ArrayValue;
     use ndarray::{ArrayD, IxDyn};
 
     use super::*;

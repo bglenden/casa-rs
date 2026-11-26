@@ -25,11 +25,11 @@
 use std::path::Path;
 use std::slice;
 
+use casa_core::measures::direction::DirectionRef;
 use casa_observation::{
     AntennaId, Observation, ObservationError, PartitionId, PointingDirection, PointingRequest,
 };
 use casa_tables::Table;
-use casa_types::measures::direction::DirectionRef;
 
 use super::Loss;
 use super::lockstep::{Sizing, WEIGHTS};
@@ -83,10 +83,10 @@ impl PointingPlan {
             None
         } else {
             let descriptor =
-                casa_tables::table_measures::TableMeasDesc::reconstruct(table, "DIRECTION")
+                casa_measures::table_measures::TableMeasDesc::reconstruct(table, "DIRECTION")
                     .ok_or_else(|| request_error("POINTING DIRECTION has no measure descriptor"))?;
             match descriptor.ref_desc() {
-                casa_tables::table_measures::MeasRefDesc::Fixed { refer } => {
+                casa_measures::table_measures::MeasRefDesc::Fixed { refer } => {
                     Some(refer.parse().map_err(|_| {
                         request_error("POINTING direction frame is unsupported (#939)")
                     })?)
@@ -421,7 +421,7 @@ fn msv2(
 /// Whether MSv4 names pointing directions in `frame`, which only an MSv4
 /// destination asks.
 #[cfg(feature = "msv4")]
-fn msv4_names(frame: casa_types::measures::direction::DirectionRef) -> bool {
+fn msv4_names(frame: casa_core::measures::direction::DirectionRef) -> bool {
     crate::observation_io::msv4::POINTING_FRAMES
         .iter()
         .any(|(_, known)| *known == frame)
@@ -429,7 +429,7 @@ fn msv4_names(frame: casa_types::measures::direction::DirectionRef) -> bool {
 
 /// Without the `msv4` feature nothing is written as MSv4, so nothing asks.
 #[cfg(not(feature = "msv4"))]
-fn msv4_names(_frame: casa_types::measures::direction::DirectionRef) -> bool {
+fn msv4_names(_frame: casa_core::measures::direction::DirectionRef) -> bool {
     true
 }
 

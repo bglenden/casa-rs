@@ -2,7 +2,7 @@
 
 use casa_components::ComponentList;
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
-use casa_types::{RecordValue, quanta::Unit};
+use casa_core::{RecordValue, quanta::Unit};
 use ndarray::Dimension;
 
 use crate::analysis::axes::direction_plane_axes;
@@ -281,11 +281,11 @@ mod tests {
     use std::{any::Any, path::Path};
 
     use casa_coordinates::{DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate};
-    use casa_lattices::{Lattice, LatticeError};
-    use casa_types::{
+    use casa_core::{
         ArrayD,
         measures::{direction::DirectionRef, frequency::FrequencyRef},
     };
+    use casa_lattices::{Lattice, LatticeError};
 
     use super::*;
     use crate::ImageInfo;

@@ -4,12 +4,12 @@ use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
+use casa_core::RecordValue;
 use casa_images::analysis::{ImageRegionSection, SubimageRegion};
 use casa_images::{
     ImageInterface, ImagePixel, MutableImageInterface, PagedImage, image::image_history_rows,
 };
 use casa_lattices::TiledShape;
-use casa_types::RecordValue;
 use ndarray::{ArrayD, SliceInfoElem, Zip};
 use numpy::{PyArrayDyn, PyArrayMethods};
 use pyo3::prelude::*;

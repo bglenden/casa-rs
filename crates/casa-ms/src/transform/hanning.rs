@@ -3,8 +3,8 @@
 
 use std::ops::{Add, Mul};
 
+use casa_core::ArrayValue;
 use casa_tables::TableError;
-use casa_types::ArrayValue;
 use ndarray::{Array1, Array2, ArrayD, Axis};
 
 use crate::schema::main_table::OptionalMainColumn::{CorrectedData, Data, ModelData};

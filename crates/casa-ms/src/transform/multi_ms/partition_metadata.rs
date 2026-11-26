@@ -4,8 +4,8 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use casa_core::{ScalarValue, Value};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ScalarValue, Value};
 
 use super::table_error;
 use crate::subtables::get_i32;

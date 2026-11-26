@@ -7,8 +7,8 @@
 use std::fs;
 use std::path::Path;
 
+use casa_core::RecordField;
 use casa_tables::Table;
-use casa_types::RecordField;
 
 use crate::{MeasurementSet, SubtableId};
 

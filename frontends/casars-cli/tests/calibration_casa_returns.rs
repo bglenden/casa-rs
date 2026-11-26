@@ -20,7 +20,7 @@ use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
 use casa_contracts::{CasaKey, CasaValue, FloatDtype, IntDtype, TaskReply};
-use casa_types::Complex32;
+use casa_core::Complex32;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
@@ -360,8 +360,8 @@ fn gaincal_and_bandpass_accept_data_descriptions_sharing_a_window() {
 /// Puts every other MAIN row of `ms` on a new data description of window
 /// 0, with polarization 0's correlations or a new setup of the cross hands.
 fn share_window_zero(ms: &Path, cross_hands: bool) {
+    use casa_core::{ArrayValue, ScalarValue, Value as CellValue};
     use casa_ms::schema::{self as ms_schema, SubtableId};
-    use casa_types::{ArrayValue, ScalarValue, Value as CellValue};
     let int = |value| CellValue::Scalar(ScalarValue::Int32(value));
     let mut opened = casa_ms::ms::MeasurementSet::open(ms).expect("open");
     let polarization_id = if cross_hands {
@@ -587,7 +587,7 @@ fn fluxscale_ms(root: &Path) -> std::path::PathBuf {
         fields
             .cell_accessor_mut(row, "NAME")
             .unwrap()
-            .set(casa_types::Value::Scalar(casa_types::ScalarValue::String(
+            .set(casa_core::Value::Scalar(casa_core::ScalarValue::String(
                 name.into(),
             )))
             .unwrap();
@@ -627,7 +627,7 @@ fn implemented_fluxscale_options_select_samples_and_set_the_fit_order() {
         table
             .cell_accessor_mut(row, "SCAN_NUMBER")
             .unwrap()
-            .set(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(
+            .set(casa_core::Value::Scalar(casa_core::ScalarValue::Int32(
                 scan,
             )))
             .unwrap();
@@ -752,14 +752,14 @@ fn gaincal_and_bandpass_use_the_unit_model_for_an_empty_virtual_record() {
         let keywords = opened.main_table_mut().keywords_mut();
         keywords.upsert(
             "definedmodel_field_0",
-            casa_types::Value::Scalar(casa_types::ScalarValue::String("model_0".into())),
+            casa_core::Value::Scalar(casa_core::ScalarValue::String("model_0".into())),
         );
         keywords.upsert(
             "model_0",
-            casa_types::Value::Record(casa_types::RecordValue::new(vec![
-                casa_types::RecordField::new(
+            casa_core::Value::Record(casa_core::RecordValue::new(vec![
+                casa_core::RecordField::new(
                     "version",
-                    casa_types::Value::Scalar(casa_types::ScalarValue::Int32(2)),
+                    casa_core::Value::Scalar(casa_core::ScalarValue::Int32(2)),
                 ),
             ])),
         );

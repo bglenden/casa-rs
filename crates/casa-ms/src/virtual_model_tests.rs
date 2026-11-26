@@ -6,8 +6,8 @@
 
 use std::path::{Path, PathBuf};
 
+use casa_core::{RecordValue, ScalarValue, Value};
 use casa_tables::{Table, TableOptions};
-use casa_types::{RecordValue, ScalarValue, Value};
 
 use super::*;
 use crate::selection::MsSelection;
@@ -53,7 +53,7 @@ fn entry(combinations: &[[i32; 4]], label: &str) -> VirtualModelEntry {
         kind: VirtualModelKind::FtMachine,
         index_combination: combinations.to_vec(),
         channel_selection: vec![[0, 0, 2, 1]],
-        container: RecordValue::new(vec![casa_types::RecordField::new("name", text(label))]),
+        container: RecordValue::new(vec![casa_core::RecordField::new("name", text(label))]),
     }
 }
 
@@ -304,7 +304,7 @@ fn an_older_record_is_not_combined_with() {
     keywords.upsert("definedmodel_field_0", text("model_0"));
     keywords.upsert(
         "model_0",
-        Value::Record(RecordValue::new(vec![casa_types::RecordField::new(
+        Value::Record(RecordValue::new(vec![casa_core::RecordField::new(
             "numcl",
             int(1),
         )])),

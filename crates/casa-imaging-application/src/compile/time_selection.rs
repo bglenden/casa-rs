@@ -147,7 +147,7 @@ impl<'a> OtherSelections<'a> {
                 .ok()
                 .and_then(|window| catalogue.windows.get(window))
                 .and_then(|window| window.reference_frequency.as_ref())
-                .map(casa_types::measures::frequency::MFrequency::hz)
+                .map(casa_core::measures::frequency::MFrequency::hz)
                 .filter(|hz| hz.is_finite() && *hz > 0.0)
                 .map(|hz| SPEED_OF_LIGHT_M_S / hz);
             descriptions.push((selected, wavelength));

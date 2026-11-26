@@ -2,8 +2,8 @@
 //! CASA calibration table output for known-source leakage fits.
 
 use super::{LeakageSolution, LeakageSolveKind, LeakageSolveRequest, SelectedSolveRow};
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use casa_ms::{MeasurementSet, schema::SubtableId};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use std::collections::BTreeMap;
 

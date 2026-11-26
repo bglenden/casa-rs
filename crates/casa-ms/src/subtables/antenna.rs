@@ -6,8 +6,8 @@
 //!
 //! Cf. C++ `MSAntennaColumns` / `MSAntenna`.
 
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_tables::{Table, TableError};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use ndarray::ArrayD;
 
 use crate::column_def::ColumnDef;
@@ -260,7 +260,7 @@ impl<'a> MsAntennaMut<'a> {
         offset: [f64; 3],
         dish_diameter: f64,
     ) -> MsResult<usize> {
-        use casa_types::{RecordField, RecordValue};
+        use casa_core::{RecordField, RecordValue};
 
         let pos_arr =
             ArrayValue::Float64(ArrayD::from_shape_vec(vec![3], position.to_vec()).unwrap());

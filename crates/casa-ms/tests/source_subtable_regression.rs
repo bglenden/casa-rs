@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_core::{ArrayValue, Value};
 use casa_ms::MeasurementSet;
 use casa_test_support::casatestdata_path;
-use casa_types::{ArrayValue, Value};
 
 #[test]
 fn ngc5921_with_flags_source_subtable_materializes_source_model_records() {

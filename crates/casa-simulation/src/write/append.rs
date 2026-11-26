@@ -189,8 +189,8 @@ pub(crate) fn scratch(
     shape: &[usize],
     resources: &SessionResources,
 ) -> SimulatorResult<()> {
+    use casa_core::{ArrayValue, Complex32, PrimitiveType};
     use casa_tables::ColumnSchema;
-    use casa_types::{ArrayValue, Complex32, PrimitiveType};
     use ndarray::{ArrayD, IxDyn, ShapeBuilder};
     let rows = Table::rows_on_disk(path).map_err(error)?;
     let mut copy = RowsCopy::new(path, path, rows, resources)?;

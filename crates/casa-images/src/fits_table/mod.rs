@@ -7,8 +7,8 @@ pub mod listing;
 
 use std::path::Path;
 
+use casa_core::{RecordField, RecordValue, Value};
 use casa_tables::{Table, TableSchema};
-use casa_types::{RecordField, RecordValue, Value};
 use fitsio::{FitsFile, sys};
 
 use cards::Header;

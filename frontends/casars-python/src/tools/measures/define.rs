@@ -12,8 +12,8 @@
 
 use std::sync::Arc;
 
-use casa_types::measures::{MPosition, MeasuresProvider, MjdHighPrec};
-use casa_types::quanta::{Dimension, Quantity, UnitDim};
+use casa_core::measures::{MPosition, MeasuresProvider, MjdHighPrec};
+use casa_core::quanta::{Dimension, Quantity, UnitDim};
 
 use crate::convert::holder::{
     DIRECTION_CODES, EPOCH_CODES, FREQUENCY_CODES, Measure, MeasureKind, MeasureValue,

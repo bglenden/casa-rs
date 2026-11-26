@@ -3,9 +3,9 @@
 mod predict_support;
 use std::{io::Read, path::Path};
 
+use casa_core::{ArrayValue, Complex32, ScalarValue};
 use casa_simulation::{NoiseSpec, PredictSpec, Simulator};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, Complex32, ScalarValue};
 use flate2::read::GzDecoder;
 use serde_json::Value;
 

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Actual CASA simulator image-layout outcomes and polarized visibilities.
 mod existing_ms_calculations;
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{BackendRequest, CasaOutcome, PredictSpec, Simulator, SimulatorOptions};
-use casa_types::measures::{EpochRef, MEpoch};
 use existing_ms_calculations::{copy, predict_support};
 use flate2::read::GzDecoder;
 use serde_json::Value;
@@ -129,8 +129,8 @@ fn direct_image_layouts_and_stokes_match_casa() {
 
 #[test]
 fn polarized_total_power_accepts_windows_with_and_without_spectral_overlap() {
+    use casa_core::{ArrayValue, Value as CellValue};
     use casa_tables::{Table, TableOptions};
-    use casa_types::{ArrayValue, Value as CellValue};
     let fixture: Value = serde_json::from_reader(GzDecoder::new(
         &include_bytes!("data/sm_image_layouts_casa.json.gz")[..],
     ))

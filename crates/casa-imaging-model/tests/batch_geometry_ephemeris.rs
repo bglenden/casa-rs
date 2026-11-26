@@ -8,18 +8,18 @@
 
 use std::sync::Arc;
 
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::ephemeris::{offset_true_angle, topocentric_j2000};
+use casa_core::measures::epoch::{EpochRef, MEpoch};
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::radial_velocity::{MRadialVelocity, RadialVelocityRef};
+use casa_core::measures::{MeasFrame, PreparedFrequencyConversion};
 use casa_imaging_model::{
     BatchGeometry, BatchGeometryError, CompiledProblem, DirectionFrame, FacetLayout,
     FrequencyFrame, GeometryPlan, GeometryTraversal, GridFtProjection, PhaseCentreLaw,
     PsfPhaseCentreLaw,
 };
 use casa_observation::{BatchBuffers, Catalogue, FieldEphemeris};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::ephemeris::{offset_true_angle, topocentric_j2000};
-use casa_types::measures::epoch::{EpochRef, MEpoch};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::radial_velocity::{MRadialVelocity, RadialVelocityRef};
-use casa_types::measures::{MeasFrame, PreparedFrequencyConversion};
 
 #[path = "fixtures/batch_observation.rs"]
 mod batch_observation;

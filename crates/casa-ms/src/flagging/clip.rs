@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Numerical clip tests for stored correlations and derived Stokes products.
 
-use casa_types::{ArrayValue, Complex32, Complex64};
+use casa_core::{ArrayValue, Complex32, Complex64};
 use ndarray::{ArrayD, Ix2};
 
 use super::correlation::{ClipMetric, ClipProjection, StokesCombination};

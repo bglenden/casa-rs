@@ -21,6 +21,8 @@
 use std::process::ExitCode;
 use std::time::Instant;
 
+use casa_core::ArrayValue;
+use casa_core::Correlation;
 use casa_imaging_model::GridFtProjection;
 use casa_imaging_operator::{GridPrecision, PaddingFactor};
 use casa_ms::MeasurementSet;
@@ -32,8 +34,6 @@ use casa_simulation::predict::{
     FtMachine, ModelPredictor, PredictOptions, PredictRow, PredictionWorkspace, PrimaryBeam,
     SkyModel,
 };
-use casa_types::ArrayValue;
-use casa_types::Correlation;
 use ndarray::IxDyn;
 use num_complex::Complex32;
 

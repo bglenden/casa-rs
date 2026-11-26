@@ -9,7 +9,7 @@ use std::path::Path;
 #[cfg(has_casacore_cpp)]
 use crate::oracle_runtime::CasacoreOracleRuntime;
 use crate::oracle_runtime::{OracleError, oracle_operation};
-use casa_types::Complex32;
+use casa_core::Complex32;
 
 /// Timings for a C++ MeasurementSet create/open/read workload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

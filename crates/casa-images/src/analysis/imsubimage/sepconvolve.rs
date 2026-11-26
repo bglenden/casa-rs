@@ -6,11 +6,11 @@ mod long_profile;
 use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
-use casa_lattices::{TraversalCursorIter, TraversalSpec};
-use casa_types::{
+use casa_core::{
     RecordValue,
     quanta::{Quantity, Unit},
 };
+use casa_lattices::{TraversalCursorIter, TraversalSpec};
 use ndarray::{Axis, Zip};
 
 use crate::{ImageError, ImageInterface, MutableImageInterface};

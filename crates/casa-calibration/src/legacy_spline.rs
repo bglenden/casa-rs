@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use casa_core::{ArrayValue, ScalarValue};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, ScalarValue};
 use num_complex::Complex32;
 
 use crate::{CalibrationTableLayout, ComplexSolution};

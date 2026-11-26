@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType};
-use casa_types::quanta::{Quantity, Unit, casacore};
-use casa_types::{ArrayValue, ScalarValue, Value};
+use casa_core::quanta::{Quantity, Unit, casacore};
+use casa_core::{ArrayValue, ScalarValue, Value};
 use numpy::PyReadonlyArrayDyn;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;

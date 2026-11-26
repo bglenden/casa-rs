@@ -6,6 +6,7 @@ use std::cell::OnceCell;
 use std::path::Path;
 use std::sync::Arc;
 
+use casa_core::measures::MeasuresProvider;
 use casa_imaging_deconvolution::{
     ImageDomainReconstructionMaskPlans, MajorCycleCompletion, ReconstructionMaskSet,
 };
@@ -20,7 +21,6 @@ use casa_imaging_runtime::{
     Admission, Admitted, Cancelled, Demand, Reservation, RunSummary, admit, free_memory, run_phase,
 };
 use casa_observation::FieldEphemeris;
-use casa_types::measures::MeasuresProvider;
 
 use crate::compile::{OpenedStore, resolve_partitions};
 

@@ -11,8 +11,8 @@ use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, QualityCoordinate, QualityType,
     StokesCoordinate, StokesType,
 };
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use casa_lattices::{TraversalCursorIter, TraversalSpec};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::{ImageError, ImageInterface, ImagePixel, PagedImage};
 

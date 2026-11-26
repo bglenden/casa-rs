@@ -7,8 +7,8 @@ use super::selection_input as input;
 use std::path::Path;
 use std::sync::Arc;
 
+use casa_core::measures::{EpochRef, MEpoch, MeasuresProvider};
 use casa_simulation::{ApplySpec, NoiseSpec, PredictSpec, Simulator, SimulatorOptions};
-use casa_types::measures::{EpochRef, MEpoch, MeasuresProvider};
 
 use super::{
     ALLOWANCE_BYTES, BUDGET_32, Closed, LIVE, MEASURED_RUNS, Ordering, PEAK, REFERENCE_MJD,

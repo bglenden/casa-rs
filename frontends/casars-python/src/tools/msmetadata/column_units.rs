@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_core::quanta::casacore::casacore_unit;
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_ms::{MsError, MsResult};
 use casa_tables::Table;
-use casa_types::quanta::casacore::casacore_unit;
-use casa_types::{ArrayValue, ScalarValue, Value};
 
 pub(super) fn column_unit<'a>(
     table: &'a Table,

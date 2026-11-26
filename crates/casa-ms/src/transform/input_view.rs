@@ -3,8 +3,8 @@
 
 use std::collections::BTreeMap;
 
+use casa_core::ArrayValue;
 use casa_tables::{Table, TableError};
-use casa_types::ArrayValue;
 
 use crate::{MeasurementSet, ResolvedMsSelectionRow};
 

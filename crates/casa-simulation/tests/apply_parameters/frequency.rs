@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Independent frequency-table input matching the stated CASA recipe.
+use casa_core::{ArrayValue, Complex32, ScalarValue, Value};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use num_complex::Complex64;
 use serde_json::Value as Json;

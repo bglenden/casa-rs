@@ -75,7 +75,7 @@ pub(crate) enum ImagingError {
     )]
     FirstTaylorCorrelationFlagged {
         /// The first selected correlation.
-        correlation: casa_types::Correlation,
+        correlation: casa_core::Correlation,
     },
     /// A normal state could not be assembled.
     #[error(transparent)]

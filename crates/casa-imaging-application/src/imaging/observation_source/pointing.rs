@@ -10,13 +10,13 @@
 //! the answers kept leave of the pointing charge; when the store refuses it
 //! that, the answers kept go and it is asked again with all of it.
 
+use casa_core::measures::EpochRef;
 use casa_imaging_model::{CompiledProblem, PointingCentreLaw, PointingDirectionColumn};
 use casa_imaging_runtime::pass::SourceError;
 use casa_observation::{
     AntennaId, Observation, ObservationError, PartitionId, PointingDirection, PointingRequest,
     PointingSeries,
 };
-use casa_types::measures::EpochRef;
 
 /// What a pointing query asked for, but the partition: its direction,
 /// antennas and span (as bits), and the time system the span is in (the
@@ -156,14 +156,14 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
+    use casa_core::Correlation;
+    use casa_core::measures::MjdHighPrec;
+    use casa_core::measures::direction::DirectionRef;
+    use casa_core::measures::frequency::FrequencyRef;
     use casa_observation::{
         AccessRequest, AntennaPointing, Catalogue, Estimate, FieldSelection, GroupKey, Grouping,
         OrderedBaseline, PartitionEntry, TimeBaselineGrid, Traversal,
     };
-    use casa_types::Correlation;
-    use casa_types::measures::MjdHighPrec;
-    use casa_types::measures::direction::DirectionRef;
-    use casa_types::measures::frequency::FrequencyRef;
 
     use super::*;
 

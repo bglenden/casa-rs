@@ -6,11 +6,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::CoordinateSystem;
+use casa_core::{RecordField, RecordValue, Value};
 use casa_images::analysis::ensure_outfile_does_not_alias_input;
 use casa_images::concatenate::{ConcatInput, ConcatenationPlan, copy_concatenated_input};
 use casa_images::image::{ImageHistoryRow, image_history_rows};
 use casa_images::{ImageError, ImageInfo, ImagePixel, ImagePixelType, MutableImageInterface};
-use casa_types::{RecordField, RecordValue, Value};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyTuple};
