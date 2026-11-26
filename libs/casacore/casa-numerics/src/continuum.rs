@@ -59,19 +59,15 @@ pub fn fit_polynomial_row(
         })
         .collect::<Vec<_>>();
 
+    let mut active = vec![true; samples.len()];
     let amplitude = samples
         .iter()
         .map(|&(_, observed, _)| observed.abs())
         .fold(0.0, f64::max);
     for _ in 1..passes {
-        let coefficients = solve_weighted_least_squares(&design, terms);
-        if !update_weights(
-            &mut design,
-            samples,
-            coefficients.as_deref().unwrap_or(&[]),
-            amplitude,
-        ) {
-            return coefficients;
+        let coefficients = solve_weighted_least_squares(&design, terms)?;
+        if !update_weights(&mut design, samples, &mut active, &coefficients, amplitude) {
+            return Some(coefficients);
         }
     }
     solve_weighted_least_squares(&design, terms)
@@ -80,12 +76,15 @@ pub fn fit_polynomial_row(
 fn update_weights(
     design: &mut [(Vec<f64>, f64, f64)],
     samples: &[(f64, f64, f64)],
+    active: &mut [bool],
     coefficients: &[f64],
     amplitude: f64,
 ) -> bool {
     let mut largest = 0.0_f64;
-    for ((_, observed, weight), &(coordinate, _, _)) in design.iter_mut().zip(samples) {
-        let residual = if *weight > f64::MIN_POSITIVE {
+    for (((_, observed, weight), &(coordinate, _, _)), is_active) in
+        design.iter_mut().zip(samples).zip(active.iter())
+    {
+        let residual = if *is_active {
             let prediction = coefficients
                 .iter()
                 .rev()
@@ -100,14 +99,15 @@ fn update_weights(
     if largest <= amplitude * 64.0 * f64::EPSILON {
         return false;
     }
-    for (_, _, weight) in design {
+    for ((_, _, weight), is_active) in design.iter_mut().zip(active.iter_mut()) {
         // The SVD solver requires strictly positive weights. Near-zero
         // weights retain the rows without moving a finite solution.
-        *weight = if *weight > 0.0 && *weight < largest {
-            (largest - *weight) / largest
+        if *is_active && *weight < largest {
+            *weight = (largest - *weight) / largest;
         } else {
-            f64::MIN_POSITIVE
-        };
+            *is_active = false;
+            *weight = f64::MIN_POSITIVE;
+        }
     }
     true
 }

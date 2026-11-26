@@ -144,7 +144,7 @@ _Avoid_: Compatibility profile, historical run replay
 
 ## Observation access
 
-The vocabulary of the MSv2/MSv4 observation boundary (`crates/casa-observation`).
+The vocabulary of the MSv2/MSv4 observation boundary (`libs/casacore/casa-observation`).
 
 **Partition**:
 One store unit of an opened observation, described by its content: spectral
