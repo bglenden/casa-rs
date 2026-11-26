@@ -27,6 +27,7 @@ use super::owned_record::visibility_record;
 use super::selection_indices::selection_text;
 use super::subtable_queries::Subtables;
 use super::vi1::Vi1Iteration;
+use super::visibility_reference::ConcatenatedReference;
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
 use crate::convert::value::CasaValue;
 
@@ -49,6 +50,7 @@ pub(super) struct VisibilityMain {
     pub(super) table: Table,
     members: Vec<Table>,
     reference: Option<PlainReferenceRead>,
+    concatenated_reference: Option<ConcatenatedReference>,
     publication: Vec<VisibilityPublication>,
     pub(super) plain: bool,
 }
@@ -236,10 +238,16 @@ impl VisibilityMain {
             ),
             TablePartNames::Concatenation { parts, .. } => (Self::open_plain_members(parts)?, None),
         };
+        let concatenated_reference = if !plain && members.is_empty() && reference.is_none() {
+            ConcatenatedReference::open(&table)?
+        } else {
+            None
+        };
         Ok(Self {
             table,
             members,
             reference,
+            concatenated_reference,
             publication,
             plain,
         })
@@ -375,7 +383,7 @@ impl VisibilityMain {
             .collect())
     }
 
-    fn open_plain_members(paths: Vec<PathBuf>) -> PyResult<Vec<Table>> {
+    pub(super) fn open_plain_members(paths: Vec<PathBuf>) -> PyResult<Vec<Table>> {
         let mut members = Vec::with_capacity(paths.len());
         for path in paths {
             if !matches!(
@@ -412,14 +420,22 @@ impl VisibilityMain {
         metadata: Option<&MeasurementSet>,
         options: tool_visibility::VisibilityReadOptions<'_>,
     ) -> PyResult<CasaValue> {
+        let projection = self
+            .concatenated_reference
+            .as_ref()
+            .and_then(|reference| reference.project(rows));
+        let (table, members, reference, rows) = if let Some((root, members, rows)) = &projection {
+            (*root, *members, None, rows.as_slice())
+        } else {
+            (
+                &self.table,
+                self.members.as_slice(),
+                self.reference.as_ref(),
+                rows,
+            )
+        };
         let record = tool_visibility::read_tool_visibility(
-            &self.table,
-            &self.members,
-            self.reference.as_ref(),
-            rows,
-            items,
-            metadata,
-            options,
+            table, members, reference, rows, items, metadata, options,
         )
         .map_err(runtime_error)?;
         Ok(visibility_record(record))

@@ -33,6 +33,7 @@ mod summary;
 pub(crate) mod surface;
 mod vi1;
 mod visibility;
+mod visibility_reference;
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
