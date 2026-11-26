@@ -278,9 +278,9 @@ const METHODS: &[Method] = &[
     ),
     method(
         "listfits",
-        &[param("fitsfile", K::Any, Required)],
-        R::Any,
-        No,
+        &[param("fitsfile", K::Text, Required)],
+        R::Bool,
+        Yes,
     ),
     method("listhistory", &[], R::Bool, Yes),
     method(
