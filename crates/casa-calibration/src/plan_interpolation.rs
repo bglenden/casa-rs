@@ -33,7 +33,7 @@ pub enum ApplyInterpolationMode {
 }
 
 impl ApplyInterpolationMode {
-    pub(crate) fn parse_casa(value: &str) -> Result<Self, String> {
+    pub fn parse_casa(value: &str) -> Result<Self, String> {
         use crate::{FrequencyInterpolation as F, TimeInterpolation as T};
         let (time, frequency) = value.split_once(',').unwrap_or((value, ""));
         let time = if time.is_empty() { "linear" } else { time };

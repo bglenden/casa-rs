@@ -127,7 +127,7 @@ pub fn export_corrected_data(
     export_corrected_data_with_overwrite(request, false)
 }
 
-pub(crate) fn export_corrected_data_with_overwrite(
+pub fn export_corrected_data_with_overwrite(
     request: &ExportCorrectedDataRequest,
     overwrite: bool,
 ) -> Result<ExportCorrectedDataReport, ExportCorrectedDataError> {

@@ -19,7 +19,7 @@ use crate::solve_stats::{
     AntennaSolution, IntervalStages, SolveStats, SolveStatsBuilder, ToolSolveActivity,
 };
 use crate::{ApplyCalibrationTableSpec, SelectedData};
-use casa_contracts::CasaValue;
+use casa_types::{ArrayValue, RecordField, RecordValue, Value};
 use std::path::PathBuf;
 
 use interval::{IntervalFits, LeakageFitStages};
@@ -27,7 +27,7 @@ use joint::SourceFitMode;
 use parallactic::BaselineSegment;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LeakageSolveKind {
+pub enum LeakageSolveKind {
     D,
     Df,
     DQu,
@@ -53,7 +53,7 @@ pub(crate) enum LeakageSolveKind {
 }
 
 impl LeakageSolveKind {
-    pub(crate) fn subtype(self) -> &'static str {
+    pub fn subtype(self) -> &'static str {
         match self {
             Self::D | Self::DQu | Self::DX => "D Jones",
             Self::Df | Self::DfQu | Self::DfX => "Df Jones",
@@ -72,7 +72,7 @@ impl LeakageSolveKind {
         }
     }
 
-    pub(crate) fn channelized(self) -> bool {
+    pub fn channelized(self) -> bool {
         matches!(
             self,
             Self::Df
@@ -93,7 +93,7 @@ impl LeakageSolveKind {
         !matches!(self, Self::Dlls | Self::Dflls) && !self.cross_hand()
     }
 
-    pub(crate) fn cross_hand(self) -> bool {
+    pub fn cross_hand(self) -> bool {
         matches!(self, Self::Xj | Self::XMueller | Self::Xf | Self::PosAng) || self.parallactic()
     }
 
@@ -113,7 +113,7 @@ impl LeakageSolveKind {
         matches!(self, Self::PosAng | Self::Xparang | Self::Xfparang)
     }
 
-    pub(crate) fn gain_phase(self) -> bool {
+    pub fn gain_phase(self) -> bool {
         matches!(self, Self::XY | Self::XYf)
     }
 
@@ -140,25 +140,25 @@ impl LeakageSolveKind {
 }
 
 #[derive(Clone)]
-pub(crate) struct LeakageSolveRequest {
-    pub(crate) output: PathBuf,
-    pub(crate) selection: MsSelection,
-    pub(crate) kind: LeakageSolveKind,
-    pub(crate) model_source: GainSolveModelSource,
-    pub(crate) stokes: [f32; 4],
-    pub(crate) priors: Vec<ApplyCalibrationTableSpec>,
-    pub(crate) parang_terms: usize,
-    pub(crate) correlation_dependent_flags: bool,
-    pub(crate) solve_mode: GainSolveMode,
-    pub(crate) normalization: Option<crate::GainNormalization>,
-    pub(crate) interval: GainSolveInterval,
-    pub(crate) frequency_interval: Option<crate::BandpassFrequencyInterval>,
-    pub(crate) combine: GainSolveCombine,
-    pub(crate) preaverage_seconds: f64,
-    pub(crate) min_baselines: usize,
-    pub(crate) min_snr: f32,
-    pub(crate) refant: RefAntSelector,
-    pub(crate) append: bool,
+pub struct LeakageSolveRequest {
+    pub output: PathBuf,
+    pub selection: MsSelection,
+    pub kind: LeakageSolveKind,
+    pub model_source: GainSolveModelSource,
+    pub stokes: [f32; 4],
+    pub priors: Vec<ApplyCalibrationTableSpec>,
+    pub parang_terms: usize,
+    pub correlation_dependent_flags: bool,
+    pub solve_mode: GainSolveMode,
+    pub normalization: Option<crate::GainNormalization>,
+    pub interval: GainSolveInterval,
+    pub frequency_interval: Option<crate::BandpassFrequencyInterval>,
+    pub combine: GainSolveCombine,
+    pub preaverage_seconds: f64,
+    pub min_baselines: usize,
+    pub min_snr: f32,
+    pub refant: RefAntSelector,
+    pub append: bool,
 }
 
 impl LeakageSolveRequest {
@@ -202,16 +202,16 @@ pub(crate) struct LeakageEstimate {
     snr: [f32; 2],
 }
 
-pub(crate) struct PolarizationSolveOutcome {
-    pub(crate) rows: usize,
-    pub(crate) source: BTreeMap<String, BTreeMap<i32, Complex32>>,
-    pub(crate) selected: SelectedData,
-    pub(crate) gain_stats: Option<SolveStats>,
-    pub(crate) solved_fields: BTreeSet<i32>,
-    pub(crate) solved_windows: BTreeSet<i32>,
+pub struct PolarizationSolveOutcome {
+    pub rows: usize,
+    pub source: BTreeMap<String, BTreeMap<i32, Complex32>>,
+    pub selected: SelectedData,
+    pub gain_stats: Option<SolveStats>,
+    pub solved_fields: BTreeSet<i32>,
+    pub solved_windows: BTreeSet<i32>,
 }
 
-pub(crate) fn solve_polarization(
+pub fn solve_polarization(
     ms: &MeasurementSet,
     request: &LeakageSolveRequest,
 ) -> Result<PolarizationSolveOutcome, String> {
@@ -515,24 +515,34 @@ fn source_polarization(
 
 pub(crate) fn fractional_stokes_record(
     source: BTreeMap<String, BTreeMap<i32, Complex32>>,
-) -> CasaValue {
-    CasaValue::dict(source.into_iter().map(|(field, windows)| {
-        let mut average = Complex32::ZERO;
-        let vector = |qu: Complex32| {
-            CasaValue::float64_vector([1.0, f64::from(qu.re), f64::from(qu.im), 0.0])
-        };
-        let mut entries = windows
-            .iter()
-            .map(|(id, &qu)| {
-                average += qu;
-                (format!("Spw{id}"), vector(qu))
+) -> RecordValue {
+    RecordValue::new(
+        source
+            .into_iter()
+            .map(|(field, windows)| {
+                let mut average = Complex32::ZERO;
+                let vector = |qu: Complex32| {
+                    Value::Array(ArrayValue::from_f64_vec(vec![
+                        1.0,
+                        f64::from(qu.re),
+                        f64::from(qu.im),
+                        0.0,
+                    ]))
+                };
+                let mut entries = windows
+                    .iter()
+                    .map(|(id, &qu)| {
+                        average += qu;
+                        RecordField::new(format!("Spw{id}"), vector(qu))
+                    })
+                    .collect::<Vec<_>>();
+                average /= windows.len() as f32;
+                entries.sort_unstable_by(|left, right| left.name.cmp(&right.name));
+                entries.push(RecordField::new("SpwAve", vector(average)));
+                RecordField::new(field, Value::Record(RecordValue::new(entries)))
             })
-            .collect::<Vec<_>>();
-        average /= windows.len() as f32;
-        entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
-        entries.push(("SpwAve".into(), vector(average)));
-        (field, CasaValue::dict(entries))
-    }))
+            .collect(),
+    )
 }
 
 struct LeakageInputs<'a> {

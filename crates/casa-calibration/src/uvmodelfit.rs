@@ -34,7 +34,7 @@ pub enum VisibilityFitShape {
 }
 
 impl VisibilityFitShape {
-    pub(crate) fn parse(name: &str) -> MsResult<Self> {
+    pub fn parse(name: &str) -> MsResult<Self> {
         match name {
             "P" => Ok(Self::Point),
             "G" => Ok(Self::Gaussian),

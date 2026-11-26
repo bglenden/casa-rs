@@ -3,9 +3,8 @@
 
 use std::path::PathBuf;
 
-use casa_calibration::{
-    CalibraterLifecycleError, FluxScaleOptions, FluxScaleRequest, fluxscale_record,
-};
+use casa_calibration::{CalibraterLifecycleError, FluxScaleOptions, FluxScaleRequest};
+use casa_tasks::calibration::fluxscale_record;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 

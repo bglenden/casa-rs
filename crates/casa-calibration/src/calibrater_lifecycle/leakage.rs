@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Configure and run the retained polarization solvers.
 
-use casa_contracts::{CasaEntry, CasaKey, CasaValue};
 use casa_ms::MeasurementSet;
+use casa_types::{RecordField, Value};
 
 use super::{CalibraterLifecycle, CalibraterLifecycleError, CalibraterModel, ConfiguredSolve};
 use crate::solve::grouping::leakage::{
@@ -129,22 +129,24 @@ impl CalibraterLifecycle {
         if !self.legacy_iterator
             && let Some(stats) = &outcome.gain_stats
         {
-            self.last_solve_stats = Some(crate::casa_return::solvestats(stats));
+            self.last_solve_stats = Some(crate::solve_stats::solvestats_record(stats));
         }
-        if let Some(CasaValue::Dict { mut entries }) = activity.record() {
+        if let Some(mut record) = activity.record() {
             if matches!(
                 request.kind,
                 LeakageSolveKind::Xparang | LeakageSolveKind::Xfparang
             ) {
-                entries.insert(
+                let mut fields = record.into_fields();
+                fields.insert(
                     0,
-                    CasaEntry {
-                        key: CasaKey::String("fStokes".into()),
-                        value: fractional_stokes_record(outcome.source),
-                    },
+                    RecordField::new(
+                        "fStokes",
+                        Value::Record(fractional_stokes_record(outcome.source)),
+                    ),
                 );
+                record = casa_types::RecordValue::new(fields);
             }
-            self.last_activity = Some(CasaValue::Dict { entries });
+            self.last_activity = Some(record);
         }
         Ok(())
     }

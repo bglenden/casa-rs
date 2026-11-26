@@ -99,7 +99,7 @@ pub enum GainFieldSelector {
 }
 
 impl GainFieldSelector {
-    pub(crate) fn parse_casa(value: &str) -> Option<Self> {
+    pub fn parse_casa(value: &str) -> Option<Self> {
         match value {
             "" => None,
             "nearest" => Some(Self::Nearest),
@@ -407,7 +407,7 @@ pub enum ApplyPlanError {
 
     /// One traditional argument failed after opening and selecting the MS.
     #[error(transparent)]
-    Argument(crate::ApplyArgumentError),
+    Argument(ApplyArgumentError),
 
     /// The MeasurementSet is outside the supported complex-DATA surface.
     #[error("MeasurementSet is missing required MAIN.DATA column")]
@@ -528,10 +528,24 @@ pub fn plan_apply_with_timings(
     plan_apply_with_preparation_error(ms, request, None)
 }
 
+/// A traditional applycal argument whose error follows MS setup and selection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, thiserror::Error)]
+pub enum ApplyArgumentError {
+    /// A table's positional calwt element was missing.
+    #[error("list index out of range")]
+    MissingCalwt,
+    /// A spwmap variant could not be read as a window map.
+    #[error("{0}")]
+    SpwMap(String),
+}
+
+/// Deferred preparation failure raised after MS opening and selection succeed.
 #[derive(Clone, Copy)]
-pub(crate) enum ApplyPreparationError<'a> {
+pub enum ApplyPreparationError<'a> {
+    /// Callibrary parse failure.
     Callibrary(&'a str),
-    Argument(&'a crate::ApplyArgumentError),
+    /// Traditional argument parse failure.
+    Argument(&'a ApplyArgumentError),
 }
 
 pub(crate) fn plan_apply_with_preparation_error(

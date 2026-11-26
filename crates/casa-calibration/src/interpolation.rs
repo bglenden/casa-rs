@@ -3,7 +3,7 @@
 use casa_types::Complex32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Curve {
+pub enum Curve {
     Nearest,
     Linear,
     Cubic,

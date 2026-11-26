@@ -32,7 +32,7 @@ struct Solution {
     parameters: ArrayValue,
 }
 
-pub(crate) fn rereference_calibration_table(
+pub fn rereference_calibration_table(
     ms_path: &Path,
     input: &Path,
     destination: &Path,

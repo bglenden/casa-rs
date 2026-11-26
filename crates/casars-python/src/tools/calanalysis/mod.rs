@@ -6,6 +6,8 @@ pub(crate) mod surface;
 use std::sync::{Mutex, PoisonError};
 
 use casa_calibration::{CalAnalysis, CalAnalysisFit, CalAnalysisIds::*, CalAnalysisQuery};
+use casa_contracts::casacore_value_to_casa;
+use casa_types::Value;
 use numpy::PyArray1;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
@@ -354,7 +356,11 @@ impl PyCalAnalysis {
             }
         });
         match result {
-            Ok(result) => reply_value(py, &result),
+            Ok(result) => {
+                let value = casacore_value_to_casa(&Value::Record(result))
+                    .map_err(PyRuntimeError::new_err)?;
+                reply_value(py, &value)
+            }
             Err(error) => {
                 emit(py, LOGGER, &[LogLine::warning(error)])?;
                 Ok(PyDict::new(py).into_any().unbind())

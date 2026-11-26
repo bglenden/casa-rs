@@ -13,7 +13,7 @@ use super::{JyperkError, metadata};
 pub(super) const DEFAULT_HOST: &str = "https://asa.alma.cl/science/jy-kelvins";
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Endpoint {
+pub enum Endpoint {
     #[default]
     Asdm,
     Interpolation,
@@ -21,7 +21,7 @@ pub(crate) enum Endpoint {
 }
 
 impl Endpoint {
-    pub(crate) fn parse(text: &str) -> Option<Self> {
+    pub fn parse(text: &str) -> Option<Self> {
         match text {
             "asdm" => Some(Self::Asdm),
             "interpolation" => Some(Self::Interpolation),
@@ -39,11 +39,11 @@ impl Endpoint {
     }
 }
 
-pub(crate) struct ServiceOptions {
-    pub(crate) endpoint: Endpoint,
-    pub(crate) timeout: i64,
-    pub(crate) attempts: i64,
-    pub(crate) delay: i64,
+pub struct ServiceOptions {
+    pub endpoint: Endpoint,
+    pub timeout: i64,
+    pub attempts: i64,
+    pub delay: i64,
 }
 
 impl Default for ServiceOptions {

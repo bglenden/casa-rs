@@ -9,20 +9,32 @@ use casa_types::Complex32;
 
 use super::linear_fit::{Fit, LinearFit};
 
-pub(super) const INVALID_WAVE: &str = "wrong value given for addwn/rejwn";
+/// Invalid wave selector error message.
+pub const INVALID_WAVE: &str = "wrong value given for addwn/rejwn";
 const NO_WAVES: &str = "No effective wave number given for sinusoidal fitting.";
 pub(super) const INVALID_FIT: &str = "sakura_LSQFitSinusoidFloat() failed -- InvalidArgument";
 
+/// Wave-number selection for sinusoidal baseline fitting.
 #[derive(Clone)]
-pub(super) enum WaveSelection {
+pub enum WaveSelection {
+    /// Explicit 1-based/0-based integer list.
     Explicit(Vec<usize>),
+    /// Exact wave indices.
     Exact(Vec<usize>),
-    Interval { first: usize, last: usize },
+    /// Closed `[first, last]` wave interval.
+    Interval {
+        /// Lower bound.
+        first: usize,
+        /// Upper bound.
+        last: usize,
+    },
+    /// All waves from this threshold through Nyquist.
     ThroughNyquist(usize),
 }
 
 impl WaveSelection {
-    pub(super) fn explicit(numbers: impl IntoIterator<Item = i64>) -> Result<Self, String> {
+    /// Construct an explicit wave list from integer arguments.
+    pub fn explicit(numbers: impl IntoIterator<Item = i64>) -> Result<Self, String> {
         numbers
             .into_iter()
             .map(|number| usize::try_from(number).map_err(|_| INVALID_WAVE.into()))
@@ -30,7 +42,8 @@ impl WaveSelection {
             .map(Self::Explicit)
     }
 
-    pub(super) fn from_task_text(text: &str) -> Result<Self, String> {
+    /// Parse wave-number specification strings into a selection.
+    pub fn from_task_text(text: &str) -> Result<Self, String> {
         let index = |value: &str| value.trim().parse::<usize>().map_err(|_| INVALID_WAVE);
         if text.contains(',') {
             let indexes = text
@@ -137,13 +150,17 @@ fn parse_integer_prefix(text: &str) -> Option<i64> {
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum FftThreshold {
+/// FFT peak detection threshold for automatic sinusoidal wave selection.
+pub enum FftThreshold {
+    /// Signal-to-noise ratio threshold.
     Sigma(f32),
+    /// Fixed number of top Fourier components.
     Top(usize),
 }
 
 impl FftThreshold {
-    pub(super) fn validate(text: &str) -> Result<(), String> {
+    /// Validate an `fftthresh` parameter string.
+    pub fn validate(text: &str) -> Result<(), String> {
         const FORMAT: &str = "fftthresh has a wrong format.";
         const POSITIVE: &str = "threshold given to fftthresh must be positive.";
         let not_positive = if let Some(top) = text.strip_prefix("top") {
@@ -243,7 +260,8 @@ impl SingleDishSinusoid {
         }
     }
 
-    pub(super) fn new(
+    /// Construct a sinusoidal baseline model from parsed wave selectors and FFT options.
+    pub fn new(
         include: WaveSelection,
         exclude: WaveSelection,
         applyfft: bool,

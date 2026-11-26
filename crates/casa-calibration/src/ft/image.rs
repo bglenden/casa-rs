@@ -40,8 +40,8 @@ use super::{channel_span, invalid, model_entry, spectral_with_runtime};
 
 /// An uncommitted Fourier image. The scratch path uses it until the write
 /// finishes. The virtual model can keep it once its on-disk record is filed.
-pub(crate) struct ImageModel {
-    pub(crate) entry: VirtualModelEntry,
+pub struct ImageModel {
+    pub entry: VirtualModelEntry,
     pub(super) nonzero: bool,
     backing: GridLifetime,
 }
@@ -98,7 +98,7 @@ impl ImageModel {
         Ok(())
     }
 
-    pub(crate) fn copy_to(&self, target: &MeasurementSet) -> MsResult<Self> {
+    pub fn copy_to(&self, target: &MeasurementSet) -> MsResult<Self> {
         let backing = GridLifetime {
             path: virtual_model_image_path(target)?,
             retained: false,
@@ -127,7 +127,7 @@ impl ImageModel {
         })
     }
 
-    pub(crate) fn retain(&mut self) {
+    pub fn retain(&mut self) {
         self.backing.retained = true;
     }
 }
@@ -146,14 +146,14 @@ impl Drop for GridLifetime {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct TaylorTerm {
-    pub(crate) count: i32,
-    pub(crate) index: i32,
-    pub(crate) reference_hz: f64,
+pub struct TaylorTerm {
+    pub count: i32,
+    pub index: i32,
+    pub reference_hz: f64,
 }
 
 /// The image spectral coordinate determines the default Taylor frequency.
-pub(crate) fn reference_frequency(path: &Path) -> MsResult<f64> {
+pub fn reference_frequency(path: &Path) -> MsResult<f64> {
     if path.is_file() {
         let fits = casa_images::fits_read::FitsToolImport::open(path, 0, -1).map_err(invalid)?;
         return spectral_reference_frequency(fits.coordinates());
@@ -175,7 +175,7 @@ fn spectral_reference_frequency(coordinates: &CoordinateSystem) -> MsResult<f64>
     spectral.world_frequency_hz(pixel).map_err(invalid)
 }
 
-pub(crate) fn prepare_image(
+pub fn prepare_image(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
     path: &Path,

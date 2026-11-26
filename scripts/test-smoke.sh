@@ -19,7 +19,7 @@ wheel_venv="$tmp_root/wheel-venv"
 wheelhouse="$tmp_root/wheelhouse"
 
 echo "==> Building calibrate binary for wheel smoke checks"
-cargo build -q -p casa-calibration --bin calibrate
+cargo build -q -p casars-cli --bin calibrate
 
 echo "==> Building distributable casars wheel"
 mkdir -p "$wheelhouse"

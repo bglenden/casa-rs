@@ -11,12 +11,12 @@ use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 
 use super::invalid;
 
-pub(crate) mod image;
-pub(crate) mod solar2010;
-pub(crate) mod solar2012;
-pub(crate) mod standards;
+pub mod image;
+pub mod solar2010;
+pub mod solar2012;
+pub mod standards;
 
-pub(crate) struct ManualFlux {
+pub struct ManualFlux {
     flux_jy: [f64; 4],
     reference: MFrequency,
     spectral_index: Vec<f64>,
@@ -27,7 +27,7 @@ pub(crate) struct ManualFlux {
 }
 
 impl ManualFlux {
-    pub(crate) fn new(
+    pub fn new(
         flux_jy: [f64; 4],
         reference: MFrequency,
         spectral_index: Vec<f64>,
@@ -74,7 +74,7 @@ impl ManualFlux {
 
     /// Form the point model and the flux at the first reported frequency in
     /// the spectral window. The caller chooses the channel list or median.
-    pub(crate) fn component(
+    pub fn component(
         &self,
         direction: MDirection,
         frequencies: &[MFrequency],
@@ -119,21 +119,21 @@ impl ManualFlux {
         ))
     }
 
-    pub(crate) fn intensity_jy(&self) -> f64 {
+    pub fn intensity_jy(&self) -> f64 {
         self.flux_jy[0]
     }
 
-    pub(crate) fn reports_spectral_index(&self) -> bool {
+    pub fn reports_spectral_index(&self) -> bool {
         self.spectral_index
             .first()
             .is_some_and(|&index| index != 0.0)
     }
 
-    pub(crate) fn has_spectral_dependence(&self) -> bool {
+    pub fn has_spectral_dependence(&self) -> bool {
         self.spectral_index.iter().any(|&index| index != 0.0)
     }
 
-    pub(crate) fn intensity_at(&self, frequency: &MFrequency, frame: &MeasFrame) -> MsResult<f64> {
+    pub fn intensity_at(&self, frequency: &MFrequency, frame: &MeasFrame) -> MsResult<f64> {
         let i = self.intensity_jy();
         let f = frequency.hz();
         let f0 = self.reference.hz();
@@ -181,7 +181,7 @@ impl ManualFlux {
     }
 }
 
-pub(crate) fn sampled_point(
+pub fn sampled_point(
     direction: MDirection,
     frequencies: &[MFrequency],
     stokes: Vec<[f64; 4]>,

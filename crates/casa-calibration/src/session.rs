@@ -390,7 +390,8 @@ pub(crate) fn resolve_calibration_selection(
     measurement_set.resolve_selection(selection, calibration_selection_budget()?)
 }
 
-pub(crate) fn resolve_casa_calibration_selection(
+/// Resolve MS selection with calibration's CASA-grammar memory budget.
+pub fn resolve_casa_calibration_selection(
     measurement_set: &MeasurementSet,
     selection: &MsSelection,
 ) -> Result<ResolvedMsSelection, MsSelectionError> {

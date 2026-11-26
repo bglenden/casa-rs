@@ -242,7 +242,6 @@ version = "0.27.0"
 dependencies = [
  "casa-atmosphere",
  "casa-components",
- "casa-contracts",
  "casa-coordinates",
  "casa-fft",
  "casa-images",
@@ -256,11 +255,8 @@ dependencies = [
  "casa-ms",
  "casa-numerics",
  "casa-observation",
- "casa-plot-data",
  "casa-simulation",
  "casa-tables",
- "casa-task-runtime",
- "casa-tasks",
  "casa-test-support",
  "casa-types",
  "csv-core",
@@ -663,6 +659,8 @@ name = "casa-plot-data"
 version = "0.27.0"
 dependencies = [
  "casa-atmosphere",
+ "casa-calibration",
+ "casa-measures-data",
  "casa-ms",
  "casa-tables",
  "casa-test-support",
@@ -761,6 +759,8 @@ name = "casa-tasks"
 version = "0.27.0"
 dependencies = [
  "casa-atmosphere",
+ "casa-calibration",
+ "casa-components",
  "casa-contracts",
  "casa-images",
  "casa-imaging-application",
@@ -783,7 +783,9 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
+ "time",
  "tracing",
+ "ureq",
 ]
 
 [[package]]
@@ -872,6 +874,7 @@ name = "casars-cli"
 version = "0.27.0"
 dependencies = [
  "base64",
+ "casa-calibration",
  "casa-contracts",
  "casa-coordinates",
  "casa-images",
