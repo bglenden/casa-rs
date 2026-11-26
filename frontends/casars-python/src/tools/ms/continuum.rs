@@ -9,8 +9,8 @@ use casa_calibration::continuum::{
     initialize_continuum_scratch_holding,
 };
 use casa_ms::schema::main_table::OptionalMainColumn;
-use casa_ms::transform::{LegacyMsTool, LegacyTimeOptions, MsTransformTaskOptions};
 use casa_ms::{MeasurementSet, MsSelection};
+use casa_mstransform::{LegacyMsTool, LegacyTimeOptions, MsTransformTaskOptions};
 use casa_tables::TableWriteLock;
 use pyo3::prelude::*;
 
@@ -121,7 +121,7 @@ impl PyMsTool {
                 },
                 combine: combine.to_ascii_lowercase(),
             })
-                as Arc<dyn casa_ms::transform::TransformInputView>)
+                as Arc<dyn casa_mstransform::TransformInputView>)
         } else {
             None
         };

@@ -12,9 +12,9 @@ use crate::plot::{
     VisibilityScatterSeries,
 };
 use casa_ms::columns::{main_ids, time_columns::TimeColumn, uvw_column::UvwColumn};
-use casa_ms::listobs::{self, ListObsOptions};
 use casa_ms::selection::parser::parse_correlation_selector;
 use casa_ms::selection::{MsSelection, resolve_row_indices_with_system_budget};
+use casa_ms::{self, ListObsOptions};
 use casa_ms::{MeasurementSet, subtables};
 
 #[derive(Debug, Default)]
@@ -412,7 +412,7 @@ fn select_correlation_slots(
     for corr_index in 0..corr_count {
         let corr_label = corr_types
             .get(corr_index)
-            .map(|code| listobs::stokes_name(*code).to_string())
+            .map(|code| casa_ms::stokes_name(*code).to_string())
             .unwrap_or_else(|| format!("corr-{corr_index}"));
         let corr_code = corr_types.get(corr_index).copied();
         if requested_corr_codes.is_empty()

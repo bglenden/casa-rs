@@ -525,8 +525,8 @@ mod legacy_tests {
     use super::*;
 
     use casa_core::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+    use casa_ms::ColumnKind;
     use casa_ms::MeasurementSetBuilder;
-    use casa_ms::column_def::ColumnKind;
     use casa_ms::schema::main_table::REQUIRED_COLUMNS;
     use casa_tables::{TableInfo, TableOptions};
     use ndarray::{ArrayD, IxDyn};

@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use casa_core::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
-use casa_ms::ms::MeasurementSet;
+use casa_ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
 use casa_numerics::solve_weighted_least_squares;
 use casa_tables::{ColumnSchema, Table, TableError, TableOptions, TableSchema};

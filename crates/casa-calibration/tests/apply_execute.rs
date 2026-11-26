@@ -9,7 +9,7 @@ use casa_calibration::{
     ExportCorrectedDataRequest, GainFieldSelector, execute_apply_from_path, export_corrected_data,
 };
 use casa_core::{ArrayValue, ScalarValue, Value};
-use casa_ms::ms::MeasurementSet;
+use casa_ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::selection::MsSelection;
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};

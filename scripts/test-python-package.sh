@@ -101,7 +101,7 @@ echo "==> Running an installed wheel task with CLI commands unavailable"
 no_cli_workspace="$tmp_root/wheel-workspace"
 no_cli_path="$tmp_root/no-commands"
 mkdir "$no_cli_workspace" "$no_cli_path"
-tar -xzf crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz -C "$no_cli_workspace"
+tar -xzf libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz -C "$no_cli_workspace"
 (
   cd "$no_cli_workspace"
   for variable in $(compgen -e); do

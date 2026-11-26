@@ -21,7 +21,7 @@ use ndarray::Ix2;
 use serde_json::json;
 use tempfile::tempdir;
 
-#[path = "../../../crates/casa-ms/tests/common/mod.rs"]
+#[path = "../../../libs/casacore/casa-ms/tests/common/mod.rs"]
 mod common;
 
 use common::casa_plotms::{discover_casa_python, ngc5921_ms_path, skip_reason};

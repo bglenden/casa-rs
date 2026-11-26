@@ -7,13 +7,13 @@ use std::path::Path;
 use crate::ms::{flagdata_empty_record, flagdata_named_summary_record, ms_task_success};
 use crate::{ParameterSession, ResolutionPatch, TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::{CasaValue, ParameterValue};
-use casa_ms::flagging::{
+use casa_flagging::{
     FlagDataColumn, FlagDataMode, FlaggingError, flagdata_calibration_program, flagdata_ms_program,
     save_next_casa_flag_backup, validate_calibration_flag_averaging, validate_ms_flag_averaging,
 };
-use casa_ms::{
-    FlagDataReport, FlagDataRequest, MeasurementSet, append_flag_commands, append_task_history,
-};
+use casa_flagging::{FlagDataReport, FlagDataRequest, append_flag_commands};
+use casa_ms::MeasurementSet;
+use casa_mstransform::append_task_history;
 
 use super::{
     channel_bin_widths, command, command_values::Assignments, data_column,
@@ -220,10 +220,7 @@ fn data_column_available(
             FlagDataColumn::Cparam | FlagDataColumn::Fparam | FlagDataColumn::Snr
         ) && has_column(column.name());
     }
-    let has_model = || {
-        has_column("MODEL_DATA")
-            || !casa_ms::scratch_columns::virtual_model_fields(table).is_empty()
-    };
+    let has_model = || has_column("MODEL_DATA") || !casa_ms::virtual_model_fields(table).is_empty();
     match column {
         FlagDataColumn::Residual => has_column("CORRECTED_DATA") && has_model(),
         FlagDataColumn::ResidualData => {
@@ -382,7 +379,7 @@ fn prepare(
         Err(error) if error.parameter.as_deref() == Some("datacolumn") => return Ok(None),
         result => result?,
     };
-    if mode == "quack" && request.quackmode == casa_ms::flagging::QuackMode::Disabled {
+    if mode == "quack" && request.quackmode == casa_flagging::QuackMode::Disabled {
         return Ok(None);
     }
     if mode == "antint" {

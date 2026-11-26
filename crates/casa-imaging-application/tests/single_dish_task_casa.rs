@@ -197,7 +197,7 @@ fn grids_actual_casa_total_power_measurement_sets() {
 
 #[test]
 fn converted_msv4_keeps_total_power_pixels_weights_and_pointings() {
-    use casa_ms::observation_io::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
+    use casa_mstransform::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
     let root = tempfile::tempdir().unwrap();
     let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data");
     tar::Archive::new(GzDecoder::new(

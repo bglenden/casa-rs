@@ -4,7 +4,7 @@
 
 use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_imaging_application::product_law;
-use casa_ms::column_def::build_table_schema;
+use casa_ms::build_table_schema;
 use casa_ms::{MeasurementSet, OptionalMainColumn};
 use ndarray::ArrayD;
 use serde_json::json;

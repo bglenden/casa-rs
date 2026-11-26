@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use casa_core::measures::direction::{DirectionRef, MDirection};
 use casa_core::measures::{EpochRef, MEpoch, MPosition, MeasFrame, MeasuresProvider, UvwFrame};
-use casa_ms::shadowing::{ProjectedBaseline, ShadowedAntenna, shadowed_antennas};
+use casa_flagging::shadowing::{ProjectedBaseline, ShadowedAntenna, shadowed_antennas};
 
 use crate::corrupt::{RowNoise, airmass};
 use crate::session::array::Antenna;

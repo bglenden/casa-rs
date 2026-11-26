@@ -8,12 +8,12 @@ use casa_core::measures::frequency::FrequencyRef;
 use casa_core::quanta::Quantity;
 use casa_ms::selection::MsSelectionIoBudget;
 use casa_ms::subtables::{MetadataDirection, MsField, MsSpectralWindow, linked_subtable_row};
-use casa_ms::transform::{
+use casa_ms::{MsError, MsResult, SubtableId};
+use casa_mstransform::{
     MsRegridOptions, MsTransformError, ToolGridFrameTables, ToolGridPhaseCentre,
     ToolSpectralWindow, tool_channel_frequencies, tool_grid_frame_at_epoch,
     tool_grid_reference_epoch,
 };
-use casa_ms::{MsError, MsResult, SubtableId};
 use casa_tables::{Table, TableOptions};
 use numpy::{PyArray1, PyUntypedArray};
 use pyo3::exceptions::{PySystemError, PyTypeError};

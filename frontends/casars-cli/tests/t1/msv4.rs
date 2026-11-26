@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 
 use casa_ms::observation_io::Msv4Codec;
-use casa_ms::observation_io::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
+use casa_mstransform::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
 use serde_json::{Value, json};
 
 use super::fixture::{Component, Observation};
@@ -183,10 +183,9 @@ fn a_flagged_first_channel_does_not_hide_a_later_acquired_channel() {
         .unwrap()
         .contains_column("WEIGHT_SPECTRUM")
     {
-        let schema = casa_ms::column_def::build_table_schema(&[
-            *OptionalMainColumn::WeightSpectrum.column_def(),
-        ])
-        .unwrap();
+        let schema =
+            casa_ms::build_table_schema(&[*OptionalMainColumn::WeightSpectrum.column_def()])
+                .unwrap();
         ms.main_table_mut()
             .add_column(schema.column("WEIGHT_SPECTRUM").unwrap().clone(), None)
             .unwrap();

@@ -51,7 +51,7 @@ imaging-t31-multidomain-geometry testdata_root casa_prefix:
 
 # Focused #522 frame/interval evaluation and edge coverage.
 imaging-t36-spectral-law:
-    CARGO_INCREMENTAL=0 cargo test -p casa-ms --features cpp-interop-tests --test spectral_frame_parity
+    CARGO_INCREMENTAL=0 cargo test -p casacore-interop --features cpp-interop-tests --test spectral_frame_parity
     CARGO_INCREMENTAL=0 cargo test -p casacore-interop --features cpp-interop-tests --test spectral_frame_exact_interop
     CARGO_INCREMENTAL=0 cargo test -p casacore-interop --features cpp-interop-tests --test frequency_sequence_interop
 

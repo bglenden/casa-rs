@@ -5,7 +5,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use casa_ms::tool_sort::{check_named_sort_output, write_sorted_measurement_set};
+use casa_mstransform::tool_sort::{check_named_sort_output, write_sorted_measurement_set};
 use casa_tables::publication::{
     check_write_access, exchange_directories, lock_table_tree_for_replacement_with_held,
     rename_without_replacing,

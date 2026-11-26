@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Build the MSv2/MSv4 trial fixtures (crates/casa-ms/tests/fixtures/ms_trial).
+"""Build the MSv2/MSv4 trial fixtures (libs/casacore/casa-ms/tests/fixtures/ms_trial).
 
 Run from the repository root, in the locked oracle environment:
 

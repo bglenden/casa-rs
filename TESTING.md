@@ -358,14 +358,14 @@ cases change.
 
 **importvla.** The CASA comparisons need `--features cpp-interop-tests` and a
 CASA Python (`casa_test_support::discover_casa_python`), and write temporary
-MeasurementSets under `target/`. With that feature, `cargo test -p casa-vla
---test cpp_import_ms_parity` imports the archive `CASA_RS_IMPORTVLA_ARCHIVE`
+MeasurementSets under `target/`. `cargo test -p casacore-interop
+--features cpp-interop-tests --test cpp_import_ms_parity` imports the archive `CASA_RS_IMPORTVLA_ARCHIVE`
 names with both; `--test cpp_import_ms_parity_matrix -- --ignored
 --nocapture` runs the known real archives (the AG189 revision 11 and 12
 exports that the test's `CASA_RS_IMPORTVLA_PARITY_*` variables name, and
 casatestdata's revision-26 `AS758` cases); and `--test real_importvla_parity
 -- --ignored --nocapture` also compares selected persisted metadata. `cargo
-test -p casa-vla --test real_archive_inventory -- --ignored --nocapture`
+test -p casa-vla --test api real_archive_inventory:: -- --ignored --nocapture`
 summarizes the modes and revisions of the archives in
 `CASA_RS_IMPORTVLA_ARCHIVES` before new matrix cases are chosen.
 

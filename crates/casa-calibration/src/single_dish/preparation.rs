@@ -10,7 +10,7 @@ mod smoothing;
 use std::path::{Path, PathBuf};
 
 use casa_ms::MsSelection;
-use casa_ms::transform::{
+use casa_mstransform::{
     MsTransformReport, MsTransformRequest, TransformDataColumn, TransformTaskHistory,
     convolve_spectra,
 };

@@ -201,7 +201,7 @@ def test_data_schema_bundle_reports_object_surface() -> None:
 
 def test_measurement_set_plot_releases_the_gil(tmp_path: Path) -> None:
     with tarfile.open(
-        REPO_ROOT / "crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz", "r:gz"
+        REPO_ROOT / "libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz", "r:gz"
     ) as archive:
         extract = {"filter": "data"} if sys.version_info >= (3, 12) else {}
         archive.extractall(tmp_path, **extract)

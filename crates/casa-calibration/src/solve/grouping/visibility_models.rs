@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use casa_core::{ArrayValue, Complex32, ScalarValue};
-use casa_ms::{MeasurementSet, ResolvedMsSelectionRow, VirtualModelEntry, scratch_columns};
+use casa_ms::{MeasurementSet, ResolvedMsSelectionRow, VirtualModelEntry};
 use ndarray::ArrayD;
 
 use crate::ft::PreparedVoltagePattern;
@@ -38,7 +38,7 @@ impl VisibilityModels {
         rows: &[ResolvedMsSelectionRow],
         recipe_slots: Option<&[usize]>,
     ) -> Result<Self, GainSolveError> {
-        let fields = scratch_columns::virtual_model_fields(ms);
+        let fields = casa_ms::virtual_model_fields(ms);
         let (rows, states) = transform_model_rows(ms, rows, &fields, recipe_slots)?;
         let models = ModelInputs::new(ms, &rows, GainSolveModelSource::FromMeasurementSet)?;
         Self::with_models(ms, rows, models, GainSolveCombine::default(), Some(&states))
@@ -64,7 +64,7 @@ impl VisibilityModels {
         combine: GainSolveCombine,
         defer_refusals: bool,
     ) -> Result<Self, GainSolveError> {
-        let virtual_fields = scratch_columns::virtual_model_fields(ms);
+        let virtual_fields = casa_ms::virtual_model_fields(ms);
         let rows = rows
             .iter()
             .filter(|row| virtual_fields.contains(&row.field_id))

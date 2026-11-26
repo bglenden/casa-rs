@@ -4,7 +4,7 @@ use std::io::{self, BufWriter, Write};
 use std::path::Path;
 
 use casa_ms::MsSelection;
-use casa_ms::tool_lister::{ToolListerOptions, write_visibility_listing};
+use casa_mstransform::tool_lister::{ToolListerOptions, write_visibility_listing};
 use pyo3::prelude::*;
 use tempfile::NamedTempFile;
 

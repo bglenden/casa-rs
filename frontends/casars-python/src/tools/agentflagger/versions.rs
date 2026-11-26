@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Direct flag-version methods and the tool's raw naming rules.
 
-use casa_ms::MeasurementSet;
-use casa_ms::flagging::{
+use casa_flagging::{
     FlagMerge, delete_flag_version, flag_version_ms_path, initialize_flag_versions,
     list_flag_versions, restore_flag_version, save_agent_disk_flag_version,
 };
+use casa_ms::MeasurementSet;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 

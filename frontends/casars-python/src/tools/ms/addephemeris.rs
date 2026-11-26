@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use casa_ms::tool_ephemeris::{ToolEphemeris, add_tool_ephemeris};
+use casa_ms::{ToolEphemeris, add_tool_ephemeris};
 use casa_tables::{Table, TableOptions};
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;

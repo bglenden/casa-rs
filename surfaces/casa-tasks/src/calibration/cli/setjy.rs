@@ -16,13 +16,11 @@ use casa_core::quanta::casacore::stream_double_precision;
 use casa_core::quanta::{Quantity, Unit};
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::schema::main_table::VisibilityDataColumn;
-use casa_ms::virtual_model::{
-    VirtualModelPublication, selected_model_combinations, virtual_model_clear_ids,
-};
 use casa_ms::{
     MeasurementSet, MsSelection, MsSpectralWindow, ResolvedMsSelection, VirtualModelEntry,
     VirtualModelKind,
 };
+use casa_ms::{VirtualModelPublication, selected_model_combinations, virtual_model_clear_ids};
 use casa_tables::TableWriteLock;
 
 use casa_calibration::attachment::OpenedMs;

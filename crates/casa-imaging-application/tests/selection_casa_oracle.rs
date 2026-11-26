@@ -55,7 +55,7 @@ const REFUSED: [&str; 2] = ["no_such_field", "mixed_missing_name"];
 fn fixture(root: &Path) -> PathBuf {
     let archive = File::open(
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../casa-ms/tests/fixtures/mssel_test_small.ms.tgz"),
+            .join("../../libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz"),
     )
     .expect("the mssel fixture archive");
     tar::Archive::new(GzDecoder::new(archive))

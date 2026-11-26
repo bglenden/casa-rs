@@ -4,8 +4,8 @@
 use std::collections::{BTreeMap, HashMap};
 
 use casa_core::{ArrayValue, Complex32};
-use casa_ms::transform::{PreparedTransformInputView, TransformInputColumns, TransformInputView};
 use casa_ms::{MeasurementSet, MsSelection, ResolvedMsSelectionRow};
+use casa_mstransform::{PreparedTransformInputView, TransformInputColumns, TransformInputView};
 use casa_tables::{RequiredScalarColumnValues, Table, TableError};
 use ndarray::{Array2, ArrayD, Ix2, ShapeBuilder};
 

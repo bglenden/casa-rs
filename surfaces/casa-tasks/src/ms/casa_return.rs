@@ -14,7 +14,7 @@ use std::path::Path;
 
 use casa_contracts::{CasaEntry, CasaKey, CasaValue};
 
-use casa_ms::{FlagCounts, FlagSummaryBreakdown, FlagVersionEntry};
+use casa_flagging::{FlagCounts, FlagSummaryBreakdown, FlagVersionEntry};
 
 /// The name CASA's summary carries: its `name` parameter, `'Summary'` by
 /// default.

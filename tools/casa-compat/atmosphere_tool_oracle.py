@@ -246,7 +246,7 @@ def invalid_layer(factory):
 
 
 def corrected_layers(factory):
-    path = Path(__file__).resolve().parents[2]/'crates/casa-atmosphere/tests/data/absorption.json'
+    path = Path(__file__).resolve().parents[2]/'libs/casa/casa-atmosphere/tests/data/absorption.json'
     fixture = json.loads(path.read_text())
     windows = fixture['windows']
     separations = [w['sep_hz'] for w in windows]

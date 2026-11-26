@@ -16,15 +16,16 @@ use casa_contracts::{
     TaskFailureKind, python_repr,
 };
 use casa_core::quanta::Quantity;
-use casa_ms::flagging::{
+use casa_flagging::{
     AntennaIntegrationOptions, RFlagThresholdReport, ShadowOptions, flagdata_path_with_model,
 };
-use casa_ms::selection::MsSelection;
-use casa_ms::{
+use casa_flagging::{
     FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
-    FlagSummaryOptions, FlaggingError, MeasurementSet, QuackMode, TransformTaskHistory,
-    append_flag_command, append_task_history, save_next_casa_flag_backup,
+    FlagSummaryOptions, FlaggingError, QuackMode, append_flag_command, save_next_casa_flag_backup,
 };
+use casa_ms::MeasurementSet;
+use casa_ms::selection::MsSelection;
+use casa_mstransform::{TransformTaskHistory, append_task_history};
 
 #[path = "flagdata/automatic.rs"]
 mod automatic;
@@ -892,7 +893,7 @@ fn flagdata_request(
                 None
             }
         } else {
-            Some(casa_ms::flagging::TfcropOptions::default())
+            Some(casa_flagging::TfcropOptions::default())
         },
         rflag_calculate: None,
         timedevscale: task.number("timedevscale")?,

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-#[path = "../../../crates/casa-ms/tests/common/mod.rs"]
+#[path = "../../../libs/casacore/casa-ms/tests/common/mod.rs"]
 mod common;
 
 use std::collections::BTreeMap;

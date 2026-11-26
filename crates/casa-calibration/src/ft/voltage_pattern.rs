@@ -17,10 +17,7 @@ use casa_images::PagedImage;
 use casa_imaging_operator::GridPolarization;
 use casa_imaging_runtime::{Admitted, Demand, HostResources, ResourcePolicy, admit};
 use casa_ms::derived::engine::MsCalEngine;
-use casa_ms::{
-    MeasurementSet, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow, SubtableId,
-    voltage_pattern,
-};
+use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow, SubtableId};
 use casa_numerics::{BeamPattern, PrimaryBeam};
 use casa_tables::{Table, TableOptions};
 use ndarray::{Array2, ArrayD};
@@ -32,7 +29,7 @@ use crate::execute::{load_parallactic_angle_state, single_receptor_angle};
 const MANAGED_VP_TABLE: &str = "CASARS_VOLTAGE_PATTERNS";
 
 pub(super) fn legacy_mosaic_table(source: &Path, grid: &Path) -> MsResult<PathBuf> {
-    let table = voltage_pattern::VoltagePatternTable::open(source).map_err(invalid)?;
+    let table = casa_ms::VoltagePatternTable::open(source).map_err(invalid)?;
     let definitions = table.definitions().map_err(invalid)?;
     let mut replacements = Vec::new();
     let destination = grid.join(MANAGED_VP_TABLE);
@@ -120,7 +117,7 @@ fn text<'a>(record: &'a RecordValue, key: &str) -> Option<&'a str> {
 pub(super) fn legacy_radial_pattern(path: &Path, telescope: &str) -> MsResult<PrimaryBeam> {
     let host = HostResources::detect().map_err(invalid)?;
     read_legacy_radial(&host, path, telescope, |record| {
-        voltage_pattern::radial_pattern(record).map_err(invalid)
+        casa_ms::radial_pattern(record).map_err(invalid)
     })
 }
 
@@ -135,7 +132,7 @@ fn read_legacy_radial<T>(
         &ResourcePolicy::Balanced,
         &Demand {
             phase: "legacy voltage-pattern table",
-            memory: voltage_pattern::VoltagePatternTable::reading_bytes(path).map_err(invalid)?,
+            memory: casa_ms::VoltagePatternTable::reading_bytes(path).map_err(invalid)?,
         },
     )
     .map_err(invalid)?;
@@ -165,7 +162,7 @@ fn legacy_radial_setup(
     requested_squint: bool,
     allow_curves: bool,
 ) -> MsResult<TableVoltagePattern> {
-    let (peak, retained) = voltage_pattern::radial_curve_storage(record);
+    let (peak, retained) = casa_ms::radial_curve_storage(record);
     let mut reservation = admit(
         host,
         &ResourcePolicy::Balanced,
@@ -176,14 +173,14 @@ fn legacy_radial_setup(
     )
     .map_err(invalid)?;
     let value = if allow_curves {
-        voltage_pattern::radial_lookup(record)
+        casa_ms::radial_lookup(record)
     } else {
-        voltage_pattern::radial_pattern(record).map(PrimaryBeam::pattern)
+        casa_ms::radial_pattern(record).map(PrimaryBeam::pattern)
     }
     .map_err(invalid)?;
     reservation.retain(retained);
     let squint = if requested_squint {
-        voltage_pattern::radial_squint(record)
+        casa_ms::radial_squint(record)
             .map_err(invalid)?
             .map(|(offset_rad, reference_hz)| BeamSquintLaw::Table {
                 offset_rad,
@@ -1092,7 +1089,7 @@ mod tests {
         }
         let root = tempfile::tempdir().unwrap();
         let archive = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../casa-ms/tests/fixtures/mssel_test_small.ms.tgz");
+            .join("../../libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz");
         tar::Archive::new(flate2::read::GzDecoder::new(
             std::fs::File::open(archive).unwrap(),
         ))

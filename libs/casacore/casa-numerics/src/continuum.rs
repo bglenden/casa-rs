@@ -52,9 +52,12 @@ pub fn fit_polynomial_row(
     let mut design = samples
         .iter()
         .map(|&(coordinate, observed, weight)| {
-            let basis = std::iter::successors(Some(1.0), |power| Some(power * coordinate))
-                .take(terms)
-                .collect::<Vec<_>>();
+            let mut basis = Vec::with_capacity(terms);
+            let mut power = 1.0;
+            for _ in 0..terms {
+                basis.push(power);
+                power *= coordinate;
+            }
             (basis, observed, weight / weight_scale)
         })
         .collect::<Vec<_>>();

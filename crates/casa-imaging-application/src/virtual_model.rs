@@ -47,7 +47,7 @@ use num_complex::Complex32;
 use crate::imaging::{self, ImagingError, KernelAdmission};
 use crate::native::NativeError;
 use crate::{ApplicationRuntime, ImagingRequest, MeasurementSetSelection};
-use casa_ms::virtual_model::ft_record::{self as record, FirstBuffer, GridFt};
+use casa_ms::schema::ft_record::{self as record, FirstBuffer, GridFt};
 
 /// The selection a virtual model is written for, as the run resolved it
 /// (`compile`'s `virtual_selection`): no expression is parsed again.

@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use casa_core::{
     ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
-use casa_ms::ms::MeasurementSet;
+use casa_ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};

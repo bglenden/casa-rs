@@ -14,9 +14,9 @@ use casa_calibration::{
     ApplyPlanRequest, execute_apply_from_path_with_options,
 };
 use casa_core::ArrayValue;
-use casa_ms::ms::MeasurementSet;
+use casa_flagging::{FlagMerge, list_flag_versions, restore_flag_version};
+use casa_ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
-use casa_ms::{FlagMerge, list_flag_versions, restore_flag_version};
 use tempfile::TempDir;
 
 /// An MS whose row 0 has no solution for antenna 1, so `calflag` flags it.

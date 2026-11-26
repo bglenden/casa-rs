@@ -12,7 +12,7 @@ use crate::{
 };
 use casa_images::{ImageInterface, PagedImage};
 use casa_imaging_runtime::{Demand, admit};
-use casa_ms::concat::{ConcatRequest, concat_with_memory};
+use casa_mstransform::concat::{ConcatRequest, concat_with_memory};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 

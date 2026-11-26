@@ -37,7 +37,7 @@ atm=$(cd "$1" && pwd)
 shift
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
-out="$root/crates/casa-atmosphere/tests/data"
+out="$root/libs/casa/casa-atmosphere/tests/data"
 as_shipped=0
 out_given=0
 binary=""

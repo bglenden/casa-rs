@@ -16,7 +16,7 @@ use super::plotms_atmosphere::Curve;
 use casa_ms::MeasurementSet;
 use casa_ms::columns::main_ids;
 use casa_ms::columns::time_columns::TimeColumn;
-use casa_ms::listobs;
+
 use casa_plot_data::msexplore::{
     MsAxis, MsPlotPayload, MsScatterPlotMsAverageIds, MsScatterPlotMsMetadata, MsScatterPointRef,
     MsScatterSeries, axis_name as name,
@@ -419,7 +419,7 @@ fn write_point(
     let pol = row
         .correlations
         .get(point.corr)
-        .map_or("?", |&code| listobs::stokes_name(code));
+        .map_or("?", |&code| casa_ms::stokes_name(code));
     writeln!(
         output,
         "{x} {y} {} {scan} {field} {} {} {} {} {:.3} {frequency:.9} {} {pol} {}",

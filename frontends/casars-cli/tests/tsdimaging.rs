@@ -119,7 +119,7 @@ fn later_modes_refuse_before_publishing_any_products() {
 fn a_valid_moving_field_refuses_explicitly_before_any_output() {
     let root = tempfile::tempdir().unwrap();
     let archive = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../crates/casa-ms/tests/fixtures/ms_trial/ms_trial_ephemeris.ms.tgz");
+        .join("../../libs/casacore/casa-ms/tests/fixtures/ms_trial/ms_trial_ephemeris.ms.tgz");
     assert!(
         std::process::Command::new("tar")
             .arg("-xzf")

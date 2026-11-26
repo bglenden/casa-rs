@@ -24,7 +24,7 @@ casa-imaging-runtime = { path = "../casa-imaging-runtime" }
 casa-imaging-singledish = { path = "../casa-imaging-singledish" }
 casa-numerics.workspace = true
 # An MSv4 processing set images as a MeasurementSet does (#932, 6c).
-casa-ms = { path = "../casa-ms", features = ["msv4"] }
+casa-ms = { workspace = true, features = ["msv4"] }
 casa-observation.workspace = true
 casa-core.workspace = true
 ndarray.workspace = true
@@ -36,6 +36,7 @@ tempfile = "3"
 thiserror.workspace = true
 
 [dev-dependencies]
+casa-mstransform = { workspace = true, features = ["msv4"] }
 casa-simulation = { path = "../casa-simulation" }
 base64 = "0.22"
 flate2 = "1"

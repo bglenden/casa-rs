@@ -7,7 +7,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use casa_core::{ArrayValue, Value};
-use casa_ms::tool_iteration::{LegacyIterationOptions, LegacyToolIteration};
+use casa_mstransform::tool_iteration::{LegacyIterationOptions, LegacyToolIteration};
 use casa_tables::publication::{
     exchange_directories, lock_table_tree_for_replacement_with_held, rename_without_replacing,
 };

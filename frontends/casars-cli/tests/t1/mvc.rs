@@ -35,10 +35,9 @@ fn set_unequal_channel_weights(observation: &Observation) {
         .unwrap()
         .contains_column("WEIGHT_SPECTRUM")
     {
-        let schema = casa_ms::column_def::build_table_schema(&[
-            *OptionalMainColumn::WeightSpectrum.column_def(),
-        ])
-        .unwrap();
+        let schema =
+            casa_ms::build_table_schema(&[*OptionalMainColumn::WeightSpectrum.column_def()])
+                .unwrap();
         ms.main_table_mut()
             .add_column(schema.column("WEIGHT_SPECTRUM").unwrap().clone(), None)
             .unwrap();

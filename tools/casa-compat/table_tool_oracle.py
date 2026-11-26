@@ -9,7 +9,7 @@ Run with CASA 6.7.6.14's Python, for example
 
 FIXTURE_TABLE is `python_fixture.table`, the table
 `cargo run -p casars-python --example make_python_fixtures -- DIR` writes, and
-MS is the MeasurementSet `crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz`
+MS is the MeasurementSet `libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz`
 unpacks to. Each scenario in `SCENARIOS` starts from a fresh copy of its
 fixture (`table` or `ms`) and replays its steps on a `tb` tool. A step is `[method, args, kwargs]`, with
 a fourth element `{"on": NAME, "bind": NAME}` when it calls a tool a step before returned (`bind` names the tool

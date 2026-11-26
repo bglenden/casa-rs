@@ -54,20 +54,19 @@ use casa_ms::columns::{
     weight_columns::{SigmaSpectrumColumn, WeightSpectrumColumn},
 };
 use casa_ms::derived::engine::MsCalEngine;
-use casa_ms::listobs::{self, ListObsOptions, ListObsSummary, ListObsUvCoverage};
 use casa_ms::selection::parser::parse_correlation_selector;
 use casa_ms::selection::resolve_row_indices_with_system_budget;
 use casa_ms::selection::spw_expr::ChannelRange;
-use casa_ms::spectral_selection::{
-    convert_frequency_to_frame, parse_rest_frequency_hz, velocity_ms_from_frequency_hz,
-};
 use casa_ms::subtables::SubTable;
 use casa_ms::subtables::data_description::MsDataDescription;
 use casa_ms::subtables::polarization::MsPolarization;
-use casa_ms::transform::{
-    PlotTimeGroups, PlotTimePhaseReferences, TimeAverageOptions, TimeUvwAverage, WeightKind,
-};
+use casa_ms::{ListObsOptions, ListObsSummary, ListObsUvCoverage};
 use casa_ms::{MeasurementSet, MeasurementSetSummaryOutputFormat, MsSelection};
+use casa_ms::{convert_frequency_to_frame, parse_rest_frequency_hz, velocity_ms_from_frequency_hz};
+use casa_mstransform::{
+    PlotMsModelReferences, PlotMsModelSpwSelection, PlotTimeGroups, PlotTimePhaseReferences,
+    TimeAverageOptions, TimeUvwAverage, WeightKind,
+};
 use casa_tables::Table;
 use ndarray::{Ix1, Ix2};
 use schemars::JsonSchema;
@@ -85,7 +84,7 @@ pub use plotms_spw::MsScatterPlotMsAverageSpw;
 pub type PlotMsModelLoader = fn(
     &MeasurementSet,
     &[casa_ms::selection::ResolvedMsSelectionRow],
-    Option<casa_ms::PlotMsModelReferences<'_>>,
+    Option<PlotMsModelReferences<'_>>,
 ) -> Result<Option<HashMap<usize, ArrayValue>>, String>;
 
 /// Short PlotMS display name for `axis`.
@@ -3306,7 +3305,7 @@ pub fn build_uncalibrated_plotms_payload(
         })
         .and_then(|plot| Some((plot, plot.averaging.avgtime?)))
         .map(|(plot, seconds)| {
-            casa_ms::transform::selected_plot_time_groups(
+            casa_mstransform::selected_plot_time_groups(
                 ms,
                 &selected.selected_rows,
                 TimeAverageOptions {
@@ -3347,7 +3346,7 @@ pub fn build_uncalibrated_plotms_payload(
             .selected_rows
             .iter()
             .map(|row| (row.row_index, row.data_desc_id));
-        let ordered = casa_ms::transform::selected_plotms_integration_order(
+        let ordered = casa_mstransform::selected_plotms_integration_order(
             ms,
             rows,
             spw_average,
@@ -3383,7 +3382,7 @@ pub fn build_uncalibrated_plotms_payload(
     for &range in selection.channel_list() {
         channels.entry(range.spw_id as i32).or_default().push(range);
     }
-    let spectral_windows = spw_model_references.then_some(casa_ms::PlotMsModelSpwSelection {
+    let spectral_windows = spw_model_references.then_some(PlotMsModelSpwSelection {
         channels: &channels,
         correlations: &selected.correlation_types,
     });
@@ -3398,7 +3397,7 @@ pub fn build_uncalibrated_plotms_payload(
     let model_references = time_bins
         .as_ref()
         .and_then(|groups| {
-            Some(casa_ms::PlotMsModelReferences {
+            Some(PlotMsModelReferences {
                 phase_slots: groups.phase_reference_slots()?,
                 recipe_slots: groups.input_buffer_first_slots(),
                 spectral_windows,
@@ -3407,13 +3406,11 @@ pub fn build_uncalibrated_plotms_payload(
         .or_else(|| {
             ordered_model_slots
                 .as_ref()
-                .map(
-                    |(phase_slots, recipe_slots)| casa_ms::PlotMsModelReferences {
-                        phase_slots,
-                        recipe_slots,
-                        spectral_windows,
-                    },
-                )
+                .map(|(phase_slots, recipe_slots)| PlotMsModelReferences {
+                    phase_slots,
+                    recipe_slots,
+                    spectral_windows,
+                })
         });
     let models = plotms_model::selected_model_cells(
         ms,
@@ -4632,7 +4629,7 @@ fn build_generic_visibility_scatter(
                     .any(MsAxis::is_interval_or_wavelength));
     let (row_numbers, buffer_starts, phase_reference_rows) = if use_iterator_order {
         let descriptions = selected_i32_values(ms.main_table(), "DATA_DESC_ID", &row_numbers)?;
-        let ordered = casa_ms::transform::selected_plotms_integration_order(
+        let ordered = casa_mstransform::selected_plotms_integration_order(
             ms,
             row_numbers.into_iter().zip(descriptions),
             false,
@@ -6782,9 +6779,9 @@ fn build_generic_visibility_scatter_with_averaging(
                         .iter()
                         .map(|(corr, _)| match kinds.row_weight {
                             WeightKind::Calibrated => weight_values[*corr],
-                            WeightKind::Observed => f64::from(
-                                casa_ms::transform::weight_from_sigma(sigma_values[*corr] as f32),
-                            ),
+                            WeightKind::Observed => f64::from(casa_mstransform::weight_from_sigma(
+                                sigma_values[*corr] as f32,
+                            )),
                             WeightKind::Unit => 1.0,
                         })
                         .sum()
@@ -9246,7 +9243,7 @@ fn select_correlation_slots(
     for corr_index in 0..corr_count {
         let corr_label = corr_types
             .get(corr_index)
-            .map(|code| listobs::stokes_name(*code).to_string())
+            .map(|code| casa_ms::stokes_name(*code).to_string())
             .unwrap_or_else(|| format!("corr-{corr_index}"));
         let corr_code = corr_types.get(corr_index).copied();
         if requested_corr_codes.is_empty()
@@ -9956,11 +9953,11 @@ mod tests {
     use super::*;
     use crate::plot::UvCoveragePlotPayload;
     use casa_core::{RecordField, RecordValue};
-    use casa_ms::column_def::{ColumnDef, ColumnKind};
-    use casa_ms::listobs::{
+    use casa_ms::{
         AntennaSummary, DataDescriptionSummary, FieldSummary, MeasurementSetInfo,
         ObservationSummary, PolarizationSummary, SourceSummary, SpectralWindowSummary,
     };
+    use casa_ms::{ColumnDef, ColumnKind};
     use casa_ms::{MeasurementSetBuilder, OptionalMainColumn, schema};
     use ndarray::ArrayD;
     use num_complex::Complex32;

@@ -5,8 +5,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::{TaskFailure, TaskInvocation};
-use casa_ms::observation_io::convert::{PaddingRows, selected_data_groups};
 use casa_ms::observation_io::{Msv4Codec, OpenOptions, PartitionScheme, open};
+use casa_mstransform::convert::{PaddingRows, selected_data_groups};
 
 use super::THREAD_BYTES;
 
@@ -121,7 +121,7 @@ pub struct MsconvertRequest {
     pub padding: PaddingRows,
     /// MSv4 output: the chunk shape, `None` for XRADIO's, sized for each
     /// dataset
-    /// ([`xradio_chunks`](casa_ms::observation_io::convert::xradio_chunks)).
+    /// ([`xradio_chunks`](casa_mstransform::convert::xradio_chunks)).
     pub chunks: Option<[u64; 4]>,
     /// MSv4 output: the payload codec.
     pub codec: Msv4Codec,
