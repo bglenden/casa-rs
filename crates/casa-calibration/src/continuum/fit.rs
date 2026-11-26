@@ -83,8 +83,13 @@ pub(super) struct FitGrid {
 impl FitGrid {
     pub(super) fn new(order: usize, channels: Vec<usize>, apply: Vec<usize>, count: usize) -> Self {
         let span = count.saturating_sub(1).max(1) as f64;
+        let requested_terms = order.saturating_add(1);
         Self {
-            terms: order.saturating_add(1).min(channels.len()),
+            terms: if requested_terms <= channels.len() {
+                requested_terms
+            } else {
+                0
+            },
             channels,
             apply,
             // An affine change of x retains the polynomial space and avoids
@@ -124,26 +129,19 @@ impl ComplexPolynomial {
         samples: impl Iterator<Item = (f64, Complex32, f64)>,
         max_terms: usize,
     ) -> Self {
+        if max_terms == 0 {
+            return Self::default();
+        }
+        if max_terms == 1 {
+            return Self::constant(samples);
+        }
         let samples = samples.collect::<Vec<_>>();
         let terms = max_terms.min(samples.len());
         if terms == 0 {
             return Self::default();
         }
         if terms == 1 {
-            let (real, imaginary, weight) =
-                samples
-                    .iter()
-                    .fold((0.0, 0.0, 0.0), |(re, im, total), &(_, value, weight)| {
-                        (
-                            re + f64::from(value.re) * weight,
-                            im + f64::from(value.im) * weight,
-                            total + weight,
-                        )
-                    });
-            return Self {
-                real: vec![real / weight],
-                imaginary: vec![imaginary / weight],
-            };
+            return Self::constant(samples.into_iter());
         }
         let weight_scale = samples
             .iter()
@@ -166,6 +164,24 @@ impl ComplexPolynomial {
         Self { real, imaginary }
     }
 
+    fn constant(samples: impl Iterator<Item = (f64, Complex32, f64)>) -> Self {
+        let (real, imaginary, weight) =
+            samples.fold((0.0, 0.0, 0.0), |(re, im, total), (_, value, weight)| {
+                (
+                    re + f64::from(value.re) * weight,
+                    im + f64::from(value.im) * weight,
+                    total + weight,
+                )
+            });
+        if weight == 0.0 {
+            return Self::default();
+        }
+        Self {
+            real: vec![real / weight],
+            imaginary: vec![imaginary / weight],
+        }
+    }
+
     pub(super) fn at(&self, x: f64) -> Complex32 {
         let evaluate = |coefficients: &[f64]| {
             coefficients
@@ -174,5 +190,9 @@ impl ComplexPolynomial {
                 .fold(0.0, |sum, &coefficient| sum * x + coefficient) as f32
         };
         Complex32::new(evaluate(&self.real), evaluate(&self.imaginary))
+    }
+
+    pub(super) fn is_defined(&self) -> bool {
+        !self.real.is_empty() && !self.imaginary.is_empty()
     }
 }

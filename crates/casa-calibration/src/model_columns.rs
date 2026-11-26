@@ -36,14 +36,14 @@ const MODEL: VisibilityDataColumn = VisibilityDataColumn::ModelData;
 pub(crate) enum ScratchWriteMode<'a> {
     Replace,
     Create,
-    Hanning { corrected: &'a str, model: &'a str },
+    Projected { corrected: &'a str, model: &'a str },
 }
 
 impl<'a> ScratchWriteMode<'a> {
     fn physical_name(self, column: VisibilityDataColumn) -> &'a str {
         match (self, column) {
-            (Self::Hanning { corrected, .. }, CORRECTED) => corrected,
-            (Self::Hanning { model, .. }, MODEL) => model,
+            (Self::Projected { corrected, .. }, CORRECTED) => corrected,
+            (Self::Projected { model, .. }, MODEL) => model,
             _ => column.name(),
         }
     }
@@ -114,6 +114,52 @@ pub(crate) fn initialize_calibrater_columns_holding(
     reset_holding(
         ms,
         all,
+        &missing,
+        observed,
+        ScratchWriteMode::Create,
+        false,
+        lock,
+    )
+}
+
+pub(crate) fn initialize_projected_scratch_holding(
+    ms: &mut MeasurementSet,
+    rows: &[usize],
+    observed: &str,
+    [corrected, model]: [&str; 2],
+    lock: &mut TableWriteLock,
+) -> MsResult<()> {
+    let missing = [(CORRECTED, corrected), (MODEL, model)]
+        .into_iter()
+        .filter(|&(_, physical)| !has_column_named(ms, physical))
+        .map(|(column, physical)| {
+            if column.name() == physical {
+                Ok(column)
+            } else {
+                Err(invalid(format!(
+                    "missing projected scratch column {physical}"
+                )))
+            }
+        })
+        .collect::<MsResult<Vec<_>>>()?;
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let whole_table = rows.iter().copied().eq(0..ms.row_count());
+    if whole_table && missing.contains(&CORRECTED) && can_clone_tiled_observed(ms, observed) {
+        return initialize_hanning_scratch_holding(ms, rows, observed, [corrected, model], lock);
+    }
+    let mut selection =
+        resolve_casa_calibration_selection(ms, &MsSelection::default()).map_err(invalid)?;
+    if !whole_table {
+        let rows: HashSet<_> = rows.iter().copied().collect();
+        selection
+            .selected_rows
+            .retain(|row| rows.contains(&row.row_index));
+    }
+    reset_holding(
+        ms,
+        selection,
         &missing,
         observed,
         ScratchWriteMode::Create,
@@ -338,7 +384,7 @@ pub fn initialize_hanning_scratch_holding(
             "a physical column named by the scratch projection is missing",
         ));
     }
-    let mode = ScratchWriteMode::Hanning { corrected, model };
+    let mode = ScratchWriteMode::Projected { corrected, model };
     scratch_columns::prepare_write_holding(ms, CORRECTED, true, lock)?;
     let whole_table = !rows.is_empty() && rows.iter().copied().eq(0..ms.row_count());
     if whole_table && !has_corrected && can_clone_tiled_observed(ms, observed) {
@@ -550,7 +596,7 @@ pub(crate) fn scratch_write_plan<'a>(
         .map(|&column| match mode {
             ScratchWriteMode::Replace => false,
             ScratchWriteMode::Create => true,
-            ScratchWriteMode::Hanning { .. } => !has_column_named(ms, mode.physical_name(column)),
+            ScratchWriteMode::Projected { .. } => !has_column_named(ms, mode.physical_name(column)),
         })
         .collect::<Vec<_>>();
     if mode == ScratchWriteMode::Create {

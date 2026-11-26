@@ -29,6 +29,20 @@ pub struct LegacyContinuumTransform {
 }
 
 impl TransformInputView for LegacyContinuumTransform {
+    fn order_output_rows(
+        &self,
+        input: &MeasurementSet,
+        rows: &mut [ResolvedMsSelectionRow],
+    ) -> Result<(), TableError> {
+        let ordered: Vec<_> = grouped_rows(input.main_table(), rows, &self.combine)?
+            .into_iter()
+            .flatten()
+            .map(|slot| rows[slot].clone())
+            .collect();
+        rows.clone_from_slice(&ordered);
+        Ok(())
+    }
+
     fn prepare<'a>(
         &self,
         input: &'a MeasurementSet,
@@ -328,7 +342,11 @@ fn add_samples(
             } else {
                 1.0
             };
-            samples[hand].push((frequency, data[[hand, channel]], weight));
+            samples[hand].push((
+                frequency,
+                data[[hand, channel]],
+                weight / data.ncols() as f64,
+            ));
         }
     }
     Ok(())
@@ -359,11 +377,43 @@ impl PreparedTransformInputView for Residuals {
             }
             output.insert(self.column, cells);
         }
+        if columns.contains(&"FLAG") {
+            let mut cells = array_cells(input, "FLAG", rows)?;
+            for (&row, cell) in rows.iter().zip(&mut cells) {
+                if let Some(ArrayValue::Bool(flags)) = cell {
+                    self.flag_missing_fit(row, flags)?;
+                }
+            }
+            output.insert("FLAG", cells);
+        }
         Ok(output)
     }
 }
 
 impl Residuals {
+    fn flag_missing_fit(&self, row: usize, flags: &mut ArrayD<bool>) -> Result<(), TableError> {
+        let Some(&(group, _, baseline)) = self.model.get(&row) else {
+            return Ok(());
+        };
+        let Some(coefficients) = self.estimates[group].get(&baseline) else {
+            flags.fill(true);
+            return Ok(());
+        };
+        let mut flags = flags
+            .view_mut()
+            .into_dimensionality::<Ix2>()
+            .map_err(error)?;
+        if flags.nrows() != coefficients.len() {
+            return Err(error("continuum fit and output flag axes disagree"));
+        }
+        for (mut hand, fit) in flags.rows_mut().into_iter().zip(coefficients) {
+            if !fit.is_defined() {
+                hand.fill(true);
+            }
+        }
+        Ok(())
+    }
+
     fn subtract(&self, row: usize, data: &mut ArrayD<Complex32>) -> Result<(), TableError> {
         let Some(&(group, window, baseline)) = self.model.get(&row) else {
             return Ok(());

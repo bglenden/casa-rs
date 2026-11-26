@@ -13,11 +13,12 @@ use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::write_session::{MeasurementSetMutationBatch, MeasurementSetWriteSession};
 use casa_ms::{MeasurementSet, MsError, MsResult, MsSelection, ResolvedMsSelectionRow};
 use casa_tables::{RequiredScalarColumnValues, TableWriteLock};
+use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, Complex32, Correlation};
 use ndarray::{ArrayD, Ix2};
 
 use crate::model_columns::{
-    ScratchWriteMode, initialize_calibrater_columns_holding, observed_column, scratch_write_plan,
+    ScratchWriteMode, initialize_projected_scratch_holding, scratch_write_plan,
 };
 use crate::session::resolve_casa_calibration_selection;
 use crate::solve::grouping::correlation_types_for_ddid;
@@ -34,9 +35,8 @@ pub struct ContinuumScratchOptions {
     pub fit_spw: String,
     /// Channels on which to apply a fit, or an empty selector for all.
     pub apply_spw: String,
-    /// Zero fits one scan at a time, a negative value fits one integration,
-    /// and a positive value sets the length of a bin in seconds.
-    pub solution_interval: f64,
+    /// A duration, `int` for an integration or `inf` for a scan.
+    pub solution_interval: String,
     /// Degree of the complex polynomial.
     pub order: usize,
     /// `model`, `subtract` (or `sub`), or `replace`.
@@ -45,79 +45,174 @@ pub struct ContinuumScratchOptions {
     pub old_iterator: bool,
 }
 
-/// Model the continuum in corrected visibilities within each time bin and
-/// baseline. Only parallel hands and cross baselines contribute or change.
-/// The MAIN write lock must protect `ms` through initialization and publication.
-/// Missing scratch columns are initialized over the full attached MS.
+/// Initialize the fit inputs and destinations on the physical rows visible to
+/// the current attachment. Existing scratch columns are preserved.
 ///
 /// # Errors
-/// An invalid selector, incompatible visibility shape, or failed table update.
-pub fn fit_continuum_scratch_holding(
+/// A missing visibility column or failure to install a scratch column.
+pub fn initialize_continuum_scratch_holding(
     ms: &mut MeasurementSet,
-    options: &ContinuumScratchOptions,
+    rows: &[usize],
+    observed: &str,
+    scratch: [&str; 2],
     lock: &mut TableWriteLock,
 ) -> MsResult<()> {
-    let windows = windows(ms, options)?;
-    let selection = MsSelection {
-        field: options.field.clone(),
-        msselect: Some("ANTENNA1!=ANTENNA2".into()),
-        ..Default::default()
-    };
-    let mut rows = resolve_casa_calibration_selection(ms, &selection)
-        .map_err(invalid)?
-        .selected_rows;
-    rows.retain(|row| windows.contains_key(&row.spectral_window_id));
-    let columns: &[_] = match options.mode.as_str() {
-        "subtract" | "sub" => &[MODEL, CORRECTED],
-        "model" => &[MODEL],
-        "replace" => &[CORRECTED],
-        _ => &[],
-    };
-    initialize_calibrater_columns_holding(ms, false, true, true, lock)?;
-    if rows.is_empty() || columns.is_empty() {
-        return Ok(());
+    initialize_projected_scratch_holding(ms, rows, observed, scratch, lock)
+}
+
+/// Model corrected visibilities within each time bin and cross baseline. The
+/// fit uses the attached logical rows, including across physical members.
+/// Publication maps those rows back to each member under its MAIN write lock.
+pub struct ContinuumScratchFit {
+    fit: ScratchFit,
+    columns: &'static [VisibilityDataColumn],
+    mode: String,
+}
+
+impl ContinuumScratchFit {
+    /// Prepare the complete logical fit after initialization of scratch data.
+    ///
+    /// # Errors
+    /// A selector or solution interval is invalid, or an input cell is unreadable.
+    pub fn prepare(ms: &MeasurementSet, options: &ContinuumScratchOptions) -> MsResult<Self> {
+        let selection = MsSelection {
+            field: options.field.clone(),
+            msselect: Some("ANTENNA1!=ANTENNA2".into()),
+            ..Default::default()
+        };
+        let mut rows = resolve_casa_calibration_selection(ms, &selection)
+            .map_err(invalid)?
+            .selected_rows;
+        let windows = windows(ms, options)?;
+        let interval = solution_interval(&options.solution_interval)?;
+        rows.retain(|row| windows.contains_key(&row.spectral_window_id));
+        let columns: &[_] = match options.mode.as_str() {
+            "subtract" | "sub" => &[MODEL, CORRECTED],
+            "model" => &[MODEL],
+            "replace" => &[CORRECTED],
+            _ => &[],
+        };
+        if columns.is_empty() {
+            rows.clear();
+        }
+        let fit = ScratchFit::new(ms, rows, windows, interval, options.old_iterator)?;
+        Ok(Self {
+            fit,
+            columns,
+            mode: options.mode.clone(),
+        })
     }
-    let context = ScratchFit::new(ms, rows, windows, options)?;
-    let observed = observed_column(ms);
-    let (plan, destinations) = scratch_write_plan(
-        ms,
-        context.rows.iter().map(|row| row.row_index).collect(),
-        columns,
-        observed,
-        ScratchWriteMode::Replace,
-        false,
-        lock,
-    )?;
-    let batch_size = plan.batch_rows().max(1);
-    let empty_ranges = BTreeMap::<i32, Range<usize>>::new();
-    MeasurementSetWriteSession::mutate_selected_rows(
-        ms,
-        plan,
-        Some(lock),
-        invalid,
-        |session, ms| {
-            for (first, rows) in context.rows.chunks(batch_size).enumerate() {
-                let ids = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
-                let models = &context.models[first * batch_size..][..rows.len()];
-                let mut batches = Vec::new();
-                for (&column, destination) in columns.iter().zip(&destinations) {
-                    let values = context.output(ms, rows, &ids, models, column, &options.mode)?;
-                    batches.extend(destination.batch(ms, &ids, rows, &empty_ranges, values)?);
+
+    /// Logical row IDs in the order used by [`Self::write_holding`].
+    pub fn row_indices(&self) -> impl Iterator<Item = usize> + '_ {
+        self.fit.rows.iter().map(|row| row.row_index)
+    }
+
+    /// Apply the model to one physical table. The row map pairs physical row
+    /// numbers with positions in [`Self::row_indices`].
+    ///
+    /// # Errors
+    /// A physical scratch column cannot be read or updated.
+    pub fn write_holding(
+        &self,
+        ms: &mut MeasurementSet,
+        rows: &BTreeMap<usize, usize>,
+        [corrected, model]: [&str; 2],
+        lock: &mut TableWriteLock,
+    ) -> MsResult<()> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let mode = ScratchWriteMode::Projected { corrected, model };
+        let (plan, destinations) = scratch_write_plan(
+            ms,
+            rows.keys().copied().collect(),
+            self.columns,
+            corrected,
+            mode,
+            false,
+            lock,
+        )?;
+        let batch_size = plan.batch_rows().max(1);
+        let empty_ranges = BTreeMap::<i32, Range<usize>>::new();
+        let ordered: Vec<_> = rows
+            .iter()
+            .map(|(&physical, &logical)| (physical, logical))
+            .collect();
+        MeasurementSetWriteSession::mutate_selected_rows(
+            ms,
+            plan,
+            Some(lock),
+            invalid,
+            |session, ms| {
+                for batch in ordered.chunks(batch_size) {
+                    let ids = batch
+                        .iter()
+                        .map(|&(physical, _)| physical)
+                        .collect::<Vec<_>>();
+                    let logical_rows = batch
+                        .iter()
+                        .map(|&(_, logical)| self.fit.rows[logical].clone())
+                        .collect::<Vec<_>>();
+                    let models = batch
+                        .iter()
+                        .map(|&(_, logical)| self.fit.models[logical])
+                        .collect::<Vec<_>>();
+                    let mut batches = Vec::new();
+                    for (&column, destination) in self.columns.iter().zip(&destinations) {
+                        let name = if column == CORRECTED {
+                            corrected
+                        } else {
+                            model
+                        };
+                        let values = self.fit.output(
+                            ms,
+                            &logical_rows,
+                            &ids,
+                            &models,
+                            name,
+                            column == CORRECTED && self.mode != "replace",
+                        )?;
+                        batches.extend(destination.batch(
+                            ms,
+                            &ids,
+                            &logical_rows,
+                            &empty_ranges,
+                            values,
+                        )?);
+                    }
+                    session
+                        .write_mutation_batch(
+                            ms,
+                            MeasurementSetMutationBatch {
+                                row_indices: ids,
+                                columns: batches,
+                            },
+                        )
+                        .map_err(invalid)?;
                 }
-                session
-                    .write_mutation_batch(
-                        ms,
-                        MeasurementSetMutationBatch {
-                            row_indices: ids,
-                            columns: batches,
-                        },
-                    )
-                    .map_err(invalid)?;
-            }
-            Ok(())
-        },
-    )?;
-    Ok(())
+                Ok(())
+            },
+        )?;
+        Ok(())
+    }
+}
+
+fn solution_interval(text: &str) -> MsResult<f64> {
+    let folded = text.to_ascii_uppercase();
+    if text.is_empty() || folded.contains("INF") {
+        return Ok(0.0);
+    }
+    if folded.contains("INT") {
+        return Ok(-1.0);
+    }
+    let quantity = Quantity::read(text).map_err(|_| invalid("Unrecognized units for solint."))?;
+    let seconds = Unit::new("s").expect("seconds");
+    Ok(f64::from(
+        quantity
+            .get_value_in(&seconds)
+            .unwrap_or_else(|_| quantity.value()) as f32,
+    ))
 }
 
 fn windows(
@@ -177,7 +272,8 @@ impl ScratchFit {
         ms: &MeasurementSet,
         rows: Vec<ResolvedMsSelectionRow>,
         windows: BTreeMap<i32, FitGrid>,
-        options: &ContinuumScratchOptions,
+        interval: f64,
+        old_iterator: bool,
     ) -> MsResult<Self> {
         let mut hands = HashMap::new();
         for row in &rows {
@@ -205,7 +301,7 @@ impl ScratchFit {
                 );
             }
         }
-        let groups = groups(ms, &rows, options.solution_interval, options.old_iterator)?;
+        let groups = groups(ms, &rows, interval, old_iterator)?;
         let mut models = vec![
             BaselineKey {
                 group: 0,
@@ -214,11 +310,7 @@ impl ScratchFit {
             };
             rows.len()
         ];
-        let mut fits = HashMap::new();
-        let has_spectrum =
-            !options.old_iterator && ms.main_table().column_accessor("WEIGHT_SPECTRUM").is_ok();
         for (group_index, group) in groups.iter().enumerate() {
-            let mut averages = HashMap::new();
             for &slot in group {
                 let row = &rows[slot];
                 models[slot] = BaselineKey {
@@ -227,51 +319,92 @@ impl ScratchFit {
                     second: row.antenna2_id,
                 };
             }
-            let mut selected = group.clone();
-            selected.sort_unstable();
-            for batch in selected.chunks(1024) {
-                let ids = batch
-                    .iter()
-                    .map(|&slot| rows[slot].row_index)
-                    .collect::<Vec<_>>();
-                let data = arrays(ms, CORRECTED.name(), &ids)?;
-                let flags = arrays(ms, "FLAG", &ids)?;
-                let weights = arrays(ms, "WEIGHT", &ids)?;
-                let spectrum = if has_spectrum {
-                    arrays(ms, "WEIGHT_SPECTRUM", &ids)?
-                } else {
-                    vec![None; ids.len()]
-                };
-                for ((((&slot, data), flags), weights), spectrum) in
-                    batch.iter().zip(data).zip(flags).zip(weights).zip(spectrum)
-                {
-                    let row = &rows[slot];
-                    let hands = &hands[&row.data_desc_id];
-                    accumulate(
-                        &mut averages,
-                        models[slot],
-                        data,
-                        flags,
-                        weights,
-                        spectrum,
-                        hands,
-                        options.old_iterator,
-                    )?;
-                }
-            }
-            let grid = &windows[&rows[group[0]].spectral_window_id];
-            fits.extend(
-                averages
-                    .into_iter()
-                    .map(|(baseline, average)| (baseline, average.model(grid))),
-            );
         }
-        Ok(Self {
+        let mut result = Self {
             rows,
             hands,
             models,
-            fits,
-        })
+            fits: HashMap::new(),
+        };
+        result.fit_windows(ms, &groups, &windows, old_iterator)?;
+        Ok(result)
+    }
+
+    fn fit_windows(
+        &mut self,
+        ms: &MeasurementSet,
+        groups: &[Vec<usize>],
+        windows: &BTreeMap<i32, FitGrid>,
+        old_iterator: bool,
+    ) -> MsResult<()> {
+        const BATCH_ROWS: usize = 1024;
+        let has_spectrum =
+            !old_iterator && ms.main_table().column_accessor("WEIGHT_SPECTRUM").is_ok();
+        let mut pending = groups;
+        while let Some((first, following)) = pending.split_first() {
+            // Adjacent short slots often use the same visibility tiles. Read
+            // them together while capping the number of live row averages.
+            let mut rows = first.len();
+            let other_groups = following
+                .iter()
+                .take_while(|group| {
+                    rows += group.len();
+                    rows <= BATCH_ROWS
+                })
+                .count();
+            let (wave, rest) = pending.split_at(other_groups + 1);
+            pending = rest;
+            let mut slots: Vec<_> = wave.iter().flatten().copied().collect();
+            slots.sort_unstable();
+            let mut averages = HashMap::new();
+            for chunk in slots.chunks(BATCH_ROWS) {
+                self.average_rows(ms, chunk, old_iterator, has_spectrum, &mut averages)?;
+            }
+            self.fits
+                .extend(averages.into_iter().map(|(baseline, average)| {
+                    let row = &self.rows[groups[baseline.group][0]];
+                    (baseline, average.model(&windows[&row.spectral_window_id]))
+                }));
+        }
+        Ok(())
+    }
+
+    fn average_rows(
+        &self,
+        ms: &MeasurementSet,
+        slots: &[usize],
+        old_iterator: bool,
+        has_spectrum: bool,
+        averages: &mut HashMap<BaselineKey, BaselineAverage>,
+    ) -> MsResult<()> {
+        let ids = slots
+            .iter()
+            .map(|&slot| self.rows[slot].row_index)
+            .collect::<Vec<_>>();
+        let data = arrays(ms, CORRECTED.name(), &ids)?;
+        let flags = arrays(ms, "FLAG", &ids)?;
+        let weights = arrays(ms, "WEIGHT", &ids)?;
+        let spectrum = if has_spectrum {
+            arrays(ms, "WEIGHT_SPECTRUM", &ids)?
+        } else {
+            vec![None; ids.len()]
+        };
+        for ((((&slot, data), flags), weights), spectrum) in
+            slots.iter().zip(data).zip(flags).zip(weights).zip(spectrum)
+        {
+            let hands = &self.hands[&self.rows[slot].data_desc_id];
+            accumulate(
+                averages,
+                self.models[slot],
+                data,
+                flags,
+                weights,
+                spectrum,
+                hands,
+                old_iterator,
+            )?;
+        }
+        Ok(())
     }
 
     fn output(
@@ -280,20 +413,20 @@ impl ScratchFit {
         rows: &[ResolvedMsSelectionRow],
         ids: &[usize],
         models: &[BaselineKey],
-        column: VisibilityDataColumn,
-        mode: &str,
+        column: &str,
+        subtract: bool,
     ) -> MsResult<Vec<ArrayValue>> {
-        arrays(ms, column.name(), ids)?
+        arrays(ms, column, ids)?
             .into_iter()
             .zip(rows)
             .zip(models)
             .map(|((data, row), key)| {
-                let mut data = complex(data, column.name())?;
+                let mut data = complex(data, column)?;
                 if let Some(fit) = self.fits.get(key) {
                     for (hand, &correlation) in self.hands[&row.data_desc_id].iter().enumerate() {
                         for channel in 0..fit.ncols() {
                             let sample = &mut data[[correlation, channel]];
-                            *sample = if column == CORRECTED && mode != "replace" {
+                            *sample = if subtract {
                                 *sample - fit[[hand, channel]]
                             } else {
                                 fit[[hand, channel]]
@@ -363,6 +496,9 @@ fn groups(
     mut interval: f64,
     old_iterator: bool,
 ) -> MsResult<Vec<Vec<usize>>> {
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
     let ids = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
     let table = ms.main_table();
     if interval < 0.0 && !old_iterator {

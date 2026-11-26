@@ -154,9 +154,9 @@ pub struct MsTransformTaskOptions {
     pub visibility_columns: Option<Vec<OptionalMainColumn>>,
     /// Match the legacy Python MeasurementSet tool's output conventions.
     pub legacy_tool: Option<LegacyMsTool>,
-    /// Copy only these spectral windows to MAIN, while retaining the request's
-    /// full spectral-window selection for the output subtable IDs.
-    pub legacy_output_spw: Option<String>,
+    /// The `contsub` fit's output spectral windows. The request's union still
+    /// determines subtable IDs, and its correlation selector filters rows.
+    pub legacy_continuum_output: Option<String>,
     /// Create and fill weight and sigma spectra even when the input has none.
     pub use_weight_spectrum: bool,
     /// CASA task preference for the output's array storage.
@@ -782,7 +782,7 @@ fn mstransform_staged(
     }
     let TransformSelection {
         selection,
-        correlations,
+        mut correlations,
         time: time_selection,
         mut rows,
         antenna_ids,
@@ -791,6 +791,9 @@ fn mstransform_staged(
         Some(partition) => partition,
         None => resolve_transform_selection(&input, request, grammar, budget, operation.is_some())?,
     };
+    if options.legacy_continuum_output.is_some() {
+        correlations = None;
+    }
     maybe_log_transform_progress(
         "select_rows",
         stage_started_at.elapsed(),
@@ -888,7 +891,7 @@ fn mstransform_staged(
         }
     }
     let output_spws = options
-        .legacy_output_spw
+        .legacy_continuum_output
         .as_deref()
         .map(|selector| {
             input
@@ -913,6 +916,14 @@ fn mstransform_staged(
                 .as_ref()
                 .is_none_or(|spws| spws.contains(&row.spectral_window_id))
     });
+    if let Some(view) = view_factory {
+        view.order_output_rows(&input, &mut rows).map_err(|error| {
+            MsTransformError::SelectRows {
+                path: request.input_ms.display().to_string(),
+                source: error.into(),
+            }
+        })?;
+    }
     let (mut selected_rows, mut selected_ddids): (Vec<_>, Vec<_>) = rows
         .iter()
         .map(|row| (row.row_index, row.data_desc_id))
