@@ -141,6 +141,7 @@
    "casa-logging",
    "casa-ms",
    "casa-numerics",
+   "casa-plot-data",
    "casa-contracts",
    "casa-tables",
    "casa-task-runtime"
@@ -232,7 +233,6 @@
     "crates/casa-task-runtime/src"
    ],
    "exclude_roots": [
-    "crates/casa-ms/src/bin",
     "crates/casa-tables/src/bin"
    ],
    "extensions": [
@@ -271,7 +271,6 @@
     "crates/casa-task-runtime/src"
    ],
    "exclude_roots": [
-    "crates/casa-ms/src/bin",
     "crates/casa-tables/src/bin"
    ],
    "extensions": [

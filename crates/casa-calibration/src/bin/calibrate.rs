@@ -11,7 +11,7 @@ fn main() -> ExitCode {
     let mut args = std::env::args_os().skip(1).peekable();
     if args.peek().is_some_and(|arg| arg == "plotms") {
         let payload = std::env::var_os("CASARS_PLOT_PAYLOAD").map(PathBuf::from);
-        return casa_ms::msexplore::cli::task_front_end_with_plot_sources(
+        return casa_tasks::ms::msexplore::cli::task_front_end_with_plot_sources(
             payload,
             Some(casa_calibration::plotms::load_calibration),
             Some(casa_calibration::plotms::load_models),

@@ -10,10 +10,12 @@ publish = false
 autotests = false
 
 [features]
-default = ["imaging", "images", "vla"]
+default = ["imaging", "images", "ms", "vla"]
 imaging = ["casa-tasks/imaging", "dep:casa-imaging-application", "dep:libc"]
 images = ["casa-tasks/images"]
+ms = ["casa-tasks/ms"]
 vla = ["casa-tasks/vla"]
+slow-tests = []
 
 [lints]
 workspace = true
@@ -34,6 +36,7 @@ casa-lattices = { path = "../../crates/casa-lattices" }
 casa-logging = { path = "../../crates/casa-logging" }
 casa-ms = { path = "../../crates/casa-ms", features = ["msv4"] }
 casa-numerics = { path = "../../crates/casa-numerics" }
+casa-plot-data = { path = "../../surfaces/casa-plot-data", features = ["ms"] }
 casa-simulation = { path = "../../crates/casa-simulation" }
 casa-tables = { path = "../../crates/casa-tables" }
 casa-test-support = { path = "../../dev/casa-test-support" }
@@ -43,6 +46,7 @@ flate2 = "1"
 ndarray.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+tar = "0.4"
 tempfile = "3"
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -111,6 +115,26 @@ required-features = ["images"]
 name = "imsubimage"
 path = "src/bin/imsubimage.rs"
 required-features = ["images"]
+
+[[bin]]
+name = "concat"
+path = "src/bin/concat.rs"
+required-features = ["ms"]
+
+[[bin]]
+name = "flagmanager"
+path = "src/bin/flagmanager.rs"
+required-features = ["ms"]
+
+[[bin]]
+name = "msconvert"
+path = "src/bin/msconvert.rs"
+required-features = ["ms"]
+
+[[bin]]
+name = "msexplore"
+path = "src/bin/msexplore.rs"
+required-features = ["ms"]
 
 [[test]]
 name = "hogbom_default"
@@ -216,3 +240,38 @@ required-features = ["images"]
 name = "workspace_paths"
 path = "tests/workspace_paths.rs"
 required-features = ["images"]
+
+[[test]]
+name = "concat"
+path = "tests/concat.rs"
+required-features = ["ms"]
+
+[[test]]
+name = "ms_casa_returns"
+path = "tests/ms_casa_returns.rs"
+required-features = ["ms"]
+
+[[test]]
+name = "ms_existing_outputs"
+path = "tests/ms_existing_outputs.rs"
+required-features = ["ms"]
+
+[[test]]
+name = "msexplore_casa_parity"
+path = "tests/msexplore_casa_parity.rs"
+required-features = ["ms", "slow-tests"]
+
+[[test]]
+name = "msexplore_cli"
+path = "tests/msexplore_cli.rs"
+required-features = ["ms"]
+
+[[test]]
+name = "msexplore_task_completion"
+path = "tests/msexplore_task_completion.rs"
+required-features = ["ms"]
+
+[[test]]
+name = "msconvert_cli"
+path = "tests/msconvert_cli.rs"
+required-features = ["ms"]

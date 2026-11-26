@@ -104,7 +104,7 @@ pub struct SimobserveRunTaskResult {
     pub artifacts: Vec<SimobserveArtifact>,
     /// Native figure documents; arrays belong to the host's payload file.
     #[serde(default)]
-    pub plots: Vec<casa_ms::plot_document::PlotFigure>,
+    pub plots: Vec<casa_plot_data::plot_document::PlotFigure>,
 }
 
 /// The report of one completed run.

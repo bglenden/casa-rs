@@ -5,7 +5,9 @@ use std::path::Path;
 
 use casa_images::{ImageInterface, PagedImage};
 use casa_imaging_runtime::{Demand, admit};
-use casa_ms::plot_document::{PlotArrayDtype, PlotDocumentPanel, PlotLayerData, PlotLayerKind};
+use casa_plot_data::plot_document::{
+    PlotArrayDtype, PlotDocumentPanel, PlotLayerData, PlotLayerKind,
+};
 use ndarray::IxDyn;
 
 use super::document::{annotation, layer, panel};
@@ -79,7 +81,7 @@ fn prepare_image(
     );
     // imshow preserves fixed image extents; the other spatial panels use
     // CASA's axis('equal'), which instead adjusts the data limits on draw.
-    output.aspect = Some(casa_ms::plot_document::PlotAspect::Equal);
+    output.aspect = Some(casa_plot_data::plot_document::PlotAspect::Equal);
     let range = if psf || stats.corner_samples == 0 {
         [stats.min, stats.max]
     } else {

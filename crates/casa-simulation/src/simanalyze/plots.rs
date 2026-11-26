@@ -7,7 +7,7 @@ use super::{
 use crate::simobserve::graphics::{document, image, observation, payload::Payload};
 use crate::{SessionResources, simobserve::SimobserveError};
 use casa_images::PagedImage;
-use casa_ms::plot_document::{PlotDocument, PlotDocumentPanel, PlotFigure, PlotLayerData};
+use casa_plot_data::plot_document::{PlotDocument, PlotDocumentPanel, PlotFigure, PlotLayerData};
 use std::path::Path;
 
 pub(super) fn prepare(

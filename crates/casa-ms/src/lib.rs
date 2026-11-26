@@ -43,7 +43,6 @@
 
 pub mod asdm_table;
 pub mod builder;
-mod casa_return;
 pub mod column_def;
 pub mod columns;
 #[cfg(unix)]
@@ -53,19 +52,14 @@ mod ephemeris;
 pub mod error;
 pub mod flagging;
 pub mod grouping;
-pub(crate) mod listobs;
+pub mod listobs;
 mod metadata;
 pub mod ms;
-pub mod msexplore;
 pub mod observation_io;
-pub mod plot;
-mod plot_data;
-pub mod plot_document;
-mod plot_visibility;
 mod probes;
 pub mod schema;
 pub mod scratch_columns;
-mod selected_pointing;
+pub mod selected_pointing;
 pub mod selection;
 pub mod shadowing;
 pub mod single_dish_import;
@@ -73,8 +67,6 @@ pub mod spectral_selection;
 mod subtable_overrides;
 mod subtable_rows;
 pub mod subtables;
-pub mod task_contract;
-mod task_front_end;
 pub mod tool_concatenate;
 pub mod tool_ephemeris;
 pub mod tool_history;
@@ -98,10 +90,6 @@ pub(crate) mod test_helpers;
 
 pub use builder::{MeasurementSetBuilder, MsSchemas};
 pub use casa_measures_data::PlanetaryEphemeris;
-pub use casa_return::{
-    FLAGDATA_SUMMARY_NAME, flagdata_empty_record, flagdata_named_summary_record,
-    flagdata_summary_record, flagmanager_list_record,
-};
 pub use ephemeris::{EphemerisBudget, PhaseCentreEphemeris, PhaseCentreEphemerisError};
 pub use error::{MsError, MsResult};
 pub use flagging::calculate_flagdata_path;
@@ -121,41 +109,8 @@ pub use listobs::{
     ListObsUvPoint as MeasurementSetUvPoint, ListObsUvTrack as MeasurementSetUvTrack,
     ScanSummary as MeasurementSetScanSummary,
 };
-pub(crate) use listobs::{ListObsOptions, ListObsSummary, ListObsUvCoverage};
+pub use listobs::{ListObsOptions, ListObsSummary, ListObsUvCoverage};
 pub use ms::MeasurementSet;
-pub use msexplore::task_contract::{
-    MSEXPLORE_TASK_PROTOCOL_NAME, MSEXPLORE_TASK_PROTOCOL_VERSION, MsExploreFlagEditRequest,
-    MsExplorePlotArtifact, MsExplorePlotExportRequest, MsExploreRunTaskRequest,
-    MsExploreRunTaskResult, MsExploreTaskRequest, MsExploreTaskResult,
-    msexplore_protocol_descriptor, msexplore_task_schema_bundle,
-};
-pub use msexplore::{
-    DEFAULT_MAX_PLOT_POINTS, MsAverageSpec, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec,
-    MsExportFormat, MsFlagAction, MsFlagEditPreview, MsFlagEditSpec, MsFlagRegion, MsFlagRowEdit,
-    MsFlagSampleEdit, MsIterationAxis, MsIterationSpec, MsLayoutSpec, MsLegendPosition,
-    MsPageExportRange, MsPageHeaderItem, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsPlotStyleSpec,
-    MsScatterGridPayload, MsScatterPageItemPayload, MsScatterPagePayload, MsScatterPanelPayload,
-    MsScatterPlotPayload, MsScatterPointRef, MsScatterSeries, MsTransformSpec,
-    apply_msexplore_flag_edit, apply_msexplore_flag_edit_for_request, build_msexplore_payload,
-    build_msexplore_payload_from_spec, build_msexplore_plot_payload,
-    build_msexplore_plot_payload_from_path, export_msexplore_plot, preview_msexplore_flag_edit,
-    preview_msexplore_flag_edit_for_request,
-};
-pub use plot::{
-    ListObsPlotKind as MeasurementSetPlotKind, ListObsPlotPayload as MeasurementSetPlotPayload,
-    ListObsPlotSpec as MeasurementSetPlotSpec,
-    build_listobs_plot_payload_from_summary as build_measurement_set_plot_payload_from_summary,
-    build_listobs_uv_plot_payload as build_measurement_set_uv_plot_payload,
-    build_listobs_visibility_plot_payload as build_measurement_set_visibility_plot_payload,
-};
-pub use plot_data::{
-    MS_PLOT_DATA_SCHEMA_VERSION, MsPlotData, MsPlotDataAxis, MsPlotDataPanel,
-    MsPlotDataPointProvenance, MsPlotDataSeries, build_msexplore_plot_data_from_path,
-};
-pub use plot_document::{
-    MeasurementSetPlot, MeasurementSetPlotError, MeasurementSetPlotRequest,
-    PLOT_DOCUMENT_DEFAULT_MAX_POINTS, PlotDocument, build_measurement_set_plot,
-};
 pub use probes::{
     MeasurementSetContext, MeasurementSetNamedContext, MeasurementSetObservationContext,
     MeasurementSetSpectralWindowContext, MeasurementSetSubtableContext, MeasurementSetTimeRange,
@@ -163,7 +118,7 @@ pub use probes::{
 };
 pub use schema::SubtableId;
 pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn, initial_model_visibility};
-pub(crate) use selected_pointing::{
+pub use selected_pointing::{
     PointingDirectionColumn, PointingReadPlan, SelectedPointingQueryDomain,
 };
 pub use selection::syntax::{
@@ -173,12 +128,12 @@ pub use selection::syntax::{
 pub use selection::{
     AntennaRow, BaselineSelection, ChannelFrequencyRange, ChannelRange, DataDescriptionRow,
     FieldSelectorRow, LogicalRowFilter, MsReadPlan, MsSelection, MsSelectionError,
-    MsSelectionIoBudget, MsSelectionRowBlock, MsSelectorEditContext, ResolvedMsSelection,
-    ResolvedMsSelectionRow, SpectralWindowRow, SpwSelection, TimeCondition, TimeDefaults,
-    TimeListEntry, TimeSelection, TimeSelector, TimeSelectorDefaults, TimeTerm, UvDistanceInterval,
-    UvDistanceLimit, msselection_first_logical_row, parse_uv_distance_intervals,
-    resolve_antenna_selector, resolve_field_selector_rows, resolve_spw_selector,
-    resolve_time_selector, validate_ms_selector_edit,
+    MsSelectionIoBudget, MsSelectionRowBlock, MsSelectorEditContext, MsSelectorKind,
+    ResolvedMsSelection, ResolvedMsSelectionRow, SpectralWindowRow, SpwSelection, TimeCondition,
+    TimeDefaults, TimeListEntry, TimeSelection, TimeSelector, TimeSelectorDefaults, TimeTerm,
+    UvDistanceInterval, UvDistanceLimit, msselection_first_logical_row,
+    parse_uv_distance_intervals, resolve_antenna_selector, resolve_field_selector_rows,
+    resolve_spw_selector, resolve_time_selector, validate_ms_selector_edit,
 };
 pub use spectral_selection::{
     CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,
@@ -196,18 +151,12 @@ pub use subtables::{
     MsSpectralWindow, MsSpectralWindowMut, MsState, MsStateMut, MsSysCal, MsSysCalMut, MsWeather,
     MsWeatherMut, SubTable,
 };
-pub use task_contract::{
-    FlagDataTaskRequest, FlagManagerMutationResult, FlagManagerTaskRequest, FlagManagerTaskResult,
-    MsTransformTaskRequest, flagdata_task_schema_bundle, flagmanager_task_schema_bundle,
-    mstransform_task_schema_bundle,
-};
-pub use task_front_end::{ms_task_success, task_flag_merge, task_selection_text};
 pub use transform::{
     ContinuumFitOptions, MsPartitionAxis, MsRegridOptions, MsTransformError,
     MsTransformMultiMsOptions, MsTransformReport, MsTransformRequest, MsTransformTaskOptions,
-    MsTransformTiling, PreparedTransformInputView, TimeAverageOptions, TransformDataColumn,
-    TransformInputColumns, TransformInputView, TransformTaskHistory, append_task_history,
-    mstransform, mstransform_task,
+    MsTransformTiling, PlotMsModelReferences, PlotMsModelSpwSelection, PreparedTransformInputView,
+    TimeAverageOptions, TransformDataColumn, TransformInputColumns, TransformInputView,
+    TransformTaskHistory, append_task_history, mstransform, mstransform_task,
 };
 pub use virtual_model::{
     VirtualModelCombinations, VirtualModelEntry, VirtualModelKind, VirtualModelRecord,

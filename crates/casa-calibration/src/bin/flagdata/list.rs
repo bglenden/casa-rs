@@ -11,11 +11,11 @@ use casa_ms::flagging::{
 };
 use casa_ms::{
     FlagDataReport, FlagDataRequest, MeasurementSet, append_flag_commands, append_task_history,
-    flagdata_empty_record, flagdata_named_summary_record, ms_task_success,
 };
 use casa_task_runtime::{
     ParameterSession, ResolutionPatch, TaskFailure, TaskInvocation, TaskSuccess,
 };
+use casa_tasks::ms::{flagdata_empty_record, flagdata_named_summary_record, ms_task_success};
 
 use super::{
     channel_bin_widths, command, command_values::Assignments, data_column,

@@ -217,7 +217,7 @@ pub(super) fn uvw_coordinates(uvw: Option<&ArrayValue>) -> Option<[f64; 3]> {
 }
 
 /// The selected physical rows and chronological anchors of PlotMS time groups.
-pub(crate) struct PlotTimeGroups {
+pub struct PlotTimeGroups {
     group_by_row_slot: Vec<usize>,
     first_row_slots: Vec<usize>,
     row_numbers: Option<Vec<usize>>,
@@ -228,50 +228,50 @@ pub(crate) struct PlotTimeGroups {
 
 impl PlotTimeGroups {
     /// Return the time group for a row's position in the original selection.
-    pub(crate) fn group(&self, row_slot: usize) -> usize {
+    pub fn group(&self, row_slot: usize) -> usize {
         self.group_by_row_slot[row_slot]
     }
 
     /// Return the first chronological integration supplying the group's metadata.
-    pub(crate) fn first_row_slot(&self, group: usize) -> usize {
+    pub fn first_row_slot(&self, group: usize) -> usize {
         self.first_row_slots[group]
     }
 
     /// The averaged Row coordinate of each group within its iterator chunk.
-    pub(crate) fn row_numbers(&self) -> Option<&[usize]> {
+    pub fn row_numbers(&self) -> Option<&[usize]> {
         self.row_numbers.as_deref()
     }
 
     /// The emitted subchunks needed by the downstream PlotMS baseline reducer.
-    pub(crate) fn buffers(&self) -> &[Range<usize>] {
+    pub fn buffers(&self) -> &[Range<usize>] {
         &self.buffers
     }
 
     /// Identify the input row that determines optional spectrum availability.
-    pub(crate) fn input_buffer_first_slot(&self, row_slot: usize) -> Option<usize> {
+    pub fn input_buffer_first_slot(&self, row_slot: usize) -> Option<usize> {
         self.input_buffer_first_slots.get(row_slot).copied()
     }
 
     /// Slots supplying the input buffer's recipe for each selected row.
-    pub(crate) fn input_buffer_first_slots(&self) -> &[usize] {
+    pub fn input_buffer_first_slots(&self) -> &[usize] {
         &self.input_buffer_first_slots
     }
 
     /// Input buffer rows supplying metadata for the vector time groups.
-    pub(crate) fn model_metadata_slots(&self) -> impl Iterator<Item = usize> + '_ {
+    pub fn model_metadata_slots(&self) -> impl Iterator<Item = usize> + '_ {
         self.first_row_slots
             .iter()
             .map(|&slot| self.input_buffer_first_slots[slot])
     }
 
     /// The first selected row of each input chunk supplies its phase center.
-    pub(crate) fn phase_reference_slots(&self) -> Option<&[usize]> {
+    pub fn phase_reference_slots(&self) -> Option<&[usize]> {
         self.phase_reference_slots.as_deref()
     }
 }
 
 /// Plan vector time groups for the selected PlotMS rows and scan/field barriers.
-pub(crate) fn selected_plot_time_groups(
+pub fn selected_plot_time_groups(
     ms: &MeasurementSet,
     rows: &[ResolvedMsSelectionRow],
     options: TimeAverageOptions,
@@ -355,9 +355,12 @@ pub(crate) fn selected_plot_time_groups(
 
 /// Select the phase-reference metadata and input time chunking used by PlotMS.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PlotTimePhaseReferences {
+pub enum PlotTimePhaseReferences {
+    /// Do not shift or track phase references.
     None,
+    /// Track virtual-model phase-reference metadata per buffer.
     VirtualModel,
+    /// Shift visibilities to the time-averaged phase reference.
     TimeAveragedShift,
 }
 
@@ -479,7 +482,7 @@ pub(super) struct TimeCoordinatesAverage {
 
 /// Weighted UVW coordinates over one time group on one baseline.
 #[derive(Default)]
-pub(crate) struct TimeUvwAverage {
+pub struct TimeUvwAverage {
     count: usize,
     has_unflagged: bool,
     weight: f64,
@@ -489,12 +492,7 @@ pub(crate) struct TimeUvwAverage {
 impl TimeUvwAverage {
     /// Prefer unflagged integrations and use unit weights when all are flagged.
     /// Return whether other sums must reset and the effective row weight.
-    pub(crate) fn add(
-        &mut self,
-        uvw: [f64; 3],
-        flagged: bool,
-        scalar_weight: f64,
-    ) -> Option<(bool, f64)> {
+    pub fn add(&mut self, uvw: [f64; 3], flagged: bool, scalar_weight: f64) -> Option<(bool, f64)> {
         if self.has_unflagged && flagged {
             return None;
         }
@@ -523,7 +521,7 @@ impl TimeUvwAverage {
     }
 
     /// Return the mean U, V and W coordinates in metres.
-    pub(crate) fn mean(&self) -> [f64; 3] {
+    pub fn mean(&self) -> [f64; 3] {
         let normalization = self.normalization();
         self.uvw.map(|coordinate| coordinate / normalization)
     }
@@ -586,7 +584,7 @@ impl TimeCoordinatesAverage {
 }
 
 /// Center the first and last visibility times and span both integrations.
-pub(crate) fn centered_time_and_interval(first: (f64, f64), last: (f64, f64)) -> (f64, f64) {
+pub fn centered_time_and_interval(first: (f64, f64), last: (f64, f64)) -> (f64, f64) {
     let elapsed = last.0 - first.0;
     let interval = if elapsed == 0.0 {
         first.1

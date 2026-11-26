@@ -10,9 +10,12 @@ use crate::{
     MeasurementSet, MsError, MsResult, derived::engine::resolve_direction_reference_selected,
 };
 
+/// Which pointing direction column in `POINTING` to decode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PointingDirectionColumn {
+pub enum PointingDirectionColumn {
+    /// Use the `DIRECTION` column.
     Direction,
+    /// Use the `TARGET` column.
     Target,
 }
 
@@ -27,7 +30,7 @@ impl PointingDirectionColumn {
 
 /// Selected antennas and query-time envelope needed to prepare POINTING once.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct SelectedPointingQueryDomain {
+pub struct SelectedPointingQueryDomain {
     antennas: Box<[AntennaPointingQueryDomain]>,
 }
 
@@ -115,15 +118,17 @@ fn extend_bounds([first, last]: &mut [f64; 2], value: f64) {
     *last = last.max(value);
 }
 
+/// Bounds controlling chunked `POINTING` scans and polynomial evaluation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PointingReadPlan {
+pub struct PointingReadPlan {
     scan_rows_per_block: usize,
     maximum_polynomial_terms: usize,
     maximum_catalog_bytes: usize,
 }
 
 impl PointingReadPlan {
-    pub(crate) fn new(
+    /// Construct a bounded `POINTING` read plan, validating positive limits.
+    pub fn new(
         scan_rows_per_block: usize,
         maximum_polynomial_terms: usize,
         maximum_catalog_bytes: usize,

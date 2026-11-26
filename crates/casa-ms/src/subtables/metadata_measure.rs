@@ -142,7 +142,8 @@ pub(super) fn field_epoch_reference(table: &Table, row: usize) -> MsResult<Epoch
     epoch_reference(table, "TIME", row, 0)
 }
 
-pub(crate) fn epoch_reference(
+/// Resolve the epoch reference frame for `column` at `row` and `element`.
+pub fn epoch_reference(
     table: &Table,
     column: &str,
     row: usize,

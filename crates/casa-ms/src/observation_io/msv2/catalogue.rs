@@ -446,12 +446,12 @@ pub(super) fn read_antennas(ms: &MeasurementSet) -> Result<Vec<AntennaEntry>, Ob
 
 /// Every `FEED` row's receptors, by (antenna, feed, spectral window), the
 /// window -1 standing for every window, in table order.
-pub(crate) struct Feeds {
+pub struct Feeds {
     rows: BTreeMap<(i32, i32, i32), Vec<Receptors>>,
 }
 
 /// The `FEED` rows.
-pub(crate) fn read_feeds(ms: &MeasurementSet) -> Result<Feeds, ObservationError> {
+pub fn read_feeds(ms: &MeasurementSet) -> Result<Feeds, ObservationError> {
     let feed = ms.feed().map_err(storage)?;
     if let Some(feed_table) = ms.subtable(SubtableId::Feed) {
         require_units(feed_table, "RECEPTOR_ANGLE", "rad")?;
@@ -512,7 +512,7 @@ impl Feeds {
     /// taken, as casacore's `MSIter` takes it (with a warning); XRADIO's
     /// converter refuses such rows, and a conversion reports them as a
     /// loss ([`Self::varying`]).
-    pub(crate) fn receptors(&self, antenna: i32, feed: i32, window: i32) -> Option<&Receptors> {
+    pub fn receptors(&self, antenna: i32, feed: i32, window: i32) -> Option<&Receptors> {
         self.rows
             .get(&(antenna, feed, window))
             .or_else(|| self.rows.get(&(antenna, feed, -1)))

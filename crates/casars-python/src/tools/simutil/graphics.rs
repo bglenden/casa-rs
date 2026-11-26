@@ -11,7 +11,7 @@ use crate::tools::{LogLine, emit};
 
 pub(super) fn draw(
     py: Python<'_>,
-    document: &casa_ms::plot_document::PlotDocument,
+    document: &casa_plot_data::plot_document::PlotDocument,
     payload: &std::path::Path,
     preserve_title: bool,
 ) -> PyResult<()> {

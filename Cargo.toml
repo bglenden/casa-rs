@@ -2,10 +2,10 @@
 resolver = "2"
 members = [
     "surfaces/casa-contracts",
+    "surfaces/casa-plot-data",
     "surfaces/casa-tasks",
     "frontends/casars-cli",
     "crates/casa-task-runtime",
-    "crates/casars-msconvert",
     "crates/casars-simulation",
     "crates/casars-python",
     "crates/casa-types",

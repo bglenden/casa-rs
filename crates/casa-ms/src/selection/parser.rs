@@ -1030,7 +1030,8 @@ pub(super) fn parse_state_selector_with_mode(
     super::intent::resolve(value, &modes, mode)
 }
 
-pub(crate) fn parse_correlation_selector(value: &str) -> MsResult<Vec<i32>> {
+/// Parse a CASA correlation/Stokes selector string into Stokes enum codes.
+pub fn parse_correlation_selector(value: &str) -> MsResult<Vec<i32>> {
     let mut codes = Vec::new();
     for raw_part in value.split(',') {
         let part = raw_part.trim();

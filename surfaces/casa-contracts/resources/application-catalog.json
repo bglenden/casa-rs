@@ -5,7 +5,7 @@
       "id": "msexplore",
       "launch": {
         "executable": "msexplore",
-        "cargo_package": "casa-ms",
+        "cargo_package": "casars-cli",
         "override_env": "CASARS_MSEXPLORE_BIN"
       },
       "dataset_kinds": [
@@ -332,7 +332,7 @@
       "id": "plotms",
       "launch": {
         "executable": "msexplore",
-        "cargo_package": "casa-ms",
+        "cargo_package": "casars-cli",
         "override_env": "CASARS_MSEXPLORE_BIN"
       },
       "dataset_kinds": [
@@ -357,7 +357,7 @@
       "id": "flagmanager",
       "launch": {
         "executable": "flagmanager",
-        "cargo_package": "casa-ms",
+        "cargo_package": "casars-cli",
         "override_env": "CASARS_FLAGMANAGER_BIN"
       },
       "dataset_kinds": [
@@ -454,7 +454,7 @@
       "id": "msconvert",
       "launch": {
         "executable": "msconvert",
-        "cargo_package": "casars-msconvert",
+        "cargo_package": "casars-cli",
         "override_env": "CASARS_MSCONVERT_BIN"
       },
       "dataset_kinds": [
@@ -491,7 +491,7 @@
       "id": "concat",
       "launch": {
         "executable": "concat",
-        "cargo_package": "casa-ms",
+        "cargo_package": "casars-cli",
         "override_env": "CASARS_CONCAT_BIN"
       },
       "dataset_kinds": [

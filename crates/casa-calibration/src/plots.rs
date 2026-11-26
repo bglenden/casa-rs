@@ -15,10 +15,10 @@
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 
-use casa_ms::{
-    MeasurementSet, MsAxis, MsDataColumn, MsLegendPosition, MsPlotPayload, MsPlotPreset,
-    MsPlotSpec, MsScatterPlotPayload, MsScatterPointRef, MsScatterSeries, MsSelection,
-    VisibilityDataColumn, build_msexplore_plot_payload,
+use casa_ms::{MeasurementSet, MsSelection, VisibilityDataColumn};
+use casa_plot_data::{
+    MsAxis, MsDataColumn, MsLegendPosition, MsPlotPayload, MsPlotPreset, MsPlotSpec,
+    MsScatterPlotPayload, MsScatterPointRef, MsScatterSeries, build_msexplore_plot_payload,
 };
 use casa_tables::{Table, TableError, TableOptions};
 use casa_types::{ArrayValue, Complex32, ScalarValue};

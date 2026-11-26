@@ -27,7 +27,9 @@ casa-task-runtime = { path = "../casa-task-runtime" }
 casa-measures-data = { path = "../casa-measures-data" }
 casa-ms = { path = "../casa-ms" }
 casa-numerics = { path = "../casa-numerics" }
+casa-plot-data = { path = "../../surfaces/casa-plot-data", features = ["ms"] }
 casa-tables = { path = "../casa-tables" }
+casa-tasks = { path = "../../surfaces/casa-tasks", features = ["ms"] }
 casa-types = { path = "../casa-types" }
 libm = "0.2"
 ndarray.workspace = true

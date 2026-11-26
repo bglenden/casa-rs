@@ -1,0 +1,176 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! `flagmanager` - native CASA-style flag-version management, on the shared
+//! task front end.
+
+use casa_contracts::CasaValue;
+use casa_ms::flagging::save_disk_flag_version;
+use casa_ms::{
+    FlaggingError, MeasurementSet, delete_flag_version, flag_version_ms_path,
+    initialize_flag_versions, list_flag_versions, rename_flag_version,
+    rename_flag_version_for_task, restore_flag_version,
+};
+use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
+
+use super::casa_return::flagmanager_list_record;
+use super::front_end::{ms_task_success, task_flag_merge};
+use super::task_contract::{
+    FlagManagerMutationResult, FlagManagerTaskRequest, FlagManagerTaskResult,
+    flagmanager_task_schema_bundle,
+};
+
+/// Build the `flagmanager` CLI and schema-backed task front end.
+pub fn task_front_end()
+-> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
+    TaskFrontEnd::new_with_deferred_schema(
+        "flagmanager",
+        flagmanager_task_schema_bundle(),
+        &["flagmanager"],
+        run,
+    )
+    .expect("the flagmanager contract carries its surface")
+}
+
+fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    let vis = task.path("vis")?;
+    let request = FlagManagerTaskRequest {
+        vis: vis.clone(),
+        mode: task.required_text("mode")?.to_ascii_lowercase(),
+        versionname: task.text("versionname")?.filter(|name| !name.is_empty()),
+        oldname: task.text("oldname")?.filter(|name| !name.is_empty()),
+        comment: task.text("comment")?,
+        merge: task_flag_merge(task, "merge")?,
+    };
+    let result = execute(request)?;
+    // CASA's `list` returns the versions; the other modes return None.
+    let value = match &result {
+        FlagManagerTaskResult::Versions(versions) => flagmanager_list_record(versions, &vis),
+        FlagManagerTaskResult::Mutation(_) => CasaValue::None,
+    };
+    ms_task_success(value, &result)
+}
+
+fn execute(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, TaskFailure> {
+    let failed = |error: casa_ms::FlaggingError| TaskFailure::execution(error.to_string());
+    let require_version = |message| {
+        request
+            .versionname
+            .clone()
+            .ok_or_else(|| TaskFailure::validation(message).at("versionname"))
+    };
+    let vis = if request.mode == "rename" {
+        request.vis.clone()
+    } else {
+        flag_version_ms_path(&request.vis)
+    };
+    let mut ms =
+        MeasurementSet::open(vis).map_err(|error| TaskFailure::execution(error.to_string()))?;
+    let mutation = |mode: &str, versionname, oldname| {
+        Ok(FlagManagerTaskResult::Mutation(FlagManagerMutationResult {
+            mode: mode.to_string(),
+            versionname,
+            oldname,
+        }))
+    };
+    match request.mode.as_str() {
+        "list" => {
+            initialize_flag_versions(&ms).map_err(failed)?;
+            Ok(FlagManagerTaskResult::Versions(
+                list_flag_versions(&ms).map_err(failed)?,
+            ))
+        }
+        "save" => {
+            let name = require_version("Illegal empty versionname: ''")?;
+            let comment = request.comment.as_deref().unwrap_or("");
+            keep_existing_version(&ms, &name)?;
+            save_disk_flag_version(&ms, &name, comment, request.merge).map_err(failed)?;
+            mutation("save", Some(name), None)
+        }
+        "restore" => {
+            let name = require_version("Illegal versionname: ''")?;
+            initialize_flag_versions(&ms).map_err(failed)?;
+            if !list_flag_versions(&ms)
+                .map_err(failed)?
+                .iter()
+                .skip(1)
+                .any(|entry| entry.name == name)
+            {
+                return Err(
+                    failed(casa_ms::FlaggingError::MissingFlagVersion { version: name })
+                        .at("versionname"),
+                );
+            }
+            restore_flag_version(&mut ms, &name, request.merge).map_err(|error| match error {
+                casa_ms::FlaggingError::MissingFlagVersion { .. } => {
+                    failed(error).at("versionname")
+                }
+                error => failed(error),
+            })?;
+            mutation("restore", Some(name), None)
+        }
+        "delete" => {
+            let name = require_version("Illegal versionname: ''")?;
+            delete_flag_version(&ms, &name).map_err(failed)?;
+            mutation("delete", Some(name), None)
+        }
+        "rename" => {
+            let name = request.versionname.ok_or_else(|| {
+                TaskFailure::validation("Illegal versionname: ''").at("versionname")
+            })?;
+            let old = request
+                .oldname
+                .ok_or_else(|| TaskFailure::validation("Illegal oldname: ''").at("oldname"))?;
+            let comment = request.comment.as_deref().unwrap_or("");
+            rename_flag_version_for_task(&ms, &old, &name, comment).map_err(
+                |error| match error {
+                    FlaggingError::FlagVersionRenameArgument { parameter, message } => {
+                        TaskFailure::validation(message).at(parameter)
+                    }
+                    error => failed(error),
+                },
+            )?;
+            mutation("rename", Some(name), Some(old))
+        }
+        other => Err(TaskFailure::validation(format!(
+            "unsupported flagmanager mode {other:?}; expected list, save, restore, delete or rename"
+        ))
+        .at("mode")),
+    }
+}
+
+/// CASA's task keeps a version that a save would replace: it is renamed
+/// `<name>.old.<seconds since 1970>` first, so the save adds a new version
+/// and the old flags stay restorable (`task_flagmanager.py`). CASA writes
+/// the new comment onto the renamed version; casa-rs keeps its own (see
+/// `docs/CASA (C++) bugs.md`).
+fn keep_existing_version(ms: &MeasurementSet, name: &str) -> Result<(), TaskFailure> {
+    let failed = |error: casa_ms::FlaggingError| TaskFailure::execution(error.to_string());
+    // `main`, the working copy, is listed but is no saved version.
+    let Some(existing) = list_flag_versions(ms)
+        .map_err(failed)?
+        .into_iter()
+        .skip(1)
+        .find(|version| version.name == name)
+    else {
+        return Ok(());
+    };
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    let kept = format!("{name}.old.{seconds}");
+    tracing::warn!("Version name '{name}' already exist. Will rename it to {kept}");
+    rename_flag_version(ms, name, &kept, &existing.comment).map_err(failed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_bundle_embeds_flagmanager_parameter_contract() {
+        let bundle = flagmanager_task_schema_bundle();
+        assert_eq!(bundle.protocol.protocol_name, "casa_ms_flagmanager_task");
+        assert_eq!(bundle.parameter_surfaces.len(), 1);
+        assert_eq!(bundle.parameter_surfaces[0].surface.id(), "flagmanager");
+        bundle.validate().expect("valid flagmanager provider");
+    }
+}

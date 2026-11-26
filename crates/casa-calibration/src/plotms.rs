@@ -4,9 +4,10 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-use casa_ms::msexplore::cli::PlotMsModelReferences;
-use casa_ms::msexplore::{PlotMsCalibratedRow, PlotMsCalibration};
-use casa_ms::{MeasurementSet, MsSelection, ResolvedMsSelectionRow, TransformInputView};
+use casa_ms::{
+    MeasurementSet, MsSelection, PlotMsModelReferences, ResolvedMsSelectionRow, TransformInputView,
+};
+use casa_plot_data::msexplore::{PlotMsCalibratedRow, PlotMsCalibration};
 use casa_task_runtime::TaskFailure;
 use casa_types::ArrayValue;
 

@@ -28,7 +28,7 @@ fn an_orphan_pending_figure_cannot_report_an_old_png_as_new_output() {
 
 #[test]
 fn simulation_figures_validate_payload_bounds_and_declared_destinations() {
-    use casa_ms::plot_document::{
+    use casa_plot_data::plot_document::{
         PlotArrayDtype, PlotBinaryArray, PlotDocument, PlotDocumentLayer, PlotFigure,
         PlotLayerData, PlotLayerKind, PlotPayloadStrategy,
     };

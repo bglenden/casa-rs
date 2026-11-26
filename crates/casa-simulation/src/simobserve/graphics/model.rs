@@ -2,7 +2,9 @@
 //! Complete model pixels or component positions, plus the mosaic pointings.
 
 use casa_components::ComponentList;
-use casa_ms::plot_document::{PlotArrayDtype, PlotDocumentPanel, PlotLayerData, PlotLayerKind};
+use casa_plot_data::plot_document::{
+    PlotArrayDtype, PlotDocumentPanel, PlotLayerData, PlotLayerKind,
+};
 
 use super::document::{layer, panel};
 use super::image::image_panel;

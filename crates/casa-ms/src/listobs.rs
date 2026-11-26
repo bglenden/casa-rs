@@ -2075,7 +2075,8 @@ fn format_f64_bracket_list(values: &[f64]) -> String {
     )
 }
 
-pub(crate) fn format_float_compact(value: f64, decimals: usize) -> String {
+/// Format a finite floating-point scalar with at most `decimals` fractional digits.
+pub fn format_float_compact(value: f64, decimals: usize) -> String {
     let epsilon = 10f64.powi(-(decimals as i32)) / 2.0;
     let normalized = if value.abs() < epsilon { 0.0 } else { value };
     let mut formatted = format!("{normalized:.decimals$}");
@@ -2090,7 +2091,7 @@ pub(crate) fn format_float_compact(value: f64, decimals: usize) -> String {
 
 /// casacore's `Stokes::name` of a `CORR_TYPE` code, from `I` (1) to
 /// `Pangle` (32); `??` for a code casacore does not define.
-pub(crate) fn stokes_name(code: i32) -> &'static str {
+pub fn stokes_name(code: i32) -> &'static str {
     const NAMES: [&str; 32] = [
         "I",
         "Q",
