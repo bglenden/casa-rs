@@ -18,8 +18,8 @@
 //! writes it to `output`; a report that would replace an existing file is
 //! refused before the task runs unless `overwrite` is set.
 //!
-//! [`CalibrationTaskRequest`]: crate::CalibrationTaskRequest
-//! [`CalibrationTaskResult`]: crate::CalibrationTaskResult
+//! [`CalibrationTaskRequest`]: crate::calibration::CalibrationTaskRequest
+//! [`CalibrationTaskResult`]: crate::calibration::CalibrationTaskResult
 
 mod calstat;
 mod casa_read;
