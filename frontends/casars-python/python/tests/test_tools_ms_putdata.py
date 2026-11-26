@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from casars import tools
+from test_tools_ms_visibility import same_visibility
 from test_tools_ms_visibility_ifraxis import baseline_fixture
 from test_tools_msmetadata import measures, native_dataset
 
@@ -29,6 +30,118 @@ def make_multi_ms(casa, path, members):
     assert assembly.createmultims(str(path), list(map(str, members)), ["ANTENNA", "DATA_DESCRIPTION", "FEED"])
     assert assembly.done()
     return str(path)
+
+
+@pytest.mark.parametrize("permanent", [False, True], ids=["automatic", "permanent"])
+@pytest.mark.parametrize("monotone", [False, True], ids=["arbitrary-order", "monotone"])
+def test_ms_visibility_and_writes_in_a_saved_multi_ms_view(
+    baseline_fixture, native_dataset, tmp_path, permanent, monotone,
+):
+    casa, _, raw = baseline_fixture
+    first = native_dataset
+    second = tmp_path / "second-member.ms"
+    shutil.copytree(first, second)
+    rows_per_member = raw["data"].shape[-1]
+    other = raw["data"].astype(np.complex64) + (17 - 9j)
+    table = casa.table()
+    assert table.open(str(second), nomodify=False)
+    assert table.putcol("DATA", other)
+    assert table.done()
+    oracle_parts = (tmp_path / "oracle-first.ms", tmp_path / "oracle-second.ms")
+    for original, copy in zip((first, second), oracle_parts):
+        shutil.copytree(original, copy)
+
+    multi = make_multi_ms(casa, tmp_path / "parent.mms", (first, second))
+    parent = casa.ms()
+    assert parent.open(multi)
+    members = parent.getreferencedtables()
+    assert len(members) == 2 and parent.done()
+    view = str(tmp_path / "saved.ms")
+    rows = np.array([rows_per_member + 13, 2, rows_per_member, 1, rows_per_member + 13])
+    if monotone:
+        rows.sort()
+    assert table.open(multi)
+    reference = table.selectrows(rows, view)
+    assert reference.done() and table.done()
+
+    wanted = np.concatenate((raw["data"], other), axis=-1)[..., rows]
+    fields = ["data", "time", "antenna1", "axis_info"]
+    results = []
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(view, lock=permanent, check=True)
+        assert reader.ismultims()
+        assert reader.getreferencedtables() == [multi]
+        assert reader.nrow() == reader.nrow(True) == len(rows)
+        assert reader.selectchannel(nchan=2, start=1, width=1, inc=2)
+        assert reader.selectpolarization(["LL"])
+        result = reader.getdata(fields)
+        np.testing.assert_array_equal(np.sort(result["data"], axis=-1),
+                                      np.sort(wanted[1:2, 1::2, :], axis=-1), strict=True)
+        results.append(result)
+        assert reader.reset()
+        unfiltered = reader.getdata(["data", "flag", "time"])
+        original = wanted, raw["flag"][..., rows % rows_per_member], raw["time"][rows % rows_per_member]
+        for name, expected in zip(("data", "flag", "time"), original):
+            np.testing.assert_array_equal(unfiltered[name], expected, strict=True)
+        assert reader.done()
+    same_visibility(*results[::-1])
+
+    oracle = make_multi_ms(casa, tmp_path / "oracle.mms", oracle_parts)
+    oracle_view = str(tmp_path / "oracle.ms")
+    assert parent.open(oracle)
+    oracle_members = parent.getreferencedtables()
+    assert parent.done()
+    assert table.open(oracle)
+    reference = table.selectrows(rows, oracle_view)
+    assert reference.done() and table.done()
+    updates = wanted + np.arange(len(rows)) * (3.5 - 2j)
+    for api, saved in ((casa, oracle_view), (tools, view)):
+        writer = api.ms()
+        assert writer.open(saved, nomodify=False, lock=permanent, check=True)
+        np.testing.assert_array_equal(writer.getdata("data")["data"], wanted, strict=True)
+        assert writer.putdata({"DATA": updates})
+        assert writer.done()
+    expected = [raw["data"].copy(), other.astype(np.complex128)]
+    for position, row in enumerate(rows):
+        member, physical = divmod(row, rows_per_member)
+        expected[member][..., physical] = updates[..., position]
+    oracle_values = []
+    for index, (actual, control) in enumerate(zip(members, oracle_members)):
+        assert table.open(control)
+        values = table.getcol("DATA")
+        assert table.done()
+        oracle_values.append(values)
+        assert_main_columns(casa, actual, {"DATA": expected[index], "FLAG": raw["flag"]})
+    if monotone:
+        for wanted_member, oracle_member in zip(expected, oracle_values):
+            np.testing.assert_array_equal(oracle_member, wanted_member, strict=True)
+    else:
+        # CASA slices the input cube in its iterator order. It writes the
+        # third and first logical inputs to physical rows 1 and 2 here.
+        np.testing.assert_array_equal(oracle_values[0][..., 1:3], updates[..., [2, 0]], strict=True)
+        assert not np.array_equal(oracle_values[0][..., 1:3], expected[0][..., 1:3])
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(view)
+        data = reader.getdata("data")["data"]
+        persisted = np.concatenate(expected, axis=-1)[..., rows].astype(np.complex128)
+        np.testing.assert_array_equal(data, persisted, strict=True)
+        assert reader.done()
+
+    # A new publication from CASA must invalidate the open native view's
+    # physical tile cache, including every occurrence of a repeated row.
+    reader = tools.ms()
+    assert reader.open(view)
+    np.testing.assert_array_equal(reader.getdata("data")["data"], persisted, strict=True)
+    member = str(members[1])
+    changed = expected[1][..., 13] + (11 + 4j)
+    assert table.open(member, nomodify=False)
+    assert table.putcell("DATA", 13, changed)
+    assert table.done()
+    persisted[..., rows == rows_per_member + 13] = changed[..., None]
+    np.testing.assert_array_equal(reader.getdata("data")["data"], persisted, strict=True)
+    assert reader.done()
 
 
 def test_ms_visibility_scalar_taql_preserves_physical_order(

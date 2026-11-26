@@ -501,6 +501,7 @@ impl TiledVariant {
 struct TiledReadHeader {
     variant: TiledVariant,
     header: TiledStManHeader,
+    packed_read_seen: std::sync::OnceLock<()>,
 }
 
 /// Immutable tiled-manager metadata retained for the lifetime of one open table.
@@ -533,7 +534,14 @@ impl TiledReadMetadata {
         {
             let header_path = table_path.join(format!("table.f{}", manager.seq_nr));
             let (variant, header) = read_tiled_header(&header_path)?;
-            headers.insert(manager.seq_nr, TiledReadHeader { variant, header });
+            headers.insert(
+                manager.seq_nr,
+                TiledReadHeader {
+                    variant,
+                    header,
+                    packed_read_seen: std::sync::OnceLock::new(),
+                },
+            );
         }
         Ok(Self { headers })
     }
@@ -2027,7 +2035,9 @@ pub(crate) fn load_tiled_column_rows_2d_channel_range_typed(
     channel_start: usize,
     channel_count: usize,
 ) -> Result<Option<SelectedArray2DCells>, StorageError> {
-    let TiledReadHeader { variant, header } = read_metadata.header(dm.seq_nr)?;
+    let TiledReadHeader {
+        variant, header, ..
+    } = read_metadata.header(dm.seq_nr)?;
     let (tile_header, target_col_idx) = tile_target(
         variant,
         Cow::Borrowed(header),
@@ -2092,7 +2102,9 @@ pub(crate) fn fill_tiled_column_rows_2d_channel_range_typed(
     channel_count: usize,
     destination: SelectedArray2DCellsMut<'_>,
 ) -> Result<Option<SelectedArray2DShape>, StorageError> {
-    let TiledReadHeader { variant, header } = read_metadata.header(dm.seq_nr)?;
+    let TiledReadHeader {
+        variant, header, ..
+    } = read_metadata.header(dm.seq_nr)?;
     let (tile_header, target_col_idx) = tile_target(
         variant,
         Cow::Borrowed(header),
@@ -2137,6 +2149,7 @@ pub(crate) fn fill_tiled_column_rows_2d_channel_range_typed(
             channel_count,
             destination,
             false,
+            false,
         ),
         _ => Err(StorageError::FormatMismatch(format!(
             "typed selected 2-D channel reads for column {} require TiledShapeStMan Shape variant",
@@ -2155,7 +2168,9 @@ pub(crate) fn load_tiled_column_rows_1d_typed(
     target_desc_idx: usize,
     selected_rows: &[usize],
 ) -> Result<SelectedArray1DCells, StorageError> {
-    let TiledReadHeader { variant, header } = read_metadata.header(dm.seq_nr)?;
+    let TiledReadHeader {
+        variant, header, ..
+    } = read_metadata.header(dm.seq_nr)?;
     let (tile_header, target_col_idx) = tile_target(
         variant,
         Cow::Borrowed(header),
@@ -2247,7 +2262,9 @@ pub(crate) fn fill_tiled_column_rows_1d_typed(
     selected_rows: &[usize],
     destination: SelectedArray1DCellsMut<'_>,
 ) -> Result<SelectedArray1DShape, StorageError> {
-    let TiledReadHeader { variant, header } = read_metadata.header(dm.seq_nr)?;
+    let TiledReadHeader {
+        variant, header, ..
+    } = read_metadata.header(dm.seq_nr)?;
     let (tile_header, target_col_idx) = tile_target(
         variant,
         Cow::Borrowed(header),
@@ -3555,6 +3572,7 @@ fn load_tiled_column_rows_shape_variant_2d_channel_range_typed(
         channel_start,
         channel_count,
         row_major: false,
+        reuse_sparse_tiles: false,
     };
 
     match dt {
@@ -3632,6 +3650,7 @@ fn fill_tiled_column_rows_shape_variant_2d_channel_range_typed(
     channel_count: usize,
     destination: SelectedArray2DCellsMut<'_>,
     widen_complex: bool,
+    reuse_sparse_tiles: bool,
 ) -> Result<Option<SelectedArray2DShape>, StorageError> {
     let n_intervals = mapping.nr_used_row_map as usize;
     if n_intervals == 0 {
@@ -3703,6 +3722,7 @@ fn fill_tiled_column_rows_shape_variant_2d_channel_range_typed(
         corr_count,
         channel_start,
         channel_count,
+        reuse_sparse_tiles,
         row_major: widen_complex
             || matches!(
                 &destination,
@@ -3802,6 +3822,7 @@ struct TypedSelected2DFillPlan<'a> {
     channel_start: usize,
     channel_count: usize,
     row_major: bool,
+    reuse_sparse_tiles: bool,
 }
 
 impl TypedSelected2DFillPlan<'_> {
@@ -3838,6 +3859,32 @@ impl TypedSelected2DFillPlan<'_> {
             self.channel_start / tile_channel_count,
             channel_end.saturating_sub(1) / tile_channel_count,
         )
+    }
+
+    fn stream_tiles(
+        &self,
+        tiles: &SelectedTiles<'_>,
+        row_tiles: usize,
+        channel_tiles: usize,
+        selected_rows: usize,
+    ) -> bool {
+        let count = row_tiles
+            .saturating_mul(channel_tiles)
+            .saturating_mul(tiles.axis0_tiles());
+        if count <= TILE_READ_SESSION_RECENT_TILE_COUNT {
+            return false;
+        }
+        // Sparse whole-cell reads can revisit the same physical tiles when a
+        // tool reads different products of an open selection. Reuse the
+        // existing bounded cache for slices occupying a small share of it.
+        !self.reuse_sparse_tiles
+            || !tiles.fits_sparse_read_cache(
+                count,
+                row_tiles,
+                selected_rows,
+                self.elem_size,
+                table_cache_budget_bytes() / 2,
+            )
     }
 
     /// The output sample of `out_idx`'s selected channel `channel`, by the
@@ -3916,11 +3963,12 @@ fn fill_typed_selected_2d_rows<T: Copy>(
         let rows_by_tile = tiles.rows_by_tile(patches);
         // No channel selected leaves the last tile before the first.
         let channel_tile_count = (last_channel_tile + 1).saturating_sub(first_channel_tile);
-        let stream_tiles = rows_by_tile
-            .len()
-            .saturating_mul(channel_tile_count)
-            .saturating_mul(tiles.axis0_tiles())
-            > TILE_READ_SESSION_RECENT_TILE_COUNT;
+        let stream_tiles = plan.stream_tiles(
+            &tiles,
+            rows_by_tile.len(),
+            channel_tile_count,
+            patches.len(),
+        );
 
         for (row_tile, row_patches) in rows_by_tile {
             for channel_tile in first_channel_tile..=last_channel_tile {
@@ -4017,11 +4065,12 @@ fn fill_typed_selected_2d_rows_by_copy<T: TilePixel>(
         let rows_by_tile = tiles.rows_by_tile(patches);
         // No channel selected leaves the last tile before the first.
         let channel_tile_count = (last_channel_tile + 1).saturating_sub(first_channel_tile);
-        let stream_tiles = rows_by_tile
-            .len()
-            .saturating_mul(channel_tile_count)
-            .saturating_mul(tiles.axis0_tiles())
-            > TILE_READ_SESSION_RECENT_TILE_COUNT;
+        let stream_tiles = plan.stream_tiles(
+            &tiles,
+            rows_by_tile.len(),
+            channel_tile_count,
+            patches.len(),
+        );
         // A tile exactly as long as axis 0 holds a row's channels as one
         // run of whole cells.
         let whole_cells = tiles.tile_axis0_count == plan.corr_count;
@@ -13559,6 +13608,62 @@ mod tests {
             "full 8-channel row should touch all four channel tiles for this shape"
         );
 
+        reset_table_cache_budget_for_tests();
+    }
+
+    #[test]
+    fn sparse_uniform_reads_reuse_tiles_and_dense_reads_stream() {
+        let _guard = shared_table_cache_test_guard();
+        reset_table_cache_budget_for_tests();
+        set_table_cache_budget_bytes(1024 * 1024);
+        let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+            "FLAG",
+            PrimitiveType::Bool,
+            vec![2, 4],
+        )])
+        .unwrap();
+        let mut table = Table::with_schema(schema);
+        for row in 0..96 {
+            let value = ArrayValue::Bool(ArrayD::from_elem(IxDyn(&[2, 4]).f(), row % 16 == 0));
+            table
+                .add_row(RecordValue::new(vec![RecordField::new(
+                    "FLAG",
+                    Value::Array(value),
+                )]))
+                .unwrap();
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("uniform.table");
+        std::fs::create_dir(&path).unwrap();
+        table
+            .save(
+                TableOptions::new(&path)
+                    .with_data_manager(DataManagerKind::TiledShapeStMan)
+                    .with_tile_shape(vec![2, 4, 8]),
+            )
+            .unwrap();
+        let table = Table::open(TableOptions::new(&path)).unwrap();
+        let flags = table.column_accessor("FLAG").unwrap();
+        let sparse = (0..96).step_by(8).collect::<Vec<_>>();
+        let ArrayValue::Bool(first) = flags.packed_2d_cells_uncached(&sparse).unwrap().unwrap()
+        else {
+            panic!("expected packed Boolean flags");
+        };
+        assert_eq!(first.shape(), &[2, 4, 12]);
+        assert!(first[[1, 2, 0]] && !first[[1, 2, 1]]);
+        assert_eq!(shared_tile_cache_entry_count_for_table(&path), 0);
+        for _ in 0..2 {
+            assert_eq!(
+                flags.packed_2d_cells_uncached(&sparse).unwrap(),
+                Some(ArrayValue::Bool(first.clone()))
+            );
+            assert_eq!(shared_tile_cache_entry_count_for_table(&path), 12);
+        }
+
+        invalidate_shared_tile_cache_for_table(&path);
+        let dense = (0..96).collect::<Vec<_>>();
+        assert!(flags.packed_2d_cells_uncached(&dense).unwrap().is_some());
+        assert_eq!(shared_tile_cache_entry_count_for_table(&path), 0);
         reset_table_cache_budget_for_tests();
     }
 

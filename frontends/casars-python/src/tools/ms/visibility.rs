@@ -27,6 +27,7 @@ use super::owned_record::visibility_record;
 use super::selection_indices::selection_text;
 use super::subtable_queries::Subtables;
 use super::vi1::Vi1Iteration;
+use super::visibility_reference::ConcatenatedReference;
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
 use crate::convert::value::CasaValue;
 
@@ -49,6 +50,7 @@ pub(super) struct VisibilityMain {
     pub(super) table: Table,
     members: Vec<Table>,
     reference: Option<PlainReferenceRead>,
+    concatenated_reference: Option<ConcatenatedReference>,
     publication: Vec<VisibilityPublication>,
     pub(super) plain: bool,
 }
@@ -228,18 +230,26 @@ impl VisibilityMain {
         .map_err(runtime_error)?;
         let parts = Table::immediate_part_names(path, path).map_err(runtime_error)?;
         let plain = matches!(&parts, TablePartNames::Plain(_));
-        let (members, reference) = match parts {
-            TablePartNames::Plain(_) => (Vec::new(), None),
-            TablePartNames::Reference(_) => (
-                Vec::new(),
-                Table::open_plain_reference(path).map_err(runtime_error)?,
-            ),
-            TablePartNames::Concatenation { parts, .. } => (Self::open_plain_members(parts)?, None),
+        let (members, reference, concatenated_reference) = match parts {
+            TablePartNames::Plain(_) => (Vec::new(), None, None),
+            TablePartNames::Reference(_) => {
+                let reference = Table::open_plain_reference(path).map_err(runtime_error)?;
+                let concatenated = if reference.is_none() {
+                    ConcatenatedReference::open(&table)?
+                } else {
+                    None
+                };
+                (Vec::new(), reference, concatenated)
+            }
+            TablePartNames::Concatenation { parts, .. } => {
+                (Self::open_plain_members(parts)?, None, None)
+            }
         };
         Ok(Self {
             table,
             members,
             reference,
+            concatenated_reference,
             publication,
             plain,
         })
@@ -300,21 +310,45 @@ impl VisibilityMain {
                 rows: rows.iter().copied().zip(0..).collect(),
             }]);
         }
-        if let Some(reference) = self
-            .table
-            .reference_write_projection(rows, names)
-            .map_err(runtime_error)?
-        {
+        let projection = if self.reference.is_some() {
+            self.table.reference_write_projection(rows, names)
+        } else {
+            self.table.reference_root_projection(rows, names)
+        }
+        .map_err(runtime_error)?;
+        if let Some(reference) = projection {
+            if self.reference.is_none()
+                && let Some(parts) =
+                    Table::concatenated_source_paths(&reference.path).map_err(runtime_error)?
+            {
+                let members = Self::open_plain_members(parts)?;
+                let root = Table::open(TableOptions::new(reference.path)).map_err(runtime_error)?;
+                return Self::write_member_targets(
+                    &members,
+                    root.row_count(),
+                    &reference.rows,
+                    reference.columns,
+                );
+            }
             return Ok(vec![VisibilityWriteTarget {
                 path: reference.path.canonicalize().map_err(runtime_error)?,
                 names: reference.columns,
                 rows: reference.rows.into_iter().zip(0..).collect(),
             }]);
         }
+        Self::write_member_targets(&self.members, self.table.row_count(), rows, own_names())
+    }
+
+    fn write_member_targets(
+        members: &[Table],
+        row_count: usize,
+        rows: &[usize],
+        names: Vec<String>,
+    ) -> PyResult<Vec<VisibilityWriteTarget>> {
         let mut count = 0;
-        let mut ends = Vec::with_capacity(self.members.len());
-        let mut paths = Vec::with_capacity(self.members.len());
-        for part in &self.members {
+        let mut ends = Vec::with_capacity(members.len());
+        let mut paths = Vec::with_capacity(members.len());
+        for part in members {
             count += part.row_count();
             ends.push(count);
             paths.push(
@@ -324,7 +358,7 @@ impl VisibilityMain {
                     .map_err(runtime_error)?,
             );
         }
-        if ends.is_empty() || count != self.table.row_count() {
+        if ends.is_empty() || count != row_count {
             return Err(runtime_error(
                 "putdata cannot map the physical rows of this concatenation (#1030)",
             ));
@@ -345,13 +379,13 @@ impl VisibilityMain {
             .into_iter()
             .map(|(path, rows)| VisibilityWriteTarget {
                 path: path.to_owned(),
-                names: own_names(),
+                names: names.clone(),
                 rows,
             })
             .collect())
     }
 
-    fn open_plain_members(paths: Vec<PathBuf>) -> PyResult<Vec<Table>> {
+    pub(super) fn open_plain_members(paths: Vec<PathBuf>) -> PyResult<Vec<Table>> {
         let mut members = Vec::with_capacity(paths.len());
         for path in paths {
             if !matches!(
@@ -388,14 +422,22 @@ impl VisibilityMain {
         metadata: Option<&MeasurementSet>,
         options: tool_visibility::VisibilityReadOptions<'_>,
     ) -> PyResult<CasaValue> {
+        let projection = self
+            .concatenated_reference
+            .as_ref()
+            .and_then(|reference| reference.project(rows));
+        let (table, members, reference, rows) = if let Some((root, members, rows)) = &projection {
+            (*root, *members, None, rows.as_slice())
+        } else {
+            (
+                &self.table,
+                self.members.as_slice(),
+                self.reference.as_ref(),
+                rows,
+            )
+        };
         let record = tool_visibility::read_tool_visibility(
-            &self.table,
-            &self.members,
-            self.reference.as_ref(),
-            rows,
-            items,
-            metadata,
-            options,
+            table, members, reference, rows, items, metadata, options,
         )
         .map_err(runtime_error)?;
         Ok(visibility_record(record))
