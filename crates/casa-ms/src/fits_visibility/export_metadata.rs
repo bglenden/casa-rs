@@ -107,7 +107,7 @@ impl ExportHeader {
             antenna_numbers,
             time: f64_cell(ms.main_table(), first_row, "TIME")?,
             rest_frequency,
-            measures: crate::open_measures_runtime().ok(),
+            measures: export_measures(),
         })
     }
 
@@ -127,6 +127,37 @@ impl ExportHeader {
     pub(super) fn separate_baselines(&self) -> bool {
         self.antenna_numbers.iter().any(|&number| number >= 256)
     }
+}
+
+#[cfg(not(test))]
+fn export_measures() -> Option<Arc<dyn MeasuresProvider>> {
+    use casa_measures::MeasuresRuntime;
+    use std::sync::Mutex;
+
+    // Catalogs are immutable for the lifetime of a runtime. Keep one provider
+    // across exports, and follow a newly selected data root on the next call.
+    static RUNTIME: Mutex<Option<Arc<MeasuresRuntime>>> = Mutex::new(None);
+    let root = MeasuresRuntime::discover_candidates()
+        .ok()?
+        .into_iter()
+        .find(|candidate| candidate.complete)?
+        .path
+        .canonicalize()
+        .ok()?;
+    let mut current = RUNTIME.lock().ok()?;
+    if let Some(runtime) = current.as_ref()
+        && runtime.root() == root
+    {
+        return Some(runtime.clone());
+    }
+    let runtime = Arc::new(MeasuresRuntime::open(root, Default::default()).ok()?);
+    *current = Some(runtime.clone());
+    Some(runtime)
+}
+
+#[cfg(test)]
+fn export_measures() -> Option<Arc<dyn MeasuresProvider>> {
+    crate::open_measures_runtime().ok()
 }
 
 pub(super) fn write_extensions(

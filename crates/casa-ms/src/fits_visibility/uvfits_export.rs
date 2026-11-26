@@ -7,11 +7,11 @@ use std::ptr;
 
 use casa_core::measures::frequency::FrequencyRef;
 use casa_core::quanta::format::{FITS, NO_TIME, format_time};
-use casa_core::{ArrayValue, ScalarValue};
+use casa_core::{ArrayValue, Complex32, ScalarValue};
 use casa_tables::Table;
 use fitsio::{FileOpenMode, FitsFile, errors, hdu::FitsHdu, sys};
 
-use super::export_layout::{OutputLayout, VisibilityRow, f64_cell, has_column, i32_cell};
+use super::export_layout::{OutputGroup, OutputLayout, VisibilityRow, has_column};
 use super::export_metadata::{ExportHeader, write_extensions};
 use super::invalid;
 use crate::{MeasurementSet, MsResult, MsSelection};
@@ -243,7 +243,7 @@ fn fits_frame(frame: i32) -> MsResult<&'static str> {
         Some(GEO) => Ok("GEOCENTR"),
         Some(TOPO) => Ok("TOPOCENT"),
         Some(GALACTO) => Ok("GALACTOC"),
-        Some(LGROUP) => Ok("LGROUP"),
+        Some(LGROUP) => Ok("LOCALGRP"),
         Some(CMB) => Ok("CMBDIPOL"),
         _ => Err(invalid(format!(
             "Frequency reference code {frame} cannot be written to UVFITS"
@@ -284,73 +284,134 @@ fn write_groups(
     let mut samples = vec![0.0; samples_per_if * ifs];
     let mut parameters = Vec::with_capacity(11);
     let target_shape = [layout.correlations.len(), layout.input_channels];
-    let use_spectrum = has_column(table, "WEIGHT_SPECTRUM")
+    let spectrum = has_column(table, "WEIGHT_SPECTRUM")
         && table
             .array_shape(layout.rows[0].index, "WEIGHT_SPECTRUM")?
             .is_none_or(|shape| shape == target_shape);
-    for (index, group) in layout.groups.iter().enumerate() {
-        for (slot, output) in group
-            .slots
+    let cells_per_group = samples.len().max(1);
+    let batch_groups = (262_144 / cells_per_group).clamp(1, 1024);
+    let mut number = 0;
+    for groups in layout.groups.chunks(batch_groups) {
+        let mut visibility = read_visibility_block(table, column, layout, groups, spectrum)?;
+        let rows = groups
             .iter()
-            .zip(samples.chunks_exact_mut(samples_per_if))
-        {
-            if let Some(row) = slot {
-                write_samples(
-                    table,
-                    column,
-                    &layout.rows[*row],
-                    layout,
-                    use_spectrum,
-                    output,
-                )?;
-            } else {
-                output.fill(0.0);
+            .map(|group| layout.rows[group.first].index)
+            .collect::<Vec<_>>();
+        let uvw = table
+            .column_accessor("UVW")?
+            .array_cells_owned_uncached(&rows)?;
+        for (group, coordinates) in groups.iter().zip(uvw) {
+            for (slot, output) in group
+                .slots
+                .iter()
+                .zip(samples.chunks_exact_mut(samples_per_if))
+            {
+                if let Some(row) = slot {
+                    let values = visibility
+                        .next()
+                        .ok_or_else(|| invalid("Missing UVFITS visibility cells"))?;
+                    write_samples(values, &layout.rows[*row], layout, output)?;
+                } else {
+                    output.fill(0.0);
+                }
             }
+            parameters.clear();
+            let Some(ArrayValue::Float64(coordinates)) = coordinates else {
+                return Err(invalid("Invalid UVW coordinates"));
+            };
+            parameters.extend(group_parameters(
+                &coordinates,
+                &layout.rows[group.first],
+                layout,
+                antennas,
+                separate,
+            )?);
+            number += 1;
+            write_group(fits, number, &mut parameters, &mut samples)?;
         }
-        parameters.clear();
-        parameters.extend(group_parameters(
-            table,
-            &layout.rows[group.first],
-            layout,
-            antennas,
-            separate,
-        )?);
-        let mut status = 0;
-        // SAFETY: the buffers have their declared lengths and the FITS handle is live.
-        unsafe {
-            let handle = fits.as_raw();
-            sys::ffpgpd(
-                handle,
-                (index + 1) as c_long,
-                1,
-                parameters.len() as c_long,
-                parameters.as_mut_ptr(),
-                &mut status,
-            );
-            sys::ffppre(
-                handle,
-                (index + 1) as c_long,
-                1,
-                samples.len() as i64,
-                samples.as_mut_ptr(),
-                &mut status,
-            );
-        }
-        errors::check_status(status).map_err(invalid)?;
     }
     Ok(())
 }
 
-fn group_parameters(
+fn write_group(
+    fits: &mut FitsFile,
+    number: c_long,
+    parameters: &mut [f64],
+    samples: &mut [f32],
+) -> MsResult<()> {
+    let mut status = 0;
+    // SAFETY: the buffers have their declared lengths and the FITS handle is live.
+    unsafe {
+        let handle = fits.as_raw();
+        sys::ffpgpd(
+            handle,
+            number,
+            1,
+            parameters.len() as c_long,
+            parameters.as_mut_ptr(),
+            &mut status,
+        );
+        sys::ffppre(
+            handle,
+            number,
+            1,
+            samples.len() as i64,
+            samples.as_mut_ptr(),
+            &mut status,
+        );
+    }
+    errors::check_status(status).map_err(invalid)
+}
+
+struct VisibilityValues {
+    data: Option<ArrayValue>,
+    flags: Option<ArrayValue>,
+    weight: Option<ArrayValue>,
+    spectrum: Option<ArrayValue>,
+}
+
+fn read_visibility_block(
     table: &Table,
+    column: &str,
+    layout: &OutputLayout,
+    groups: &[OutputGroup],
+    spectrum: bool,
+) -> MsResult<impl Iterator<Item = VisibilityValues>> {
+    let rows = groups
+        .iter()
+        .flat_map(|group| group.slots.iter().flatten())
+        .map(|&position| layout.rows[position].index)
+        .collect::<Vec<_>>();
+    let read = |name| {
+        table
+            .column_accessor(name)?
+            .array_cells_owned_uncached(&rows)
+    };
+    let data = read(column)?;
+    let flags = read("FLAG")?;
+    let weight = read("WEIGHT")?;
+    let spectrum = if spectrum {
+        read("WEIGHT_SPECTRUM")?
+    } else {
+        vec![None; rows.len()]
+    };
+    Ok(data.into_iter().zip(flags).zip(weight).zip(spectrum).map(
+        |(((data, flags), weight), spectrum)| VisibilityValues {
+            data,
+            flags,
+            weight,
+            spectrum,
+        },
+    ))
+}
+
+fn group_parameters(
+    uvw: &ndarray::ArrayD<f64>,
     row: &VisibilityRow,
     layout: &OutputLayout,
     antennas: &[i32],
     separate: bool,
 ) -> MsResult<impl Iterator<Item = f64>> {
-    let ArrayValue::Float64(uvw) = table.cell_accessor(row.index, "UVW")?.array()? else {
-        return Err(invalid("Invalid UVW coordinates"));
-    };
     let mut parameters = [0.0; 11];
     if uvw.len() != 3 {
         return Err(invalid("UVW must store three coordinates"));
@@ -367,7 +428,7 @@ fn group_parameters(
             .get(id as usize)
             .ok_or_else(|| invalid("Invalid antenna index"))?;
     }
-    let array = i32_cell(table, row.index, "ARRAY_ID")?;
+    let array = row.array;
     let mut count = 5;
     if separate {
         parameters[5..8].copy_from_slice(&[
@@ -388,39 +449,37 @@ fn group_parameters(
     count += 1;
     if layout.multi {
         parameters[count] = f64::from(layout.fields[&row.field]);
-        parameters[count + 1] = f64_cell(table, row.index, "EXPOSURE")?;
+        parameters[count + 1] = row.exposure;
         count += 2;
     }
     Ok(parameters.into_iter().take(count))
 }
 
 fn write_samples(
-    table: &Table,
-    column: &str,
+    values: VisibilityValues,
     row: &VisibilityRow,
     layout: &OutputLayout,
-    use_spectrum: bool,
     output: &mut [f32],
 ) -> MsResult<()> {
-    let ArrayValue::Complex32(data) = table.cell_accessor(row.index, column)?.array()? else {
-        return Err(invalid("UVFITS needs a complex visibility column"));
+    let VisibilityValues {
+        data,
+        flags,
+        weight,
+        spectrum,
+    } = values;
+    let (
+        Some(ArrayValue::Complex32(data)),
+        Some(ArrayValue::Bool(flags)),
+        Some(ArrayValue::Float32(weight)),
+    ) = (data, flags, weight)
+    else {
+        return Err(invalid(
+            "UVFITS needs complex DATA, Boolean FLAG and float32 WEIGHT",
+        ));
     };
-    let ArrayValue::Bool(flags) = table.cell_accessor(row.index, "FLAG")?.array()? else {
-        return Err(invalid("Unexpected FLAG cell type"));
-    };
-    let ArrayValue::Float32(weight) = table.cell_accessor(row.index, "WEIGHT")?.array()? else {
-        return Err(invalid("Unexpected WEIGHT cell type"));
-    };
-    let ScalarValue::Bool(flag_row) = table.cell_accessor(row.index, "FLAG_ROW")?.scalar()? else {
-        return Err(invalid("Unexpected FLAG_ROW cell type"));
-    };
-    let spectrum = if use_spectrum && table.is_cell_defined(row.index, "WEIGHT_SPECTRUM")? {
-        match table.cell_accessor(row.index, "WEIGHT_SPECTRUM")?.array()? {
-            ArrayValue::Float32(values) if values.shape() == data.shape() => Some(values),
-            _ => None,
-        }
-    } else {
-        None
+    let spectrum = match &spectrum {
+        Some(ArrayValue::Float32(values)) if values.shape() == data.shape() => Some(values),
+        _ => None,
     };
     let shape = [layout.correlations.len(), layout.input_channels];
     if data.shape() != shape || flags.shape() != shape || weight.len() != shape[0] {
@@ -435,13 +494,30 @@ fn write_samples(
             .map(move |&(_, corr)| [corr, channel])
     });
     for (sample, [corr, channel]) in output.as_chunks_mut::<3>().0.iter_mut().zip(indices) {
+        if let Some(width) = layout.astron_bin_width {
+            let samples = (channel..channel + width)
+                .map(|channel| [corr, channel])
+                .filter(|&index| !flags[index]);
+            let (sum, total) = samples.fold((Complex32::ZERO, 0.0), |(sum, total), index| {
+                let weight = spectrum.map_or(weight[[corr]], |values| values[index]);
+                (sum + data[index] * weight, total + weight)
+            });
+            let value = if total > 0.0 {
+                sum / total
+            } else {
+                Complex32::ZERO
+            };
+            let total = if row.flagged { -total } else { total };
+            *sample = [value.re, value.im, total];
+            continue;
+        }
         let index = [corr, channel];
         let visibility = data[index];
         let weight = spectrum.map_or(weight[[corr]] / shape[1] as f32, |values| values[index]);
         sample.copy_from_slice(&[
             visibility.re,
             visibility.im,
-            if *flag_row {
+            if row.flagged {
                 -weight.abs()
             } else if flags[index] {
                 -weight.max(0.0)

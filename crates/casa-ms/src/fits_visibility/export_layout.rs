@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_core::{ArrayValue, ScalarValue};
-use casa_tables::Table;
+use casa_tables::{RequiredScalarColumnValues, Table};
 
 use super::invalid;
 use super::uvfits_export::UvFitsExportOptions;
@@ -20,6 +20,7 @@ pub(super) struct OutputLayout {
     pub(super) correlations: Vec<(i32, usize)>,
     pub(super) input_channels: usize,
     pub(super) channels: Vec<usize>,
+    pub(super) astron_bin_width: Option<usize>,
     pub(super) reference: f64,
     pub(super) pixel: usize,
     pub(super) step: f64,
@@ -34,6 +35,10 @@ pub(super) struct VisibilityRow {
     pub(super) antenna: [i32; 2],
     pub(super) field: i32,
     pub(super) window: usize,
+    pub(super) array: i32,
+    pub(super) interval: f64,
+    pub(super) exposure: f64,
+    pub(super) flagged: bool,
     description: i32,
 }
 
@@ -84,7 +89,10 @@ impl OutputLayout {
             .zip(1..)
             .collect::<BTreeMap<_, _>>();
         let multi = options.multisource || fields.len() > 1;
-        let spectral = SpectralLayout::resolve(ms, &used, indices.channel.first().copied())?;
+        let observation = subtable(ms, SubtableId::Observation)?;
+        let wsrt = matches!(observation.cell_accessor(0, "TELESCOPE_NAME")?.scalar()?,
+            ScalarValue::String(name) if name == "WSRT");
+        let spectral = SpectralLayout::resolve(ms, &used, indices.channel.first().copied(), wsrt)?;
         let windows_by_id = spectral
             .windows
             .iter()
@@ -106,7 +114,6 @@ impl OutputLayout {
         let combine = options.combinespw;
         let groups = group_rows(
             &rows,
-            ms.main_table(),
             spectral.windows.len(),
             combine,
             multi,
@@ -121,6 +128,7 @@ impl OutputLayout {
             correlations: spectral.correlations,
             input_channels: spectral.input_channels,
             channels: spectral.channels,
+            astron_bin_width: spectral.astron_bin_width,
             reference: spectral.reference,
             pixel: spectral.pixel,
             step: spectral.step,
@@ -136,32 +144,65 @@ fn load_rows(
     descriptions: &Table,
     selected: &[usize],
 ) -> MsResult<(Vec<VisibilityRow>, BTreeSet<i32>)> {
-    let mut used = BTreeSet::new();
-    let mut rows = Vec::with_capacity(selected.len());
-    for &index in selected {
-        let description = i32_cell(table, index, "DATA_DESC_ID")?;
-        if description < 0 || description as usize >= descriptions.row_count() {
-            return Err(invalid(format!("Invalid DATA_DESC_ID {description}")));
-        }
-        used.insert(description);
-        rows.push(VisibilityRow {
-            index,
-            time: f64_cell(table, index, "TIME_CENTROID")?,
-            antenna: [
-                i32_cell(table, index, "ANTENNA1")?,
-                i32_cell(table, index, "ANTENNA2")?,
-            ],
-            field: i32_cell(table, index, "FIELD_ID")?,
-            window: 0,
-            description,
-        });
+    let names = [
+        "DATA_DESC_ID",
+        "ANTENNA1",
+        "ANTENNA2",
+        "FIELD_ID",
+        "ARRAY_ID",
+        "TIME_CENTROID",
+        "INTERVAL",
+        "EXPOSURE",
+        "FLAG_ROW",
+    ];
+    let mut projection = table.required_scalar_columns_owned_for_rows(&names, selected)?;
+    let mut integers = |name| match projection.remove(name) {
+        Some(RequiredScalarColumnValues::Int32(values)) => Ok(values),
+        _ => Err(invalid(format!("Invalid integer column {name}"))),
+    };
+    let description = integers("DATA_DESC_ID")?;
+    let first = integers("ANTENNA1")?;
+    let second = integers("ANTENNA2")?;
+    let field = integers("FIELD_ID")?;
+    let array = integers("ARRAY_ID")?;
+    let mut doubles = |name| match projection.remove(name) {
+        Some(RequiredScalarColumnValues::Float64(values)) => Ok(values),
+        _ => Err(invalid(format!("Invalid floating-point column {name}"))),
+    };
+    let time = doubles("TIME_CENTROID")?;
+    let interval = doubles("INTERVAL")?;
+    let exposure = doubles("EXPOSURE")?;
+    let Some(RequiredScalarColumnValues::Bool(flagged)) = projection.remove("FLAG_ROW") else {
+        return Err(invalid("Invalid FLAG_ROW column"));
+    };
+    let used: BTreeSet<_> = description.iter().copied().collect();
+    if let Some(&invalid_id) = used
+        .iter()
+        .find(|&&id| id < 0 || id as usize >= descriptions.row_count())
+    {
+        return Err(invalid(format!("Invalid DATA_DESC_ID {invalid_id}")));
     }
+    let rows = selected
+        .iter()
+        .enumerate()
+        .map(|(row, &index)| VisibilityRow {
+            index,
+            time: time[row],
+            antenna: [first[row], second[row]],
+            field: field[row],
+            window: 0,
+            description: description[row],
+            array: array[row],
+            interval: interval[row],
+            exposure: exposure[row],
+            flagged: flagged[row],
+        })
+        .collect();
     Ok((rows, used))
 }
 
 fn group_rows(
     rows: &[VisibilityRow],
-    table: &Table,
     windows: usize,
     combine: bool,
     multi: bool,
@@ -179,7 +220,7 @@ fn group_rows(
     let mut start = 0;
     while start < rows.len() {
         let first = &rows[start];
-        let limit = first.time + 0.2 * f64_cell(table, first.index, "INTERVAL")?;
+        let limit = first.time + 0.2 * first.interval;
         let mut slots = vec![None; windows];
         let length = rows[start..]
             .iter()
@@ -215,6 +256,7 @@ struct SpectralLayout {
     correlations: Vec<(i32, usize)>,
     input_channels: usize,
     channels: Vec<usize>,
+    astron_bin_width: Option<usize>,
     reference: f64,
     pixel: usize,
     step: f64,
@@ -226,6 +268,7 @@ impl SpectralLayout {
         ms: &MeasurementSet,
         used: &BTreeSet<i32>,
         channel: Option<[i32; 4]>,
+        wsrt: bool,
     ) -> MsResult<Self> {
         let descriptions = subtable(ms, SubtableId::DataDescription)?;
         let spectral = subtable(ms, SubtableId::SpectralWindow)?;
@@ -255,12 +298,16 @@ impl SpectralLayout {
                 .ok_or_else(|| invalid("No spectral channels"))?;
             let delta = frequencies.get(1).map_or(bandwidth, |next| next - first);
             let frame = i32_cell(spectral, window_id as usize, "MEAS_FREQ_REF")?;
-            let initial = shape.get_or_insert_with(|| AxisShape {
-                channels: select_channels(frequencies.len(), channel),
-                count: frequencies.len(),
-                frame,
-                stokes: stokes.clone(),
-                width: delta,
+            let initial = shape.get_or_insert_with(|| {
+                let (channels, stride) = select_channels(frequencies.len(), channel);
+                AxisShape {
+                    channels,
+                    stride,
+                    count: frequencies.len(),
+                    frame,
+                    stokes: stokes.clone(),
+                    width: delta,
+                }
             });
             if initial.count != frequencies.len()
                 || initial.stokes != stokes
@@ -272,9 +319,11 @@ impl SpectralLayout {
                 ));
             }
             let channels = &initial.channels;
-            let step = channels.get(1).map_or(delta, |index| {
-                frequencies[*index] - frequencies[channels[0]]
-            });
+            let step = channels
+                .get(1)
+                .map_or(delta * initial.stride as f64, |index| {
+                    frequencies[*index] - frequencies[channels[0]]
+                });
             if channels
                 .windows(2)
                 .any(|pair| !near(frequencies[pair[1]] - frequencies[pair[0]], step))
@@ -286,7 +335,12 @@ impl SpectralLayout {
                 window_id,
                 OutputWindow {
                     id: window_id,
-                    frequency: frequencies[channels[middle]],
+                    frequency: frequencies[channels[middle]]
+                        + if wsrt {
+                            0.5 * (initial.stride - 1) as f64 * delta
+                        } else {
+                            0.0
+                        },
                     increment: step,
                     bandwidth,
                     sideband: i32_cell(spectral, window_id as usize, "NET_SIDEBAND")?,
@@ -303,6 +357,7 @@ impl SpectralLayout {
             correlations: fits_correlations(&shape.stokes)?,
             input_channels: shape.count,
             channels: shape.channels,
+            astron_bin_width: wsrt.then_some(shape.stride),
             reference,
             pixel,
             step,
@@ -313,6 +368,7 @@ impl SpectralLayout {
 
 struct AxisShape {
     channels: Vec<usize>,
+    stride: usize,
     count: usize,
     frame: i32,
     stokes: Vec<i32>,
@@ -323,7 +379,7 @@ fn near(left: f64, right: f64) -> bool {
     (left - right).abs() <= 1.0e-5 * left.abs().max(right.abs())
 }
 
-fn select_channels(count: usize, selection: Option<[i32; 4]>) -> Vec<usize> {
+fn select_channels(count: usize, selection: Option<[i32; 4]>) -> (Vec<usize>, usize) {
     if let Some([_, first, last, stride]) = selection {
         let mut stride = stride.max(1);
         let mut length = (last - first + 1) / stride;
@@ -332,12 +388,15 @@ fn select_channels(count: usize, selection: Option<[i32; 4]>) -> Vec<usize> {
             stride = 1;
         }
         if first >= 0 && i64::from(first) + i64::from(length) * i64::from(stride) <= count as i64 {
-            return (0..length)
-                .map(|index| (first + index * stride) as usize)
-                .collect();
+            return (
+                (0..length)
+                    .map(|index| (first + index * stride) as usize)
+                    .collect(),
+                stride as usize,
+            );
         }
     }
-    (0..count).collect()
+    ((0..count).collect(), 1)
 }
 
 fn fits_correlations(stokes: &[i32]) -> MsResult<Vec<(i32, usize)>> {

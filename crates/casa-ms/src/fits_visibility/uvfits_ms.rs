@@ -347,7 +347,17 @@ fn write_feeds(
 
 fn spectral_reference(header: &Header) -> FrequencyRef {
     if let Some(reference) = header.frame.as_deref() {
-        return reference.trim().parse().unwrap_or(FrequencyRef::TOPO);
+        use FrequencyRef::*;
+        return match reference.trim() {
+            "BARYCENT" => BARY,
+            "GEOCENTR" => GEO,
+            "SOURCE" => REST,
+            "GALACTOC" => GALACTO,
+            "LOCALGRP" => LGROUP,
+            "CMBDIPOL" => CMB,
+            "TOPOCENT" => TOPO,
+            name => name.parse().unwrap_or(TOPO),
+        };
     }
     match header.velocity_reference.unwrap_or(3).rem_euclid(256) {
         1 => FrequencyRef::LSRK,
@@ -360,6 +370,24 @@ fn spectral_reference(header: &Header) -> FrequencyRef {
     }
 }
 
+fn source_velocity_frame(extensions: &Extensions) -> Option<FrequencyRef> {
+    let name = extensions.velocity_type.as_deref()?;
+    [
+        ("LSRD", FrequencyRef::LSRD),
+        ("LSR", FrequencyRef::LSRK),
+        ("REST", FrequencyRef::REST),
+        ("BARY", FrequencyRef::BARY),
+        ("GEO", FrequencyRef::GEO),
+        ("TOPO", FrequencyRef::TOPO),
+        ("GALAC", FrequencyRef::GALACTO),
+        ("LOCAL", FrequencyRef::LGROUP),
+        ("LGROUP", FrequencyRef::LGROUP),
+        ("CMB", FrequencyRef::CMB),
+    ]
+    .into_iter()
+    .find_map(|(token, reference)| name.contains(token).then_some(reference))
+}
+
 fn write_spectral_windows(
     ms: &mut MeasurementSet,
     header: &Header,
@@ -368,6 +396,7 @@ fn write_spectral_windows(
     windows: usize,
 ) -> MsResult<()> {
     let reference = spectral_reference(header);
+    let stored_reference = source_velocity_frame(extensions).unwrap_or(reference);
     let axis = &layout.frequency;
     for id in 0..windows {
         let mut window = extensions.spectral.as_ref().map_or(
@@ -421,7 +450,7 @@ fn write_spectral_windows(
                 ("TOTAL_BANDWIDTH", f(window.bandwidth)),
                 ("NET_SIDEBAND", i(band)),
                 ("FREQ_GROUP", i((id / layout.windows) as i32)),
-                ("MEAS_FREQ_REF", i(reference.casacore_code())),
+                ("MEAS_FREQ_REF", i(stored_reference.casacore_code())),
             ],
         )?;
         insert(

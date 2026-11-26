@@ -4,6 +4,10 @@
 use std::collections::BTreeMap;
 use std::ptr;
 
+use casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+use casa_tables::{ColumnSchema, Table, TableSchema};
+use ndarray::Array1;
+
 use fitsio::{
     FitsFile, errors,
     hdu::{FitsHdu, HduInfo},
@@ -88,7 +92,9 @@ impl Header {
             date.clone()
         };
         let frame = optional_key(&hdu, fits, "SPECSYS")?;
-        let rest_frequency = optional_key(&hdu, fits, "RESTFREQ")?.unwrap_or(0.0);
+        let rest_frequency = optional_key(&hdu, fits, "RESTFREQ")?
+            .or(optional_key(&hdu, fits, "RESTFRQ")?)
+            .unwrap_or(0.0);
         let alternate_value = optional_key(&hdu, fits, "ALTRVAL")?;
         let alternate_pixel = optional_key(&hdu, fits, "ALTRPIX")?;
         let velocity_reference = optional_key(&hdu, fits, "VELREF")?;
@@ -114,6 +120,8 @@ pub(super) struct Extensions {
     pub(super) array: Array,
     pub(super) spectral: Option<Vec<SpectralWindow>>,
     pub(super) sources: Option<BTreeMap<i32, Source>>,
+    pub(super) system_power: Option<Table>,
+    pub(super) velocity_type: Option<String>,
 }
 
 impl Extensions {
@@ -125,6 +133,8 @@ impl Extensions {
         let mut array = None;
         let mut spectral = None;
         let mut sources = None;
+        let mut system_power = None;
+        let mut velocity_type = None;
         let hdu_count = fits.num_hdus().map_err(invalid)?;
         for index in 1..hdu_count {
             let hdu = fits.hdu(index).map_err(invalid)?;
@@ -142,7 +152,10 @@ impl Extensions {
             } else if spectral.is_none() && name.contains("FQ") {
                 spectral = Some(read_spectral(table, layout)?);
             } else if sources.is_none() && name.contains("SU") {
+                velocity_type = optional_key(table.hdu, table.fits, "VELTYP")?;
                 sources = Some(read_sources(table)?);
+            } else if system_power.is_none() && name.contains("SY") {
+                system_power = Some(read_system_power(table)?);
             }
         }
         let array = array.ok_or_else(|| invalid("Cannot find the required UVFITS AN table"))?;
@@ -151,6 +164,8 @@ impl Extensions {
             array,
             spectral,
             sources,
+            system_power,
+            velocity_type,
         })
     }
 }
@@ -346,6 +361,72 @@ fn diameter(telescope: &str, number: i32, name: &str) -> f32 {
         }
         _ => 25.0,
     }
+}
+
+fn read_system_power(mut table: BinaryTable<'_>) -> MsResult<Table> {
+    let no_if = table
+        .hdu
+        .read_key::<i32>(table.fits, "NO_IF")
+        .map_err(invalid)?;
+    let no_pol = table
+        .hdu
+        .read_key::<i32>(table.fits, "NO_POL")
+        .map_err(invalid)?;
+    if no_if != 1 || !matches!(no_pol, 1 | 2) {
+        return Err(invalid(
+            "UVFITS SYSPOWER requires one IF and one or two polarizations",
+        ));
+    }
+    let time = table.column::<f64>("TIME", 1)?;
+    let intervals = table.column::<f32>("TIME INTERVAL", 1)?;
+    let antennas = table.column::<i32>("ANTENNA NO.", 1)?;
+    let windows = table.column::<i32>("FREQ ID", 1)?;
+    let power_names = ["SWITCHED_DIFF", "SWITCHED_SUM", "REQUANTIZER_GAIN"];
+    let power = ["POWER DIF", "POWER SUM", "POST GAIN"].map(|source| {
+        (1..=no_pol)
+            .map(|hand| table.column::<f32>(&format!("{source}{hand}"), 1))
+            .collect::<MsResult<Vec<_>>>()
+    });
+    let [dif, sum, gain] = power;
+    let power = [dif?, sum?, gain?];
+    let mut columns = vec![
+        ColumnSchema::scalar("ANTENNA_ID", PrimitiveType::Int32),
+        ColumnSchema::scalar("FEED_ID", PrimitiveType::Int32),
+        ColumnSchema::scalar("SPECTRAL_WINDOW_ID", PrimitiveType::Int32),
+        ColumnSchema::scalar("TIME", PrimitiveType::Float64),
+        ColumnSchema::scalar("INTERVAL", PrimitiveType::Float32),
+    ];
+    columns.extend(
+        power_names.map(|name| ColumnSchema::array_variable(name, PrimitiveType::Float32, Some(1))),
+    );
+    let mut output = Table::with_schema(TableSchema::new(columns).map_err(invalid)?);
+    for row in 0..table.rows {
+        let mut values = RecordValue::new(vec![
+            RecordField::new(
+                "ANTENNA_ID",
+                Value::Scalar(ScalarValue::Int32(antennas[row] - 1)),
+            ),
+            RecordField::new("FEED_ID", Value::Scalar(ScalarValue::Int32(0))),
+            RecordField::new(
+                "SPECTRAL_WINDOW_ID",
+                Value::Scalar(ScalarValue::Int32(windows[row] - 1)),
+            ),
+            RecordField::new(
+                "TIME",
+                Value::Scalar(ScalarValue::Float64(time[row] * 86_400.0)),
+            ),
+            RecordField::new(
+                "INTERVAL",
+                Value::Scalar(ScalarValue::Float32(intervals[row] * 86_400.0)),
+            ),
+        ]);
+        for (name, hands) in power_names.into_iter().zip(&power) {
+            let array = Array1::from_iter(hands.iter().map(|hand| hand[row]));
+            values.upsert(name, Value::Array(ArrayValue::Float32(array.into_dyn())));
+        }
+        output.add_row(values)?;
+    }
+    Ok(output)
 }
 
 fn read_spectral(

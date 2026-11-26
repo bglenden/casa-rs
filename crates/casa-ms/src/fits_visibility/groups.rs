@@ -272,25 +272,31 @@ impl GroupLayout {
     }
 
     pub(super) fn visibility(&self, samples: &[f32], window: usize) -> GroupVisibility {
-        let shape = (self.corr.len(), self.frequency.length).f();
-        let sample = |correlation, channel| {
-            let offset = window * self.window_stride
-                + channel * self.frequency.stride
-                + self.input_corr_order[correlation] * self.corr_stride;
-            &samples[offset..offset + 3]
-        };
-        let data = Array2::from_shape_fn(shape, |(correlation, channel)| {
-            let value = sample(correlation, channel);
-            Complex32::new(value[0], value[1])
-        });
-        let weight_spectrum = Array2::from_shape_fn(shape, |(c, f)| sample(c, f)[2].abs());
-        let flag = Array2::from_shape_fn(shape, |(c, f)| sample(c, f)[2] <= 0.0);
-        let weight = Array1::from_iter(
-            weight_spectrum
-                .rows()
-                .into_iter()
-                .map(|hand| hand.iter().copied().sum::<f32>()),
-        );
+        let correlations = self.corr.len();
+        let channels = self.frequency.length;
+        let shape = (correlations, channels).f();
+        let length = correlations * channels;
+        let mut data = Vec::with_capacity(length);
+        let mut weight_spectrum = Vec::with_capacity(length);
+        let mut flag = Vec::with_capacity(length);
+        let mut weight = Array1::<f32>::zeros(correlations);
+        let window_offset = window * self.window_stride;
+        for channel in 0..channels {
+            let base = window_offset + channel * self.frequency.stride;
+            for (correlation, &input) in self.input_corr_order.iter().enumerate() {
+                let offset = base + input * self.corr_stride;
+                let value = &samples[offset..offset + 3];
+                let unsigned_weight = value[2].abs();
+                data.push(Complex32::new(value[0], value[1]));
+                flag.push(value[2] <= 0.0);
+                weight_spectrum.push(unsigned_weight);
+                weight[correlation] += unsigned_weight;
+            }
+        }
+        let data = Array2::from_shape_vec(shape, data).expect("one visibility per cell");
+        let flag = Array2::from_shape_vec(shape, flag).expect("one flag per cell");
+        let weight_spectrum =
+            Array2::from_shape_vec(shape, weight_spectrum).expect("one weight per cell");
         let sigma = weight.mapv(|value| {
             if value > 0.0 {
                 f64::from(value).recip().sqrt() as f32

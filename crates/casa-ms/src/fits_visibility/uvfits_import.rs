@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use casa_core::{ArrayValue, Value};
-use casa_tables::{Table, TableInfo};
+use casa_tables::{Table, TableInfo, TableOptions};
 use fitsio::FitsFile;
 
 use super::groups::{GroupMetadata, GroupVisibility, VisibilityGroups, open_file};
@@ -79,7 +79,17 @@ pub fn import_uvfits(input: &Path, output: &Path, options: UvFitsImportOptions) 
     )
     .map_err(invalid)?;
     let staging = payload.path().join("visibility.ms");
+    let system_power = staging.join("SYSPOWER");
+    if extensions.system_power.is_some() {
+        ms.main_table_mut().keywords_mut().upsert(
+            "SYSPOWER",
+            Value::TableRef(casa_tables::strip_directory(&system_power, &staging)),
+        );
+    }
     ms.save_as_with_visibility_tiles(&staging, import_tiles(&header, &groups, options))?;
+    if let Some(table) = &extensions.system_power {
+        table.save(TableOptions::new(&system_power))?;
+    }
     drop(ms);
     std::fs::rename(staging, destination.staging_path()).map_err(invalid)?;
     destination.commit().map_err(invalid)

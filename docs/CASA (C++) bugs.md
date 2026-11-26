@@ -12380,3 +12380,12 @@ correlation types, `StatWT::process` reports failure to `GroupProcessor`,
 whose return value `Reweighter::reweight` discards. CASA returns `True`
 after publishing the earlier integrations. casa-rs raises `RuntimeError`
 and leaves the whole update unpublished.
+
+## UVFITS import can lose fully flagged initial visibility rows
+
+CASA 6.7.6.14's column-wise UVFITS importer can leave `FLAG_ROW` false
+while every channel and correlation in the row is flagged. Export the
+upstream `uvfits_test.ms` with `ms.tofits()` and import the result with
+`ms.fromfits()`. In the 630-row export, this happens on rows 1 through 29.
+The signed per-sample weights and `FLAG` agree across readers. casa-rs
+derives `FLAG_ROW` from all the flags in each persisted visibility cell.
