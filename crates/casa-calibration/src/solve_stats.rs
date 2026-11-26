@@ -29,9 +29,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use casa_contracts::CasaValue;
+use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+use crate::SelectedData;
 
 use crate::solve::grouping::SolveAccumulator;
 use crate::solve::kernel::baseline_constrained_antennas;
@@ -113,7 +115,7 @@ struct IntervalActivity {
 
 /// The direct calibrater's per-window solve activity.
 #[derive(Default)]
-pub(crate) struct ToolSolveActivity {
+pub struct ToolSolveActivity {
     windows: Vec<IntervalActivity>,
 }
 
@@ -135,23 +137,100 @@ impl ToolSolveActivity {
         output.succeeded += i64::from(succeeded);
     }
 
-    pub(crate) fn record(&self) -> Option<CasaValue> {
+    pub(crate) fn record(&self) -> Option<RecordValue> {
         if self.windows.is_empty() {
             return None;
         }
         let vector = |field: fn(IntervalActivity) -> i64| {
-            CasaValue::int64_vector(self.windows.iter().copied().map(field))
+            Value::Array(ArrayValue::from_i64_vec(
+                self.windows.iter().copied().map(field).collect(),
+            ))
         };
-        Some(CasaValue::dict([
-            ("nAttempt", vector(|activity| activity.attempted)),
-            ("nExpected", vector(|activity| activity.expected)),
-            ("nSucceed", vector(|activity| activity.succeeded)),
-            (
+        Some(RecordValue::new(vec![
+            RecordField::new("nAttempt", vector(|activity| activity.attempted)),
+            RecordField::new("nExpected", vector(|activity| activity.expected)),
+            RecordField::new("nSucceed", vector(|activity| activity.succeeded)),
+            RecordField::new(
                 "origin",
-                CasaValue::string("Calibrater::genericGatherAndSolve"),
+                Value::Scalar(ScalarValue::String(
+                    "Calibrater::genericGatherAndSolve".to_string(),
+                )),
             ),
         ]))
     }
+}
+
+pub(crate) fn selectvis_record_value(selected: Option<&SelectedData>) -> RecordValue {
+    let ids = |ids: &[i32]| {
+        Value::Array(ArrayValue::from_i64_vec(
+            ids.iter().map(|&id| i64::from(id)).collect(),
+        ))
+    };
+    selected.map_or_else(
+        || RecordValue::new(Vec::new()),
+        |selected| {
+            RecordValue::new(vec![
+                RecordField::new("antennas", ids(&selected.antennas)),
+                RecordField::new("field", ids(&selected.fields)),
+                RecordField::new(
+                    "intents",
+                    Value::Array(ArrayValue::from_string_vec(selected.intents.clone())),
+                ),
+                RecordField::new("observation", ids(&selected.observations)),
+                RecordField::new("scan", ids(&selected.scans)),
+                RecordField::new("spw", ids(&selected.spectral_windows)),
+            ])
+        },
+    )
+}
+
+pub(crate) fn solvestats_record(stats: &SolveStats) -> RecordValue {
+    let counts = |c: &SolveCounts| -> Vec<(String, Value)> {
+        let vec = |values: &[u64]| {
+            Value::Array(ArrayValue::from_i64_vec(
+                values.iter().map(|&v| v as i64).collect(),
+            ))
+        };
+        vec![
+            ("above_minblperant".to_string(), vec(&c.above_minblperant)),
+            ("above_minsnr".to_string(), vec(&c.above_minsnr)),
+            ("data_unflagged".to_string(), vec(&c.data_unflagged)),
+            ("expected".to_string(), vec(&c.expected)),
+        ]
+    };
+    let sorted = |mut entries: Vec<(String, Value)>| {
+        entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+        RecordValue::new(
+            entries
+                .into_iter()
+                .map(|(k, v)| RecordField::new(k, v))
+                .collect(),
+        )
+    };
+    let windows = stats.windows.iter().map(|window| {
+        let antennas = window.antennas.iter().map(|antenna| {
+            let mut entries = counts(&antenna.counts);
+            entries.push((
+                "used_as_refant".to_string(),
+                Value::Array(ArrayValue::from_i64_vec(vec![
+                    antenna.used_as_refant as i64,
+                ])),
+            ));
+            (
+                format!("ant{}", antenna.antenna_id),
+                Value::Record(sorted(entries)),
+            )
+        });
+        let mut entries = counts(&window.counts);
+        entries.extend(antennas);
+        (
+            format!("spw{}", window.spw_id),
+            Value::Record(sorted(entries)),
+        )
+    });
+    let mut entries = counts(&stats.total().unwrap_or_default());
+    entries.extend(windows);
+    sorted(entries)
 }
 
 impl SolveStats {

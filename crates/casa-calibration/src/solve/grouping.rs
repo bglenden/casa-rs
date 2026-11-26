@@ -3,7 +3,7 @@
 
 pub(super) mod additive_polynomial;
 mod inputs;
-pub(crate) mod leakage;
+pub mod leakage;
 mod legacy_baseline;
 pub(crate) mod polynomial;
 mod samples;
@@ -39,7 +39,7 @@ use samples::{
 pub(super) use spectra::DelaySpectrum;
 pub(crate) use time::SolveInputRows;
 use time::{AveragedBaseline, FirstTBuffer, WeightedTime, bucketed_rows, first_t_buffers};
-pub(crate) use visibility_models::VisibilityModels;
+pub use visibility_models::VisibilityModels;
 pub(super) use weights::VisibilityBuffer;
 use weights::{SpectralWeights, solve_weights};
 

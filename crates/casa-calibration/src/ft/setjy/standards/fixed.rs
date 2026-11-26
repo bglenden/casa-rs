@@ -2,7 +2,7 @@
 //! Published fixed flux polynomials used by CASA's FluxStdsQS2.
 
 #[derive(Clone, Copy)]
-pub(crate) enum FixedScale {
+pub enum FixedScale {
     Baars,
     Perley90,
     PerleyTaylor95,
@@ -11,7 +11,7 @@ pub(crate) enum FixedScale {
     StevensReynolds2016,
 }
 
-pub(crate) struct FixedSpectrum {
+pub struct FixedSpectrum {
     reference_hz: f64,
     coefficients: &'static [f32],
     upper: Option<(f64, &'static [f32])>,

@@ -49,7 +49,7 @@ impl<'a> ScratchWriteMode<'a> {
     }
 }
 
-pub(crate) fn reset_scratch_columns(
+pub fn reset_scratch_columns(
     ms: &mut MeasurementSet,
     selection: &MsSelection,
     add_model: bool,

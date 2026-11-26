@@ -28,7 +28,8 @@ struct ReferenceGroup {
     state: i32,
 }
 
-pub(super) fn generate(
+/// Solve and write position-switch sky spectra (`SDSKY_PS`) from OFF integrations.
+pub fn generate(
     ms: &MeasurementSet,
     rows: &[usize],
     destination: &Path,

@@ -10,8 +10,8 @@ mod common;
 use std::path::{Path, PathBuf};
 
 use casa_calibration::{
-    ApplyCalibrationTableSpec, ApplyMode, CalibrationTaskRequest, CalibrationTaskResult,
-    ExecuteApplyTaskRequest,
+    ApplyCalibrationTableSpec, ApplyExecutionOptions, ApplyExecutionReport, ApplyMode,
+    ApplyPlanRequest, execute_apply_from_path_with_options,
 };
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
@@ -45,24 +45,23 @@ fn applycal(
     caltable_path: &Path,
     apply_mode: ApplyMode,
     flagbackup: bool,
-) -> Result<CalibrationTaskResult, String> {
-    CalibrationTaskRequest::ExecuteApply(ExecuteApplyTaskRequest {
-        callibrary_error: None,
-        argument_error: None,
-        measurement_set: ms_path.to_path_buf(),
-        selection: MsSelection::new().spw(&[0]),
-        calibration_tables: vec![ApplyCalibrationTableSpec::new(caltable_path)],
-        apply_mode,
-        parang: false,
-        flagbackup,
-    })
-    .execute()
+) -> Result<ApplyExecutionReport, String> {
+    execute_apply_from_path_with_options(
+        ms_path,
+        &ApplyPlanRequest {
+            selection: MsSelection::new().spw(&[0]),
+            apply_mode,
+            parang: false,
+            calibration_tables: vec![ApplyCalibrationTableSpec::new(caltable_path)],
+        },
+        ApplyExecutionOptions {
+            flag_backup: flagbackup,
+        },
+    )
+    .map_err(|error| error.to_string())
 }
 
-fn backup_version(result: &CalibrationTaskResult) -> Option<&str> {
-    let CalibrationTaskResult::Apply(report) = result else {
-        panic!("expected an apply report");
-    };
+fn backup_version(report: &ApplyExecutionReport) -> Option<&str> {
     report.flag_backup_version.as_deref()
 }
 

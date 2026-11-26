@@ -1,23 +1,20 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Native single-dish spectral preparation shared by the task and tool.
 
-pub(crate) mod atmosphere;
-pub(crate) mod baseline;
-pub(crate) mod import;
-pub(crate) mod line_fit;
+pub mod atmosphere;
+pub mod baseline;
+pub mod import;
+pub mod line_fit;
 mod smoothing;
 
 use std::path::{Path, PathBuf};
 
-use casa_contracts::CasaValue;
 use casa_ms::MsSelection;
 use casa_ms::transform::{
     MsTransformReport, MsTransformRequest, TransformDataColumn, TransformTaskHistory,
     convolve_spectra,
 };
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
-use super::selector;
 use smoothing::Smoothing;
 
 /// Single-dish tool state. The path and selection are resolved by the operation.
@@ -109,54 +106,12 @@ impl SingleDishSession {
     }
 }
 
-fn data_column(name: &str) -> Result<TransformDataColumn, String> {
+/// Map a CASA data column string to `TransformDataColumn`.
+pub fn data_column(name: &str) -> Result<TransformDataColumn, String> {
     match name.to_ascii_lowercase().as_str() {
         "data" => Ok(TransformDataColumn::Data),
         "float_data" => Ok(TransformDataColumn::FloatData),
         "corrected" => Ok(TransformDataColumn::CorrectedData),
         _ => Err("Invalid data column name".into()),
     }
-}
-
-pub(crate) fn run_sdsmooth(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    let mut session = SingleDishSession::default();
-    session.open(task.input_path("infile")?);
-    session
-        .set_selection(
-            MsSelection {
-                antenna: selector(task, "antenna")?,
-                field: selector(task, "field")?,
-                spw: selector(task, "spw")?,
-                timerange: selector(task, "timerange")?,
-                scan: selector(task, "scan")?,
-                correlation: selector(task, "pol")?,
-                intent: selector(task, "intent")?,
-                ..MsSelection::default()
-            },
-            task.flag("reindex")?,
-        )
-        .map_err(TaskFailure::execution)?;
-    let outfile = task.text("outfile")?.unwrap_or_default();
-    let overwrite = task.flag("overwrite")?;
-    if outfile.is_empty() {
-        return Err(TaskFailure::validation("outfile is empty.").at("outfile"));
-    }
-    let output = Path::new(&outfile);
-    if output.exists() && !overwrite {
-        return Err(TaskFailure::execution(format!("{outfile} exists.")).at("outfile"));
-    }
-    let report = session
-        .smooth(SingleDishSmoothing {
-            kernel: &task.text("kernel")?.unwrap_or_else(|| "gaussian".into()),
-            width: task.integer("kwidth")? as f32,
-            datacolumn: &task.text("datacolumn")?.unwrap_or_else(|| "data".into()),
-            output,
-            overwrite,
-            history: Some(TransformTaskHistory {
-                task: "sdsmooth".into(),
-                parameters: Vec::new(),
-            }),
-        })
-        .map_err(TaskFailure::execution)?;
-    TaskSuccess::new(CasaValue::None, &report)
 }

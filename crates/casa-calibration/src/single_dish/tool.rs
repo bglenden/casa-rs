@@ -147,7 +147,7 @@ impl Solver {
                 controls,
                 Some(activity),
             )
-            .map_err(|error| error.message)?;
+            .map_err(|error| error.into_message())?;
             return Ok(stats);
         }
         let rows = selection.row_indices().collect::<Vec<_>>();

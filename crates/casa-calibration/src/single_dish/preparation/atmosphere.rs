@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Apply differential atmospheric emission to calibrated single-dish spectra.
 
-mod inputs;
+pub mod inputs;
 mod model;
-pub(crate) mod task;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -21,7 +20,8 @@ use ndarray::{ArrayD, Axis};
 
 use super::{SingleDishSession, data_column};
 use crate::output::CalibrationOutput;
-use inputs::{MainRows, Pointing, Weather};
+pub use inputs::MainRows;
+use inputs::{Pointing, Weather};
 use model::{GroundConditions, SpectralResponse, WindowModel};
 
 /// Atmospheric correction on the attached MeasurementSet and selection.
@@ -45,7 +45,7 @@ impl SingleDishSession {
         self.atmcor_prepared(&ms, rows, request)
     }
 
-    fn atmcor_prepared(
+    pub fn atmcor_prepared(
         &self,
         ms: &MeasurementSet,
         rows: MainRows,
@@ -199,7 +199,8 @@ impl Configuration {
     }
 }
 
-fn thread_count(requested: Option<f64>) -> usize {
+/// Resolve requested thread count into an OpenMP-compatible worker limit.
+pub fn thread_count(requested: Option<f64>) -> usize {
     match requested {
         None => 1,
         Some(count) if count > 0. => count as usize,

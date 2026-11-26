@@ -2,7 +2,6 @@
 //! Selected single-dish Gaussian and Lorentzian line profiles.
 
 mod product;
-pub(crate) mod task;
 
 use std::collections::BTreeMap;
 use std::fs;

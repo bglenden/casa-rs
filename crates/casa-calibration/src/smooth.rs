@@ -13,13 +13,13 @@ use casa_types::{ArrayValue, Complex32, Value};
 use crate::solution_edit::{edit_calibration_table, error_text};
 
 #[derive(Clone, Copy)]
-pub(crate) enum Smoother {
+pub enum Smoother {
     Mean,
     Median,
 }
 
 impl Smoother {
-    pub(crate) fn from_name(mode: &str) -> Option<Self> {
+    pub fn from_name(mode: &str) -> Option<Self> {
         match mode {
             "mean" => Some(Self::Mean),
             "median" => Some(Self::Median),
@@ -28,7 +28,7 @@ impl Smoother {
     }
 }
 
-pub(crate) fn smooth_calibration_table(
+pub fn smooth_calibration_table(
     ms_path: &Path,
     input: &Path,
     destination: &Path,

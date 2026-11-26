@@ -3,6 +3,8 @@
 
 mod document;
 
+#[cfg(feature = "calibration")]
+pub mod calibration;
 #[cfg(feature = "ms")]
 pub mod msexplore;
 #[cfg(feature = "ms")]
@@ -16,6 +18,11 @@ pub(crate) mod plot_visibility;
 
 pub use document::*;
 
+#[cfg(feature = "calibration")]
+pub use calibration::plots::{
+    CalibrationPlotError, CalibrationPlotPreset, CalibrationPlotRequest,
+    build_calibration_plot_payload,
+};
 #[cfg(feature = "ms")]
 pub use msexplore::{
     MsAverageSpec, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec, MsExportFormat, MsFlagAction,

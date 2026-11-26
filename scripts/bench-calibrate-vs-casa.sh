@@ -57,7 +57,7 @@ if [[ -n "$casa_profile_dir" ]]; then
 fi
 echo
 
-cargo build --release -p casa-calibration --bin calibrate >/dev/null
+cargo build --release -p casars-cli --bin calibrate >/dev/null
 
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT

@@ -12,7 +12,7 @@ use casa_tables::TableWriteLock;
 
 use super::{image::ImageModel, invalid};
 
-pub(crate) struct VirtualFtPublication {
+pub struct VirtualFtPublication {
     components: Vec<VirtualModelEntry>,
     incremental: bool,
     field: Option<i32>,
@@ -33,13 +33,13 @@ struct Target {
 }
 
 impl VirtualFtPublication {
-    pub(crate) fn may_reference_models(&self) -> bool {
+    pub fn may_reference_models(&self) -> bool {
         self.targets
             .iter()
             .any(|target| target.publication.may_reference_images())
     }
 
-    pub(crate) fn new<'a>(
+    pub fn new<'a>(
         tables: impl Iterator<Item = &'a MeasurementSet>,
         components: Vec<VirtualModelEntry>,
         images: Vec<ImageModel>,
@@ -71,7 +71,7 @@ impl VirtualFtPublication {
 
     /// Prepare a field's replacement across a concatenation's physical
     /// SOURCE and MAIN tables. Distinct targets each own their images.
-    pub(crate) fn replacing_field<'a>(
+    pub fn replacing_field<'a>(
         tables: impl Iterator<Item = &'a MeasurementSet>,
         components: Vec<VirtualModelEntry>,
         images: Vec<ImageModel>,
@@ -140,7 +140,7 @@ impl VirtualFtPublication {
 
     /// Resume this publication with the same set of inputs in the same
     /// order. A target with a finished record never receives it twice.
-    pub(crate) fn publish<'a>(
+    pub fn publish<'a>(
         &mut self,
         tables: impl Iterator<Item = (&'a mut MeasurementSet, &'a mut TableWriteLock)>,
     ) -> MsResult<()> {
