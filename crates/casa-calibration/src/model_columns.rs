@@ -84,6 +84,17 @@ pub(crate) fn initialize_calibrater_columns(
     add_model: bool,
     mut lock: TableWriteLock,
 ) -> MsResult<TableWriteLock> {
+    initialize_calibrater_columns_holding(ms, compress, add_corrected, add_model, &mut lock)?;
+    Ok(lock)
+}
+
+pub(crate) fn initialize_calibrater_columns_holding(
+    ms: &mut MeasurementSet,
+    compress: bool,
+    add_corrected: bool,
+    add_model: bool,
+    lock: &mut TableWriteLock,
+) -> MsResult<()> {
     let missing = [(MODEL, add_model), (CORRECTED, add_corrected)]
         .into_iter()
         .filter(|&(column, requested)| requested && !has_column(ms, column))
@@ -92,14 +103,23 @@ pub(crate) fn initialize_calibrater_columns(
     if missing.is_empty() {
         // Calibrater preserves both existing scratch cells and virtual
         // recipes on open. Adding a missing MODEL_DATA clears the recipes.
-        return Ok(lock);
+        return Ok(());
     }
     let all = resolve_casa_calibration_selection(ms, &MsSelection::default()).map_err(invalid)?;
     if compress {
-        compression::initialize_columns(ms, all, &missing, &mut lock)?;
-        return Ok(lock);
+        compression::initialize_columns(ms, all, &missing, lock)?;
+        return Ok(());
     }
-    reset(ms, all, &missing, true, false, lock)
+    let observed = observed_column(ms);
+    reset_holding(
+        ms,
+        all,
+        &missing,
+        observed,
+        ScratchWriteMode::Create,
+        false,
+        lock,
+    )
 }
 
 /// Reset existing scratch columns for `calibrater.initcalset`.

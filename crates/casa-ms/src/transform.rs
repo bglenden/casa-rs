@@ -154,6 +154,9 @@ pub struct MsTransformTaskOptions {
     pub visibility_columns: Option<Vec<OptionalMainColumn>>,
     /// Match the legacy Python MeasurementSet tool's output conventions.
     pub legacy_tool: Option<LegacyMsTool>,
+    /// Copy only these spectral windows to MAIN, while retaining the request's
+    /// full spectral-window selection for the output subtable IDs.
+    pub legacy_output_spw: Option<String>,
     /// Create and fill weight and sigma spectra even when the input has none.
     pub use_weight_spectrum: bool,
     /// CASA task preference for the output's array storage.
@@ -884,9 +887,31 @@ fn mstransform_staged(
             });
         }
     }
+    let output_spws = options
+        .legacy_output_spw
+        .as_deref()
+        .map(|selector| {
+            input
+                .resolve_spw_selector(selector)
+                .map_err(|error| MsTransformError::InvalidSpw {
+                    selector: selector.to_owned(),
+                    reason: error.to_string(),
+                })
+                .map(|selection| {
+                    selection
+                        .spw_ids()
+                        .iter()
+                        .map(|&id| id as i32)
+                        .collect::<BTreeSet<_>>()
+                })
+        })
+        .transpose()?;
     rows.retain(|row| {
         spw_selection.selects_row(row.data_desc_id)
             && channel_bins.contains_key(&row.spectral_window_id)
+            && output_spws
+                .as_ref()
+                .is_none_or(|spws| spws.contains(&row.spectral_window_id))
     });
     let (mut selected_rows, mut selected_ddids): (Vec<_>, Vec<_>) = rows
         .iter()
