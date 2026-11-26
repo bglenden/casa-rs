@@ -4,14 +4,11 @@ use std::path::Path;
 
 use casa_coordinates::CoordinateType;
 use casa_core::RecordValue;
-use casa_images::{
-    ImageInterface,
-    analysis::{
-        ImageTwoPoint, StructurePixel, SubimageRegion, TwoPointOptions,
-        ensure_artifacts_do_not_overlap, ensure_outfile_does_not_alias_input,
-    },
-    image::image_history_rows,
+use casa_imageanalysis::analysis::{
+    ImageTwoPoint, StructurePixel, SubimageRegion, TwoPointOptions,
+    ensure_artifacts_do_not_overlap, ensure_outfile_does_not_alias_input,
 };
+use casa_images::{ImageInterface, image_history_rows};
 use pyo3::prelude::*;
 
 use crate::convert::IntList;

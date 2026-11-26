@@ -4,7 +4,7 @@
 
 use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::ParameterValue;
-use casa_images::{ImpvRequest, PvAmount, impv};
+use casa_imageanalysis::{ImpvRequest, PvAmount, impv};
 use serde::de::DeserializeOwned;
 
 use super::front_end::{

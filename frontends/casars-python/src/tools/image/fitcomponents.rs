@@ -6,13 +6,11 @@ use std::path::Path;
 
 use casa_core::RecordValue;
 use casa_core::quanta::Quantity;
-use casa_images::{
-    ImageInterface, MutableImageInterface, PagedImage,
-    analysis::{
-        ComponentFitPixel, ComponentFitQuantity, FitComponentsOptions, ImageComponentFit,
-        ensure_artifacts_do_not_overlap, fit_image_components,
-    },
+use casa_imageanalysis::analysis::{
+    ComponentFitPixel, ComponentFitQuantity, FitComponentsOptions, ImageComponentFit,
+    ensure_artifacts_do_not_overlap, fit_image_components,
 };
+use casa_images::{ImageInterface, MutableImageInterface, PagedImage};
 use casa_lattices::TiledShape;
 use pyo3::prelude::*;
 use pyo3::types::PyBool;
@@ -176,42 +174,45 @@ impl FitRequest<'_> {
                 ensure_artifacts_do_not_overlap(path, peer).map_err(raised)?;
             }
         }
-        let fit = casa_images::analysis::with_mask_output_paths(paths.iter().copied(), || {
-            publish_image_set([self.model, self.residual], true, |staged| {
-                read_locked(attachment, |source| {
-                    for target in &paths {
-                        for input in source
-                            .path()
-                            .into_iter()
-                            .chain(attachment.operand_paths().iter().map(|path| path.as_path()))
-                        {
-                            ensure_artifacts_do_not_overlap(target, input).map_err(raised)?;
+        let fit = casa_imageanalysis::analysis::with_mask_output_paths(
+            paths.iter().copied(),
+            || {
+                publish_image_set([self.model, self.residual], true, |staged| {
+                    read_locked(attachment, |source| {
+                        for target in &paths {
+                            for input in source
+                                .path()
+                                .into_iter()
+                                .chain(attachment.operand_paths().iter().map(|path| path.as_path()))
+                            {
+                                ensure_artifacts_do_not_overlap(target, input).map_err(raised)?;
+                            }
                         }
-                    }
-                    match source {
-                        ImageHandle::Float(Storage::Temp {
-                            image,
-                            fits: Some(fits),
-                            ..
-                        }) => self.compute(
-                            attachment,
-                            source,
-                            &fits.image_view(image),
-                            &paths,
-                            staged,
-                            history,
-                        ),
-                        ImageHandle::Float(storage) => with_storage!(storage, image =>
-                            self.compute(attachment, source, image.as_ref(), &paths, staged, history)
-                        ),
-                        ImageHandle::Double(storage) => with_storage!(storage, image =>
-                            self.compute(attachment, source, image.as_ref(), &paths, staged, history)
-                        ),
-                        _ => Err(raised("This method only supports real valued images")),
-                    }
+                        match source {
+                            ImageHandle::Float(Storage::Temp {
+                                image,
+                                fits: Some(fits),
+                                ..
+                            }) => self.compute(
+                                attachment,
+                                source,
+                                &fits.image_view(image),
+                                &paths,
+                                staged,
+                                history,
+                            ),
+                            ImageHandle::Float(storage) => with_storage!(storage, image =>
+                                self.compute(attachment, source, image.as_ref(), &paths, staged, history)
+                            ),
+                            ImageHandle::Double(storage) => with_storage!(storage, image =>
+                                self.compute(attachment, source, image.as_ref(), &paths, staged, history)
+                            ),
+                            _ => Err(raised("This method only supports real valued images")),
+                        }
+                    })
                 })
-            })
-        })?;
+            },
+        )?;
         self.write_artifacts(&fit)?;
         Ok(fit.record)
     }

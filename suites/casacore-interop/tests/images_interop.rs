@@ -255,7 +255,7 @@ fn rc_casa_reads_a_transposed_casa_image_rust_rewrote() {
         return;
     };
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let fixtures = root.join("crates/casa-images/tests/data/casa-6.7.6/axis_maps");
+    let fixtures = root.join("libs/casacore/casa-images/tests/data/casa-6.7.6/axis_maps");
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("transposed.image");
     copy_dir_all(&fixtures.join("transposed.image"), &path);

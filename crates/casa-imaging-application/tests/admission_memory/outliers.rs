@@ -237,7 +237,7 @@ fn explicit_outlier_seeds_are_admitted_one_field_at_a_time() {
     let outlier = root.path().join("initial-outlier.model");
     let expected = |path: &Path| {
         let image = casa_images::PagedImage::<f32>::open(path).unwrap();
-        let template = casa_images::RegridTemplate {
+        let template = casa_imageanalysis::RegridTemplate {
             coordinates: image.coordinates().clone(),
             shape: image.shape().to_vec(),
         };

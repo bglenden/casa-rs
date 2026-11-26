@@ -272,8 +272,9 @@ mod frame_tests {
 
     #[test]
     fn flatimage_requires_a_complete_direction_plane() {
-        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../casa-images/tests/data/casa-6.7.6/axis_maps/dropdeg_ra.image");
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "../../libs/casacore/casa-images/tests/data/casa-6.7.6/axis_maps/dropdeg_ra.image",
+        );
         let scratch = tempfile::tempdir().unwrap();
         let image = scratch.path().join("sliced.image");
         std::fs::create_dir(&image).unwrap();

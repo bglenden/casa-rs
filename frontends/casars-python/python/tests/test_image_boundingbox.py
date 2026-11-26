@@ -80,7 +80,7 @@ def test_compound_world_regions(casa):
 
 
 def test_reference_relative_polygon_as_record_and_file(casa, tmp_path):
-    fixtures = Path(__file__).resolve().parents[4] / "crates" / "casa-images" / "tests" / "data" / "imsubimage"
+    fixtures = Path(__file__).resolve().parents[4] / "libs" / "casacore" / "casa-images" / "tests" / "data" / "imsubimage"
     table = tmp_path / "source.im"
     copytree(fixtures / "cube.im", table)
     region_file = str(fixtures / "saved_relative_polygon_ref.rgn")

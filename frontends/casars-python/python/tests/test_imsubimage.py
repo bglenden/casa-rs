@@ -13,7 +13,7 @@ import pytest
 from casars import tasks, tools
 
 ROOT = Path(__file__).resolve().parents[4]
-DATA = ROOT / "crates/casa-images/tests/data/imsubimage"
+DATA = ROOT / "libs/casacore/casa-images/tests/data/imsubimage"
 ORACLE = ROOT / "tools/casa-compat/imsubimage_oracle.py"
 CASA_PYTHON = Path(
     os.environ.get("CASA_RS_CASA_PYTHON", "/Applications/CASA.app/Contents/MacOS/python3")

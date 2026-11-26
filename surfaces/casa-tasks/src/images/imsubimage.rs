@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
-use casa_images::{ImsubimageRequest, imsubimage};
+use casa_imageanalysis::{ImsubimageRequest, imsubimage};
 
 use super::front_end::{image_task_front_end, image_task_success};
 use super::task_contract::ImageAnalysisTaskResult;

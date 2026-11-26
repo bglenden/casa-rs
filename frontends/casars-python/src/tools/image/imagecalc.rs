@@ -4,13 +4,11 @@ use std::path::{Path, PathBuf};
 
 use casa_coordinates::{CoordinateSystem, CoordinateType, StokesCoordinate, StokesType};
 use casa_core::{Complex32, RecordValue};
-use casa_images::analysis::{
+use casa_imageanalysis::analysis::{
     ImageToolExpressionInputs, ImageToolPixelExpression, ensure_outfile_does_not_alias_input,
     materialize_image_tool_expression,
 };
-use casa_images::{
-    ImageExpression, ImageInfo, ImagePixelType, TempImage, image_expr::ImageExprValue,
-};
+use casa_images::{ImageExprValue, ImageExpression, ImageInfo, ImagePixelType, TempImage};
 use pyo3::prelude::*;
 
 use super::PyImageTool;
@@ -67,7 +65,7 @@ impl Metadata {
         let entry = casa_tables::lexical_absolute(name);
         let referent = name.canonicalize().map_err(raised)?;
         saved_expression::check_output_dependencies(output.target, &[entry, referent], false)?;
-        let image = if casa_images::concat_file::is_image_concat(name) {
+        let image = if casa_images::is_image_concat(name) {
             super::concatenate::virtual_image::open_metadata(name, output)?
         } else {
             saved_expression::open_metadata(name, output)?
@@ -272,7 +270,7 @@ impl PyImageTool {
             let same_output = !outfile.is_empty() && same_file_path(output_path, metadata_path);
             let staged_metadata = !outfile.is_empty() && !same_output
                 && (casa_images::expr_file::is_image_expr(metadata_path)
-                    || casa_images::concat_file::is_image_concat(metadata_path));
+                    || casa_images::is_image_concat(metadata_path));
             let metadata = if imagemd.is_empty() || staged_metadata {
                 None
             } else if same_output {

@@ -16,11 +16,12 @@ crate-type = ["cdylib"]
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]
+casa-imageanalysis.workspace = true
 casa-atmosphere = { path = "../../crates/casa-atmosphere" }
 casa-calibration = { path = "../../crates/casa-calibration" }
-casa-components = { path = "../../crates/casa-components" }
+casa-components.workspace = true
 casa-coordinates.workspace = true
-casa-images = { path = "../../crates/casa-images" }
+casa-images.workspace = true
 casa-lattices.workspace = true
 casa-measures.workspace = true
 casa-ms = { path = "../../crates/casa-ms" }

@@ -60,6 +60,6 @@ try:
 finally:gc.enable();source.done()
 root=Path(__file__).resolve().parents[2]
 revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
-dirty=subprocess.check_output(['git','status','--porcelain','--','crates','libs/casacore','tools/simulation'],cwd=root,text=True)
+dirty=subprocess.check_output(['git','status','--porcelain','--','crates','libs','tools/simulation'],cwd=root,text=True)
 a.out.write_text(json.dumps({'revision':revision,'source_dirty':bool(dirty),'casa_version':version_string(),'python':sys.executable,'backend':a.backend,'command':sys.argv,'cases':results},indent=2)+'\n')
 print('wrote',len(results),'cases')

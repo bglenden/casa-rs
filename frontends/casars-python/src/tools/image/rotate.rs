@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use casa_images::analysis::{ImageRegridOptions, ImageRegridTarget};
+use casa_imageanalysis::analysis::{ImageRegridOptions, ImageRegridTarget};
 use pyo3::prelude::*;
 
 use crate::convert::{IntList, Variant, quantity, value_in};

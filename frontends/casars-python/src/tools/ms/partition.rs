@@ -69,7 +69,7 @@ impl PyMsTool {
             tiling: tile_layout(tileshape.as_ref())?,
             ..MsTransformTaskOptions::default()
         };
-        self.write_subms(py, outputms, spw, selection, options, None)
+        self.write_subms(py, outputms, spw, selection, options, ("partition", None))
     }
 }
 
@@ -81,17 +81,12 @@ impl PyMsTool {
         spw: String,
         selection: MsSelection,
         options: MsTransformTaskOptions,
-        history: Option<String>,
+        (operation, history): (&'static str, Option<String>),
     ) -> PyResult<bool> {
-        let operation = if history.is_some() {
-            "split"
-        } else {
-            "partition"
-        };
         py.detach(|| {
             let attached = self.attached.lock().map_err(runtime_error)?;
             let Some(ms) = attached.as_ref() else {
-                if operation == "split" {
+                if operation != "partition" {
                     return Err(runtime_error("Table column DATA_DESC_ID is unknown"));
                 }
                 return Ok(false);
@@ -155,13 +150,18 @@ impl PyMsTool {
                 && output.is_some()
             {
                 let table = Table::open(TableOptions::new(&staged)).map_err(runtime_error)?;
-                let message = format!("{outputms} split from {}", ms.path.display());
+                let message = if operation == "contsub" {
+                    format!("Continuum subtracted from {}", ms.path.display())
+                } else {
+                    format!("{outputms} split from {}", ms.path.display())
+                };
+                let origin = format!("ms::{operation}()");
                 append_tool_history(
                     &table,
                     true,
                     &[message],
                     parameters,
-                    "ms::split()",
+                    &origin,
                     "ms",
                     &mut Default::default(),
                 )

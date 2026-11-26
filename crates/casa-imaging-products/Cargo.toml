@@ -18,7 +18,7 @@ workspace = true
 tracing.workspace = true
 casa-coordinates.workspace = true
 casa-fft.workspace = true
-casa-images = { path = "../casa-images" }
+casa-images.workspace = true
 casa-imaging-deconvolution = { path = "../casa-imaging-deconvolution" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-numerics.workspace = true

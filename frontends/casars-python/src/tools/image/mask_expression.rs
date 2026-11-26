@@ -33,7 +33,7 @@ impl PyImageTool {
                 validate_name(name)?;
             }
             let component_mask = with_pixels!(&mut *image, storage => match storage {
-                Storage::Temp { image, .. } => image.define_component_mask(explicit, true, asdefault, &values),
+                Storage::Temp { image, .. } => image.define_stored_mask(explicit, true, asdefault, &values),
                 Storage::Paged(_) => Ok(false),
             }).map_err(raised)?;
             if !component_mask {

@@ -3,13 +3,10 @@
 use std::path::Path;
 
 use casa_coordinates::CoordinateType;
-use casa_images::{
-    ImageInterface, ImagePixel, PagedImage,
-    analysis::{
-        FourierOptions, FourierPixel, ImageFourier, SubimageRegion,
-        ensure_outfile_does_not_alias_input,
-    },
+use casa_imageanalysis::analysis::{
+    FourierOptions, FourierPixel, ImageFourier, SubimageRegion, ensure_outfile_does_not_alias_input,
 };
+use casa_images::{ImageInterface, ImagePixel, PagedImage};
 use casa_lattices::TiledShape;
 use num_complex::{Complex, Complex32, Complex64};
 use pyo3::prelude::*;

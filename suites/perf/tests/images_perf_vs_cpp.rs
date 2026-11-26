@@ -14,9 +14,9 @@ use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
 use casa_core::Complex32;
+use casa_images::ImageInterface;
 use casa_images::expr_file;
 use casa_images::expr_parser::{HashMapResolver, parse_image_expr};
-use casa_images::image::ImageInterface;
 use casa_images::{Image, ImageExprBuilder, PagedImage};
 use casa_lattices::{
     ExecutionPolicy, Lattice, LatticeIterExt, LatticeStatistics, Statistic, TraversalSpec,

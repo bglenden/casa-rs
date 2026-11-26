@@ -245,6 +245,7 @@ dependencies = [
  "casa-coordinates",
  "casa-core",
  "casa-fft",
+ "casa-imageanalysis",
  "casa-images",
  "casa-imaging-model",
  "casa-imaging-operator",
@@ -283,7 +284,6 @@ dependencies = [
  "casa-core",
  "casa-measures",
  "casa-tables",
- "casa-test-support",
  "complex-bessel",
  "libm",
  "ndarray",
@@ -352,21 +352,37 @@ dependencies = [
 ]
 
 [[package]]
-name = "casa-images"
+name = "casa-imageanalysis"
 version = "0.27.0"
 dependencies = [
  "casa-components",
  "casa-coordinates",
  "casa-core",
  "casa-fft",
+ "casa-images",
  "casa-lattices",
  "casa-numerics",
  "casa-tables",
- "casa-test-support",
  "fitsio",
  "ndarray",
  "num-complex",
  "schemars",
+ "serde",
+ "tempfile",
+]
+
+[[package]]
+name = "casa-images"
+version = "0.27.0"
+dependencies = [
+ "casa-coordinates",
+ "casa-core",
+ "casa-lattices",
+ "casa-numerics",
+ "casa-tables",
+ "fitsio",
+ "ndarray",
+ "num-complex",
  "serde",
  "serde_json",
  "tempfile",
@@ -380,6 +396,7 @@ dependencies = [
  "base64",
  "casa-coordinates",
  "casa-core",
+ "casa-imageanalysis",
  "casa-images",
  "casa-imaging-deconvolution",
  "casa-imaging-metal",
@@ -627,6 +644,20 @@ dependencies = [
 [[package]]
 name = "casa-parity"
 version = "0.27.0"
+dependencies = [
+ "casa-components",
+ "casa-coordinates",
+ "casa-core",
+ "casa-imageanalysis",
+ "casa-images",
+ "casa-lattices",
+ "casa-tables",
+ "casa-test-support",
+ "ndarray",
+ "num-complex",
+ "serde_json",
+ "tempfile",
+]
 
 [[package]]
 name = "casa-perf-suite"
@@ -683,6 +714,7 @@ dependencies = [
  "casa-coordinates",
  "casa-core",
  "casa-fft",
+ "casa-imageanalysis",
  "casa-images",
  "casa-imaging-application",
  "casa-imaging-model",
@@ -740,6 +772,7 @@ dependencies = [
  "casa-components",
  "casa-contracts",
  "casa-core",
+ "casa-imageanalysis",
  "casa-images",
  "casa-imaging-application",
  "casa-imaging-deconvolution",
@@ -811,6 +844,7 @@ name = "casacore-interop"
 version = "0.27.0"
 dependencies = [
  "casa-aipsio",
+ "casa-components",
  "casa-coordinates",
  "casa-core",
  "casa-images",
@@ -820,7 +854,9 @@ dependencies = [
  "casa-tables",
  "casa-test-support",
  "ndarray",
+ "num-complex",
  "pkg-config",
+ "serde_json",
  "sofars",
  "tempfile",
  "thiserror",
@@ -835,6 +871,7 @@ dependencies = [
  "casa-contracts",
  "casa-coordinates",
  "casa-core",
+ "casa-imageanalysis",
  "casa-images",
  "casa-imaging-application",
  "casa-imaging-deconvolution",
@@ -871,6 +908,7 @@ dependencies = [
  "casa-contracts",
  "casa-coordinates",
  "casa-core",
+ "casa-imageanalysis",
  "casa-images",
  "casa-lattices",
  "casa-measures",

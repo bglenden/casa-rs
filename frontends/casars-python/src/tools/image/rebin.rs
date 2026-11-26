@@ -4,12 +4,10 @@ use std::path::Path;
 
 use casa_coordinates::CoordinateType;
 use casa_core::RecordValue;
-use casa_images::{
-    ImageInterface,
-    analysis::{ImageRebin, ImageRebinOptions, ensure_outfile_does_not_alias_input},
-    image::image_history_rows,
-    image_expr::ImageExprValue,
+use casa_imageanalysis::analysis::{
+    ImageRebin, ImageRebinOptions, ensure_outfile_does_not_alias_input,
 };
+use casa_images::{ImageExprValue, ImageInterface, image_history_rows};
 use pyo3::prelude::*;
 
 use crate::convert::IntList;

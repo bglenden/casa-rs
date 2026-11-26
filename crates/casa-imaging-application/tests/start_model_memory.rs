@@ -16,7 +16,8 @@ use casa_coordinates::{
     StokesCoordinate, StokesType,
 };
 use casa_core::measures::{direction::DirectionRef, frequency::FrequencyRef};
-use casa_images::{PagedImage, RegridTemplate};
+use casa_imageanalysis::RegridTemplate;
+use casa_images::PagedImage;
 use casa_imaging_application::start_model_law::{main_samples, seeding_bytes};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 

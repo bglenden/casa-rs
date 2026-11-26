@@ -112,6 +112,7 @@
    "casa-numerics"
   ],
   "casa-imaging-application": [
+   "casa-imageanalysis",
    "casa-images",
    "casa-imaging-deconvolution",
    "casa-imaging-model",
@@ -129,6 +130,7 @@
    "casa-calibration",
    "casa-components",
    "casa-fft",
+   "casa-imageanalysis",
    "casa-images",
    "casa-imaging-application",
    "casa-imaging-model",
@@ -140,6 +142,23 @@
    "casa-measures",
    "casa-ms",
    "casa-numerics",
+   "casa-tables"
+  ],
+  "casa-images": [
+   "casa-lattices",
+   "casa-numerics",
+   "casa-tables"
+  ],
+  "casa-imageanalysis": [
+   "casa-components",
+   "casa-fft",
+   "casa-images",
+   "casa-lattices",
+   "casa-numerics",
+   "casa-tables"
+  ],
+  "casa-components": [
+   "casa-measures",
    "casa-tables"
   ]
  },
@@ -218,7 +237,8 @@
     "libs/casacore/casa-fft/src",
     "crates/casa-ms/src",
     "libs/casacore/casa-tables/src",
-    "crates/casa-images/src",
+    "libs/casacore/casa-images/src",
+    "libs/casa/casa-imageanalysis/src",
     "libs/casacore/casa-coordinates/src",
     "libs/casacore/casa-lattices/src",
     "libs/casacore/casa-numerics/src",
@@ -251,7 +271,8 @@
     "libs/casacore/casa-fft/src",
     "crates/casa-ms/src",
     "libs/casacore/casa-tables/src",
-    "crates/casa-images/src",
+    "libs/casacore/casa-images/src",
+    "libs/casa/casa-imageanalysis/src",
     "libs/casacore/casa-coordinates/src",
     "libs/casacore/casa-lattices/src",
     "libs/casacore/casa-numerics/src",

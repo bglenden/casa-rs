@@ -61,10 +61,10 @@ struct VisibilityPublication {
     stamp: Option<TableStamp>,
 }
 
-struct VisibilityWriteTarget {
-    path: PathBuf,
-    names: Vec<String>,
-    rows: BTreeMap<usize, usize>,
+pub(super) struct VisibilityWriteTarget {
+    pub(super) path: PathBuf,
+    pub(super) names: Vec<String>,
+    pub(super) rows: BTreeMap<usize, usize>,
 }
 
 impl VisibilityState {
@@ -297,7 +297,7 @@ impl VisibilityMain {
         }
     }
 
-    fn write_targets(
+    pub(super) fn write_targets(
         &self,
         rows: &[usize],
         names: &[&str],

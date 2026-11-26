@@ -122,7 +122,7 @@ fn run(
     }
     let invocation = TaskInvocation::in_process(&session, workspace, argument_text, options);
     #[cfg(feature = "images")]
-    return casa_images::analysis::with_image_expression_workspace(workspace, || {
+    return casa_imageanalysis::analysis::with_image_expression_workspace(workspace, || {
         observe_task(&invocation, execute)
     });
     #[cfg(not(feature = "images"))]

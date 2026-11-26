@@ -13,7 +13,7 @@ import pytest
 from casars import tasks
 
 ROOT = Path(__file__).resolve().parents[4]
-DATA = ROOT / "crates/casa-images/tests/data/feather"
+DATA = ROOT / "libs/casacore/casa-images/tests/data/feather"
 ORACLE = ROOT / "tools/casa-compat"
 CASA_PYTHON = Path(os.environ.get("CASA_RS_CASA_PYTHON", "/Applications/CASA.app/Contents/MacOS/python3"))
 CASES = json.loads((DATA / "expected.json").read_text())["cases"]

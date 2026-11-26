@@ -7,7 +7,8 @@
 use std::path::Path;
 
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, Projection, ProjectionType};
-use casa_images::{AnyPagedImage, ImagePixel, RegridTemplate};
+use casa_imageanalysis::RegridTemplate;
+use casa_images::{AnyPagedImage, ImagePixel};
 use casa_imaging_model::{DirectionCoordinateSpec, DirectionFrame, SkyDirection};
 
 use crate::PrepareError;

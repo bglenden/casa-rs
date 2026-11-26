@@ -4,11 +4,10 @@ use std::path::Path;
 
 use casa_coordinates::CoordinateType;
 use casa_core::RecordValue;
-use casa_images::{
-    ImageInterface,
-    analysis::{ImageCrop, ImageCropOptions, ensure_outfile_does_not_alias_input},
-    image::image_history_rows,
+use casa_imageanalysis::analysis::{
+    ImageCrop, ImageCropOptions, ensure_outfile_does_not_alias_input,
 };
+use casa_images::{ImageInterface, image_history_rows};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
 

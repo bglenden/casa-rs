@@ -7831,7 +7831,7 @@ duplicated axis. An out-of-range or negative axis is refused with the catchable
 uncontrolled path, not a policy.
 
 casa-rs refuses a duplicated axis with `Invalid cursor axes: [0, 0]: an axis
-is named twice; CASA 6.7.6.14 aborts on it` (crates/casa-images/src/analysis.rs,
+is named twice; CASA 6.7.6.14 aborts on it` (libs/casa/casa-imageanalysis/src/analysis.rs,
 `parse_axes`), keeping every other axes form CASA accepts, including the
 minimum-forms `-1` for all axes (#977).
 
@@ -7895,7 +7895,7 @@ wraps both unit conversion and `mypo.linpolint(..., outfile=lpol)`, yet the
 later `if (polithresh):` block unconditionally evaluates `lpol` and raises
 `UnboundLocalError: cannot access local variable 'lpol'`.
 
-casa-rs parses `polithresh` as an optional-unit quantity (`crates/casa-images/src/analysis/immath/pol.rs`),
+casa-rs parses `polithresh` as an optional-unit quantity (`libs/casa/casa-imageanalysis/src/analysis/immath/pol.rs`),
 treats a unitless `polithresh` as already expressed in the input image's
 brightness unit, and thresholds linear polarized intensity normally (#977).
 
@@ -7913,7 +7913,7 @@ In CASA 6.7.6.14, `_immath_new_poli` converts a positive `sigma` via
 silently over-thresholds and masks the entire output plane.
 
 casa-rs validates unit conformance via `get_conformant_value` when `sigma > 0`
-(`crates/casa-images/src/analysis/immath/pol.rs`) and refuses non-conforming or
+(`libs/casa/casa-imageanalysis/src/analysis/immath/pol.rs`) and refuses non-conforming or
 unitless `sigma` against non-empty image `bunit` with a clear error (#977).
 
 ## Median fringe smoothing wraps delay values as phase
@@ -8122,14 +8122,14 @@ In CASA 6.7.6.14, `exportfits(..., history=True)` wraps logtable lines across
 80-byte FITS `HISTORY` cards by placing 72 characters on the first card and
 `>` followed by 71 characters on continuation cards, but skips character index
 143 on card 3 and subsequent continuation cards when the wrapped line spans
-more than 143 characters. On `cube_i.im` (`crates/casa-images/tests/data/exportfits/cube_i.im`),
+more than 143 characters. On `cube_i.im` (`libs/casacore/casa-images/tests/data/exportfits/cube_i.im`),
 CASA drops `'y'` from `csys={...}` in the 202-character `ia.fromshape(...)`
 message and drops the closing `')'` of the 144-character
 `ia.setrestoringbeam(...)` message (emitting 47 `HISTORY` cards instead of 48);
 on a synthetic 160-digit `"0123..."` history entry, CASA drops `'3'` at index
 143 between `>...012` and `>456...`.
 
-casa-rs (`crates/casa-images/src/analysis/exportfits.rs`, `wrap_fits_history_text`)
+casa-rs (`libs/casa/casa-imageanalysis/src/analysis/exportfits.rs`, `wrap_fits_history_text`)
 splits at 72 characters on the first card and `>` plus 71 characters on each
 continuation card without skipping characters, emitting all 48 cards on
 `cube_i.im` so both casa-rs and CASA 6.7.6.14 `ia.history(list=False)` read back
@@ -9029,7 +9029,7 @@ output. The upstream suite checks each implementation's error (#977).
 In CASA 6.7.6.14, `imregrid` with a one-channel input, an explicitly selected
 spectral axis and a multi-channel output replicates the data and mask. During
 that copy it loses the brightness unit and restoring beam. The `singleton`
-case in `crates/casa-images/tests/data/imregrid/expected.json` records a
+case in `libs/casacore/casa-images/tests/data/imregrid/expected.json` records a
 `Jy/beam` image with a 4 by 3 arcsec beam becoming a unitless image without a
 beam. casa-rs matches the samples, mask and template frequency grid and retains
 the original units and beam. Copying channels does not change the calibration
@@ -9050,7 +9050,7 @@ the shifted fixture with an all-masked result and published no output.
 CASA 6.7.6.14 can copy pixels and masks unchanged when regridding a leading
 axis of a three-axis linear coordinate at the same shape. The
 `same_shape_linear_shift` case in
-`crates/casa-images/tests/data/imregrid/expected.json` changes the first
+`libs/casacore/casa-images/tests/data/imregrid/expected.json` changes the first
 axis's reference value by 0.25 m on a 7 × 6 × 5 image. CASA reports the new
 reference value but retains the source samples. In casacore's
 `LinearCoordinate::near`, the exclusion loop marks consecutive entries
@@ -12380,6 +12380,53 @@ correlation types, `StatWT::process` reports failure to `GroupProcessor`,
 whose return value `Reweighter::reweight` discards. CASA returns `True`
 after publishing the earlier integrations. casa-rs raises `RuntimeError`
 and leaves the whole update unpublished.
+
+
+## Legacy continuum scratch fitting and failed output publication
+
+CASA 6.7.6.14 `continuumsubold()` obtains a `WEIGHT` cube with axes
+`(correlation, baseline, time)` from `MSSelector::getData`.
+`MSSelUtil2<Complex>::timeAverage` advances its weight offset once per
+baseline and time, reusing one value for every correlation. This also shifts
+weights between baselines and times in the cube. A three-integration fit
+with distinct per-hand weights on baseline `0&1` returned real model values
+121.285713 and 136.333328. The per-correlation weighted means are 128.031738
+and 113.587639, as pinned `continuumsub()` also confirms. casa-rs uses each
+sample's own weight with both methods. It keeps the legacy method's
+all-flagged channel behavior and its time bins.
+
+`continuumsub()` and `continuumsubold()` pass a negative `fitorder` to
+the casacore polynomial constructor. The type expects a nonnegative degree.
+CASA 6.7.6.14 terminates the process on the paired four-channel fixture.
+casa-rs raises `RuntimeError` and preserves the attached MS. The named-output
+`contsub()` deliberately uses a negative degree to copy the selection with
+the continuum retained, and casa-rs follows that behavior.
+
+Both in-place methods can also terminate CASA when the attachment is a
+saved RefTable over an MMS and its constituents lack scratch columns. The
+pinned test used a six-row view spanning two 30-row constituent tables.
+CASA completes the same fit if both columns are installed on the constituents
+first. casa-rs initializes the visible physical rows under the constituent
+locks, publishes the saved column projection, and fits across both members.
+Both readers can reopen the fitted cells and the unselected scratch cells
+remain undefined.
+
+With `contsub(outputms, fitspw='0', spw='99', whichcol='data')` on a
+single-window MS, `SubMS` creates the named output before checking whether
+the output window exists. Pinned CASA raises a selection error and leaves a
+zero-row MS at `outputms`. casa-rs checks and writes through the MS transform's
+private stage. The selection error leaves the requested output unpublished.
+
+On an MS with only one physical scratch column, pinned CASA can replace a
+preexisting `MODEL_DATA` with unity when it creates `CORRECTED_DATA`, or
+terminate during modelling when only `CORRECTED_DATA` exists. casa-rs
+initializes the missing column and preserves the existing cells.
+
+The scratch continuum subtractors in CASA 6.7.6.14 assume a data-description
+identifier also identifies its spectral window. When the two DATA_DESCRIPTION
+entries reference windows `[1, 0]`, `continuumsubold(fitspw='0', mode='model')`
+fits rows from window 1. casa-rs follows the DATA_DESCRIPTION mapping and
+fits window 0.
 
 ## UVFITS import can lose fully flagged initial visibility rows
 

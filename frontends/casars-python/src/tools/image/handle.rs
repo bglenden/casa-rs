@@ -7,10 +7,9 @@ use std::path::{Path, PathBuf};
 use casa_coordinates::CoordinateSystem;
 use casa_core::{RecordValue, Value};
 use casa_images::{
-    AnyPagedImage, ImageError, ImagePixel, ImagePixelType, PagedImage, ScratchSpace, TempImage,
-    TempStoragePolicy,
+    AnyPagedImage, ImageError, ImagePixel, ImagePixelType, MiriadImage, PagedImage, ScratchSpace,
+    TempImage, TempStoragePolicy,
     fits_read::{FitsSectionReader, FitsToolImport, fits_section_image},
-    miriad_read::MiriadImage,
 };
 use ndarray::ArrayD;
 use num_complex::{Complex32, Complex64};
@@ -151,12 +150,12 @@ impl ImageHandle {
         lock_attempts: Option<u32>,
         component_cache: bool,
     ) -> Result<Self, ImageError> {
-        if casa_images::concat_file::is_image_concat(path) {
+        if casa_images::is_image_concat(path) {
             return super::concatenate::virtual_image::open_handle(path);
         }
-        if casa_images::ComponentListImage::recognizes_native(path) {
+        if casa_imageanalysis::ComponentListImage::recognizes_native(path) {
             let (source, record) =
-                casa_images::ComponentListImage::open_native(path, component_cache)?;
+                casa_imageanalysis::ComponentListImage::open_native(path, component_cache)?;
             return Self::from_component(source, record);
         }
         #[cfg(unix)]
@@ -169,7 +168,7 @@ impl ImageHandle {
     }
 
     pub(super) fn from_component(
-        source: casa_images::ComponentListImage,
+        source: casa_imageanalysis::ComponentListImage,
         record: RecordValue,
     ) -> Result<Self, ImageError> {
         let image = TempImage::from_read_only_image(
@@ -186,7 +185,7 @@ impl ImageHandle {
 
     pub(super) fn disable_component_cache(&mut self) -> Result<(), ImageError> {
         if let Self::Float(Storage::Temp { image, .. }) = self {
-            image.set_component_cache(false)?;
+            image.set_source_cache(false)?;
         }
         Ok(())
     }
@@ -336,16 +335,16 @@ impl ImageHandle {
         with_pixels!(self, storage => storage.save())
     }
 
-    pub(super) fn history_entries(&self) -> PyResult<Vec<casa_images::image::ImageHistoryRow>> {
+    pub(super) fn history_entries(&self) -> PyResult<Vec<casa_images::ImageHistoryRow>> {
         with_pixels!(self, storage => match storage {
-            Storage::Paged(image) => casa_images::image::image_history_rows(image.name().expect("native image path")).map_err(raised),
+            Storage::Paged(image) => casa_images::image_history_rows(image.name().expect("native image path")).map_err(raised),
             Storage::Temp { image, .. } => Ok(image.history_rows().map_err(raised)?.into_owned()),
         })
     }
 
     pub(super) fn append_history_entries(
         &mut self,
-        entries: &[casa_images::image::ImageHistoryRow],
+        entries: &[casa_images::ImageHistoryRow],
     ) -> PyResult<()> {
         with_pixels!(self, storage => with_storage!(storage, image => image.append_history_entries(entries))).map_err(raised)
     }
@@ -386,7 +385,7 @@ impl ImageHandle {
         {
             let coordinates = CoordinateSystem::from_record(&record).map_err(raised)?;
             image
-                .set_component_coordinates(coordinates, &record)
+                .set_source_coordinates(coordinates, &record)
                 .map_err(raised)?;
             *current = record;
             return Ok(());

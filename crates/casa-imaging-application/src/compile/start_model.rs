@@ -32,9 +32,10 @@
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, StokesType};
+use casa_imageanalysis::{RegridTemplate, check_regrid_along_frequency, regrid_along_frequency};
 use casa_images::{
-    AnyPagedImage, ImageError, ImageInterface, ImagePixel, RegridMethod, RegridTemplate, TempImage,
-    TempStoragePolicy, check_regrid_along_frequency, regrid_along_frequency,
+    AnyPagedImage, ImageError, ImageInterface, ImagePixel, RegridMethod, TempImage,
+    TempStoragePolicy,
 };
 use ndarray::{ArrayD, Zip};
 

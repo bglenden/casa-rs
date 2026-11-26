@@ -77,7 +77,7 @@ fn imhead_edits_spectral_units_as_casa_does() {
             let fits = workspace
                 .path()
                 .join(format!("spectral-{index}-{field}.fits"));
-            casa_images::analysis::export_fits(&path, &fits, velocity, false).unwrap();
+            casa_imageanalysis::analysis::export_fits(&path, &fits, velocity, false).unwrap();
             let bytes = std::fs::read(fits).unwrap();
             let cards = bytes
                 .as_chunks::<80>()

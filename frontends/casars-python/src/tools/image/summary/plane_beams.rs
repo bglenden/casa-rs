@@ -8,7 +8,7 @@ use casa_coordinates::{
 use casa_core::measures::doppler::DopplerRef;
 use casa_core::quanta::{Quantity, Unit, casacore};
 use casa_core::{RecordValue, ScalarValue, Value};
-use casa_images::beam::wrap_position_angle;
+use casa_images::wrap_position_angle;
 use casa_images::{GaussianBeam, ImageBeamSet};
 use pyo3::PyResult;
 

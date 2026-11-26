@@ -30,6 +30,7 @@ mod calibrater_lifecycle;
 pub mod calibration_service;
 pub mod callib;
 pub mod constants;
+pub mod continuum;
 pub mod corrected_export;
 pub mod execute;
 mod flagdata_model;

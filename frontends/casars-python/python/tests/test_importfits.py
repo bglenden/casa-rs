@@ -13,7 +13,7 @@ from casars import tasks, tools
 
 
 ROOT = Path(__file__).resolve().parents[4]
-DATA = ROOT / "crates/casa-images/tests/data/importfits"
+DATA = ROOT / "libs/casacore/casa-images/tests/data/importfits"
 CASA_PYTHON = Path(os.environ.get("CASA_RS_CASA_PYTHON", "/Applications/CASA.app/Contents/MacOS/python3"))
 ORACLE = ROOT / "tools/casa-compat"
 REFERENCE = json.loads((DATA / "expected.json").read_text())

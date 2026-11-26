@@ -79,7 +79,14 @@ impl PyMsTool {
             tiling: tile_layout(tileshape.as_ref())?,
             ..MsTransformTaskOptions::default()
         };
-        self.write_subms(py, outputms, spw, selection, options, Some(history))
+        self.write_subms(
+            py,
+            outputms,
+            spw,
+            selection,
+            options,
+            ("split", Some(history)),
+        )
     }
 }
 

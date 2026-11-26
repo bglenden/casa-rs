@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_core::RecordValue;
-use casa_images::analysis::{HistogramOptions, image_histogram};
+use casa_imageanalysis::analysis::{HistogramOptions, image_histogram};
 use pyo3::prelude::*;
 
 use crate::convert::{DoubleList, IntList};

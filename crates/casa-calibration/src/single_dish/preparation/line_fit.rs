@@ -13,7 +13,7 @@ use casa_core::{
     ArrayValue,
     quanta::{Quantity, Unit},
 };
-use casa_images::analysis::{ChannelLineShape, fit_channel_lines};
+use casa_imageanalysis::analysis::{ChannelLineShape, fit_channel_lines};
 use casa_ms::MeasurementSet;
 use casa_ms::transform::{
     MsTransformRequest, MsTransformTaskOptions, SpectrumBaseline, SpectrumRow, SpectrumWeights,

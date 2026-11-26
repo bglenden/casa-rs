@@ -3,7 +3,7 @@
 
 use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::ParameterValue;
-use casa_images::{ImportFitsRequest, ImportFitsValue, importfits};
+use casa_imageanalysis::{ImportFitsRequest, ImportFitsValue, importfits};
 
 use super::front_end::{image_task_front_end, image_task_success};
 use super::task_contract::ImageAnalysisTaskResult;

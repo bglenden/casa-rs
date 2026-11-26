@@ -12,10 +12,11 @@ default = []
 slow-tests = []
 
 [dependencies]
+casa-imageanalysis.workspace = true
 casa-atmosphere = { path = "../casa-atmosphere" }
-casa-components = { path = "../casa-components" }
+casa-components.workspace = true
 casa-coordinates.workspace = true
-casa-images = { path = "../casa-images" }
+casa-images.workspace = true
 casa-lattices.workspace = true
 casa-fft.workspace = true
 casa-imaging-model = { path = "../casa-imaging-model" }

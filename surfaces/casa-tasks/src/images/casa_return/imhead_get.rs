@@ -4,8 +4,9 @@
 use std::path::Path;
 
 use casa_contracts::{CasaValue, casacore_value_to_casa};
-use casa_images::analysis::{imhead_axis_index, imhead_custom_value, imhead_is_custom_key};
-use casa_images::{ImageError, ImageHeaderSummary};
+use casa_imageanalysis::ImageHeaderSummary;
+use casa_imageanalysis::analysis::{imhead_axis_index, imhead_custom_value, imhead_is_custom_key};
+use casa_images::ImageError;
 
 /// A failure selecting a CASA image-header value.
 #[derive(Debug, thiserror::Error)]
@@ -25,7 +26,7 @@ pub enum ImheadGetError {
 ///
 /// `path` must name the image from which `summary` was computed. For extrema
 /// keys the summary must include the extrema computed by
-/// [`casa_images::analysis::imhead_extrema`]. Unknown and unsupported fields return an error.
+/// [`casa_imageanalysis::analysis::imhead_extrema`]. Unknown and unsupported fields return an error.
 ///
 /// # Errors
 ///

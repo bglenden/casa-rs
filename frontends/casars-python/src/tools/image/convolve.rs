@@ -3,13 +3,11 @@
 use std::path::Path;
 
 use casa_core::{ArrayD, RecordValue};
-use casa_images::{
-    ImageInterface,
-    analysis::{
-        ConvolutionKernel, ConvolutionOptions, ConvolutionPixel, ImageConvolution,
-        ensure_outfile_does_not_alias_input,
-    },
+use casa_imageanalysis::analysis::{
+    ConvolutionKernel, ConvolutionOptions, ConvolutionPixel, ImageConvolution,
+    ensure_outfile_does_not_alias_input,
 };
+use casa_images::ImageInterface;
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyTuple};

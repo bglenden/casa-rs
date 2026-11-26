@@ -10,8 +10,8 @@ use casa_contracts::{
     TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas, TaskSemanticContract,
     builtin_surface_bundle, merged_components,
 };
-use casa_images::analysis::ImheadRequest;
-use casa_images::{
+use casa_imageanalysis::analysis::ImheadRequest;
+use casa_imageanalysis::{
     ExportFitsRequest, FeatherRequest, FeatherSummary, FitsExportSummary, FitsImportSummary,
     ImageHeaderSummary, ImageMathSummary, ImageRegridSummary, ImageSubimageSummary, ImmathRequest,
     ImmomentsRequest, ImportFitsRequest, ImstatOutcome, ImstatRequest, ImsubimageRequest,
@@ -435,7 +435,7 @@ pub(super) fn try_image_analysis_task_schema_bundle() -> Result<TaskProviderCont
 mod tests {
     use std::path::PathBuf;
 
-    use casa_images::analysis::ImheadRequest;
+    use casa_imageanalysis::analysis::ImheadRequest;
 
     use super::{
         IMAGE_ANALYSIS_TASK_PROTOCOL_NAME, ImageAnalysisTaskRequest,

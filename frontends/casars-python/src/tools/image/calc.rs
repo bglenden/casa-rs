@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_images::analysis::{
+use casa_imageanalysis::analysis::{
     ImageToolPixelExpression, calculate_complex_pixels, calculate_real_pixels,
 };
 use pyo3::prelude::*;

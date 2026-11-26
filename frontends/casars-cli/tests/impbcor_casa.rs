@@ -46,10 +46,10 @@ fn invoke(workspace: &Path, values: &Value) -> std::process::Output {
 
 #[test]
 fn task_matches_pinned_casa_products() {
-    let fixtures =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/casa-images/tests/data/impbcor");
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../libs/casacore/casa-images/tests/data/impbcor");
     let recorded: Value = serde_json::from_str(include_str!(
-        "../../../crates/casa-images/tests/data/impbcor/expected.json"
+        "../../../libs/casacore/casa-images/tests/data/impbcor/expected.json"
     ))
     .unwrap();
     assert_eq!(recorded["casa_version"], "6.7.6.14");
@@ -115,8 +115,8 @@ fn task_matches_pinned_casa_products() {
 
 #[test]
 fn failed_overwrite_preserves_input_and_existing_output() {
-    let fixtures =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/casa-images/tests/data/impbcor");
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../libs/casacore/casa-images/tests/data/impbcor");
     let workspace = tempfile::tempdir().unwrap();
     copy_inputs(&fixtures, workspace.path());
     let mut values = json!({"imagename": "cube.im", "pbimage": "plane.im", "outfile": "out.im"});

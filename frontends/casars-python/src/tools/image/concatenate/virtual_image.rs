@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use casa_core::RecordValue;
-use casa_images::concat_file::{ConcatManifest, is_image_concat};
-use casa_images::concatenate::ConcatenationPlan;
-use casa_images::virtual_concat::{ConcatImage, ConcatLockState, ConcatMember};
+use casa_images::ConcatenationPlan;
+use casa_images::{ConcatImage, ConcatLockState, ConcatMember};
+use casa_images::{ConcatManifest, is_image_concat};
 use casa_images::{
     ImageError, ImageInfo, ImageInterface, ImagePixel, ImagePixelType, MutableImageInterface,
     TempImage,
