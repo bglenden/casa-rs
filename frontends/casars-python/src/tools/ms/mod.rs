@@ -6,6 +6,7 @@
 mod addephemeris;
 mod attachment_info;
 mod concatenate;
+mod fits_visibility;
 mod history;
 mod iteration;
 mod legacy_iteration;

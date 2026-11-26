@@ -50,6 +50,7 @@ pub mod concat;
 pub mod derived;
 mod ephemeris;
 pub mod error;
+pub mod fits_visibility;
 pub mod flagging;
 pub mod grouping;
 pub mod listobs;

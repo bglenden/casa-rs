@@ -283,7 +283,10 @@ impl MeasurementSet {
         self.save_using(save_main_table_with_policy)
     }
 
-    fn save_using(&mut self, save_main: fn(&mut Table, &Path) -> MsResult<()>) -> MsResult<()> {
+    fn save_using(
+        &mut self,
+        save_main: impl FnOnce(&mut Table, &Path) -> MsResult<()>,
+    ) -> MsResult<()> {
         let path = self
             .path
             .as_ref()
@@ -526,10 +529,41 @@ impl MeasurementSet {
         })
     }
 
+    pub(crate) fn save_as_with_visibility_tiles(
+        &mut self,
+        path: &Path,
+        visibility_tile: Vec<usize>,
+    ) -> MsResult<()> {
+        self.save_as_using(path, |main, path| {
+            let mut bindings = measurement_set_main_table_bindings(main);
+            let [correlations, channels, rows] = visibility_tile.as_slice() else {
+                return Err(MsError::InvalidInput(
+                    "visibility tiles need three axes".into(),
+                ));
+            };
+            let mut set_shape = |name: &str, shape: Vec<usize>| {
+                if let Some(binding) = bindings.get_mut(name) {
+                    binding.tile_shape = Some(shape);
+                }
+            };
+            for name in ["DATA", "FLAG", "WEIGHT_SPECTRUM"] {
+                set_shape(name, visibility_tile.clone());
+            }
+            set_shape("FLAG_CATEGORY", vec![*correlations, *channels, 1, *rows]);
+            for name in ["WEIGHT", "SIGMA"] {
+                set_shape(name, vec![*correlations, *rows]);
+            }
+            set_shape("UVW", vec![3, 1024]);
+            main.prepare_write()
+                .save_with_bindings(measurement_set_table_options(path), &bindings)?;
+            Ok(())
+        })
+    }
+
     fn save_as_using(
         &mut self,
         path: &Path,
-        save_main: fn(&mut Table, &Path) -> MsResult<()>,
+        save_main: impl FnOnce(&mut Table, &Path) -> MsResult<()>,
     ) -> MsResult<()> {
         let path = path.to_path_buf();
         let target = crate::write_session::MeasurementSetCreateTarget::prepare(&path, true)
