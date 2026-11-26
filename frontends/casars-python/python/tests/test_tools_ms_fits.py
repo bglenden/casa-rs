@@ -654,3 +654,37 @@ def test_tofits_combined_if_system_calibration(fits_stock, tmp_path):
         with pytest.raises(RuntimeError, match="repeated SYSCAL spectral window"):
             writer.tofits(str(output), combinespw=True, writesyscal=True, overwrite=True)
     assert output.read_bytes() == previous
+
+
+@pytest.mark.parametrize("column,offset", [("CoRrEcTeD", 11), ("MODEL_DATA", 23), ("unknown", 0)])
+def test_tofits_columns_and_active_view(fits_stock, tmp_path, column, offset):
+    casa = pinned_casa()
+    source = tmp_path / "columns.ms"
+    copytree(fits_stock / "uvfits_test.ms", source)
+    with closing(casa.table()) as table:
+        assert table.open(str(source), nomodify=False)
+        descriptor = variable_test_column(table, "DATA")
+        data = table.getcol("DATA")
+        for name, shift in (("CORRECTED_DATA", 11), ("MODEL_DATA", 23)):
+            if name not in table.colnames():
+                assert table.addcols({name: descriptor})
+            assert table.putcol(name, np.full_like(data, shift + 2j))
+    results = []
+    for api, label in ((casa, "casa"), (tools, "native")):
+        output = tmp_path / f"{label}.uvfits"
+        with closing(api.ms()) as ms:
+            assert ms.tofits(str(output), column=column)
+            assert not output.exists()
+            assert ms.open(str(source))
+            assert ms.msselect({"spw": "1"})
+            before = ms.nrow()
+            assert ms.tofits(str(output), column=column)
+            assert ms.name() == str(source) and ms.nrow() == before and not ms.iswritable()
+        target = tmp_path / f"{label}.ms"
+        with closing(casa.ms()) as reader:
+            assert reader.fromfits(str(target), str(output))
+            assert reader.nrow() == 315
+        results.append(read(casa, target, ["DATA", "FLAG"]))
+    compare(*results)
+    if offset:
+        np.testing.assert_array_equal(results[-1]["DATA"], np.full_like(results[-1]["DATA"], offset + 2j))
