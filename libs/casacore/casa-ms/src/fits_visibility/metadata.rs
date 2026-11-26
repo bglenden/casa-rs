@@ -558,7 +558,7 @@ fn string_key(hdu: &FitsHdu, fits: &mut FitsFile, key: &str, fallback: &str) -> 
         .map_or_else(|| fallback.to_owned(), |value| value.trim_end().to_owned()))
 }
 
-fn history(fits: &mut FitsFile) -> MsResult<Vec<String>> {
+pub(super) fn history(fits: &mut FitsFile) -> MsResult<Vec<String>> {
     use fitsio::{errors, sys};
     let mut result = Vec::new();
     let (mut status, mut count, mut space) = (0, 0, 0);

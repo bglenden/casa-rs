@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use casa_ms::MsSelection;
+use casa_ms::fits_visibility::{FitsIdiOptions, import_fits_idi};
 use casa_ms::fits_visibility::{
     UvFitsExportOptions, UvFitsImportOptions, export_uvfits, import_uvfits,
 };
@@ -40,6 +41,36 @@ impl PyMsTool {
             import_uvfits(Path::new(fitsfile), output, options).map_err(runtime_error)?;
             let output = table_cache_name(output).map_err(runtime_error)?;
             *attached = Some(AttachedMs::open(output, !nomodify, lock, false)?);
+            Ok(true)
+        })
+    }
+
+    /// Import a FITS-IDI data set and attach the created MeasurementSet.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (msfile = "", fitsfile = "", nomodify = true, lock = false, obstype = 0), text_signature = "($self, msfile='', fitsfile='', nomodify=True, lock=False, obstype=0)")]
+    fn fromfitsidi(
+        &self,
+        py: Python<'_>,
+        msfile: &str,
+        fitsfile: &str,
+        #[pyo3(from_py_with = strict_bool)] nomodify: bool,
+        #[pyo3(from_py_with = strict_bool)] lock: bool,
+        obstype: i64,
+    ) -> PyResult<bool> {
+        let options = FitsIdiOptions {
+            observation_type: obstype as i32,
+            overwrite: !nomodify,
+        };
+        py.detach(|| {
+            let mut attached = self.attached.lock().map_err(runtime_error)?;
+            let output = Path::new(msfile);
+            import_fits_idi(Path::new(fitsfile), output, options).map_err(runtime_error)?;
+            *attached = Some(AttachedMs::open(
+                table_cache_name(output).map_err(runtime_error)?,
+                !nomodify,
+                lock,
+                false,
+            )?);
             Ok(true)
         })
     }

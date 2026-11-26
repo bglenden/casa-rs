@@ -611,33 +611,13 @@ impl BinaryGroups {
 }
 
 fn correlation_order(stokes: &Axis, binary: bool) -> MsResult<(Vec<Correlation>, Vec<usize>)> {
-    use Correlation::{I, LL, LR, Q, RL, RR, U, V, XX, XY, YX, YY};
     if stokes.length > 12 {
         return Err(invalid("Too many UVFITS Stokes values"));
     }
     let inputs = (0..stokes.length)
         .map(|index| {
             let code = (stokes.coordinate(index) + 0.5).floor() as i32;
-            let correlation = match code {
-                -1 => RR,
-                -2 => LL,
-                -3 => RL,
-                -4 => LR,
-                -5 => XX,
-                -6 => YY,
-                -7 => XY,
-                -8 => YX,
-                1 if binary => I,
-                2 if binary => Q,
-                3 if binary => U,
-                4 if binary => V,
-                1..=4 => {
-                    return Err(invalid(
-                        "UVFITS Stokes parameters cannot be decomposed into correlations",
-                    ));
-                }
-                _ => return Err(invalid(format!("Unknown UVFITS correlation type {code}"))),
-            };
+            let correlation = fits_correlation(code, binary)?;
             Ok((correlation, index))
         })
         .collect::<MsResult<Vec<_>>>()?;
@@ -647,6 +627,30 @@ fn correlation_order(stokes: &Axis, binary: bool) -> MsResult<(Vec<Correlation>,
         return Err(invalid("Repeated UVFITS Stokes values"));
     }
     Ok(inputs.into_iter().unzip())
+}
+
+pub(super) fn fits_correlation(code: i32, allow_stokes: bool) -> MsResult<Correlation> {
+    use Correlation::{I, LL, LR, Q, RL, RR, U, V, XX, XY, YX, YY};
+    Ok(match code {
+                -1 => RR,
+                -2 => LL,
+                -3 => RL,
+                -4 => LR,
+                -5 => XX,
+                -6 => YY,
+                -7 => XY,
+                -8 => YX,
+                1 if allow_stokes => I,
+                2 if allow_stokes => Q,
+                3 if allow_stokes => U,
+                4 if allow_stokes => V,
+                1..=4 => {
+                    return Err(invalid(
+                        "UVFITS Stokes parameters cannot be decomposed into correlations",
+                    ));
+                }
+                _ => return Err(invalid(format!("Unknown UVFITS correlation type {code}"))),
+    })
 }
 
 pub(super) fn binary_extension_name(fits: &mut FitsFile, index: usize) -> MsResult<Option<String>> {

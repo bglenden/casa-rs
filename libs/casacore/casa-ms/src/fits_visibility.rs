@@ -4,12 +4,14 @@
 mod export_calibration;
 mod export_layout;
 mod export_metadata;
+mod fits_idi;
 mod groups;
 mod metadata;
 mod uvfits_export;
 mod uvfits_import;
 mod uvfits_ms;
 
+pub use fits_idi::{FitsIdiOptions, import_fits_idi};
 pub use uvfits_export::{UvFitsExportOptions, export_uvfits};
 pub use uvfits_import::{UvFitsImportOptions, import_uvfits};
 
