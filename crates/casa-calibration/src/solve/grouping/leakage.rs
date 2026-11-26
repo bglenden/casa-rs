@@ -19,7 +19,7 @@ use crate::solve_stats::{
     AntennaSolution, IntervalStages, SolveStats, SolveStatsBuilder, ToolSolveActivity,
 };
 use crate::{ApplyCalibrationTableSpec, SelectedData};
-use casa_provider_contracts::CasaValue;
+use casa_contracts::CasaValue;
 use std::path::PathBuf;
 
 use interval::{IntervalFits, LeakageFitStages};

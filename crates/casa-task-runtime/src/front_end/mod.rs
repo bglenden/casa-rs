@@ -27,8 +27,8 @@
 //! surface's contract and writes one [`TaskReply`] to stdout, whose exit
 //! status agrees with it; [`classify_task_exit`] reads it back.
 //!
-//! [`TaskRunRequest`]: casa_provider_contracts::TaskRunRequest
-//! [`TaskReply`]: casa_provider_contracts::TaskReply
+//! [`TaskRunRequest`]: casa_contracts::TaskRunRequest
+//! [`TaskReply`]: casa_contracts::TaskReply
 
 mod help;
 mod inspect;
@@ -43,12 +43,12 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
-use casa_logging::{CasaLoggingConfig, CasaLoggingError, CasaLoggingGuard};
-use casa_provider_contracts::{
+use casa_contracts::{
     CasaValue, EXIT_EXECUTION_FAILED, EXIT_SUCCEEDED, EXIT_VALIDATION_FAILED, ParameterValue,
     ProviderProtocolDescriptor, SurfaceContractBundle, TaskFailureKind, TaskFrontEndSchemas,
     TaskProviderContract, TaskReply, TaskRunRequest,
 };
+use casa_logging::{CasaLoggingConfig, CasaLoggingError, CasaLoggingGuard};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use serde_json::{Map, Value};
@@ -325,9 +325,9 @@ where
 {
     /// The front end of `program`, which hosts `surfaces` from `contract`; the
     /// first runs when the command line's first word names none.
-    pub fn new<E: Serialize>(
+    pub fn new(
         program: impl Into<String>,
-        contract: TaskProviderContract<E>,
+        contract: TaskProviderContract,
         surfaces: &[&str],
         execute: F,
     ) -> Result<Self, String> {
@@ -400,12 +400,12 @@ where
         })
     }
 
-    fn construct<E: Serialize>(
+    fn construct(
         program: impl Into<String>,
-        mut contract: TaskProviderContract<E>,
+        mut contract: TaskProviderContract,
         surfaces: &[&str],
         execute: F,
-        document: impl FnOnce(TaskProviderContract<E>) -> Result<ContractDocument, String>,
+        document: impl FnOnce(TaskProviderContract) -> Result<ContractDocument, String>,
     ) -> Result<Self, String> {
         contract.validate().map_err(|errors| {
             errors
@@ -1098,8 +1098,8 @@ fn apply_typed_values(
     Ok(())
 }
 
-fn has_variant_domain(domain: &casa_provider_contracts::ParameterType) -> bool {
-    use casa_provider_contracts::ParameterType;
+fn has_variant_domain(domain: &casa_contracts::ParameterType) -> bool {
+    use casa_contracts::ParameterType;
     match domain {
         ParameterType::Variant => true,
         ParameterType::Optional { value, .. } => has_variant_domain(value),

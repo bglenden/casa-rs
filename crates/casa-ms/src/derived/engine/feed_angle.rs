@@ -109,7 +109,7 @@ impl MsCalEngine {
     }
 
     /// The visibility iterator evaluates waveguide mounts with signed azimuths.
-    pub(crate) fn iterator_feed_parallactic_angle(
+    pub fn iterator_feed_parallactic_angle(
         &self,
         time_mjd_sec: f64,
         field_id: usize,
@@ -127,7 +127,7 @@ impl MsCalEngine {
 
     /// CASA's array parallactic angle uses the first antenna's mount at
     /// the array reference position.
-    pub(crate) fn array_feed_angle_at_position(
+    pub fn array_feed_angle_at_position(
         &self,
         time_mjd_sec: f64,
         field_id: usize,

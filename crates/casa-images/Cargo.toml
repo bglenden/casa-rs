@@ -14,8 +14,6 @@ workspace = true
 casa-components = { path = "../casa-components" }
 casa-fft = { path = "../casa-fft" }
 casa-coordinates = { path = "../casa-coordinates" }
-casa-provider-contracts = { path = "../casa-provider-contracts" }
-casa-task-runtime = { path = "../casa-task-runtime" }
 casa-lattices = { path = "../casa-lattices" }
 casa-numerics = { path = "../casa-numerics" }
 casa-tables = { path = "../casa-tables" }
@@ -29,13 +27,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 tempfile = "3"
 thiserror.workspace = true
 
-[build-dependencies]
-casa-provider-contracts = { path = "../casa-provider-contracts" }
-schemars = { version = "0.8", features = ["derive"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order"] }
-
 [dev-dependencies]
-casa-test-support = { path = "../casa-test-support" }
+casa-test-support = { path = "../../dev/casa-test-support" }
 serde_json = { version = "1", features = ["preserve_order"] }
 tempfile = "3"

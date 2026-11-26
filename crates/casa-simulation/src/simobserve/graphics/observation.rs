@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Antenna layout and every positive/negative UV point in the observation.
 
-use casa_ms::{
-    MeasurementSet,
-    columns::uvw_column::UvwColumn,
-    plot_document::{PlotArrayDtype, PlotDocumentPanel, PlotLayerData, PlotLayerKind},
+use casa_ms::{MeasurementSet, columns::uvw_column::UvwColumn};
+use casa_plot_data::plot_document::{
+    PlotArrayDtype, PlotDocumentPanel, PlotLayerData, PlotLayerKind,
 };
 
 use super::document::{annotation, layer, panel};

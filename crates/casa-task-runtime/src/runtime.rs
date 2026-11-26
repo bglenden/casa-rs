@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-use casa_provider_contracts::{ParameterType, ParameterValue, SurfaceContractBundle};
+use casa_contracts::{ParameterType, ParameterValue, SurfaceContractBundle};
 use thiserror::Error;
 
 use crate::{
@@ -275,7 +275,7 @@ pub struct ParameterTextError(String);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use casa_provider_contracts::builtin_surface_bundle;
+    use casa_contracts::builtin_surface_bundle;
 
     #[test]
     fn missing_last_is_not_replaced_with_defaults() {

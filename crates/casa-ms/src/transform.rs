@@ -55,21 +55,22 @@ mod input_view;
 mod legacy_split;
 mod legacy_time;
 mod main_arrays;
+mod model_references;
 mod multi_ms;
 mod output_layout;
 mod regrid;
-mod selection_metadata;
+pub mod selection_metadata;
 mod single_dish_polarization;
 mod spectral_metadata;
 mod subtable_copy;
 pub(crate) mod task_history;
-pub(crate) mod time_average;
+pub mod time_average;
 mod time_projection;
 mod visibility_columns;
 
 pub use baseline::{SpectrumBaseline, SpectrumRow, SpectrumWeights};
 use channel_average::{ChannelAverages, SpectrumCells, unaveraged_spectra};
-pub(crate) use channel_average::{
+pub use channel_average::{
     WeightKind, mean_weight_preferring_unflagged, sigma_from_weight, visibility_weight_kind,
     weight_from_sigma,
 };
@@ -80,17 +81,18 @@ pub use convolution::{SpectrumConvolution, convolve_spectra, transform_baseline_
 use correlation_metadata::{CorrelationSelection, select_visibility_axes};
 pub use input_view::{PreparedTransformInputView, TransformInputColumns, TransformInputView};
 use main_arrays::MainArrayBlock;
+pub use model_references::{PlotMsModelReferences, PlotMsModelSpwSelection};
 pub use regrid::{
     LegacySpectralGrid, ToolGridFrameTables, ToolGridPhaseCentre, ToolSpectralWindow,
     reframe_staged_ms, tool_channel_frequencies, tool_grid_frame_at_epoch,
     tool_grid_reference_epoch,
 };
-pub(crate) use selection_metadata::selected_plotms_integration_order;
+pub use selection_metadata::selected_plotms_integration_order;
 use single_dish_polarization::PolarizationProjection;
 pub use single_dish_polarization::{SingleDishPolarizationAverage, ensure_stokes_i_polarization};
 use subtable_copy::copy_subtables;
 pub use task_history::{TransformTaskHistory, append_task_history};
-pub(crate) use time_average::{
+pub use time_average::{
     PlotTimeGroups, PlotTimePhaseReferences, TimeUvwAverage, centered_time_and_interval,
     selected_plot_time_groups,
 };

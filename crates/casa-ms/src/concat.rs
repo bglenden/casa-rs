@@ -9,8 +9,6 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use casa_observation::{MergeTolerance, ObservationError};
-use casa_provider_contracts::{CasaValue, TaskProviderContract};
-use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_types::quanta::{Quantity, Unit};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -60,32 +58,6 @@ pub struct ConcatReport {
     pub batches: usize,
     /// Deliberate defaulting and history handling reported by the writer.
     pub notices: Vec<String>,
-}
-
-/// The canonical task contract on the shared CLI/Python envelope.
-pub fn concat_task_schema_bundle() -> TaskProviderContract {
-    crate::task_contract::one_shot_contract::<ConcatRequest, ConcatReport>(
-        "casa_ms_concat_task",
-        &["concat"],
-    )
-}
-
-/// The command-line host; all scientific work is in [`concat()`].
-pub fn concat_front_end()
--> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
-    TaskFrontEnd::new_with_deferred_schema(
-        "concat",
-        concat_task_schema_bundle(),
-        &["concat"],
-        |task| {
-            let request: ConcatRequest =
-                serde_json::from_value(serde_json::json!(task.plain_values()))
-                    .map_err(|e| TaskFailure::validation(e.to_string()))?;
-            let report = concat(&request).map_err(|e| TaskFailure::execution(e.to_string()))?;
-            crate::ms_task_success(CasaValue::None, &report)
-        },
-    )
-    .expect("concat contract")
 }
 
 /// Concatenate simulation MeasurementSets through the bounded creation plan.

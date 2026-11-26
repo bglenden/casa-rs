@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use casa_provider_contracts::{CasaValue, ParameterValue};
+use casa_contracts::{CasaValue, ParameterValue};
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use serde::Serialize;
 

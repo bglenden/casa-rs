@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use casa_provider_contracts::{
+use casa_contracts::{
     ObjectSemanticContract, ObjectTypeContract, ProviderComponentSchemas,
     ProviderProjectionMetadata, ProviderSurfaceKind, merged_components,
 };
@@ -253,7 +253,7 @@ impl DataObjectSchemaBundle {
 
 #[cfg(test)]
 mod tests {
-    use casa_provider_contracts::ProviderSurfaceKind;
+    use casa_contracts::ProviderSurfaceKind;
 
     use super::{
         DATA_OBJECT_PROTOCOL_NAME, DATA_OBJECT_PROTOCOL_VERSION, DataObjectProtocolInfo,

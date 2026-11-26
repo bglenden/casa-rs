@@ -30,4 +30,4 @@ tempfile = "3"
 thiserror.workspace = true
 
 [dev-dependencies]
-casa-test-support = { path = "../casa-test-support" }
+casa-test-support = { path = "../../dev/casa-test-support" }

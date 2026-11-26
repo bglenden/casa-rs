@@ -42,13 +42,9 @@ fi
 # The end-to-end tests start a real task executable, which a development
 # checkout's resolver finds in this build (#931); they must not skip here.
 echo "==> Building the task executables the end-to-end tests run"
-cargo build -q -p casa-ms --bin flagmanager --bin msexplore -p casa-calibration --bin calibrate --bin flagdata
-cargo build -q -p casa-images --bin immath --bin exportfits --bin imsubimage --bin importfits --bin impv
-cargo build -q -p casars-imexplore --bin imexplore
-cargo build -q -p casa-images --bin imregrid
-cargo build -q -p casars-msconvert --bin msconvert
+cargo build -q -p casa-calibration --bin calibrate --bin flagdata
+cargo build -q -p casars-cli --bin concat --bin flagmanager --bin msexplore --bin msconvert --bin immath --bin exportfits --bin imsubimage --bin importfits --bin impv --bin imexplore --bin imregrid --bin immoments --bin impbcor --bin feather --bin importvla
 cargo build -q -p casars-simulation --bin simobserve --bin simanalyze --bin simalma
-cargo build -q -p casa-images --bin immoments --bin impbcor --bin feather
 export CASARS_REQUIRE_TASK_BINARIES=1
 
 editable_venv="$tmp_root/editable-venv"

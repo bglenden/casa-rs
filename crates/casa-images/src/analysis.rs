@@ -12,7 +12,6 @@ use casa_lattices::{
     StatisticsAlgorithmKind, StatsElement, TiledShape, compute_robust_stats, parse_algorithm,
     parse_center, parse_clmethod,
 };
-use casa_provider_contracts::ParameterValue;
 use casa_tables::{Table, TableOptions};
 use casa_types::{ArrayD, RecordValue, ScalarValue, Value};
 use fitsio::images::ImageType as FitsImageType;
@@ -69,12 +68,12 @@ pub use imsubimage::{
 };
 pub use imsubimage::{ImageSepConvolution, SepConvolutionOptions};
 pub use imsubimage::{ImageTwoPoint, StructurePixel, TwoPointOptions};
+mod imhead_value;
 mod list_log;
 mod projection_header;
 mod quantity_input;
 mod schema;
 mod summary_log;
-mod task_contract;
 mod transpose;
 pub use transpose::copy_transposed_image;
 mod world_header;
@@ -104,20 +103,13 @@ pub use self::lel_mask::{
 };
 pub use crate::expr_parser::ImageToolPixelExpression;
 mod lel_pixels;
+pub use self::imhead_value::ImheadValue;
 pub use self::lel_pixels::{
     calculate_complex_pixels, calculate_real_pixels, materialize_image_tool_expression,
 };
 pub use self::list_log::imhead_list_log;
-#[cfg(casa_prebuilt_image_provider)]
-pub(crate) use self::schema::schema_maps_preserve_order;
 pub use self::schema::*;
 pub use self::summary_log::imhead_summary_log;
-#[cfg(casa_prebuilt_image_provider)]
-pub(crate) use self::task_contract::IMAGE_ANALYSIS_TASK_SURFACES;
-pub use self::task_contract::{
-    IMAGE_ANALYSIS_TASK_PROTOCOL_NAME, IMAGE_ANALYSIS_TASK_PROTOCOL_VERSION,
-    image_analysis_protocol_descriptor, image_analysis_task_schema_bundle,
-};
 use crate::expr_parser::{ExprParseError, ExprValueConvert, HashMapResolver, parse_mask_expr};
 use crate::fits_read::{PrimaryHdu, image_info_from_fits_header};
 use crate::image_expr::ImageExprValue;
@@ -128,47 +120,6 @@ use crate::{
 
 const SPEED_OF_LIGHT_KM_S: f64 = 299_792.458;
 const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
-
-/// Run an image-analysis JSON task request.
-pub fn run_image_analysis_task(
-    request: ImageAnalysisTaskRequest,
-) -> Result<ImageAnalysisTaskResult, ImageError> {
-    match request {
-        ImageAnalysisTaskRequest::Imhead(request) => {
-            Ok(ImageAnalysisTaskResult::Imhead(imhead(&request.imagename)?))
-        }
-        ImageAnalysisTaskRequest::Imstat(request) => {
-            Ok(ImageAnalysisTaskResult::Imstat(imstat(&request)?))
-        }
-        ImageAnalysisTaskRequest::Immoments(request) => {
-            Ok(ImageAnalysisTaskResult::Immoments(immoments(&request)?))
-        }
-        ImageAnalysisTaskRequest::Impv(request) => {
-            Ok(ImageAnalysisTaskResult::Impv(impv(&request)?))
-        }
-        ImageAnalysisTaskRequest::Imsubimage(request) => {
-            Ok(ImageAnalysisTaskResult::Imsubimage(imsubimage(&request)?))
-        }
-        ImageAnalysisTaskRequest::Immath(request) => {
-            Ok(ImageAnalysisTaskResult::Immath(immath(&request)?))
-        }
-        ImageAnalysisTaskRequest::Impbcor(request) => {
-            Ok(ImageAnalysisTaskResult::Impbcor(impbcor(&request)?))
-        }
-        ImageAnalysisTaskRequest::Imregrid(request) => {
-            Ok(ImageAnalysisTaskResult::Imregrid(imregrid(&request)?))
-        }
-        ImageAnalysisTaskRequest::Feather(request) => {
-            Ok(ImageAnalysisTaskResult::Feather(feather(&request)?))
-        }
-        ImageAnalysisTaskRequest::Exportfits(request) => {
-            Ok(ImageAnalysisTaskResult::Exportfits(exportfits(&request)?))
-        }
-        ImageAnalysisTaskRequest::Importfits(request) => {
-            Ok(ImageAnalysisTaskResult::Importfits(importfits(&request)?))
-        }
-    }
-}
 
 /// Return a CASA `imhead(..., mode="summary")`-style metadata summary.
 pub fn imhead(path: impl AsRef<Path>) -> Result<ImageHeaderSummary, ImageError> {
@@ -512,7 +463,7 @@ pub fn imhead_put(
 pub fn imhead_put_reference_pixel(
     path: impl AsRef<Path>,
     hdkey: &str,
-    hdvalue: &ParameterValue,
+    hdvalue: &ImheadValue,
 ) -> Result<ImageHeaderSummary, ImageError> {
     let path = path.as_ref();
     validate_imhead_image(path)?;
@@ -539,14 +490,11 @@ pub fn imhead_put_reference_pixel(
         ));
     }
     let (value, rendered) = match hdvalue {
-        ParameterValue::Integer(value) => {
-            let value = casa_provider_contracts::casa_variant_integer(*value);
-            (f64::from(value), value.to_string())
-        }
-        ParameterValue::Float(value) if value.is_finite() => {
+        ImheadValue::Int(value) => (f64::from(*value), value.to_string()),
+        ImheadValue::Float(value) if value.is_finite() => {
             (*value, projection_header::cpp_number_precision(*value, 12))
         }
-        ParameterValue::String(value) => (
+        ImheadValue::String(value) => (
             value.parse::<f64>().map_err(|_| {
                 ImageError::InvalidMetadata(format!("fromString failure for string {value:?}"))
             })?,
@@ -576,7 +524,7 @@ pub fn imhead_put_reference_pixel(
 }
 
 /// Parse the one-based digit prefix used by CASA's image-header axis keys.
-pub(crate) fn imhead_axis_index(suffix: &str) -> Option<usize> {
+pub fn imhead_axis_index(suffix: &str) -> Option<usize> {
     let digits = suffix.bytes().take_while(u8::is_ascii_digit).count();
     suffix[..digits].parse::<usize>().ok()?.checked_sub(1)
 }
@@ -590,7 +538,7 @@ pub(crate) fn imhead_axis_index(suffix: &str) -> Option<usize> {
 pub fn imhead_put_axis_quantity(
     path: impl AsRef<Path>,
     hdkey: &str,
-    hdvalue: &ParameterValue,
+    hdvalue: &ImheadValue,
 ) -> Result<ImageHeaderSummary, ImageError> {
     let path = path.as_ref();
     validate_imhead_image(path)?;
@@ -655,19 +603,19 @@ fn imhead_put_stokes_values(
     path: &Path,
     key: &str,
     axis: usize,
-    value: &ParameterValue,
+    value: &ImheadValue,
 ) -> Result<ImageHeaderSummary, ImageError> {
     let (names, rendered) = match value {
-        ParameterValue::String(value) if !value.is_empty() => {
+        ImheadValue::String(value) if !value.is_empty() => {
             (vec![value.clone()], format!("\"{value}\""))
         }
-        ParameterValue::Array(values) if !values.is_empty() => {
+        ImheadValue::List(values) if !values.is_empty() => {
             let mixed = values
                 .iter()
-                .any(|value| matches!(value, ParameterValue::String(_)))
+                .any(|value| matches!(value, ImheadValue::String(_)))
                 && values
                     .iter()
-                    .any(|value| !matches!(value, ParameterValue::String(_)));
+                    .any(|value| !matches!(value, ImheadValue::String(_)));
             if mixed {
                 return Err(ImageError::InvalidMetadata(
                     "Mixed-type polarization arrays are unsupported (#977)".into(),
@@ -676,7 +624,7 @@ fn imhead_put_stokes_values(
             let names = values
                 .iter()
                 .map(|value| match value {
-                    ParameterValue::String(value) => Ok(value.clone()),
+                    ImheadValue::String(value) => Ok(value.clone()),
                     _ => Err(ImageError::InvalidMetadata(
                         "Polarization values must be strings".into(),
                     )),
@@ -684,6 +632,33 @@ fn imhead_put_stokes_values(
                 .collect::<Result<Vec<_>, _>>()?;
             let rendered = format!("[{}]", names.join(", "));
             (names, rendered)
+        }
+        ImheadValue::Array(casa_types::ArrayValue::String(values)) if !values.is_empty() => {
+            let names: Vec<String> = values.iter().cloned().collect();
+            let rendered = format!("[{}]", names.join(", "));
+            (names, rendered)
+        }
+        ImheadValue::Array(array)
+            if !matches!(
+                array,
+                casa_types::ArrayValue::Bool(values) if values.is_empty()
+            ) && !matches!(
+                array,
+                casa_types::ArrayValue::Int32(values) if values.is_empty()
+            ) && !matches!(
+                array,
+                casa_types::ArrayValue::Float64(values) if values.is_empty()
+            ) && !matches!(
+                array,
+                casa_types::ArrayValue::Complex64(values) if values.is_empty()
+            ) && !matches!(
+                array,
+                casa_types::ArrayValue::String(values) if values.is_empty()
+            ) =>
+        {
+            return Err(ImageError::InvalidMetadata(
+                "Polarization values must be strings".into(),
+            ));
         }
         _ => {
             return Err(ImageError::InvalidMetadata(
@@ -727,7 +702,7 @@ fn imhead_put_stokes_values(
 /// image I/O failure. History I/O may fail after the metadata is saved.
 pub fn imhead_put_rest_frequency(
     path: impl AsRef<Path>,
-    hdvalue: &ParameterValue,
+    hdvalue: &ImheadValue,
 ) -> Result<ImageHeaderSummary, ImageError> {
     let path = path.as_ref();
     validate_imhead_image(path)?;
@@ -777,7 +752,7 @@ pub fn imhead_put_rest_frequency(
 /// cannot be updated. History I/O may fail after the metadata is saved.
 pub fn imhead_add_rest_frequency(
     path: impl AsRef<Path>,
-    hdvalue: &ParameterValue,
+    hdvalue: &ImheadValue,
 ) -> Result<ImageHeaderSummary, ImageError> {
     let path = path.as_ref();
     let summary = imhead(path)?;
@@ -802,14 +777,14 @@ pub fn imhead_add_rest_frequency(
 pub fn imhead_put_observation_date(
     path: impl AsRef<Path>,
     hdkey: &str,
-    hdvalue: &ParameterValue,
+    hdvalue: &ImheadValue,
 ) -> Result<ImageHeaderSummary, ImageError> {
     use casa_types::measures::{EpochRef, MEpoch};
     use casa_types::quanta::{Unit, casacore::get_conformant_value, format};
 
     let path = path.as_ref();
     validate_imhead_image(path)?;
-    if matches!(hdvalue, ParameterValue::String(value) if value.is_empty()) {
+    if matches!(hdvalue, ImheadValue::String(value) if value.is_empty()) {
         return Err(ImageError::InvalidMetadata(format!(
             "{hdkey} value not specified"
         )));
@@ -898,11 +873,11 @@ fn valid_imhead_calendar_date(days: f64) -> bool {
 pub fn imhead_put_direction_reference(
     path: impl AsRef<Path>,
     hdkey: &str,
-    hdvalue: &ParameterValue,
+    hdvalue: &ImheadValue,
 ) -> Result<ImageHeaderSummary, ImageError> {
     let path = path.as_ref();
     validate_imhead_image(path)?;
-    let ParameterValue::String(reference) = hdvalue else {
+    let ImheadValue::String(reference) = hdvalue else {
         return Err(ImageError::InvalidMetadata(
             "equinox value must be a string".into(),
         ));
@@ -944,11 +919,11 @@ pub fn imhead_put_direction_reference(
 pub fn imhead_put_projection(
     path: impl AsRef<Path>,
     hdkey: &str,
-    hdvalue: &ParameterValue,
+    hdvalue: &ImheadValue,
 ) -> Result<ImageHeaderSummary, ImageError> {
     let path = path.as_ref();
     validate_imhead_image(path)?;
-    let ParameterValue::String(projection) = hdvalue else {
+    let ImheadValue::String(projection) = hdvalue else {
         return Err(ImageError::InvalidMetadata(
             "projection value must be a string".into(),
         ));
@@ -990,11 +965,11 @@ pub fn imhead_put_projection(
 pub fn imhead_put_spectral_reference(
     path: impl AsRef<Path>,
     hdkey: &str,
-    hdvalue: &ParameterValue,
+    hdvalue: &ImheadValue,
 ) -> Result<ImageHeaderSummary, ImageError> {
     let path = path.as_ref();
     validate_imhead_image(path)?;
-    let ParameterValue::String(reference) = hdvalue else {
+    let ImheadValue::String(reference) = hdvalue else {
         return Err(ImageError::InvalidMetadata(
             "reffreqtype value must be a string".into(),
         ));
@@ -1040,7 +1015,7 @@ pub fn imhead_change_beam(
     path: impl AsRef<Path>,
     mode: &str,
     hdkey: &str,
-    hdvalue: &ParameterValue,
+    hdvalue: &ImheadValue,
 ) -> Result<(ImageHeaderSummary, bool), ImageError> {
     let path = path.as_ref();
     validate_imhead_image(path)?;
@@ -1079,7 +1054,7 @@ fn edit_beam<T: ImagePixel>(
     mode: &str,
     hdkey: &str,
     component: crate::BeamComponent,
-    hdvalue: &ParameterValue,
+    hdvalue: &ImheadValue,
 ) -> Result<Option<(&'static str, String)>, ImageError> {
     use crate::BeamComponent;
     let info = image.image_info()?;
@@ -1168,7 +1143,7 @@ fn edit_beam<T: ImagePixel>(
 pub fn imhead_put_axis_name(
     path: impl AsRef<Path>,
     hdkey: &str,
-    hdvalue: &ParameterValue,
+    hdvalue: &ImheadValue,
 ) -> Result<ImageHeaderSummary, ImageError> {
     imhead_put_axis_text(path.as_ref(), hdkey, hdvalue, "ctype")
 }
@@ -1182,7 +1157,7 @@ pub fn imhead_put_axis_name(
 pub fn imhead_put_axis_unit(
     path: impl AsRef<Path>,
     hdkey: &str,
-    hdvalue: &ParameterValue,
+    hdvalue: &ImheadValue,
 ) -> Result<ImageHeaderSummary, ImageError> {
     imhead_put_axis_text(path.as_ref(), hdkey, hdvalue, "cunit")
 }
@@ -1190,7 +1165,7 @@ pub fn imhead_put_axis_unit(
 fn imhead_put_axis_text(
     path: &Path,
     hdkey: &str,
-    hdvalue: &ParameterValue,
+    hdvalue: &ImheadValue,
     prefix: &str,
 ) -> Result<ImageHeaderSummary, ImageError> {
     validate_imhead_image(path)?;
@@ -1212,7 +1187,7 @@ fn imhead_put_axis_text(
             "A polarization axis cannot have a unit".into(),
         ));
     }
-    let ParameterValue::String(name) = hdvalue else {
+    let ImheadValue::String(name) = hdvalue else {
         return Err(ImageError::InvalidMetadata(format!(
             "{key} value must be a string"
         )));
@@ -1309,32 +1284,22 @@ pub fn imhead_is_custom_key(key: &str) -> bool {
 ///
 /// Returns an error for a missing field, a type CASA cannot read, an
 /// unsupported field type, or an unreadable image.
-pub fn imhead_custom_value(
-    path: impl AsRef<Path>,
-    key: &str,
-) -> Result<casa_provider_contracts::CasaValue, ImageError> {
+pub fn imhead_custom_value(path: impl AsRef<Path>, key: &str) -> Result<Value, ImageError> {
     let path = path.as_ref();
     if path.is_file() {
         return imhead_fits::custom_value(path, key);
     }
-    fn get<T: ImagePixel>(
-        image: &PagedImage<T>,
-        key: &str,
-    ) -> Result<casa_provider_contracts::CasaValue, ImageError> {
-        use casa_provider_contracts::CasaValue;
+    fn get<T: ImagePixel>(image: &PagedImage<T>, key: &str) -> Result<Value, ImageError> {
         let info = image.misc_info();
         let value = info
             .get(key)
             .or_else(|| info.get(&key.to_ascii_lowercase()))
             .ok_or_else(|| imhead_unknown_keyword(key))?;
         match value {
-            Value::Scalar(ScalarValue::String(value)) => Ok(CasaValue::string(value)),
-            Value::Scalar(ScalarValue::Int32(value)) => Ok(CasaValue::Int {
-                value: i64::from(*value),
-            }),
-            Value::Scalar(ScalarValue::Float64(value)) => Ok(CasaValue::float(*value)),
-            Value::Record(_) => casa_provider_contracts::casacore_value_to_casa(value)
-                .map_err(|error| ImageError::InvalidMetadata(error.into())),
+            Value::Scalar(ScalarValue::String(_))
+            | Value::Scalar(ScalarValue::Int32(_))
+            | Value::Scalar(ScalarValue::Float64(_))
+            | Value::Record(_) => Ok(value.clone()),
             Value::Scalar(ScalarValue::Bool(_)) => Err(ImageError::InvalidMetadata(
                 "Unhandled data type Bool for user defined type. Send us a bug report".into(),
             )),
@@ -1396,7 +1361,7 @@ pub fn imhead_custom_value_change(
     path: impl AsRef<Path>,
     mode: &str,
     key: &str,
-    value: &ParameterValue,
+    value: &ImheadValue,
 ) -> Result<ImageHeaderSummary, ImageError> {
     let path = path.as_ref();
     validate_imhead_image(path)?;
@@ -1412,63 +1377,33 @@ pub fn imhead_custom_value_change(
         )
     } else {
         match value {
-            ParameterValue::String(value) => (
+            ImheadValue::String(value) => (
                 Value::Scalar(ScalarValue::String(value.clone())),
                 format!("\"{value}\""),
             ),
-            ParameterValue::Integer(value) => {
-                let value = casa_provider_contracts::casa_variant_integer(*value);
-                (Value::Scalar(ScalarValue::Int32(value)), value.to_string())
+            ImheadValue::Int(value) => {
+                (Value::Scalar(ScalarValue::Int32(*value)), value.to_string())
             }
-            ParameterValue::Float(value) => (
+            ImheadValue::Float(value) => (
                 Value::Scalar(ScalarValue::Float64(*value)),
                 self::projection_header::cpp_number_precision(*value, 12),
             ),
-            ParameterValue::Bool(value) => (
+            ImheadValue::Bool(value) => (
                 Value::Scalar(ScalarValue::Bool(*value)),
                 if *value { "1" } else { "0" }.to_string(),
             ),
-            ParameterValue::Array(values) => {
-                let array = casa_provider_contracts::parameter_array_to_casa(values)
-                    .map_err(|error| ImageError::InvalidMetadata(error.into()))?;
+            ImheadValue::Array(array) => {
                 if matches!(array, casa_types::ArrayValue::Complex64(_)) {
                     return Err(ImageError::InvalidMetadata(format!(
                         "Unhandled value type Array<DComplex> for {key}"
                     )));
                 }
-                let rendered = custom_values::format_array(&array);
-                (Value::Array(array), rendered)
+                let rendered = custom_values::format_array(array);
+                (Value::Array(array.clone()), rendered)
             }
-            ParameterValue::EmptyArray { dtype, shape } => {
-                let array = casa_provider_contracts::empty_parameter_array(*dtype, shape)
-                    .map_err(|error| ImageError::InvalidMetadata(error.into()))?;
-                if matches!(array, casa_types::ArrayValue::Complex64(_)) {
-                    return Err(ImageError::InvalidMetadata(format!(
-                        "Unhandled value type Array<DComplex> for {key}"
-                    )));
-                }
-                let rendered = custom_values::format_array(&array);
-                (Value::Array(array), rendered)
-            }
-            ParameterValue::ScalarArray(value) => {
-                let array = casa_provider_contracts::scalar_parameter_array(value)
-                    .map_err(|error| ImageError::InvalidMetadata(error.into()))?;
-                if matches!(array, casa_types::ArrayValue::Complex64(_)) {
-                    return Err(ImageError::InvalidMetadata(format!(
-                        "Unhandled value type Array<DComplex> for {key}"
-                    )));
-                }
-                let rendered = custom_values::format_array(&array);
-                (Value::Array(array), rendered)
-            }
-            ParameterValue::Table(_) => {
-                let stored = casa_provider_contracts::parameter_value_to_casacore(value)
-                    .map_err(|error| ImageError::InvalidMetadata(error.into()))?;
-                let Value::Record(record) = &stored else {
-                    unreachable!()
-                };
+            ImheadValue::Record(record) => {
                 let rendered = custom_values::format_record(record);
-                (stored, rendered)
+                (Value::Record(record.clone()), rendered)
             }
             _ => {
                 return Err(ImageError::InvalidMetadata(
@@ -1551,7 +1486,7 @@ fn imhead_change_string(
             path,
             mode,
             hdkey,
-            &ParameterValue::String(hdvalue.to_string()),
+            &ImheadValue::String(hdvalue.to_string()),
         );
     }
     validate_imhead_image(path)?;
@@ -3875,87 +3810,30 @@ mod tests {
     }
 
     #[test]
-    fn image_analysis_schema_and_ui_surfaces_advertise_task_contracts() {
-        let bundle = image_analysis_task_schema_bundle();
-        bundle.validate().expect("image-analysis provider contract");
-        assert_eq!(
-            bundle.protocol.protocol_name,
-            IMAGE_ANALYSIS_TASK_PROTOCOL_NAME
-        );
-        assert_eq!(bundle.semantic.operations.len(), 11);
-        assert_eq!(bundle.parameter_surfaces.len(), 11);
-        assert_eq!(bundle.parameter_surfaces[0].surface.id(), "imhead");
-        assert_eq!(bundle.parameter_surfaces[10].surface.id(), "importfits");
-        for surface in &bundle.parameter_surfaces {
-            surface.validate().unwrap_or_else(|errors| {
-                panic!(
-                    "invalid embedded image-analysis surface {}: {errors:?}",
-                    surface.surface.id()
-                )
-            });
-        }
-        assert_eq!(
-            serde_json::to_value(&bundle).unwrap()["parameter_surfaces"]
-                .as_array()
-                .unwrap()
-                .len(),
-            11
-        );
-        assert_eq!(
-            bundle
-                .projections
-                .cli
-                .as_ref()
-                .unwrap()
-                .machine_actions
-                .json_run
-                .as_deref(),
-            Some("--json-run <SOURCE>")
-        );
-        assert_eq!(
-            bundle.projections.python.as_ref().unwrap()["module"],
-            "casars.tasks.image_analysis"
-        );
-    }
-
-    #[test]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "predates the function-length limit; #705"
-    )]
     fn image_analysis_task_dispatch_roundtrips_real_image_products() {
         let temp = tempfile::tempdir().unwrap();
         let source_path = temp.path().join("source.image");
         let moment_path = temp.path().join("moment.image");
         let fits_path = temp.path().join("source.fits");
         let imported_path = temp.path().join("imported.image");
-        let request_path = temp.path().join("request.json");
         create_spectral_test_image(&source_path);
 
-        let imhead_result =
-            run_image_analysis_task(ImageAnalysisTaskRequest::Imhead(ImheadRequest {
-                imagename: source_path.clone(),
-            }))
-            .unwrap();
-        let ImageAnalysisTaskResult::Imhead(header) = imhead_result else {
-            panic!("expected imhead result");
-        };
+        let header = imhead(&source_path).unwrap();
         assert_eq!(header.shape, vec![2, 2, 3]);
         assert_eq!(header.units, "Jy/beam");
         assert_eq!(header.object_name, "NGC Test");
         assert_eq!(header.axes.len(), 3);
         assert!(header.restoring_beam.is_some());
 
-        let imstat_result =
-            run_image_analysis_task(ImageAnalysisTaskRequest::Imstat(ImstatRequest {
-                imagename: source_path.clone(),
-                box_pixels: Some("0,0,1,1".to_string()),
-                chans: Some("1~2".to_string()),
-                includepix: Some([5.0, 12.0]),
-                ..ImstatRequest::default()
-            }))
-            .unwrap();
-        let ImageAnalysisTaskResult::Imstat(ImstatOutcome::Global(stats)) = imstat_result else {
+        let imstat_result = imstat(&ImstatRequest {
+            imagename: source_path.clone(),
+            box_pixels: Some("0,0,1,1".to_string()),
+            chans: Some("1~2".to_string()),
+            includepix: Some([5.0, 12.0]),
+            ..ImstatRequest::default()
+        })
+        .unwrap();
+        let ImstatOutcome::Global(stats) = imstat_result else {
             panic!("expected a global imstat result");
         };
         assert_eq!(stats.blc, vec![0, 0, 1]);
@@ -3978,21 +3856,17 @@ mod tests {
             * channel_km_s;
         assert!((stats.flux.unwrap() - expected_flux).abs() < 1e-12 * expected_flux);
 
-        let moment_result =
-            run_image_analysis_task(ImageAnalysisTaskRequest::Immoments(ImmomentsRequest {
-                imagename: source_path.clone(),
-                outfile: moment_path.clone(),
-                moments: vec![0],
-                chans: Some("0~2".to_string()),
-                includepix: Some([2.0, 12.0]),
-                mask: None,
-                overwrite: false,
-                ..ImmomentsRequest::default()
-            }))
-            .unwrap();
-        let ImageAnalysisTaskResult::Immoments(moment) = moment_result else {
-            panic!("expected immoments result");
-        };
+        let moment = immoments(&ImmomentsRequest {
+            imagename: source_path.clone(),
+            outfile: moment_path.clone(),
+            moments: vec![0],
+            chans: Some("0~2".to_string()),
+            includepix: Some([2.0, 12.0]),
+            mask: None,
+            overwrite: false,
+            ..ImmomentsRequest::default()
+        })
+        .unwrap();
         assert_eq!(moment.shape, vec![2, 2, 1]);
         assert_eq!(moment.products[0].units, "Jy/beam.km/s");
         assert_eq!(moment.products[0].valid_profiles, 4);
@@ -4036,66 +3910,54 @@ mod tests {
         assert_eq!(masked_moment.products[0].valid_profiles, 3);
 
         let pv_path = temp.path().join("pv.image");
-        let pv_error = run_image_analysis_task(ImageAnalysisTaskRequest::Impv(ImpvRequest {
+        let pv_error = impv(&ImpvRequest {
             imagename: source_path.clone(),
             outfile: pv_path.clone(),
             start: Some(PvPosition::Pixel([0.0, 0.0])),
             end: Some(PvPosition::Pixel([1.0, 1.0])),
             chans: Some("1~2".into()),
             ..ImpvRequest::default()
-        }))
+        })
         .unwrap_err();
         assert!(pv_error.to_string().contains("square direction pixels"));
         assert!(!pv_path.exists());
 
         let subimage_path = temp.path().join("sub.image");
-        let subimage_result =
-            run_image_analysis_task(ImageAnalysisTaskRequest::Imsubimage(ImsubimageRequest {
-                imagename: source_path.clone(),
-                outfile: subimage_path.clone(),
-                box_pixels: Some("0,0,0,1".to_string()),
-                chans: Some("1~2".to_string()),
-                ..ImsubimageRequest::default()
-            }))
-            .unwrap();
-        let ImageAnalysisTaskResult::Imsubimage(subimage) = subimage_result else {
-            panic!("expected imsubimage result");
-        };
+        let subimage = imsubimage(&ImsubimageRequest {
+            imagename: source_path.clone(),
+            outfile: subimage_path.clone(),
+            box_pixels: Some("0,0,0,1".to_string()),
+            chans: Some("1~2".to_string()),
+            ..ImsubimageRequest::default()
+        })
+        .unwrap();
         assert_eq!(subimage.shape, vec![1, 2, 2]);
         let subimage_image = PagedImage::<f32>::open(&subimage_path).unwrap();
         assert_eq!(subimage_image.shape(), &[1, 2, 2]);
 
         let product_path = temp.path().join("product.image");
-        let math_result =
-            run_image_analysis_task(ImageAnalysisTaskRequest::Immath(ImmathRequest {
-                imagename: vec![subimage_path.clone(), subimage_path.clone()],
-                outfile: product_path.clone(),
-                expr: "IM0 * IM1".to_string(),
-                overwrite: false,
-                ..ImmathRequest::default()
-            }))
-            .unwrap();
-        let ImageAnalysisTaskResult::Immath(math) = math_result else {
-            panic!("expected immath result");
-        };
+        let math = immath(&ImmathRequest {
+            imagename: vec![subimage_path.clone(), subimage_path.clone()],
+            outfile: product_path.clone(),
+            expr: "IM0 * IM1".to_string(),
+            overwrite: false,
+            ..ImmathRequest::default()
+        })
+        .unwrap();
         assert_eq!(math.shape, vec![1, 2, 2]);
         assert_eq!(math.valid_pixels, 4);
         let product_image = PagedImage::<f32>::open(&product_path).unwrap();
         assert_eq!(product_image.shape(), &[1, 2, 2]);
 
         let scaled_path = temp.path().join("scaled.image");
-        let scaled_result =
-            run_image_analysis_task(ImageAnalysisTaskRequest::Immath(ImmathRequest {
-                imagename: vec![subimage_path.clone()],
-                outfile: scaled_path.clone(),
-                expr: "1.222e6*IM0/1.579^2/(29.30*29.03)".to_string(),
-                overwrite: false,
-                ..ImmathRequest::default()
-            }))
-            .unwrap();
-        let ImageAnalysisTaskResult::Immath(scaled) = scaled_result else {
-            panic!("expected scalar immath result");
-        };
+        let scaled = immath(&ImmathRequest {
+            imagename: vec![subimage_path.clone()],
+            outfile: scaled_path.clone(),
+            expr: "1.222e6*IM0/1.579^2/(29.30*29.03)".to_string(),
+            overwrite: false,
+            ..ImmathRequest::default()
+        })
+        .unwrap();
         assert_eq!(scaled.shape, vec![1, 2, 2]);
         assert_eq!(scaled.valid_pixels, 4);
         let scaled_image = PagedImage::<f32>::open(&scaled_path).unwrap();
@@ -4109,25 +3971,21 @@ mod tests {
         assert_eq!(PagedImage::<f32>::open(&scaled_path).unwrap().units(), "K");
 
         let pbcor_path = temp.path().join("pbcor.image");
-        let pbcor_result =
-            run_image_analysis_task(ImageAnalysisTaskRequest::Impbcor(ImpbcorRequest {
-                imagename: source_path.clone(),
-                pbimage: mask_path.clone().into(),
-                outfile: pbcor_path.clone(),
-                mode: "divide".to_string(),
-                cutoff: 0.3,
-                box_selection: None,
-                region: None,
-                chans: None,
-                stokes: None,
-                mask: None,
-                stretch: false,
-                overwrite: false,
-            }))
-            .unwrap();
-        let ImageAnalysisTaskResult::Impbcor(pbcor) = pbcor_result else {
-            panic!("expected impbcor result");
-        };
+        let pbcor = impbcor(&ImpbcorRequest {
+            imagename: source_path.clone(),
+            pbimage: mask_path.clone().into(),
+            outfile: pbcor_path.clone(),
+            mode: "divide".to_string(),
+            cutoff: 0.3,
+            box_selection: None,
+            region: None,
+            chans: None,
+            stokes: None,
+            mask: None,
+            stretch: false,
+            overwrite: false,
+        })
+        .unwrap();
         assert_eq!(pbcor.shape, vec![2, 2, 3]);
         assert_eq!(pbcor.units, "Jy/beam");
         assert_eq!(pbcor.valid_pixels, 9);
@@ -4137,39 +3995,25 @@ mod tests {
         let source_data = source.get_slice(&[1, 0, 0], &[1, 1, 1]).unwrap();
         assert!((pbcor_data[[0, 0, 0]] - source_data[[0, 0, 0]]).abs() < 1.0e-6);
 
-        run_image_analysis_task(ImageAnalysisTaskRequest::Exportfits(ExportFitsRequest {
+        exportfits(&ExportFitsRequest {
             imagename: source_path.clone(),
             fitsimage: fits_path.clone(),
             velocity: true,
             overwrite: false,
             ..ExportFitsRequest::default()
-        }))
+        })
         .unwrap();
         assert!(fits_path.exists());
 
-        run_image_analysis_task(ImageAnalysisTaskRequest::Importfits(ImportFitsRequest {
+        importfits(&ImportFitsRequest {
             fitsimage: fits_path.clone(),
             imagename: imported_path.clone(),
             ..ImportFitsRequest::default()
-        }))
+        })
         .unwrap();
         let imported = PagedImage::<f32>::open(&imported_path).unwrap();
         assert_eq!(imported.shape(), &[2, 2, 3]);
         assert_eq!(imported.units(), "Jy/beam");
-
-        fs::write(
-            &request_path,
-            serde_json::to_string(&ImageAnalysisTaskRequest::Imhead(ImheadRequest {
-                imagename: imported_path,
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-        let payload = casa_task_runtime::read_task_request(request_path.to_str().unwrap()).unwrap();
-        assert!(matches!(
-            serde_json::from_str::<ImageAnalysisTaskRequest>(&payload).unwrap(),
-            ImageAnalysisTaskRequest::Imhead(_)
-        ));
     }
 
     #[test]

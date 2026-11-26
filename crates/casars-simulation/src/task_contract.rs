@@ -2,11 +2,11 @@
 //! simobserve's task contract over the shared provider envelope: CASA's
 //! catalog-named parameters of one run in, its report and products out.
 
-use casa_provider_contracts::{
-    NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
-    ProviderProjectionMetadata, ProviderProtocolDescriptor, ProviderSurfaceKind, RunProductKind,
-    TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas, TaskSemanticContract,
-    builtin_surface_bundle, merged_components,
+use casa_contracts::{
+    ProviderCliMachineActions, ProviderCliProjection, ProviderProjectionMetadata,
+    ProviderProtocolDescriptor, ProviderSurfaceKind, RunProductKind, TaskOperationDescriptor,
+    TaskProviderContract, TaskProviderSchemas, TaskSemanticContract, builtin_surface_bundle,
+    merged_components,
 };
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
@@ -63,7 +63,6 @@ pub fn simobserve_task_schema_bundle() -> TaskProviderContract {
         domain_schemas: TaskProviderSchemas {
             request_schema,
             result_schema,
-            additional: NoAdditionalProviderSchemas {},
         },
     }
 }
@@ -105,7 +104,7 @@ pub struct SimobserveRunTaskResult {
     pub artifacts: Vec<SimobserveArtifact>,
     /// Native figure documents; arrays belong to the host's payload file.
     #[serde(default)]
-    pub plots: Vec<casa_ms::plot_document::PlotFigure>,
+    pub plots: Vec<casa_plot_data::plot_document::PlotFigure>,
 }
 
 /// The report of one completed run.

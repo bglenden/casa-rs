@@ -3,11 +3,10 @@
 
 use std::process::ExitCode;
 
-use casa_provider_contracts::{
-    NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
-    ProviderProjectionMetadata, ProviderProtocolDescriptor, ProviderSurfaceKind,
-    TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas, TaskSemanticContract,
-    builtin_surface_bundle, merged_components,
+use casa_contracts::{
+    ProviderCliMachineActions, ProviderCliProjection, ProviderProjectionMetadata,
+    ProviderProtocolDescriptor, ProviderSurfaceKind, TaskOperationDescriptor, TaskProviderContract,
+    TaskProviderSchemas, TaskSemanticContract, builtin_surface_bundle, merged_components,
 };
 use casa_task_runtime::TaskFrontEnd;
 use schemars::schema_for;
@@ -71,7 +70,6 @@ fn schema_bundle() -> TaskProviderContract {
         domain_schemas: TaskProviderSchemas {
             request_schema: request,
             result_schema: result,
-            additional: NoAdditionalProviderSchemas {},
         },
     }
 }

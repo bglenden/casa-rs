@@ -1,11 +1,11 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/casa-provider-contracts",
+    "surfaces/casa-contracts",
+    "surfaces/casa-plot-data",
+    "surfaces/casa-tasks",
+    "frontends/casars-cli",
     "crates/casa-task-runtime",
-    "crates/casars-imager",
-    "crates/casars-imexplore",
-    "crates/casars-msconvert",
     "crates/casars-simulation",
     "crates/casars-python",
     "crates/casa-types",
@@ -33,9 +33,13 @@ members = [
     "crates/casa-simulation",
     "crates/casa-atmosphere",
     "crates/casa-measures-data",
-    "crates/casa-test-support",
     "crates/casa-ms",
     "crates/casa-observation",
+    "dev/casa-test-support",
+    "dev/casa-dev-tools",
+    "suites/casacore-interop",
+    "suites/casa-parity",
+    "suites/perf",
 ]
 
 [workspace.package]
@@ -83,6 +87,10 @@ opt-level = 2
 opt-level = 3
 [profile.test.package.casa-test-support]
 opt-level = 2
+[profile.test.package.casacore-interop]
+opt-level = 2
+[profile.test.package.casa-perf-suite]
+opt-level = 2
 
 # Imaging end-to-end tests (T1 tier) must finish within about ten minutes on
 # realistic sample counts; debug assertions stay on, optimisation is release-like.
@@ -100,7 +108,9 @@ opt-level = 3
 opt-level = 3
 [profile.test.package.casa-imaging-application]
 opt-level = 3
-[profile.test.package.casars-imager]
+[profile.test.package.casa-tasks]
+opt-level = 3
+[profile.test.package.casars-cli]
 opt-level = 3
 [profile.test.package.casa-fft]
 opt-level = 3

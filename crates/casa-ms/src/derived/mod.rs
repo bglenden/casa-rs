@@ -17,7 +17,7 @@ use casa_types::quanta::{Quantity, Unit};
 
 /// Parse two angular quantities with an optional direction frame, as CASA
 /// tasks accept for an explicit phase center.
-pub(crate) fn parse_phase_direction(value: &str) -> Option<MDirection> {
+pub fn parse_phase_direction(value: &str) -> Option<MDirection> {
     let mut parts = value.split_whitespace();
     let (frame, longitude, latitude) =
         match (parts.next(), parts.next(), parts.next(), parts.next()) {

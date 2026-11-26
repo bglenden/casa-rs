@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use casa_contracts::{ParameterValue, python_repr};
 use casa_ms::flagging::{ShadowAntenna, ShadowOptions};
-use casa_provider_contracts::{ParameterValue, python_repr};
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
 pub(super) struct ShadowParameters {

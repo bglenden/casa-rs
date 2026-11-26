@@ -4,8 +4,7 @@
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate,
 };
-use casa_provider_contracts::{ParameterValue, parameter_array_to_casa};
-use casa_types::{ArrayD, ArrayValue};
+use casa_types::ArrayD;
 use ndarray::{Axis, Slice};
 
 use crate::analysis::{
@@ -22,16 +21,9 @@ pub(super) struct SelectedBeam<T> {
 
 pub(super) fn array<T: ImagePixel + From<f32>>(
     target: &dyn ImageInterface<T>,
-    values: &[ParameterValue],
+    values: &ArrayD<f64>,
     selection: &SubimageSelection,
 ) -> Result<SelectedBeam<T>, ImageError> {
-    let values = parameter_array_to_casa(values)
-        .map_err(|message| ImageError::CasaSelection(message.into()))?;
-    let ArrayValue::Float64(values) = values else {
-        return Err(ImageError::CasaSelection(
-            "pbimage pixels must be a floating-point array".into(),
-        ));
-    };
     let input_shape = values.shape().to_vec();
     let layout = BeamLayout::for_array(target, &input_shape)?;
     let stride = vec![1; target.ndim()];
@@ -41,7 +33,7 @@ pub(super) fn array<T: ImagePixel + From<f32>>(
         stride: &stride,
     };
     let pixels = layout
-        .read_array(&values, &section)
+        .read_array(values, &section)
         .mapv(|value| T::from(value as f32));
     Ok(SelectedBeam {
         pixels,

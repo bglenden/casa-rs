@@ -9,7 +9,7 @@ use crate::{
 };
 use casa_images::{ImageInterface, PagedImage};
 use casa_imaging_runtime::{Demand, admit};
-use casa_ms::plot_document::PlotFigure;
+use casa_plot_data::plot_document::PlotFigure;
 use std::{collections::BTreeSet, path::Path};
 
 // Keep logical output names during screen-only preparation so repeated TP

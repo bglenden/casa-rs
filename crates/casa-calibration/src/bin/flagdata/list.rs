@@ -4,18 +4,18 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use casa_contracts::{CasaValue, ParameterValue};
 use casa_ms::flagging::{
     FlagDataColumn, FlagDataMode, FlaggingError, flagdata_calibration_program, flagdata_ms_program,
     save_next_casa_flag_backup, validate_calibration_flag_averaging, validate_ms_flag_averaging,
 };
 use casa_ms::{
     FlagDataReport, FlagDataRequest, MeasurementSet, append_flag_commands, append_task_history,
-    flagdata_empty_record, flagdata_named_summary_record, ms_task_success,
 };
-use casa_provider_contracts::{CasaValue, ParameterValue};
 use casa_task_runtime::{
     ParameterSession, ResolutionPatch, TaskFailure, TaskInvocation, TaskSuccess,
 };
+use casa_tasks::ms::{flagdata_empty_record, flagdata_named_summary_record, ms_task_success};
 
 use super::{
     channel_bin_widths, command, command_values::Assignments, data_column,
@@ -480,7 +480,7 @@ mod tests {
         f: impl FnOnce(&TaskInvocation<'_>) -> Result<T, TaskFailure>,
     ) -> Result<T, TaskFailure> {
         let args = args.iter().map(OsString::from).collect::<Vec<_>>();
-        let bundle = casa_provider_contracts::builtin_surface_bundle("flagdata").unwrap();
+        let bundle = casa_contracts::builtin_surface_bundle("flagdata").unwrap();
         let line = TaskCommandLine::parse(&bundle, &args).unwrap();
         let session = ParameterRuntime::default()
             .open_session(line.open_session_request(bundle))

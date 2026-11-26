@@ -10,11 +10,11 @@ use crate::{
     simobserve::SimobserveError,
     simutil::{analysis, qa},
 };
+use casa_contracts::builtin_surface_bundle;
 use casa_coordinates::{Coordinate, CoordinateModel};
 use casa_images::{ImageInterface, PagedImage, RegridMethod, RegridTemplate, regrid};
 use casa_imaging_runtime::{Demand, admit};
 use casa_ms::MeasurementSet;
-use casa_provider_contracts::builtin_surface_bundle;
 use casa_task_runtime::resolve_plain_values;
 use casa_types::quanta::Quantity;
 use serde_json::json;

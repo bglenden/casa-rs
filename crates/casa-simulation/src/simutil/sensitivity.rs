@@ -241,9 +241,9 @@ fn image_noise(
     frequency_hz: f64,
     resources: SessionResources,
 ) -> Result<f64, SimutilError> {
+    use casa_contracts::builtin_surface_bundle;
     use casa_images::PagedImage;
     use casa_imaging_application::{BackendRequest, Cancel, ImagingRequest, RunContext, execute};
-    use casa_provider_contracts::builtin_surface_bundle;
     use casa_task_runtime::resolve_plain_values;
 
     let cell = 6e3 / 250.0 / (frequency_hz / 1e9);

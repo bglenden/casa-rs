@@ -16,9 +16,6 @@ cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
 workspace = true
 
 [dependencies]
-casa-provider-contracts = { path = "../casa-provider-contracts" }
-casa-task-runtime = { path = "../casa-task-runtime" }
-casa-logging = { path = "../casa-logging" }
 casa-measures-data = { path = "../casa-measures-data" }
 casa-ms = { path = "../casa-ms" }
 casa-tables = { path = "../casa-tables" }
@@ -32,7 +29,7 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-casa-test-support = { path = "../casa-test-support" }
+casa-test-support = { path = "../../dev/casa-test-support" }
 
 [build-dependencies]
 pkg-config = "0.3"

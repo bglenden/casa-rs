@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
-use casa_provider_contracts::ParameterValue;
+use casa_contracts::ParameterValue;
 
 /// A message only when the recorded CASA type validator would also reject
 /// the value. CASA coerces integers and booleans to floats and accepts
@@ -162,7 +162,7 @@ pub(crate) fn parse_variant_json(raw: &str) -> Result<ParameterValue, String> {
 
 #[cfg(test)]
 mod tests {
-    use casa_provider_contracts::ParameterValue;
+    use casa_contracts::ParameterValue;
 
     use super::{direct_type_refusal, integer_literal_outside_i64, single_required_path};
 

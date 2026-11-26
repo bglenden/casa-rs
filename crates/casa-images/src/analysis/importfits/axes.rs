@@ -5,7 +5,6 @@ use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate, Projection,
     ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
 };
-use casa_provider_contracts::ParameterValue;
 use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::quanta::{
@@ -17,6 +16,7 @@ use casa_types::{ArrayValue, RecordValue, Value};
 
 use super::{ImportFitsRequest, invalid_type, reject};
 use crate::ImageError;
+use crate::analysis::ImportFitsValue;
 use crate::fits_read::FitsToolImport;
 
 const STANDARD: [&str; 4] = ["Right Ascension", "Declination", "Stokes", "Frequency"];
@@ -109,7 +109,7 @@ fn has_name(names: &[String], name: &str) -> bool {
 fn append_missing(
     record: &mut RecordValue,
     coordinates: &mut CoordinateSystem,
-    stokes: &ParameterValue,
+    stokes: &ImportFitsValue,
 ) -> Result<(), ImageError> {
     if coordinates
         .find_coordinate(CoordinateType::Direction)
@@ -135,7 +135,7 @@ fn append_missing(
             SpectralCoordinate::new(FrequencyRef::LSRK, 1.415e9, 1e3, 0.0, 1.420_405_751_786e9);
         append(record, coordinates, "spectral", spectral.into());
     }
-    let ParameterValue::String(stokes) = stokes else {
+    let ImportFitsValue::String(stokes) = stokes else {
         return Err(invalid_type(
             "defaultaxesvalues",
             "The Stokes default value must be a string",
@@ -228,19 +228,19 @@ fn order_standard(record: &mut RecordValue, names: &[String]) -> Result<Vec<usiz
     Ok(order)
 }
 
-fn axis_default(value: &ParameterValue, label: &str, unit: &str) -> Result<f64, ImageError> {
+fn axis_default(value: &ImportFitsValue, label: &str, unit: &str) -> Result<f64, ImageError> {
     let invalid = || {
         reject(format!(
             "{label} default value is not a valid {unit} quantity: {value:?}"
         ))
     };
     let number = match value {
-        ParameterValue::Integer(_) if unit == "Hz" => {
+        ImportFitsValue::Integer(_) if unit == "Hz" => {
             return Err(reject("Unrecognized format for world coordinate"));
         }
-        ParameterValue::Integer(value) => *value as f64,
-        ParameterValue::Float(value) => *value,
-        ParameterValue::String(text) => {
+        ImportFitsValue::Integer(value) => *value as f64,
+        ImportFitsValue::Float(value) => *value,
+        ImportFitsValue::String(text) => {
             let quantity = Quantity::read(text).map_err(|_| invalid())?;
             if unit == "Hz" && !quantity.unit().name().contains("Hz") {
                 return Err(invalid_type(

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use casa_provider_contracts::{
+use casa_contracts::{
     CasaValue, RunProductKind, RunProductRole, builtin_application_catalog, builtin_surface_bundle,
     installed_suite_root, resolve_task_executable,
 };
@@ -374,7 +374,7 @@ fn plot_documents(
     returncode: i32,
     stdout: &str,
     payload_bytes: u64,
-) -> Result<Vec<casa_ms::plot_document::PlotFigure>, String> {
+) -> Result<Vec<casa_plot_data::plot_document::PlotFigure>, String> {
     if !matches!(
         surface_id,
         "simobserve" | "simanalyze" | "simalma" | "plotms"
@@ -400,7 +400,7 @@ fn plot_documents(
     #[derive(serde::Deserialize)]
     struct PlotReply {
         #[serde(default)]
-        plots: Vec<casa_ms::plot_document::PlotFigure>,
+        plots: Vec<casa_plot_data::plot_document::PlotFigure>,
         #[serde(default)]
         artifacts: Vec<casars_simulation::SimobserveArtifact>,
     }

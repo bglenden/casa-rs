@@ -25,7 +25,7 @@ pub use analysis::{
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use casa_provider_contracts::{RunProductKind, SurfaceContractBundle};
+use casa_contracts::{RunProductKind, SurfaceContractBundle};
 use casa_simulation::simobserve::{
     SimobserveParameters, SimobserveRequest, simobserve, simobserve_with_plots,
 };
@@ -39,7 +39,7 @@ use serde_json::{Map, Value};
 pub use task_contract::*;
 
 fn simobserve_surface() -> Result<SurfaceContractBundle, String> {
-    casa_provider_contracts::builtin_surface_bundle("simobserve")
+    casa_contracts::builtin_surface_bundle("simobserve")
 }
 
 fn workspace() -> Result<PathBuf, String> {

@@ -96,7 +96,7 @@ fn task_opening_masks_beam_and_publication_are_admitted() {
     ))
     .unpack(root.path())
     .unwrap();
-    let bundle = casa_provider_contracts::builtin_surface_bundle("tsdimaging").unwrap();
+    let bundle = casa_contracts::builtin_surface_bundle("tsdimaging").unwrap();
     let sparse = json!({"infiles":root.path().join("map.ms"), "outfile":root.path().join("output"), "overwrite":true, "imsize":[128,128], "cell":"3arcsec", "phasecenter":"J2000 270deg -23deg", "gridfunction":"SF", "convsupport":6});
     let values = casa_task_runtime::resolve_plain_values(
         bundle,

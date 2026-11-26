@@ -52,16 +52,16 @@ imaging-t31-multidomain-geometry testdata_root casa_prefix:
 # Focused #522 frame/interval evaluation and edge coverage.
 imaging-t36-spectral-law:
     CARGO_INCREMENTAL=0 cargo test -p casa-ms --features cpp-interop-tests --test spectral_frame_parity
-    CARGO_INCREMENTAL=0 cargo test -p casa-test-support --features cpp-interop-tests --test spectral_frame_exact_interop
-    CARGO_INCREMENTAL=0 cargo test -p casa-test-support --features cpp-interop-tests --test frequency_sequence_interop
+    CARGO_INCREMENTAL=0 cargo test -p casacore-interop --features cpp-interop-tests --test spectral_frame_exact_interop
+    CARGO_INCREMENTAL=0 cargo test -p casacore-interop --features cpp-interop-tests --test frequency_sequence_interop
 
 # Focused #527 moving-source, ephemeris and provider-contract gate.
 imaging-t41-moving-source:
     just arch-check
-    CARGO_INCREMENTAL=0 cargo test -p casa-provider-contracts
+    CARGO_INCREMENTAL=0 cargo test -p casa-contracts
     CARGO_INCREMENTAL=0 cargo test -p casa-tables add_variable_shape_tiled_column_in_place_persists_defined_rows_only
     CARGO_INCREMENTAL=0 cargo test -p casa-ms t41_
-    CARGO_INCREMENTAL=0 cargo test -p casars-imager task_contract
+    CARGO_INCREMENTAL=0 cargo test -p casa-tasks --features imaging task_contract
 
 # Representative #527 frozen-CASA gate on the slow-parity ALMA ephemeris
 # MeasurementSet: the TRACKFIELD phase centre at three row times, and the
@@ -85,8 +85,8 @@ imaging-t48-heterogeneous-response-casa:
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p target/t48-testdata/imaging/t48
-    CARGO_INCREMENTAL=0 cargo run --release -p casa-simulation --bin synthetic-ms -- --json-run tools/perf/imager/fixtures/t48-mixed-alma-aca-request.json
-    CASA_RS_TESTDATA_ROOT="{{justfile_directory()}}/target/t48-testdata" python3 tools/perf/imager/run_workload.py t48-heterogeneous-mosaic-mfs --stream-log
+    CARGO_INCREMENTAL=0 cargo run --release -p casa-dev-tools --bin synthetic-ms -- --json-run suites/perf/imager/fixtures/t48-mixed-alma-aca-request.json
+    CASA_RS_TESTDATA_ROOT="{{justfile_directory()}}/target/t48-testdata" python3 suites/perf/imager/run_workload.py t48-heterogeneous-mosaic-mfs --stream-log
 
 # Focused #528 MT-MFS weight grouping and Taylor reconstruction gate.
 imaging-t42-mtmfs-normal:
@@ -124,9 +124,9 @@ release-perf:
     bash scripts/test-release-perf.sh
 
 external-data-cleanup *args:
-    tools/perf/imager/cleanup_external_data.py {{args}}
+    suites/perf/imager/cleanup_external_data.py {{args}}
 
-# Tests of the imaging performance and evidence tools (tools/perf/imager).
+# Tests of the imaging performance and evidence tools (suites/perf/imager).
 perf-tools-test *args:
     bash scripts/test-perf-tools.sh {{args}}
 

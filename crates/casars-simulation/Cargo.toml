@@ -18,7 +18,8 @@ casa-types = { path = "../casa-types" }
 casa-tables = { path = "../casa-tables" }
 casa-measures-data = { path = "../casa-measures-data" }
 casa-ms = { path = "../casa-ms" }
-casa-provider-contracts = { path = "../casa-provider-contracts" }
+casa-contracts = { path = "../../surfaces/casa-contracts" }
+casa-plot-data = { path = "../../surfaces/casa-plot-data" }
 casa-simulation = { path = "../casa-simulation" }
 casa-task-runtime = { path = "../casa-task-runtime" }
 schemars = "0.8"

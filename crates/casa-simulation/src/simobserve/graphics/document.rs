@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The simulation's panels expressed through the shared plot document.
 
-use casa_ms::plot_document::{
+use casa_plot_data::plot_document::{
     PlotAspect, PlotAxisScale, PlotDocument, PlotDocumentAnnotation, PlotDocumentAxis,
     PlotDocumentLayer, PlotDocumentPanel, PlotLayerData, PlotLayerKind, PlotLayerStyle, PlotLayout,
     PlotPayloadStrategy, PlotTextStyle,

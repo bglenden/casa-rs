@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use casa_contracts::CasaValue;
 use casa_measures_data::MeasuresRuntime;
-use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use serde::Serialize;
 

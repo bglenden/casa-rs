@@ -9,7 +9,6 @@ use std::ops::{Div, Mul};
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::CoordinateType;
-use casa_provider_contracts::{ParameterValue, parameter_value_to_casacore};
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{Table, TableOptions};
 use casa_types::{ArrayD, RecordValue, Value};
@@ -235,15 +234,8 @@ fn region_record<T: ImagePixel>(
     region: Option<&PbcorRegion>,
 ) -> Result<Option<RecordValue>, ImageError> {
     match region {
-        Some(PbcorRegion::Record(fields)) if !fields.is_empty() => {
-            let value = parameter_value_to_casacore(&ParameterValue::Table(fields.clone()))
-                .map_err(|error| {
-                    ImageError::CasaSelection(format!("invalid region record: {error}"))
-                })?;
-            let Value::Record(record) = value else {
-                unreachable!("a parameter table converts to a record")
-            };
-            Ok(Some(record))
+        Some(PbcorRegion::Record(record)) if !record.fields().is_empty() => {
+            Ok(Some(record.clone()))
         }
         Some(PbcorRegion::Text(name))
             if !name.trim().is_empty()

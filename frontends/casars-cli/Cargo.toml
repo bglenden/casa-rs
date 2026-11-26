@@ -1,0 +1,277 @@
+[package]
+name = "casars-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Unified CLI frontend binaries for casa-rs tasks"
+repository.workspace = true
+publish = false
+autotests = false
+
+[features]
+default = ["imaging", "images", "ms", "vla"]
+imaging = ["casa-tasks/imaging", "dep:casa-imaging-application", "dep:libc"]
+images = ["casa-tasks/images"]
+ms = ["casa-tasks/ms"]
+vla = ["casa-tasks/vla"]
+slow-tests = []
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-imaging-application = { path = "../../crates/casa-imaging-application", optional = true }
+casa-task-runtime = { path = "../../crates/casa-task-runtime" }
+casa-tasks = { path = "../../surfaces/casa-tasks" }
+libc = { version = "0.2", optional = true }
+
+[dev-dependencies]
+base64 = "0.22"
+casa-contracts = { path = "../../surfaces/casa-contracts" }
+casa-coordinates = { path = "../../crates/casa-coordinates" }
+casa-images = { path = "../../crates/casa-images" }
+casa-imaging-deconvolution = { path = "../../crates/casa-imaging-deconvolution" }
+casa-lattices = { path = "../../crates/casa-lattices" }
+casa-logging = { path = "../../crates/casa-logging" }
+casa-ms = { path = "../../crates/casa-ms", features = ["msv4"] }
+casa-numerics = { path = "../../crates/casa-numerics" }
+casa-plot-data = { path = "../../surfaces/casa-plot-data", features = ["ms"] }
+casa-simulation = { path = "../../crates/casa-simulation" }
+casa-tables = { path = "../../crates/casa-tables" }
+casa-test-support = { path = "../../dev/casa-test-support" }
+casa-types = { path = "../../crates/casa-types" }
+fitsio = { version = "0.21", features = ["fitsio-src", "src-cmake"] }
+flate2 = "1"
+ndarray.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tar = "0.4"
+tempfile = "3"
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[[bin]]
+name = "casars-imager"
+path = "src/bin/casars-imager.rs"
+required-features = ["imaging"]
+
+[[bin]]
+name = "tsdimaging"
+path = "src/bin/tsdimaging.rs"
+required-features = ["imaging"]
+
+[[bin]]
+name = "importvla"
+path = "src/bin/importvla.rs"
+required-features = ["vla"]
+
+[[bin]]
+name = "exportfits"
+path = "src/bin/exportfits.rs"
+required-features = ["images"]
+
+[[bin]]
+name = "feather"
+path = "src/bin/feather.rs"
+required-features = ["images"]
+
+[[bin]]
+name = "imexplore"
+path = "src/bin/imexplore.rs"
+required-features = ["images"]
+
+[[bin]]
+name = "immath"
+path = "src/bin/immath.rs"
+required-features = ["images"]
+
+[[bin]]
+name = "immoments"
+path = "src/bin/immoments.rs"
+required-features = ["images"]
+
+[[bin]]
+name = "impbcor"
+path = "src/bin/impbcor.rs"
+required-features = ["images"]
+
+[[bin]]
+name = "importfits"
+path = "src/bin/importfits.rs"
+required-features = ["images"]
+
+[[bin]]
+name = "impv"
+path = "src/bin/impv.rs"
+required-features = ["images"]
+
+[[bin]]
+name = "imregrid"
+path = "src/bin/imregrid.rs"
+required-features = ["images"]
+
+[[bin]]
+name = "imsubimage"
+path = "src/bin/imsubimage.rs"
+required-features = ["images"]
+
+[[bin]]
+name = "concat"
+path = "src/bin/concat.rs"
+required-features = ["ms"]
+
+[[bin]]
+name = "flagmanager"
+path = "src/bin/flagmanager.rs"
+required-features = ["ms"]
+
+[[bin]]
+name = "msconvert"
+path = "src/bin/msconvert.rs"
+required-features = ["ms"]
+
+[[bin]]
+name = "msexplore"
+path = "src/bin/msexplore.rs"
+required-features = ["ms"]
+
+[[test]]
+name = "hogbom_default"
+path = "tests/hogbom_default.rs"
+required-features = ["imaging"]
+
+[[test]]
+name = "numeric_selector_provenance"
+path = "tests/numeric_selector_provenance.rs"
+required-features = ["imaging"]
+
+[[test]]
+name = "pb_default"
+path = "tests/pb_default.rs"
+required-features = ["imaging"]
+
+[[test]]
+name = "t1"
+path = "tests/t1.rs"
+required-features = ["imaging"]
+
+[[test]]
+name = "t61_vlass_catalog"
+path = "tests/t61_vlass_catalog.rs"
+required-features = ["imaging"]
+
+[[test]]
+name = "t65_sparse_profiles"
+path = "tests/t65_sparse_profiles.rs"
+required-features = ["imaging"]
+
+[[test]]
+name = "tsdimaging"
+path = "tests/tsdimaging.rs"
+required-features = ["imaging"]
+
+[[test]]
+name = "casa_values"
+path = "tests/casa_values.rs"
+required-features = ["images"]
+
+[[test]]
+name = "existing_outputs"
+path = "tests/existing_outputs.rs"
+required-features = ["images"]
+
+[[test]]
+name = "exportfits_casa"
+path = "tests/exportfits_casa.rs"
+required-features = ["images"]
+
+[[test]]
+name = "feather_casa"
+path = "tests/feather_casa.rs"
+required-features = ["images"]
+
+[[test]]
+name = "imexplore_casa_returns"
+path = "tests/imexplore_casa_returns.rs"
+required-features = ["images"]
+
+[[test]]
+name = "imexplore_cli"
+path = "tests/imexplore_cli.rs"
+required-features = ["images"]
+
+[[test]]
+name = "immath_casa"
+path = "tests/immath_casa.rs"
+required-features = ["images"]
+
+[[test]]
+name = "immoments_casa"
+path = "tests/immoments_casa.rs"
+required-features = ["images"]
+
+[[test]]
+name = "impbcor_casa"
+path = "tests/impbcor_casa.rs"
+required-features = ["images"]
+
+[[test]]
+name = "importfits_casa"
+path = "tests/importfits_casa.rs"
+required-features = ["images"]
+
+[[test]]
+name = "impv_casa"
+path = "tests/impv_casa.rs"
+required-features = ["images"]
+
+[[test]]
+name = "imregrid_casa"
+path = "tests/imregrid_casa.rs"
+required-features = ["images"]
+
+[[test]]
+name = "imstat_casa"
+path = "tests/imstat_casa.rs"
+required-features = ["images"]
+
+[[test]]
+name = "workspace_paths"
+path = "tests/workspace_paths.rs"
+required-features = ["images"]
+
+[[test]]
+name = "concat"
+path = "tests/concat.rs"
+required-features = ["ms"]
+
+[[test]]
+name = "ms_casa_returns"
+path = "tests/ms_casa_returns.rs"
+required-features = ["ms"]
+
+[[test]]
+name = "ms_existing_outputs"
+path = "tests/ms_existing_outputs.rs"
+required-features = ["ms"]
+
+[[test]]
+name = "msexplore_casa_parity"
+path = "tests/msexplore_casa_parity.rs"
+required-features = ["ms", "slow-tests"]
+
+[[test]]
+name = "msexplore_cli"
+path = "tests/msexplore_cli.rs"
+required-features = ["ms"]
+
+[[test]]
+name = "msexplore_task_completion"
+path = "tests/msexplore_task_completion.rs"
+required-features = ["ms"]
+
+[[test]]
+name = "msconvert_cli"
+path = "tests/msconvert_cli.rs"
+required-features = ["ms"]

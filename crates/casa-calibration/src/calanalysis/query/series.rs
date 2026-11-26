@@ -3,7 +3,7 @@
 
 use std::f64::consts::{PI, TAU};
 
-use casa_provider_contracts::CasaValue;
+use casa_contracts::CasaValue;
 use num_complex::Complex64;
 
 use super::fit::FitOptions;

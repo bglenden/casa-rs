@@ -3,8 +3,8 @@
 
 use std::path::PathBuf;
 
+use casa_contracts::CasaValue;
 use casa_ms::{MeasurementSet, MsError, MsSelection};
-use casa_provider_contracts::CasaValue;
 use casa_tables::TableWriteLock;
 use casa_types::measures::frequency::MFrequency;
 

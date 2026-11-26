@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use casa_provider_contracts::CasaValue;
+use casa_contracts::CasaValue;
 
 use super::ApplyPlan;
 use super::chain::viscal_order;

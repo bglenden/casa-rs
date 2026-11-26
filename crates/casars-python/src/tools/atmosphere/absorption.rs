@@ -4,7 +4,7 @@
 use std::ops::Range;
 
 use casa_atmosphere::{AtmosphereSpectrum, absorption::Absorber};
-use casa_provider_contracts::CasaValue;
+use casa_contracts::CasaValue;
 use pyo3::prelude::*;
 
 use super::quantity;

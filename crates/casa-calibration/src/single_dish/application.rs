@@ -3,8 +3,8 @@
 
 use std::path::{Path, PathBuf};
 
+use casa_contracts::{CasaValue, ParameterValue};
 use casa_ms::{MeasurementSet, MsSelection, ResolvedMsSelection};
-use casa_provider_contracts::{CasaValue, ParameterValue};
 use casa_tables::{Table, TableOptions};
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::{ScalarValue, Value};

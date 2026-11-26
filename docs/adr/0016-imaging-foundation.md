@@ -22,6 +22,11 @@ was deleted; its references now point to `ARCHITECTURE.md`, `TESTING.md` or
 git history, and the ticket and review-gate process (decision 12) is reduced
 to what still holds.
 
+Amended: 2026-11-25, on clean-sheet module reorganization: update Decision 10
+crate names (`casa-core`, `casa-imaging` for `casa-imaging-application`), remove
+`casa-imaging-reconstruction` reference, and document unconditional cross-platform
+`casa-imaging-runtime -> casa-imaging-metal`.
+
 ## Context
 
 Programme #486 delivered cube, MFS, Clark, multi-worker and Metal imaging as
@@ -92,18 +97,22 @@ kept in git at the location above as a record, not a binding document.
    gate. Capabilities that are rejected are not in the catalog.
 9. **Diagnostics.** Library crates read no environment variables and emit no
    `eprintln!`; diagnostic switches are request fields; emission is `tracing`.
-10. **Crates.** `casa-imaging-model`, `casa-imaging-operator`,
+10. **Crates.** Eight compiler-enforced imaging crates live under
+    `libs/imaging/`: `casa-imaging-model`, `casa-imaging-operator`,
     `casa-imaging-deconvolution`, `casa-imaging-products`,
-    `casa-imaging-runtime`, `casa-imaging-metal` (macOS), and
-    `casa-imaging-application`. `casa-imaging-reconstruction` is deleted when
-    empty. Dependency direction is enforced by
-    `scripts/check-imaging-dependencies.py` over `cargo metadata`.
+    `casa-imaging-runtime`, `casa-imaging-singledish`, `casa-imaging-metal`,
+    and `casa-imaging` (renamed from `casa-imaging-application`).
+    `casa-imaging-runtime` depends unconditionally across platforms on
+    `casa-imaging-metal`, and only `objc2-metal` inside `casa-imaging-metal`
+    is gated under `cfg(target_os = "macos")`. Dependency direction is
+    enforced by `scripts/check-imaging-dependencies.py` over `cargo metadata`.
     Every crate the policy covers, the model included, may depend on the
     **definitional crates**: crates that define values, units, quanta,
     measures and coordinate systems and the pure functions on them, do no
     file, network, process or environment I/O, start no threads, use no
-    device, and depend on no workspace crate but one another. They are
-    `casa-values`, `casa-types` and `casa-coordinates`; beyond them the model
+    device, and depend on no workspace crate but one another. In the target
+    layout they are `casa-core` (consolidated from `casa-values` and
+    `casa-types`) and `casa-coordinates`; beyond them the model
     depends only on `casa-observation`, the observation boundary, whose
     catalogue, batches and pointing samples its batch geometry reads
     (amended 2026-10-28 on owner approval; imaging port decision 1 of

@@ -8,7 +8,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use casa_ms::plot_document::{PlotDocument, PlotLayerData};
+use casa_plot_data::plot_document::{PlotDocument, PlotLayerData};
 use casa_types::measures::{MPosition, MeasuresProvider, direction::MDirection};
 
 use crate::SessionResources;

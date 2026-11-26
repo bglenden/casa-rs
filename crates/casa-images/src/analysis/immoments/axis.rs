@@ -2,19 +2,18 @@
 //! World coordinates and integration scale of a collapsed image axis.
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
-use casa_provider_contracts::ParameterValue;
 use casa_types::measures::{
     MeasFrame,
     doppler::{DopplerRef, MDoppler},
 };
 use casa_types::quanta::Unit;
 
-use super::super::SPEED_OF_LIGHT_KM_S;
+use super::super::{MomentAxis as MomentAxisParam, SPEED_OF_LIGHT_KM_S};
 use crate::{ImageError, ImageInterface, ImagePixel};
 
 pub(super) fn resolve<T: ImagePixel>(
     image: &dyn ImageInterface<T>,
-    parameter: Option<&ParameterValue>,
+    parameter: Option<&MomentAxisParam>,
     selected_shape: &[usize],
 ) -> Result<usize, ImageError> {
     let invalid = || ImageError::CasaSelection("Illegal moment axis; out of range".into());
@@ -27,7 +26,7 @@ pub(super) fn resolve<T: ImagePixel>(
     };
     match parameter {
         None => spectral(),
-        Some(ParameterValue::Integer(index)) if *index < 0 => {
+        Some(MomentAxisParam::Index(index)) if *index < 0 => {
             let axis = spectral()?;
             if selected_shape[axis] == 1 {
                 return Err(ImageError::CasaSelection(
@@ -36,11 +35,11 @@ pub(super) fn resolve<T: ImagePixel>(
             }
             Ok(axis)
         }
-        Some(ParameterValue::Integer(index)) => usize::try_from(*index)
+        Some(MomentAxisParam::Index(index)) => usize::try_from(*index)
             .ok()
             .filter(|&index| index < image.ndim())
             .ok_or_else(invalid),
-        Some(ParameterValue::String(name)) => {
+        Some(MomentAxisParam::Name(name)) => {
             let name = name.trim().to_ascii_lowercase();
             let candidates: Vec<_> = image
                 .axis_names()
@@ -69,9 +68,6 @@ pub(super) fn resolve<T: ImagePixel>(
                 ))),
             }
         }
-        _ => Err(ImageError::CasaSelection(
-            "axis must be an index or axis name".into(),
-        )),
     }
 }
 

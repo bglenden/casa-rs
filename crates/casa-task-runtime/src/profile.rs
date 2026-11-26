@@ -2,9 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use casa_provider_contracts::{
-    DefaultSpec, ParameterValue, Predicate, SurfaceContractBundle, SurfaceKind,
-};
+use casa_contracts::{DefaultSpec, ParameterValue, Predicate, SurfaceContractBundle, SurfaceKind};
 use thiserror::Error;
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, SourceLocation};
@@ -829,8 +827,8 @@ pub enum ProfileError {
 mod tests {
     mod provenance;
 
-    use casa_provider_contracts::SurfaceParameterBinding;
-    use casa_provider_contracts::{
+    use casa_contracts::SurfaceParameterBinding;
+    use casa_contracts::{
         CELL_CONCEPT_ID, ContextRole, ParameterCatalog, ParameterConcept, ParameterConceptId,
         ParameterConceptRef, ParameterDocs, ParameterPresentation, ParameterProjections,
         ParameterRole, ParameterType, PersistenceClass, SemanticRevision, SurfaceDefinition,
@@ -841,7 +839,7 @@ mod tests {
 
     fn bundle(kind: SurfaceKind) -> SurfaceContractBundle {
         let imsize = ParameterConcept {
-            id: ParameterConceptId::new(casa_provider_contracts::IMSIZE_CONCEPT_ID),
+            id: ParameterConceptId::new(casa_contracts::IMSIZE_CONCEPT_ID),
             semantic_revision: SemanticRevision(1),
             casa_name: "imsize".into(),
             value_domain: ParameterType::Array {
@@ -850,7 +848,7 @@ mod tests {
                 max_items: Some(2),
                 allow_scalar: true,
             },
-            normalization: casa_provider_contracts::NormalizationRule::Identity,
+            normalization: casa_contracts::NormalizationRule::Identity,
             base_constraints: Vec::new(),
             unit_dimension: None,
             semantic_role: ParameterRole::Geometry,
@@ -875,7 +873,7 @@ mod tests {
                 max_items: Some(2),
                 allow_scalar: true,
             },
-            normalization: casa_provider_contracts::NormalizationRule::Quantity {
+            normalization: casa_contracts::NormalizationRule::Quantity {
                 canonical_unit: "arcsec".into(),
             },
             base_constraints: Vec::new(),
@@ -964,7 +962,7 @@ mod tests {
 
     #[test]
     fn frozen_vlass_single_and_all_field_profiles_round_trip_without_parameter_loss() {
-        let bundle = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
+        let bundle = casa_contracts::builtin_surface_bundle("tclean").unwrap();
         for (label, source, expected_field) in [
             (
                 "single",
@@ -1075,7 +1073,7 @@ imsize = 256
 
     #[test]
     fn stale_tclean_field_files_are_refused_before_none_is_interpreted() {
-        let bundle = casa_provider_contracts::builtin_surface_bundle("tclean").unwrap();
+        let bundle = casa_contracts::builtin_surface_bundle("tclean").unwrap();
         let stale = parse_profile(
             r#"[casars]
 format = 1

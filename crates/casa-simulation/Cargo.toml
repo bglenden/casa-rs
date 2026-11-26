@@ -31,7 +31,8 @@ casa-imaging-singledish = { path = "../casa-imaging-singledish" }
 casa-lattices = { path = "../casa-lattices" }
 casa-ms = { path = "../casa-ms" }
 casa-numerics = { path = "../casa-numerics" }
-casa-provider-contracts = { path = "../casa-provider-contracts" }
+casa-plot-data = { path = "../../surfaces/casa-plot-data" }
+casa-contracts = { path = "../../surfaces/casa-contracts" }
 casa-tables = { path = "../casa-tables" }
 casa-task-runtime = { path = "../casa-task-runtime" }
 casa-types = { path = "../casa-types" }
@@ -46,11 +47,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 sha2 = "0.10"
-casa-test-support = { path = "../casa-test-support" }
+casa-test-support = { path = "../../dev/casa-test-support" }
 flate2 = "1"
 tar = "0.4"
 tracing-subscriber.workspace = true
-
-[[bin]]
-name = "synthetic-ms"
-path = "bin/synthetic-ms.rs"

@@ -127,7 +127,7 @@ pub struct SimobserveOutcome {
     pub warnings: Vec<String>,
     /// Native-prepared figures for the caller's renderer, with array views
     /// into the file supplied to [`simobserve_with_plots`].
-    pub plots: Vec<casa_ms::plot_document::PlotFigure>,
+    pub plots: Vec<casa_plot_data::plot_document::PlotFigure>,
 }
 
 /// What `simobserve` refuses.
@@ -286,7 +286,7 @@ struct Run<'a> {
     /// The outcome's warnings.
     warnings: Vec<String>,
     /// Renderer-neutral native figures prepared in this run.
-    plots: Vec<casa_ms::plot_document::PlotFigure>,
+    plots: Vec<casa_plot_data::plot_document::PlotFigure>,
 }
 
 impl<'a> Run<'a> {

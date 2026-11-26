@@ -344,7 +344,8 @@ pub fn import_archive_files_to_measurement_set_from_options(
     import_archive_with_history(options, None)
 }
 
-pub(crate) fn import_archive_with_history(
+/// Import archive files from disk into a MeasurementSet, optionally recording task history.
+pub fn import_archive_with_history(
     options: &ImportVlaOptions,
     history: Option<&casa_ms::TransformTaskHistory>,
 ) -> Result<ImportReport, VlaError> {

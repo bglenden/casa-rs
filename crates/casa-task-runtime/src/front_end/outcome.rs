@@ -5,7 +5,7 @@
 use std::fmt;
 use std::process::ExitStatus;
 
-use casa_provider_contracts::{CasaValue, TaskFailureKind, TaskReply};
+use casa_contracts::{CasaValue, TaskFailureKind, TaskReply};
 use serde_json::Value;
 
 /// The exit status of a finished task process.

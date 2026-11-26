@@ -27,7 +27,7 @@ fn clip_with_its_defaults_flags_nans_as_casa_does() {
         "vis": ms_path, "mode": "clip", "flagbackup": false,
     }));
     assert!(
-        matches!(reply, casa_provider_contracts::TaskReply::Succeeded { .. }),
+        matches!(reply, casa_contracts::TaskReply::Succeeded { .. }),
         "{reply:?}"
     );
     let ms = MeasurementSet::open(&ms_path).expect("open MS");
@@ -80,7 +80,7 @@ fn the_flagdata_binary_applies_explicit_rflag_thresholds() {
 }
 
 /// The `flagdata` binary's reply to a `--json-run` request of `values`.
-fn flagdata_json_run(values: serde_json::Value) -> casa_provider_contracts::TaskReply {
+fn flagdata_json_run(values: serde_json::Value) -> casa_contracts::TaskReply {
     let temp = tempdir().expect("tempdir");
     let request = temp.path().join("request.json");
     let request_text = serde_json::json!({"surface": "flagdata", "values": values}).to_string();
@@ -111,7 +111,7 @@ fn rflag_flags(
     values["flagbackup"] = serde_json::json!(false);
     let reply = flagdata_json_run(values);
     assert!(
-        matches!(reply, casa_provider_contracts::TaskReply::Succeeded { .. }),
+        matches!(reply, casa_contracts::TaskReply::Succeeded { .. }),
         "{reply:?}"
     );
     flag_count(&MeasurementSet::open(&ms_path).expect("open MS"))
@@ -170,7 +170,7 @@ fn rflag_accepts_computed_matrix_and_file_thresholds() {
             let reply = flagdata_json_run(serde_json::json!({
                 "vis": ms_path, "mode": "rflag", "flagbackup": false, name: value,
             }));
-            let casa_provider_contracts::TaskReply::Succeeded { result, .. } = reply else {
+            let casa_contracts::TaskReply::Succeeded { result, .. } = reply else {
                 panic!("{name}={value}: {reply:?}");
             };
             result[name].as_f64().expect("reported RFlag cutoff")
@@ -203,7 +203,7 @@ fn extend_grows_each_correlation_on_its_own_and_reads_no_data_column() {
             "flagbackup": false,
         }));
         assert!(
-            matches!(reply, casa_provider_contracts::TaskReply::Succeeded { .. }),
+            matches!(reply, casa_contracts::TaskReply::Succeeded { .. }),
             "{reply:?}"
         );
         let ms = MeasurementSet::open(&ms_path).expect("open MS");

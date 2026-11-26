@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use casa_ms::msexplore::cli::PlotMsModelReferences;
+use casa_ms::PlotMsModelReferences;
 use casa_ms::selection::ChannelRange;
 use casa_ms::{
     MeasurementSet, PreparedTransformInputView, ResolvedMsSelectionRow, SubtableId,

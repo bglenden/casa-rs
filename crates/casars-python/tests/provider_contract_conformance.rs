@@ -10,38 +10,41 @@ fn every_builtin_provider_validates_through_the_shared_envelope() {
         "calibration",
         casa_calibration::calibration_task_schema_bundle(),
     );
-    assert_task_provider("importvla", casa_vla::importvla_task_schema_bundle());
+    assert_task_provider("importvla", casa_tasks::vla::importvla_task_schema_bundle());
     assert_task_provider(
         "msexplore",
-        casa_ms::msexplore::task_contract::msexplore_task_schema_bundle(),
+        casa_tasks::ms::msexplore::task_contract::msexplore_task_schema_bundle(),
     );
     assert_task_provider(
         "simobserve",
         casars_simulation::simobserve_task_schema_bundle(),
     );
-    assert_task_provider("mstransform", casa_ms::mstransform_task_schema_bundle());
-    assert_task_provider("concat", casa_ms::concat::concat_task_schema_bundle());
-    assert_task_provider("flagdata", casa_ms::flagdata_task_schema_bundle());
-    assert_task_provider("flagmanager", casa_ms::flagmanager_task_schema_bundle());
+    assert_task_provider(
+        "mstransform",
+        casa_tasks::ms::mstransform_task_schema_bundle(),
+    );
+    assert_task_provider("concat", casa_tasks::ms::concat_task_schema_bundle());
+    assert_task_provider("flagdata", casa_tasks::ms::flagdata_task_schema_bundle());
+    assert_task_provider(
+        "flagmanager",
+        casa_tasks::ms::flagmanager_task_schema_bundle(),
+    );
     assert_task_provider(
         "msconvert",
-        casars_msconvert::msconvert_task_schema_bundle(),
+        casa_tasks::ms::msconvert::msconvert_task_schema_bundle(),
     );
     assert_task_provider(
         "image-analysis",
-        casa_images::analysis::image_analysis_task_schema_bundle(),
+        casa_tasks::images::image_analysis_task_schema_bundle(),
     );
-    assert_task_provider("imager", casars_imager::imager_task_schema_bundle());
+    assert_task_provider("imager", casa_tasks::imaging::imager_task_schema_bundle());
     assert_task_provider(
         "tsdimaging",
-        casars_imager::single_dish::tsdimaging_task_schema_bundle(),
+        casa_tasks::imaging::single_dish::tsdimaging_task_schema_bundle(),
     );
 }
 
-fn assert_task_provider<E>(
-    name: &str,
-    mut bundle: casa_provider_contracts::TaskProviderContract<E>,
-) {
+fn assert_task_provider(name: &str, mut bundle: casa_contracts::TaskProviderContract) {
     bundle
         .validate()
         .unwrap_or_else(|errors| panic!("{name} provider contract: {errors:?}"));
@@ -61,11 +64,11 @@ fn assert_task_provider<E>(
         .machine_actions
         .json_run = json_run;
 
-    let casa_provider_contracts::SurfaceDefinition::Task(definition) =
+    let casa_contracts::SurfaceDefinition::Task(definition) =
         &mut bundle.parameter_surfaces[0].surface;
     let surface_id = std::mem::take(&mut definition.id);
     assert_rejected(name, &bundle.validate(), "parameter_surface");
-    let casa_provider_contracts::SurfaceDefinition::Task(definition) =
+    let casa_contracts::SurfaceDefinition::Task(definition) =
         &mut bundle.parameter_surfaces[0].surface;
     definition.id = surface_id;
 
@@ -75,7 +78,7 @@ fn assert_task_provider<E>(
 
 fn assert_rejected(
     name: &str,
-    result: &Result<(), Vec<casa_provider_contracts::ProviderContractValidationError>>,
+    result: &Result<(), Vec<casa_contracts::ProviderContractValidationError>>,
     code: &str,
 ) {
     assert!(

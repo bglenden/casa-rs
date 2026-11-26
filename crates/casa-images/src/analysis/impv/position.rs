@@ -4,8 +4,6 @@
 use std::f64::consts::PI;
 
 use casa_coordinates::{Coordinate, DirectionCoordinate};
-use casa_provider_contracts::{ParameterValue, parameter_value_to_casacore};
-use casa_types::Value;
 use casa_types::measures::{
     MeasFrame,
     direction::{DirectionRef, MDirection},
@@ -123,15 +121,7 @@ fn radians(value: &PvAmount) -> Result<f64, ImageError> {
     let invalid = || ImageError::CasaSelection("expected a value with angular units".into());
     let quantity = match value {
         PvAmount::Angular(text) => Quantity::read(text).map_err(|_| invalid())?,
-        PvAmount::Quantity(fields) => {
-            let Value::Record(record) =
-                parameter_value_to_casacore(&ParameterValue::Table(fields.clone()))
-                    .map_err(|_| invalid())?
-            else {
-                return Err(invalid());
-            };
-            crate::beam::quantity_from_record(&record)?
-        }
+        PvAmount::Record(record) => crate::beam::quantity_from_record(record)?,
         _ => return Err(invalid()),
     };
     let radians = quantity

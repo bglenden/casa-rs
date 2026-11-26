@@ -18,11 +18,15 @@ use super::{
     MsTransformError, MsTransformRequest, rewrite_selected_table_rows, scalar_f64, scalar_i32,
 };
 
-pub(crate) struct OrderedMainRows {
-    pub(crate) rows: Vec<usize>,
+/// Ordered main-table row schedule and visibility-buffer boundaries for transforms and plots.
+pub struct OrderedMainRows {
+    /// Main-table row indices in iteration order.
+    pub rows: Vec<usize>,
     pub(super) descriptions: Vec<i32>,
-    pub(crate) starts_visibility_buffer: Vec<bool>,
-    pub(crate) phase_reference_rows: Vec<usize>,
+    /// Whether each row begins a new visibility buffer.
+    pub starts_visibility_buffer: Vec<bool>,
+    /// Phase-reference row index per ordered output row.
+    pub phase_reference_rows: Vec<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -151,7 +155,7 @@ fn plot_iterator_boundaries(
 
 /// Return selected MAIN rows and buffer starts in PlotMS iterator order.
 /// Each input pair contains a row number and its data-description ID.
-pub(crate) fn selected_plotms_integration_order(
+pub fn selected_plotms_integration_order(
     ms: &MeasurementSet,
     selected: impl Iterator<Item = (usize, i32)>,
     combine_spectral_windows: bool,

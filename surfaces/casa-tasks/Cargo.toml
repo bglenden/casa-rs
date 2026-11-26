@@ -1,0 +1,69 @@
+[package]
+name = "casa-tasks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Feature-gated task adapters, contracts, and CASA return projections for casa-rs"
+repository.workspace = true
+publish = false
+
+[features]
+default = []
+imaging = [
+    "dep:casa-images",
+    "dep:casa-imaging-application",
+    "dep:casa-ms",
+    "dep:ndarray",
+]
+images = [
+    "dep:casa-images",
+    "dep:casa-lattices",
+    "dep:casa-types",
+]
+ms = [
+    "dep:casa-atmosphere",
+    "dep:casa-measures-data",
+    "dep:casa-ms",
+    "dep:casa-numerics",
+    "dep:casa-observation",
+    "dep:casa-plot-data",
+    "dep:casa-tables",
+    "dep:casa-types",
+    "dep:ndarray",
+    "dep:num-complex",
+    "dep:tempfile",
+]
+vla = ["dep:casa-ms", "dep:casa-vla"]
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-atmosphere = { path = "../../crates/casa-atmosphere", optional = true }
+casa-contracts = { path = "../casa-contracts" }
+casa-images = { path = "../../crates/casa-images", optional = true }
+casa-imaging-application = { path = "../../crates/casa-imaging-application", optional = true }
+casa-lattices = { path = "../../crates/casa-lattices", optional = true }
+casa-measures-data = { path = "../../crates/casa-measures-data", optional = true }
+casa-ms = { path = "../../crates/casa-ms", features = ["msv4"], optional = true }
+casa-numerics = { path = "../../crates/casa-numerics", optional = true }
+casa-observation = { path = "../../crates/casa-observation", optional = true }
+casa-plot-data = { path = "../casa-plot-data", features = ["ms"], optional = true }
+casa-tables = { path = "../../crates/casa-tables", optional = true }
+casa-task-runtime = { path = "../../crates/casa-task-runtime" }
+casa-types = { path = "../../crates/casa-types", optional = true }
+casa-vla = { path = "../../crates/casa-vla", optional = true }
+ndarray = { workspace = true, optional = true }
+num-complex = { workspace = true, optional = true }
+schemars = { version = "0.8", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = { version = "3", optional = true }
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+casa-imaging-deconvolution = { path = "../../crates/casa-imaging-deconvolution" }
+casa-test-support = { path = "../../dev/casa-test-support" }
+tempfile = "3"

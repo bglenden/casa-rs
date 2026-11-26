@@ -1,0 +1,47 @@
+[package]
+name = "casa-plot-data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Feature-gated renderer-neutral plot data DTOs and MeasurementSet plot builders"
+repository.workspace = true
+publish = false
+
+[features]
+default = []
+ms = [
+    "dep:casa-atmosphere",
+    "dep:casa-ms",
+    "dep:casa-tables",
+    "dep:casa-types",
+    "dep:ndarray",
+    "dep:serde_json",
+    "dep:tracing",
+]
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-atmosphere = { path = "../../crates/casa-atmosphere", optional = true }
+casa-ms = { path = "../../crates/casa-ms", optional = true }
+casa-tables = { path = "../../crates/casa-tables", optional = true }
+casa-types = { path = "../../crates/casa-types", optional = true }
+ndarray = { workspace = true, optional = true }
+schemars = { version = "0.8", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", optional = true }
+thiserror.workspace = true
+tracing = { workspace = true, optional = true }
+
+[dev-dependencies]
+casa-test-support = { path = "../../dev/casa-test-support" }
+flate2 = "1"
+num-complex.workspace = true
+tar = "0.4"
+tempfile = "3"
+
+[[example]]
+name = "profile_msexplore"
+required-features = ["ms"]

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA `rerefant` input and return contract.
 
-use casa_provider_contracts::CasaValue;
+use casa_contracts::CasaValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {

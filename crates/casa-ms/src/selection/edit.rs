@@ -1,10 +1,39 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Canonical syntax and dataset-context validation for MeasurementSet selectors.
 
-use casa_provider_contracts::SelectorGrammar;
-
 use crate::selection::syntax::{parse_numeric_id_selector, parse_spw_selector};
 use crate::{MeasurementSet, MsError, MsResult, MsSelection};
+
+/// Selector fields accepted by [`validate_ms_selector_edit`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MsSelectorKind {
+    /// FIELD selection expression.
+    Field,
+    /// SPW and channel selection expression.
+    SpectralWindow,
+    /// TIME range selection expression.
+    TimeRange,
+    /// UV-distance selection expression.
+    UvRange,
+    /// ANTENNA/baseline selection expression.
+    Antenna,
+    /// SCAN selection expression.
+    Scan,
+    /// CORRELATION selection expression.
+    Correlation,
+    /// ARRAY selection expression.
+    Array,
+    /// OBSERVATION selection expression.
+    Observation,
+    /// STATE/intent selection expression.
+    Intent,
+    /// FEED selection expression.
+    Feed,
+    /// TaQL row selection expression.
+    MsSelect,
+    /// Single-SPW channel selection expression.
+    ImageChannels,
+}
 
 /// Dataset context needed by selectors that are edited separately from SPW.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -19,7 +48,7 @@ pub struct MsSelectorEditContext {
 /// subtable-owned names, units, correlation types, intents, and channel bounds.
 pub fn validate_ms_selector_edit(
     ms: &MeasurementSet,
-    grammar: SelectorGrammar,
+    kind: MsSelectorKind,
     value: &str,
     context: MsSelectorEditContext,
 ) -> MsResult<()> {
@@ -29,23 +58,23 @@ pub fn validate_ms_selector_edit(
     }
 
     let mut request = MsSelection::default();
-    match grammar {
-        SelectorGrammar::Field => request.field = Some(value.to_string()),
-        SelectorGrammar::SpectralWindow => request.spw = Some(value.to_string()),
-        SelectorGrammar::TimeRange => request.timerange = Some(value.to_string()),
-        SelectorGrammar::UvRange => request.uvrange = Some(value.to_string()),
-        SelectorGrammar::Antenna => request.antenna = Some(value.to_string()),
-        SelectorGrammar::Scan => request.scan = Some(value.to_string()),
-        SelectorGrammar::Correlation => request.correlation = Some(value.to_string()),
-        SelectorGrammar::Array => request.array = Some(value.to_string()),
-        SelectorGrammar::Observation => request.observation = Some(value.to_string()),
-        SelectorGrammar::Intent => request.intent = Some(value.to_string()),
-        SelectorGrammar::Feed => {
+    match kind {
+        MsSelectorKind::Field => request.field = Some(value.to_string()),
+        MsSelectorKind::SpectralWindow => request.spw = Some(value.to_string()),
+        MsSelectorKind::TimeRange => request.timerange = Some(value.to_string()),
+        MsSelectorKind::UvRange => request.uvrange = Some(value.to_string()),
+        MsSelectorKind::Antenna => request.antenna = Some(value.to_string()),
+        MsSelectorKind::Scan => request.scan = Some(value.to_string()),
+        MsSelectorKind::Correlation => request.correlation = Some(value.to_string()),
+        MsSelectorKind::Array => request.array = Some(value.to_string()),
+        MsSelectorKind::Observation => request.observation = Some(value.to_string()),
+        MsSelectorKind::Intent => request.intent = Some(value.to_string()),
+        MsSelectorKind::Feed => {
             validate_numeric_membership(value, "feed", feed_ids(ms)?.as_slice())?;
             return Ok(());
         }
-        SelectorGrammar::MsSelect => request.msselect = Some(value.to_string()),
-        SelectorGrammar::ImageChannels => {
+        MsSelectorKind::MsSelect => request.msselect = Some(value.to_string()),
+        MsSelectorKind::ImageChannels => {
             let spw_id = context.spectral_window_id.ok_or_else(|| {
                 MsError::InvalidInput(
                     "channel edit validation requires a selected spectral window".to_string(),
@@ -53,54 +82,46 @@ pub fn validate_ms_selector_edit(
             })?;
             request.spw = Some(format!("{spw_id}:{value}"));
         }
-        SelectorGrammar::ImageBox | SelectorGrammar::ImageRegion | SelectorGrammar::Stokes => {
-            return Err(MsError::InvalidInput(format!(
-                "{grammar:?} is not a MeasurementSet selector grammar"
-            )));
-        }
     }
 
     request.compile(ms)?;
-    validate_dataset_bounds(ms, grammar, value, context)
+    validate_dataset_bounds(ms, kind, value, context)
 }
 
 fn validate_dataset_bounds(
     ms: &MeasurementSet,
-    grammar: SelectorGrammar,
+    kind: MsSelectorKind,
     value: &str,
     context: MsSelectorEditContext,
 ) -> MsResult<()> {
-    match grammar {
-        SelectorGrammar::Field => {
+    match kind {
+        MsSelectorKind::Field => {
             let numeric = numeric_parts(value);
             validate_ids_below(&numeric, "field", ms.field()?.row_count())
         }
-        SelectorGrammar::SpectralWindow => validate_spw_bounds(ms, value),
-        SelectorGrammar::ImageChannels => {
+        MsSelectorKind::SpectralWindow => validate_spw_bounds(ms, value),
+        MsSelectorKind::ImageChannels => {
             let spw_id = context.spectral_window_id.expect("checked by caller");
             validate_spw_bounds(ms, &format!("{spw_id}:{value}"))
         }
-        SelectorGrammar::Antenna => {
+        MsSelectorKind::Antenna => {
             let ids = antenna_numeric_parts(value);
             validate_ids_below(&ids, "antenna", ms.antenna()?.row_count())
         }
-        SelectorGrammar::Observation => validate_numeric_membership(
+        MsSelectorKind::Observation => validate_numeric_membership(
             value,
             "observation",
             &(0..ms.observation()?.row_count() as i32).collect::<Vec<_>>(),
         ),
-        SelectorGrammar::Scan | SelectorGrammar::Array => {
-            parse_numeric_id_selector(value, selector_label(grammar)).map(|_| ())
+        MsSelectorKind::Scan | MsSelectorKind::Array => {
+            parse_numeric_id_selector(value, selector_label(kind)).map(|_| ())
         }
-        SelectorGrammar::TimeRange
-        | SelectorGrammar::UvRange
-        | SelectorGrammar::Correlation
-        | SelectorGrammar::Intent
-        | SelectorGrammar::Feed
-        | SelectorGrammar::MsSelect => Ok(()),
-        SelectorGrammar::ImageBox | SelectorGrammar::ImageRegion | SelectorGrammar::Stokes => {
-            unreachable!("rejected by caller")
-        }
+        MsSelectorKind::TimeRange
+        | MsSelectorKind::UvRange
+        | MsSelectorKind::Correlation
+        | MsSelectorKind::Intent
+        | MsSelectorKind::Feed
+        | MsSelectorKind::MsSelect => Ok(()),
     }
 }
 
@@ -189,10 +210,10 @@ fn feed_ids(ms: &MeasurementSet) -> MsResult<Vec<i32>> {
     Ok(ids)
 }
 
-fn selector_label(grammar: SelectorGrammar) -> &'static str {
-    match grammar {
-        SelectorGrammar::Scan => "scan",
-        SelectorGrammar::Array => "array",
+fn selector_label(kind: MsSelectorKind) -> &'static str {
+    match kind {
+        MsSelectorKind::Scan => "scan",
+        MsSelectorKind::Array => "array",
         _ => "selector",
     }
 }

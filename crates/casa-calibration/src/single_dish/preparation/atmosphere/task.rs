@@ -4,8 +4,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use casa_contracts::{CasaValue, ParameterValue};
 use casa_ms::{MeasurementSet, MsSelection, MsSelectionIoBudget, ResolvedMsSelectionRow};
-use casa_provider_contracts::{CasaValue, ParameterValue};
 use casa_tables::{Table, TableOptions};
 use casa_task_runtime::{CasaLoggingConfig, TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::{

@@ -655,29 +655,6 @@ fn flagdata_summary_backups_and_selector_errors_match_expected_boundaries() {
     assert!(missing.is_err());
 }
 
-#[test]
-fn flagmanager_binary_emits_json() {
-    let temp = tempdir().expect("tempdir");
-    let ms_path = create_msexplore_fixture_ms(temp.path());
-    let flagmanager_output = Command::new(env!("CARGO_BIN_EXE_flagmanager"))
-        .args([
-            "--vis",
-            ms_path.to_str().expect("UTF-8 MS path"),
-            "--mode",
-            "list",
-        ])
-        .output()
-        .expect("run flagmanager");
-    assert!(
-        flagmanager_output.status.success(),
-        "flagmanager stderr: {}",
-        String::from_utf8_lossy(&flagmanager_output.stderr)
-    );
-    let flagmanager_json: serde_json::Value =
-        serde_json::from_slice(&flagmanager_output.stdout).expect("flagmanager JSON");
-    assert_eq!(flagmanager_json[0]["name"], "main");
-}
-
 fn seed_constant_data_with_outliers(
     ms_path: &std::path::Path,
     outliers: &[(usize, usize, usize, f32)],

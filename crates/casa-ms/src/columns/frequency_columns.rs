@@ -119,7 +119,7 @@ impl<'a> ChanFreqColumn<'a> {
     /// descriptor lacks a reference. CASA's visibility iterator reads the
     /// measurement-frame column in that case, while the measure accessor's
     /// default remains REST.
-    pub(crate) fn visibility_frequency_reference(&self, row: usize) -> MsResult<FrequencyRef> {
+    pub fn visibility_frequency_reference(&self, row: usize) -> MsResult<FrequencyRef> {
         if matches!(
             self.channels_reference.or(&self.centre_reference),
             FrequencyReference::Incomplete

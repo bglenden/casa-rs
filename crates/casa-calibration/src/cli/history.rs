@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use casa_provider_contracts::{ParameterValue, python_repr};
+use casa_contracts::{ParameterValue, python_repr};
 use casa_tables::{Table, TableOptions};
 use casa_task_runtime::TaskInvocation;
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};

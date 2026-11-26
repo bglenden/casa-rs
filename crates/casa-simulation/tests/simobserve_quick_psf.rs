@@ -209,7 +209,7 @@ fn default_tclean_control(case: &Value, quick: &Path) {
         "niter": 0, "calcres": false, "restoration": false,
     });
     let resolved = casa_task_runtime::resolve_plain_values(
-        casa_provider_contracts::builtin_surface_bundle("tclean").expect("surface"),
+        casa_contracts::builtin_surface_bundle("tclean").expect("surface"),
         std::env::current_dir().expect("workspace"),
         values.as_object().expect("object"),
     )
@@ -402,8 +402,8 @@ fn complete_native_figures_match_casas_independent_plot_data() {
     }
 }
 
-fn binary_values(array: &casa_ms::plot_document::PlotBinaryArray, bytes: &[u8]) -> Vec<f64> {
-    use casa_ms::plot_document::PlotArrayDtype;
+fn binary_values(array: &casa_plot_data::plot_document::PlotBinaryArray, bytes: &[u8]) -> Vec<f64> {
+    use casa_plot_data::plot_document::PlotArrayDtype;
     let size = array.dtype.bytes();
     let strides = if array.strides_bytes.is_empty() {
         if array.shape.len() == 2 {
@@ -458,11 +458,11 @@ fn close_values(actual: &[f64], reference: &Value, allowance: f64, context: &str
 }
 
 fn compare_panel(
-    panel: &casa_ms::plot_document::PlotDocumentPanel,
+    panel: &casa_plot_data::plot_document::PlotDocumentPanel,
     reference: &Value,
     bytes: &[u8],
 ) {
-    use casa_ms::plot_document::PlotLayerData;
+    use casa_plot_data::plot_document::PlotLayerData;
     assert_eq!(panel.title, reference["title"].as_str().expect("title"));
     assert_eq!(
         panel.axes[0].label,

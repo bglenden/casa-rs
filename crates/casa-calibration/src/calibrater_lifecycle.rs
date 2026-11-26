@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use casa_components::ComponentList;
+use casa_contracts::CasaValue;
 use casa_ms::{MeasurementSet, MsSelection, SubtableId};
-use casa_provider_contracts::CasaValue;
 use casa_tables::RequiredScalarColumnValues;
 use casa_types::{ScalarValue, Value};
 

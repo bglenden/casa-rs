@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 casa-logging = { path = "../casa-logging" }
-casa-provider-contracts = { path = "../casa-provider-contracts" }
+casa-contracts = { path = "../../surfaces/casa-contracts" }
 casa-types = { path = "../casa-types" }
 fs2 = "0.4"
 serde = { version = "1", features = ["derive"] }

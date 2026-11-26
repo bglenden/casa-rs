@@ -6,7 +6,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use casa_components::ComponentList;
-use casa_provider_contracts::{CasaValue, ParameterValue, casa_numpy_scalar_root};
+use casa_contracts::{CasaValue, ParameterValue, casa_numpy_scalar_root};
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{Table, TableOptions};
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
