@@ -19,7 +19,7 @@ pub fn imsubimage_front_end()
 pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let outfile = task
         .text("outfile")?
-        .map_or_else(PathBuf::new, PathBuf::from);
+        .map_or_else(PathBuf::new, |path| task.io_path(path));
     let request = ImsubimageRequest {
         imagename: task.input_path("imagename")?,
         outfile,
