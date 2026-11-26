@@ -318,6 +318,7 @@ mod tests {
         let overrides = json!({
             "vis": ["input.ms"],
             "imagename": "output",
+            "cell": "1arcsec",
             "gridder": "awproject",
             "conjbeams": true,
             "wprojplanes": 32,
