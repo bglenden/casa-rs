@@ -30,16 +30,19 @@ pub(super) fn read(task: &TaskInvocation<'_>) -> Result<Vec<Assignments>, TaskFa
     let padded = tbuff_active(task);
     let padding = padding(buffer)?;
     let (lines, from_file) = match task.value("inpfile") {
-        Some(ParameterValue::String(line)) if padded && !Path::new(line).is_file() => {
+        Some(ParameterValue::String(line)) if padded && !task.io_path(line).is_file() => {
             (vec![line.clone()], false)
         }
-        Some(ParameterValue::String(path)) => (read_lines(path)?, true),
+        Some(ParameterValue::String(path)) => (read_lines(&task.io_path(path))?, true),
         Some(ParameterValue::Array(values)) => {
             let inputs = strings(values)?;
-            if inputs.first().is_some_and(|path| Path::new(path).is_file()) {
+            if inputs
+                .first()
+                .is_some_and(|path| task.io_path(path).is_file())
+            {
                 let mut lines = Vec::new();
                 for path in inputs {
-                    lines.extend(read_lines(path)?);
+                    lines.extend(read_lines(&task.io_path(path))?);
                 }
                 (lines, true)
             } else {
@@ -80,7 +83,7 @@ pub(super) fn read(task: &TaskInvocation<'_>) -> Result<Vec<Assignments>, TaskFa
         if let Some(ParameterValue::String(path)) = values.get("addantenna")
             && !path.is_empty()
         {
-            let antenna = shadow::read_list(path).map_err(|_| error())?;
+            let antenna = shadow::read_list(task, path).map_err(|_| error())?;
             values.set_with_spelling("addantenna", antenna.value, antenna.command);
         }
         if values
@@ -128,7 +131,7 @@ fn strings(values: &[ParameterValue]) -> Result<Vec<&str>, TaskFailure> {
         .collect()
 }
 
-fn read_lines(path: &str) -> Result<Vec<String>, TaskFailure> {
+fn read_lines(path: &Path) -> Result<Vec<String>, TaskFailure> {
     let text = fs::read_to_string(path).map_err(|_| error())?;
     Ok(text.lines().map(str::trim_end).map(str::to_owned).collect())
 }

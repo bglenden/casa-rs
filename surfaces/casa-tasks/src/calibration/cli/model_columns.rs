@@ -28,7 +28,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
                     ParameterValue::String(part.to_string_lossy().into_owned()),
                 )
                 .map_err(|error| TaskFailure::execution(error.to_string()))?;
-            let partition = TaskInvocation::new(&session, task.workspace());
+            let partition = task.with_session(&session);
             if let Err(error) = run_one(&partition, &part, true) {
                 tracing::warn!(task = task.surface(), partition = %part.display(), error = %error.message, "Multi-MS partition failed");
             }
@@ -40,7 +40,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
 }
 
 fn run_one(task: &TaskInvocation<'_>, path: &Path, partition: bool) -> Result<(), TaskFailure> {
-    let mut lock = TableWriteLock::acquire_to_reread(path, 0)
+    let mut lock = acquire_write(task, path)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("vis"))?;
     let mut ms = MeasurementSet::open(path)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("vis"))?;
@@ -97,6 +97,22 @@ fn run_one(task: &TaskInvocation<'_>, path: &Path, partition: bool) -> Result<()
         .map_err(|error| TaskFailure::execution(error.to_string()).at("vis"))?;
     super::history::record_task(task, path);
     Ok(())
+}
+
+fn acquire_write(
+    task: &TaskInvocation<'_>,
+    path: &Path,
+) -> Result<TableWriteLock, casa_tables::TableError> {
+    #[cfg(unix)]
+    if let Some(options) = task.native_options()
+        && let Some(reservations) = options.table_writes.as_ref()
+    {
+        return TableWriteLock::acquire_reserved_interruptibly(path, reservations, &|| {
+            options.is_cancelled()
+        });
+    }
+    let _ = task;
+    TableWriteLock::acquire_to_reread(path, 0)
 }
 
 fn selectvis_text(value: Option<String>) -> Option<String> {

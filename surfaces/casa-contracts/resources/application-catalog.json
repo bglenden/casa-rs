@@ -1,12 +1,11 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "applications": [
     {
       "id": "msexplore",
       "launch": {
         "executable": "msexplore",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_MSEXPLORE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -17,8 +16,7 @@
       "id": "calibrate",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set",
@@ -30,8 +28,7 @@
       "id": "importvla",
       "launch": {
         "executable": "importvla",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_IMPORTVLA_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "archive"
@@ -42,8 +39,7 @@
       "id": "tclean",
       "launch": {
         "executable": "casars-imager",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_IMAGER_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -54,8 +50,7 @@
       "id": "simobserve",
       "launch": {
         "executable": "simobserve",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_SIMOBSERVE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "image",
@@ -67,8 +62,7 @@
       "id": "imhead",
       "launch": {
         "executable": "imexplore",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_IMEXPLORE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "image"
@@ -79,8 +73,7 @@
       "id": "imstat",
       "launch": {
         "executable": "imexplore",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_IMEXPLORE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "image"
@@ -91,8 +84,7 @@
       "id": "immoments",
       "launch": {
         "executable": "immoments",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_IMMOMENTS_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "image"
@@ -103,8 +95,7 @@
       "id": "exportfits",
       "launch": {
         "executable": "exportfits",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_EXPORTFITS_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "image"
@@ -115,8 +106,7 @@
       "id": "mstransform",
       "launch": {
         "executable": "mstransform",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_MSTRANSFORM_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -127,8 +117,7 @@
       "id": "split",
       "launch": {
         "executable": "mstransform",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_MSTRANSFORM_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -139,8 +128,7 @@
       "id": "applycal",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set",
@@ -152,8 +140,7 @@
       "id": "gaincal",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -164,8 +151,7 @@
       "id": "accor",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -176,8 +162,7 @@
       "id": "blcal",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -188,8 +173,7 @@
       "id": "fringefit",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -200,8 +184,7 @@
       "id": "pccor",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -212,8 +195,7 @@
       "id": "appendantab",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -224,8 +206,7 @@
       "id": "bandpass",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -236,8 +217,7 @@
       "id": "fluxscale",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "calibration_table"
@@ -248,8 +228,7 @@
       "id": "uvsub",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -260,8 +239,7 @@
       "id": "ft",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -272,8 +250,7 @@
       "id": "setjy",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -284,8 +261,7 @@
       "id": "uvmodelfit",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -296,8 +272,7 @@
       "id": "clearcal",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -308,8 +283,7 @@
       "id": "delmod",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -320,8 +294,7 @@
       "id": "gencal",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -332,8 +305,7 @@
       "id": "plotms",
       "launch": {
         "executable": "msexplore",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_MSEXPLORE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set",
@@ -345,8 +317,7 @@
       "id": "flagdata",
       "launch": {
         "executable": "flagdata",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_FLAGDATA_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -357,8 +328,7 @@
       "id": "flagmanager",
       "launch": {
         "executable": "flagmanager",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_FLAGMANAGER_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -369,8 +339,7 @@
       "id": "impbcor",
       "launch": {
         "executable": "impbcor",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_IMPBCOR_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "image"
@@ -381,8 +350,7 @@
       "id": "impv",
       "launch": {
         "executable": "impv",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_IMPV_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "image"
@@ -393,8 +361,7 @@
       "id": "imsubimage",
       "launch": {
         "executable": "imsubimage",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_IMSUBIMAGE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "image"
@@ -405,8 +372,7 @@
       "id": "immath",
       "launch": {
         "executable": "immath",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_IMMATH_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "image"
@@ -417,8 +383,7 @@
       "id": "imregrid",
       "launch": {
         "executable": "imregrid",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_IMREGRID_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "image"
@@ -429,8 +394,7 @@
       "id": "feather",
       "launch": {
         "executable": "feather",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_FEATHER_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "image"
@@ -441,8 +405,7 @@
       "id": "importfits",
       "launch": {
         "executable": "importfits",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_IMPORTFITS_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "image",
@@ -454,8 +417,7 @@
       "id": "msconvert",
       "launch": {
         "executable": "msconvert",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_MSCONVERT_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -466,8 +428,7 @@
       "id": "simanalyze",
       "launch": {
         "executable": "simanalyze",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_SIMANALYZE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "image",
@@ -479,8 +440,7 @@
       "id": "tsdimaging",
       "launch": {
         "executable": "tsdimaging",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_TSDIMAGING_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -491,8 +451,7 @@
       "id": "concat",
       "launch": {
         "executable": "concat",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CONCAT_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -503,8 +462,7 @@
       "id": "simalma",
       "launch": {
         "executable": "simalma",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_SIMALMA_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "image",
@@ -516,8 +474,7 @@
       "id": "getjyperkalma",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -528,8 +485,7 @@
       "id": "getephemtable",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [],
       "include_in_suite": true
@@ -538,8 +494,7 @@
       "id": "getcalmodvla",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [],
       "include_in_suite": true
@@ -548,8 +503,7 @@
       "id": "getantposalma",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [],
       "include_in_suite": true
@@ -558,8 +512,7 @@
       "id": "smoothcal",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -570,8 +523,7 @@
       "id": "rerefant",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -582,8 +534,7 @@
       "id": "plotweather",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -594,8 +545,7 @@
       "id": "initweights",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -606,8 +556,7 @@
       "id": "statwt",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -618,8 +567,7 @@
       "id": "calstat",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "calibration_table"
@@ -630,8 +578,7 @@
       "id": "listcal",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set",
@@ -643,8 +590,7 @@
       "id": "plotbandpass",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set",
@@ -656,8 +602,7 @@
       "id": "predictcomp",
       "launch": {
         "executable": "predictcomp",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_PREDICTCOMP_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [],
       "include_in_suite": true
@@ -666,8 +611,7 @@
       "id": "wvrgcal",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -678,8 +622,7 @@
       "id": "polcal",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -690,8 +633,7 @@
       "id": "polfromgain",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -702,8 +644,7 @@
       "id": "sdcal",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set",
@@ -715,8 +656,7 @@
       "id": "sdgaincal",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set",
@@ -728,8 +668,7 @@
       "id": "sdsmooth",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -740,8 +679,7 @@
       "id": "sdbaseline",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -752,8 +690,7 @@
       "id": "sdfit",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"
@@ -764,8 +701,7 @@
       "id": "sdatmcor",
       "launch": {
         "executable": "calibrate",
-        "cargo_package": "casars-cli",
-        "override_env": "CASARS_CALIBRATE_BIN"
+        "cargo_package": "casars-cli"
       },
       "dataset_kinds": [
         "measurement_set"

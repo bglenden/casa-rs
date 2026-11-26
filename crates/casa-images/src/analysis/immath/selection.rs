@@ -706,7 +706,7 @@ pub(super) fn evaluate_immath_mask<T: RealMathPixel>(
         if aliases.iter().any(|(k, _)| k == name) {
             continue;
         }
-        let opened = open_raw_image::<T>(Path::new(name)).map_err(|_| {
+        let opened = open_raw_image::<T>(&super::operand_path(name)).map_err(|_| {
             ImageError::CasaSelection(format!(
                 "Input mask specification is incorrect: ImageExprParse: '{name}' is an unknown lattice or image or it is an unqualified region"
             ))

@@ -73,17 +73,24 @@ pub fn tsdimaging_front_end()
 -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
     tsdimaging_front_end_with_cancel(Cancel::new())
 }
-fn run(task: &TaskInvocation<'_>, cancel: Cancel) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run(task: &TaskInvocation<'_>, cancel: Cancel) -> Result<TaskSuccess, TaskFailure> {
     let started = Instant::now();
     let parameters = task.plain_values();
+    let mut execution_parameters = parameters.clone();
+    task.resolve_file_values(&mut execution_parameters, &["infile", "outfile"]);
     let context = RunContext {
         host: HostResources::detect().map_err(|e| TaskFailure::execution(e.to_string()))?,
         policy: ResourcePolicy::Balanced,
         cancel,
         summary: None,
     };
-    let output = image_from_parameters(&parameters, &context)
-        .map_err(|e| TaskFailure::execution(e.to_string()))?;
+    let output = image_from_parameters(&execution_parameters, &context).map_err(|error| {
+        if context.cancel.is_cancelled() {
+            TaskFailure::interrupted(error.to_string())
+        } else {
+            TaskFailure::execution(error.to_string())
+        }
+    })?;
     let artifacts = [
         (ImagerArtifactKind::Image, &output.image),
         (ImagerArtifactKind::Weight, &output.weight),

@@ -4,8 +4,10 @@ use super::{Parameters, failure, plan::Plan};
 use crate::{
     SessionResources,
     plot_sink::SimulationPlotSink,
-    simanalyze::{SimanalyzeRequest, simanalyze, simanalyze_with_plot_sink_and_override},
-    simobserve::SimobserveError,
+    simanalyze::{
+        SimanalyzeRequest, simanalyze_with_controls, simanalyze_with_plot_sink_and_override,
+    },
+    simobserve::{Cancel, SimobserveError, check_cancel},
     simutil::analysis,
 };
 use casa_images::{ImageInterface, PagedImage};
@@ -20,10 +22,17 @@ pub(super) fn execute<'a, 'b>(
     resources: SessionResources,
     mut plot_sink: Option<&'a mut (dyn SimulationPlotSink + 'b)>,
     outcome: &mut crate::simobserve::SimobserveOutcome,
+    cancel: &Cancel,
 ) -> Result<(), SimobserveError> {
     let mut products = Vec::new();
     if !plan.tp_vis.is_empty() {
-        products.extend(total_power(p, plan, resources, plot_sink.as_deref_mut())?);
+        products.extend(total_power(
+            p,
+            plan,
+            resources,
+            plot_sink.as_deref_mut(),
+            cancel,
+        )?);
     }
     for array in &plan.arrays {
         let result = synthesis(
@@ -32,6 +41,7 @@ pub(super) fn execute<'a, 'b>(
             &plan.vis(array),
             resources,
             plot_sink.as_deref_mut(),
+            cancel,
         )?;
         products.extend(result.products);
     }
@@ -47,7 +57,7 @@ pub(super) fn execute<'a, 'b>(
             resources,
         )?;
         products.push(path.clone());
-        let result = synthesis(p, plan, &path, resources, plot_sink)?;
+        let result = synthesis(p, plan, &path, resources, plot_sink, cancel)?;
         products.extend(result.products);
         plan.directory
             .join(format!("{}.concat.image", plan.project))
@@ -55,6 +65,7 @@ pub(super) fn execute<'a, 'b>(
         plan.vis(&plan.arrays[0]).with_extension("image")
     };
     if !plan.tp_vis.is_empty() {
+        check_cancel(cancel)?;
         products.extend(super::combine::execute(plan, &high, resources)?);
     }
     outcome.products.extend(products);
@@ -67,6 +78,7 @@ fn synthesis<'a, 'b>(
     vis: &Path,
     resources: SessionResources,
     plot_sink: Option<&'a mut (dyn SimulationPlotSink + 'b)>,
+    cancel: &Cancel,
 ) -> Result<crate::simanalyze::SimanalyzeOutcome, SimobserveError> {
     let cell = if p.text("cell").is_empty() {
         format!("{}arcsec", plan.model.cell[0])
@@ -85,16 +97,14 @@ fn synthesis<'a, 'b>(
         json!((plan.model.size[0] / plan.model.cell[0]) as usize)
     };
     let request = SimanalyzeRequest {
+        workspace: Some(plan.directory.clone()),
         resources,
         parameters: json!({"project":plan.directory,"vis":vis,"image":true,"modelimage":"","cell":cell,"imsize":imsize,"imdirection":if p.text("imdirection").is_empty(){plan.model.direction.as_str()}else{p.text("imdirection")},"niter":p.0["niter"],"threshold":p.text("threshold"),"weighting":"briggs","mask":[],"outertaper":[],"stokes":"I","analyze":true,"graphics":if plot_sink.is_some(){super::graphics_mode(p)}else{"none"},"verbose":p.flag("verbose"),"overwrite":true})
             .as_object()
             .unwrap()
             .clone(),
     };
-    match plot_sink {
-        Some(sink) => simanalyze_with_plot_sink_and_override(&request, sink, None),
-        None => simanalyze(&request),
-    }
+    simanalyze_with_controls(&request, plot_sink, cancel)
 }
 
 fn total_power<'a, 'b>(
@@ -102,6 +112,7 @@ fn total_power<'a, 'b>(
     plan: &Plan,
     resources: SessionResources,
     plot_sink: Option<&'a mut (dyn SimulationPlotSink + 'b)>,
+    cancel: &Cancel,
 ) -> Result<Vec<PathBuf>, SimobserveError> {
     let primary_beam =
         casa_imaging_singledish::primary_beam_fwhm_arcsec(plan.model.frequency, 12., 0.75, 10.);
@@ -120,7 +131,7 @@ fn total_power<'a, 'b>(
     let sparse = json!({"infiles":[input],"outfile":raw,"imsize":p.0["imsize"],"cell":[cell.clone(),cell],"phasecenter":plan.model.direction,"mode":"channel","nchan":plan.model.channels,"gridfunction":"sf","convsupport":6});
     let result = casa_imaging_application::single_dish::image_from_sparse_parameters(
         sparse.as_object().unwrap(),
-        &crate::simanalyze::imaging::context(resources),
+        &crate::simanalyze::imaging::context(resources, cancel),
     )
     .map_err(failure)?;
     let beam = result
@@ -160,6 +171,7 @@ fn total_power<'a, 'b>(
     drop(_memory);
     let skymodel = plan.directory.join(format!("{}.skymodel", plan.tp_stem));
     let request = SimanalyzeRequest {
+        workspace: Some(plan.directory.clone()),
         resources,
         parameters: json!({"project":plan.directory,"image":false,"imagename":output,"skymodel":skymodel,"analyze":true,"showuv":false,"showpsf":false,"showconvolved":true,"graphics":if plot_sink.is_some(){super::graphics_mode(p)}else{"none"},"overwrite":true})
             .as_object()
@@ -174,8 +186,9 @@ fn total_power<'a, 'b>(
                 plan.directory
                     .join(format!("{}.analysis.png", plan.project)),
             ),
+            cancel,
         )?,
-        None => simanalyze(&request)?,
+        None => simanalyze_with_controls(&request, None, cancel)?,
     };
     let mut products = vec![raw, result.weight, output];
     products.extend(analyzed.products);

@@ -29,8 +29,10 @@ use self::selection::{Expressions, Selection};
 use self::table_data::CalibrationTable;
 
 pub(super) fn input(task: &TaskInvocation<'_>) -> Result<Option<PathBuf>, TaskFailure> {
-    let explicit = task.text("caltable")?.filter(|value| !value.is_empty());
-    let vis = task.text("vis")?.filter(|value| !value.is_empty());
+    let explicit = task
+        .file_text("caltable")?
+        .filter(|value| !value.is_empty());
+    let vis = task.file_text("vis")?.filter(|value| !value.is_empty());
     if let Some(explicit) = explicit {
         if vis.is_some() {
             return Err(TaskFailure::execution(

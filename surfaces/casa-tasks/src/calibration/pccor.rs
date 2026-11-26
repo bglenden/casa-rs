@@ -25,7 +25,7 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         spw: task.required_text("spw")?,
         antenna: task.required_text("antenna")?,
         cable: task.flag("cablecal_correction")?,
-        fringe_table: (fringe != "none").then(|| PathBuf::from(fringe)),
+        fringe_table: (fringe != "none").then(|| task.io_path(fringe)),
     };
     let report = run_pccor(&request).map_err(|error| match error {
         PccorError::Selection(message) => TaskFailure::execution(message).at("selection"),

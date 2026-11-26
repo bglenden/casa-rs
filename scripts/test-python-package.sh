@@ -39,12 +39,6 @@ if [[ -z "${CASA_RS_MEASURESPATH:-}" ]]; then
   export CASA_RS_MEASURESPATH="$measures_root"
 fi
 
-# The end-to-end tests start a real task executable, which a development
-# checkout's resolver finds in this build (#931); they must not skip here.
-echo "==> Building the task executables the end-to-end tests run"
-cargo build -q -p casars-cli --bin calibrate --bin flagdata --bin concat --bin flagmanager --bin msexplore --bin msconvert --bin immath --bin exportfits --bin imsubimage --bin importfits --bin impv --bin imexplore --bin imregrid --bin immoments --bin impbcor --bin feather --bin importvla --bin simobserve --bin simanalyze --bin simalma
-export CASARS_REQUIRE_TASK_BINARIES=1
-
 editable_venv="$tmp_root/editable-venv"
 
 echo "==> Installing editable casars package and running Python tests"
@@ -100,6 +94,37 @@ wheel_venv="$tmp_root/wheel-venv"
 echo "==> Installing the built wheel and running Python tests"
 "$python_bin" -m venv "$wheel_venv"
 "$wheel_venv/bin/python" -m pip install "${wheels[0]}[$extras]"
+
+# Run from a separate workspace with an empty PATH, even if the caller
+# already has a suite installed or task binaries built in the checkout.
+echo "==> Running an installed wheel task with CLI commands unavailable"
+no_cli_workspace="$tmp_root/wheel-workspace"
+no_cli_path="$tmp_root/no-commands"
+mkdir "$no_cli_workspace" "$no_cli_path"
+tar -xzf crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz -C "$no_cli_workspace"
+(
+  cd "$no_cli_workspace"
+  for variable in $(compgen -e); do
+    case "$variable" in
+      CASARS_*) unset "$variable" ;;
+    esac
+  done
+  PATH="$no_cli_path" CARGO_TARGET_DIR="$no_cli_path" "$wheel_venv/bin/python" -I - "$wheel_venv" <<'PY'
+from pathlib import Path
+import shutil
+import sys
+
+import casars._core
+from casars import tasks
+
+assert Path(sys.argv[1]).resolve() in Path(casars._core.__file__).resolve().parents
+assert shutil.which("flagmanager") is None
+ms = Path("mssel_test_small.ms")
+completion = tasks.run("flagmanager", vis=ms, mode="list")
+assert completion.successful, completion.describe()
+assert tasks.flagmanager(vis=ms, mode="list") == {"MS": str(ms.resolve())}
+PY
+)
 test_installed "$wheel_venv" "$tests_dir"
 
 # A development build is enough to prove that the sdist is complete and

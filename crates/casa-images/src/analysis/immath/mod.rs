@@ -9,6 +9,7 @@ mod selection;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::expression_workspace::operand_path;
 use crate::expr_parser::referenced_images;
 use crate::image::add_image_history;
 use crate::{ImageError, ImageMathSummary, ImagePixelType, ImmathRequest};
@@ -44,7 +45,7 @@ pub(super) fn run(request: &ImmathRequest) -> Result<ImageMathSummary, ImageErro
         let mask_paths = referenced_images(&mask)
             .map_err(|error| ImageError::CasaSelection(format!("Invalid image mask: {error}")))?
             .into_iter()
-            .map(PathBuf::from)
+            .map(operand_path)
             .filter(|path| path.exists())
             .collect::<Vec<_>>();
         ensure_outfile_does_not_alias_inputs(&outfile, &mask_paths)?;
@@ -191,15 +192,11 @@ fn resolve_inputs(
         for name in referenced_images(&expression).map_err(|error| {
             ImageError::InvalidMetadata(format!("Invalid image expression: {error}"))
         })? {
-            let is_varname = varnames.iter().any(|v| v == &name);
-            let is_imagename = imagename_paths
-                .iter()
-                .any(|p| p.display().to_string() == name);
-            let already_added = extra_quoted
-                .iter()
-                .any(|p: &PathBuf| p.display().to_string() == name);
-            if !is_varname && !is_imagename && !already_added {
-                let p = PathBuf::from(&name);
+            if varnames.contains(&name) {
+                continue;
+            }
+            let p = operand_path(&name);
+            if !imagename_paths.contains(&p) && !extra_quoted.contains(&p) {
                 if !p.exists() {
                     return Err(ImageError::Io(format!(
                         "Image data set not found - please verify {name}"

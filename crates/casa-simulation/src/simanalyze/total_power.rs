@@ -25,6 +25,7 @@ pub(super) fn image(
     p: &Parameters<'_>,
     plan: &Plan,
     resources: SessionResources,
+    cancel: &casa_imaging_application::Cancel,
 ) -> Result<Vec<PathBuf>, SimobserveError> {
     let model = PagedImage::<f32>::open(&plan.model).map_err(failure)?;
     let CoordinateModel::Direction(direction) = model.coordinates().coordinate(0) else {
@@ -108,7 +109,7 @@ pub(super) fn image(
             "cell": [format!("{sfcell}arcsec"),format!("{sfcell}arcsec")]});
     let gridded = casa_imaging_application::single_dish::image_from_sparse_parameters(
         sparse.as_object().unwrap(),
-        &context(resources),
+        &context(resources, cancel),
     )
     .map_err(failure)?;
     let beam = gridded

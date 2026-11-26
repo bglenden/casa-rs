@@ -173,8 +173,8 @@ struct ProcessLockState {
     in_use_len: i64,
     /// Acquisitions that may still obtain the data lock, including kernel waits.
     acquisitions: usize,
-    /// The Python caller is waiting for its provider to use the table.
-    delegated_write: bool,
+    /// The reservation handle that delegates access to one task.
+    delegated_write: Option<u64>,
 }
 
 struct Acquisition<'a>(&'a SharedLockFd);
@@ -462,10 +462,19 @@ impl LockFile {
     /// Returns an I/O error when `fcntl` fails for a reason other than a held
     /// lock, a deadlock or missing lock support.
     pub fn acquire(&mut self, lock_type: LockType, nattempts: u32) -> io::Result<LockOutcome> {
+        self.acquire_with_reservation(lock_type, nattempts, None)
+    }
+
+    pub(super) fn acquire_with_reservation(
+        &mut self,
+        lock_type: LockType,
+        nattempts: u32,
+        reservations: Option<&[DelegatedTableWrite]>,
+    ) -> io::Result<LockOutcome> {
         let shared = Arc::clone(&self.shared);
         let _acquisition = {
             let mut state = shared.state();
-            if state.delegated_write {
+            if !delegated_write::permits(state.delegated_write, self, reservations) {
                 return Err(io::Error::new(
                     io::ErrorKind::WouldBlock,
                     "a task provider is using this table",

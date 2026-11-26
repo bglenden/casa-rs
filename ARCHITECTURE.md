@@ -26,7 +26,7 @@ coordinates, measures, and related workflows.
 | imaging application (`casa-imaging-application`) | Sole production composition of observation, reconstruction, products, resources and execution | native imaging owners, `casa-ms`, `casa-observation` |
 | simulation (`casa-simulation`) | CASA's `sm` tool, `simutil`, `simobserve`, multi-array/TP `simanalyze`, `simalma`, and native developer fixtures | an application of the ADR-0016 layering |
 | domain libraries (`casa-ms`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-calibration`, `casa-vla`, `casa-components`) | Astronomy data models and algorithms over table and image persistence | foundation crates, `casa-tables`, documented peer domain crates |
-| boundary contracts (`casa-provider-contracts`) | Task-provider envelope, parameter and application catalogs, task surfaces, the task-executable resolver | domain libraries and foundation crates; never a second source of truth |
+| boundary contracts (`casa-contracts`) | Task-provider envelope, task surfaces, parameter catalog and CLI inventory | domain libraries and foundation crates; never a second source of truth |
 | parameter and task runtime (`casa-task-runtime`) | Parameter resolution, current sparse TOML profiles, Last/Last Successful, the shared task front end and its `--json-run` invocation | boundary contracts, `casa-types`, `casa-logging`; no provider science |
 | apps and runtimes (`casars-imager`, `casars-imexplore`, `casars-msconvert`, `casars-simulation`, `casars-python`) | Task executables that are not binaries of a domain crate, each on the shared task front end, and the Python package with its PyO3 extension `casars._core` | boundary contracts, domain libraries, foundation crates |
 | test support (`casa-test-support`) | Cross-language parity harnesses, fixtures, integration helpers | any workspace crate, for tests only |
@@ -75,15 +75,9 @@ decision 10). Adding a crate to that set is the owner's decision.
   images cross it through the typed `TiledArrayStorage` seam.
 - Provider bundles are versioned boundary contracts; CLI parsers are views
   derived from them.
-- `casa-provider-contracts::ApplicationCatalog` is the one application
-  inventory; every entry is a task. `resolve_task_executable` is the one
-  resolver of a task's executable: the catalog override
-  (`CASARS_<APP>_BIN`), else a suite root's `bin/` (`CASARS_SUITE_ROOT`, or
-  the installed suite the Python package belongs to), else the newest
-  `debug` or `release` build of the development checkout the package was
-  built from. The first step that applies decides; a missing file is an
-  error naming the fix, never a fall-through to a later step, `PATH` or
-  `cargo run`.
+- `casa-contracts::ApplicationCatalog` maps task surfaces to the standalone
+  CLI and suite inventory. Python runs the adapters in `casa-tasks` through
+  the wheel's `casars._core` extension.
 - Parameter concepts live in the checked `ParameterCatalog`; each provider
   bundle embeds the concepts it references. A task's `SurfaceDefinition`
   supplies defaults, activation, narrowing and presentation, but

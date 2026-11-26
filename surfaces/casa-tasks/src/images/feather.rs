@@ -14,7 +14,7 @@ pub fn feather_front_end()
     image_task_front_end("feather", &["feather"], run)
 }
 
-fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let request = FeatherRequest {
         imagename: task.path("imagename")?,
         highres: task.input_path("highres")?,

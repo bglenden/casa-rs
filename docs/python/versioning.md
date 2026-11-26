@@ -31,34 +31,10 @@ is never overwritten without an explicit save.
 
 ## Task-runner compatibility
 
-Python has one task transport: every generated `casars.tasks.<task>` callable
-and `casars.tasks.run` start the task's own executable, named by the
-canonical application catalog, with its surface's fixed arguments and
-`--json-run -`. One Rust resolver
-(`casa_provider_contracts::resolve_task_executable`, through `casars._core`)
-finds that executable. The first step that applies decides:
-
-1. the task's catalog override variable, `CASARS_<APP>_BIN` (for example
-   `CASARS_IMAGER_BIN` or `CASARS_CALIBRATE_BIN`), names the file;
-2. a suite root holds it at `<root>/bin/<executable>`: `CASARS_SUITE_ROOT`,
-   or else the installed suite the Python package belongs to (the
-   installer's environment is `<suite>/python`, beside `<suite>/bin` and
-   `bundle-manifest.json`);
-3. a development checkout: the newest `debug` or `release` build of the
-   executable under the workspace the package was built from, in
-   `$CARGO_TARGET_DIR` or `target/`.
-
-A step that applies but lacks the file raises `TaskBinaryNotFoundError`
-naming what it lacked; it never falls through to a later step, so an
-installed suite never runs a checkout's build. A missing development build is
-reported with the `cargo build -p <package> --bin <executable>` that makes
-it. Python does not search the current directory or `PATH`, and nothing runs
-through `cargo`. A wheel installed outside a suite, such as one from PyPI,
-runs tasks only with `CASARS_SUITE_ROOT` or the task's override set; its
-in-process `casars.data`, `casars.tools` and `casars.simutil` need no
-executables. The executable validates the provider contract and request
-before execution; Python does not maintain a second protocol descriptor,
-provider schema, or compatibility handshake.
+The generated `casars.tasks` functions and `casars.tasks.run` execute through
+the wheel's `casars._core` extension. The Python package and the standalone CLI
+share the Rust parameters, task adapters and product contracts at the
+published casa-rs revision.
 
 Release tags also build and publish Python package artifacts separately from the
 Rust binaries:
@@ -66,12 +42,6 @@ Rust binaries:
 - GitHub release assets always receive the built wheels, source distribution,
   suite bundles, standalone binary bundles, and installer script.
 - PyPI publication is attempted from the same workflow when `PYPI_API_TOKEN` is configured.
-
-That means Python package compatibility has two layers:
-
-1. package-version compatibility with the published wheel or sdist
-2. runtime contract compatibility with the resolved suite and its
-   catalog-owned task executables
 
 The direct object-surface contract published by `casars.data.protocol_info()`
 and `casars.data.schema_bundle()` is currently:

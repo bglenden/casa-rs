@@ -900,6 +900,7 @@ dependencies = [
  "casa-coordinates",
  "casa-images",
  "casa-lattices",
+ "casa-logging",
  "casa-measures-data",
  "casa-ms",
  "casa-plot-data",
@@ -917,6 +918,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

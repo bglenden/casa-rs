@@ -29,8 +29,9 @@ pub(super) fn read_outlier_domains(
     path: &Path,
     default_size: [usize; 2],
     default_cell_arcsec: [f64; 2],
+    workspace: Option<&Path>,
 ) -> Result<Vec<OutlierDomain>, PrepareError> {
-    outlier_domains(path, default_size, default_cell_arcsec).map_err(|problem| {
+    outlier_domains(path, default_size, default_cell_arcsec, workspace).map_err(|problem| {
         PrepareError::OutlierFile {
             path: path.to_path_buf(),
             problem,
@@ -42,23 +43,36 @@ fn outlier_domains(
     path: &Path,
     default_size: [usize; 2],
     default_cell_arcsec: [f64; 2],
+    workspace: Option<&Path>,
 ) -> Result<Vec<OutlierDomain>, OutlierProblem> {
     read_records(path)?
         .into_iter()
         .enumerate()
-        .map(|(ordinal, fields)| compile_record(ordinal, fields, default_size, default_cell_arcsec))
+        .map(|(ordinal, fields)| {
+            compile_record(
+                ordinal,
+                fields,
+                default_size,
+                default_cell_arcsec,
+                workspace,
+            )
+        })
         .collect()
 }
 
 /// Read only names, using compile's syntax and resolution. In particular,
 /// never allocate an image-sized mask before resource admission (#944).
-pub(super) fn read_output_prefixes(path: &Path) -> Result<Vec<PathBuf>, PrepareError> {
+pub(super) fn read_output_prefixes(
+    path: &Path,
+    workspace: Option<&Path>,
+) -> Result<Vec<PathBuf>, PrepareError> {
     let read = || {
         read_records(path)?
             .into_iter()
             .enumerate()
             .map(|(ordinal, mut fields)| {
-                take_required(&mut fields, "imagename", ordinal).map(|name| output_path(&name))
+                take_required(&mut fields, "imagename", ordinal)
+                    .map(|name| output_path(&name, workspace))
             })
             .collect::<Result<Vec<_>, OutlierProblem>>()
     };
@@ -119,8 +133,11 @@ fn parse_records(text: &str) -> Result<Vec<BTreeMap<String, String>>, OutlierPro
 /// An outlier's output prefix, as tclean's `imagename` reads: from the working
 /// directory, wherever the file is (`ImagerParameters.parseOutlierFile` joins
 /// nothing).
-fn output_path(name: &str) -> PathBuf {
-    std::path::absolute(name).unwrap_or_else(|_| PathBuf::from(name))
+fn output_path(name: &str, workspace: Option<&Path>) -> PathBuf {
+    match workspace {
+        Some(workspace) => workspace.join(name),
+        None => std::path::absolute(name).unwrap_or_else(|_| PathBuf::from(name)),
+    }
 }
 
 fn compile_record(
@@ -128,9 +145,10 @@ fn compile_record(
     mut fields: BTreeMap<String, String>,
     default_size: [usize; 2],
     default_cell_arcsec: [f64; 2],
+    workspace: Option<&Path>,
 ) -> Result<OutlierDomain, OutlierProblem> {
     let name = take_required(&mut fields, "imagename", ordinal)?;
-    let output = output_path(&name);
+    let output = output_path(&name, workspace);
     let image_size = fields
         .remove("imsize")
         .map(|value| parse_size(&value))
@@ -142,7 +160,12 @@ fn compile_record(
         .transpose()?
         .unwrap_or(default_cell_arcsec);
     let phase_center = take_required(&mut fields, "phasecenter", ordinal)?;
-    let start_model = fields.remove("startmodel");
+    let start_model = fields.remove("startmodel").map(|value| match workspace {
+        Some(workspace) if !value.is_empty() => {
+            workspace.join(value).to_string_lossy().into_owned()
+        }
+        _ => value,
+    });
     let mask = fields
         .remove("mask")
         .filter(|value| !value.is_empty())
@@ -333,11 +356,12 @@ mod tests {
             "imagename='outlier'\nimsize=[80,80]\ncell=['8arcsec','8arcsec']\nphasecenter='J2000 19:58:40.895 +40.55.58.543'\nmask='circle[[40pix,40pix],10pix]'\n",
         )
         .expect("write outlier fixture");
-        let domains = read_outlier_domains(&path, [100; 2], [4.0; 2]).expect("compile outlier");
+        let domains =
+            read_outlier_domains(&path, [100; 2], [4.0; 2], None).expect("compile outlier");
         assert_eq!(domains.len(), 1);
         assert_eq!(domains[0].image_size, [80, 80]);
         assert_eq!(domains[0].cell_arcsec, [8.0, 8.0]);
-        assert_eq!(domains[0].output, output_path("outlier"));
+        assert_eq!(domains[0].output, output_path("outlier", None));
         assert_eq!(
             domains[0].output,
             std::env::current_dir()
@@ -360,7 +384,8 @@ mod tests {
             "imagename='outlier'\nimsize=[60,40]\ncell=['8arcsec','6arcsec']\nphasecenter='J2000 19:58:40.895 +40.55.58.543'\nmask='circle[[50pix,10pix],3pix]'\n",
         )
         .expect("write outlier fixture");
-        let domains = read_outlier_domains(&path, [100; 2], [4.0; 2]).expect("compile outlier");
+        let domains =
+            read_outlier_domains(&path, [100; 2], [4.0; 2], None).expect("compile outlier");
         assert_eq!(domains[0].image_size, [60, 40]);
         assert_eq!(domains[0].cell_arcsec, [8.0, 6.0]);
         let DomainMask::PixelSupport { support, .. } = &domains[0].mask else {
@@ -394,7 +419,7 @@ mod tests {
         let path = directory.path().join("outlier.txt");
         std::fs::write(&path, "imagename='outlier'\n# a comment\nphasecenter\n")
             .expect("write outlier fixture");
-        let Err(error) = read_outlier_domains(&path, [100; 2], [4.0; 2]) else {
+        let Err(error) = read_outlier_domains(&path, [100; 2], [4.0; 2], None) else {
             panic!("a line without '=' is refused");
         };
         assert!(

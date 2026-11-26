@@ -72,10 +72,26 @@ impl TaskInvocation<'_> {
         self.text(name)?.ok_or_else(|| missing(name))
     }
 
+    #[cfg(any(feature = "ms", feature = "images"))]
+    pub(crate) fn file_text(&self, name: &str) -> Result<Option<String>, TaskFailure> {
+        self.text(name)
+            .map(|value| value.map(|path| self.io_path(&path).to_string_lossy().into_owned()))
+    }
+
+    #[cfg(feature = "calibration")]
+    pub(crate) fn required_file_text(&self, name: &str) -> Result<String, TaskFailure> {
+        self.file_text(name)?.ok_or_else(|| missing(name))
+    }
+
     /// `name` as paths: one path, or a list of them; none when it is unset,
     /// inactive, or holds the explicit absence its provider adapter omits
     /// (`"none"`).
     pub fn paths(&self, name: &str) -> Result<Vec<PathBuf>, TaskFailure> {
+        self.raw_paths(name)
+            .map(|paths| paths.into_iter().map(|path| self.io_path(path)).collect())
+    }
+
+    fn raw_paths(&self, name: &str) -> Result<Vec<PathBuf>, TaskFailure> {
         match self.present(name) {
             None => Ok(Vec::new()),
             Some(ParameterValue::String(path)) => Ok(vec![PathBuf::from(path)]),
@@ -92,7 +108,11 @@ impl TaskInvocation<'_> {
 
     /// `name` as exactly one path.
     pub fn path(&self, name: &str) -> Result<PathBuf, TaskFailure> {
-        let mut paths = self.paths(name)?;
+        self.raw_path(name).map(|path| self.io_path(path))
+    }
+
+    fn raw_path(&self, name: &str) -> Result<PathBuf, TaskFailure> {
+        let mut paths = self.raw_paths(name)?;
         match paths.len() {
             1 => Ok(paths.remove(0)),
             0 => Err(missing(name)),
@@ -107,19 +127,19 @@ impl TaskInvocation<'_> {
     /// workspace; a missing input is a refusal naming the parameter, before
     /// the task starts, as CASA's `imstat('missing.im')` is.
     pub fn input_path(&self, name: &str) -> Result<PathBuf, TaskFailure> {
-        let path = self.path(name)?;
+        let path = self.raw_path(name)?;
         self.existing(name, &path)?;
-        Ok(path)
+        Ok(self.io_path(path))
     }
 
     /// `name` as paths to inputs that exist, as [`input_path`](Self::input_path)
     /// reads one.
     pub fn input_paths(&self, name: &str) -> Result<Vec<PathBuf>, TaskFailure> {
-        let paths = self.paths(name)?;
+        let paths = self.raw_paths(name)?;
         for path in &paths {
             self.existing(name, path)?;
         }
-        Ok(paths)
+        Ok(paths.into_iter().map(|path| self.io_path(path)).collect())
     }
 
     fn existing(&self, name: &str, path: &std::path::Path) -> Result<(), TaskFailure> {

@@ -12,18 +12,15 @@ const APPLICATION_CATALOG_JSON: &str = include_str!(concat!(
     "/resources/application-catalog.json"
 ));
 
-/// The catalog schema this crate reads. Version 2 (#972) dropped the
-/// presentation fields only the retired terminal and Swift frontends read
-/// (`kind`, `shell_kind`, `interaction`, `show_in_tui`, `show_in_swift`).
-pub const APPLICATION_CATALOG_SCHEMA_VERSION: u32 = 2;
+/// The catalog schema this crate reads. Version 3 describes the CLI and suite inventory.
+pub const APPLICATION_CATALOG_SCHEMA_VERSION: u32 = 3;
 
-/// How a task's executable is found and built.
+/// The CLI host for a task and the package that builds it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationLaunchDescriptor {
     pub executable: String,
     pub cargo_package: String,
-    pub override_env: String,
 }
 
 /// One task application: the surface it runs and how it is launched and
@@ -82,30 +79,19 @@ impl ApplicationCatalog {
             }
             if application.launch.executable.is_empty()
                 || application.launch.cargo_package.is_empty()
-                || application.launch.override_env.is_empty()
             {
                 errors.push(format!(
                     "application {:?} has an incomplete launch descriptor",
                     application.id
                 ));
             }
-            let override_env = &application.launch.override_env;
-            if !(override_env.starts_with("CASARS_") && override_env.ends_with("_BIN")) {
-                errors.push(format!(
-                    "application {:?} override {override_env:?} is not named CASARS_<APP>_BIN",
-                    application.id
-                ));
-            }
-            let launch_owner = (
-                application.launch.cargo_package.as_str(),
-                application.launch.override_env.as_str(),
-            );
+            let package = application.launch.cargo_package.as_str();
             if let Some(previous) =
-                executable_owners.insert(application.launch.executable.as_str(), launch_owner)
-                && previous != launch_owner
+                executable_owners.insert(application.launch.executable.as_str(), package)
+                && previous != package
             {
                 errors.push(format!(
-                    "executable {:?} has conflicting package/environment mappings",
+                    "executable {:?} has conflicting package mappings",
                     application.launch.executable
                 ));
             }
@@ -181,7 +167,7 @@ mod tests {
                 application.id
             );
         }
-        // The launcher is retired (#931): Python starts each task directly.
+        // Each entry names a task surface. The old launcher had no surface.
         assert!(catalog.application("casars").is_none());
     }
 
@@ -241,21 +227,6 @@ mod tests {
             errors
                 .iter()
                 .any(|error| error.contains("\"casars\" has no canonical surface")),
-            "{errors:?}"
-        );
-    }
-
-    #[test]
-    fn every_override_is_named_for_the_resolver() {
-        let mut catalog = builtin_application_catalog().unwrap().clone();
-        let impbcor = catalog.application("impbcor").unwrap();
-        assert_eq!(impbcor.launch.override_env, "CASARS_IMPBCOR_BIN");
-        catalog.applications[0].launch.override_env = "CASA_RS_MSEXPLORE_BIN".to_string();
-        let errors = catalog.validate().unwrap_err();
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.contains("is not named CASARS_<APP>_BIN")),
             "{errors:?}"
         );
     }

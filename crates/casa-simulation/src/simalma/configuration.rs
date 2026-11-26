@@ -8,7 +8,7 @@ use crate::{
     simobserve::{SimobserveError, antennas},
     simutil::qa,
 };
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub(super) struct Selection {
     pub arrays: Vec<Array>,
@@ -24,7 +24,7 @@ pub(super) fn select(
     model: &Model,
     primary_beam: f64,
 ) -> Result<Selection, SimobserveError> {
-    let repository = antennas::repository(&request.data_roots);
+    let repository = antennas::repository(&request.data_roots, Some(&request.workspace));
     let mut arrays = Vec::new();
     let mut tp_configuration = "aca.tp.cfg".to_string();
     let mut tp_index = None;
@@ -40,7 +40,7 @@ pub(super) fn select(
             antennas::alma_configuration(configuration, model.frequency / 1e9, &repository)?;
         let path = [
             directory.join(&resolved),
-            PathBuf::from(&resolved),
+            request.workspace.join(&resolved),
             repository.join(&resolved),
         ]
         .into_iter()
@@ -154,7 +154,7 @@ pub(super) fn select(
     }
     if tp_antennas > 0 {
         let path = [
-            PathBuf::from(&tp_configuration),
+            request.workspace.join(&tp_configuration),
             repository.join(&tp_configuration),
         ]
         .into_iter()

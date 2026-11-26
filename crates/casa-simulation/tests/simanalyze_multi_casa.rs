@@ -3,6 +3,7 @@
 use casa_images::{ImageInterface, PagedImage};
 use casa_simulation::{
     ExecutionControls, SessionResources,
+    session::BackendRequest,
     simanalyze::{SimanalyzeRequest, simanalyze},
 };
 use flate2::read::GzDecoder;
@@ -118,20 +119,22 @@ fn weighted_multi_array_and_total_power_products_match_casa() {
     ))
     .unpack(scratch.path())
     .unwrap();
-    let resources = SessionResources::from_controls(&ExecutionControls::default()).unwrap();
+    let resources = SessionResources::from_controls(&ExecutionControls {
+        backend: BackendRequest::Cpu,
+        ..ExecutionControls::default()
+    })
+    .unwrap();
     let mut passed = true;
     for case in ["multi", "tp", "seed", "feather"] {
         let reference = &oracle["cases"][case];
         let project = scratch.path().join(case);
         let mut parameters = reference["parameters"].as_object().unwrap().clone();
-        parameters.insert("project".into(), json!(project));
+        parameters.insert("project".into(), json!(case));
         if case == "feather" {
-            parameters.insert(
-                "featherimage".into(),
-                json!(scratch.path().join("tp/tp.sd.image")),
-            );
+            parameters.insert("featherimage".into(), json!("tp/tp.sd.image"));
         }
         let outcome = simanalyze(&SimanalyzeRequest {
+            workspace: Some(scratch.path().to_path_buf()),
             parameters,
             resources,
         })
