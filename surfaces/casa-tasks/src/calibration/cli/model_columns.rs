@@ -107,7 +107,7 @@ fn acquire_write(
     if let Some(options) = task.native_options()
         && let Some(reservations) = options.table_writes.as_ref()
     {
-        return TableWriteLock::acquire_reserved_to_reread(path, reservations, &|| {
+        return TableWriteLock::acquire_reserved_interruptibly(path, reservations, &|| {
             options.is_cancelled()
         });
     }

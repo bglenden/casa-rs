@@ -309,6 +309,54 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn native_aw_paths_use_the_workspace() {
+        use casa_imaging_application::{AwCfSource, Gridder};
+
+        let workspace = tempfile::tempdir().unwrap();
+        let bundle = casa_contracts::builtin_surface_bundle("tclean").unwrap();
+        let mut session = crate::ParameterSession::defaults(bundle).unwrap();
+        let overrides = json!({
+            "vis": ["input.ms"],
+            "imagename": "output",
+            "gridder": "awproject",
+            "conjbeams": true,
+            "wprojplanes": 32,
+            "aw_cf_source": "native-evla",
+            "native_cf_cache": "cache",
+            "evla_surface": "surface",
+            "native_cf_working_size": 64,
+            "native_cf_oversampling": 4,
+            "native_cf_cache_bytes": 1_048_576,
+            "native_cf_maximum_cells": 64,
+        });
+        for (key, value) in overrides.as_object().unwrap() {
+            session
+                .set(
+                    key,
+                    casa_contracts::ParameterValue::from_plain_json(value).unwrap(),
+                )
+                .unwrap();
+        }
+        let names = std::collections::BTreeMap::new();
+        let native = crate::NativeTaskOptions::default();
+        let invocation = TaskInvocation::in_process(&session, workspace.path(), &names, &native);
+        let (_, request) = task_request_with_surface(&invocation, None).unwrap();
+        let Gridder::Awproject(aw) = request.gridder else {
+            panic!("expected awproject");
+        };
+        let AwCfSource::NativeEvla {
+            native_cf_cache,
+            evla_surface,
+            ..
+        } = aw.cf_source
+        else {
+            panic!("expected native EVLA convolution functions");
+        };
+        assert_eq!(native_cf_cache, workspace.path().join("cache"));
+        assert_eq!(evla_surface, workspace.path().join("surface"));
+    }
+
+    #[test]
     fn tclean_domain_defaults_match_catalog_resolution() {
         let overrides = json!({
             "vis": ["unused.ms"],

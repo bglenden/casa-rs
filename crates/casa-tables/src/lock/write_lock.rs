@@ -356,6 +356,27 @@ impl TableWriteLock {
         )
     }
 
+    /// Take a write lock under this task's local reservations, then reread
+    /// the table. The guard retains the reservations until it is released.
+    ///
+    /// # Errors
+    /// As [`Self::acquire_to_reread`]. A different task's reservation
+    /// refuses the request even when this process owns the underlying lock.
+    #[cfg(unix)]
+    pub fn acquire_reserved_to_reread(
+        table_dir: &Path,
+        nattempts: u32,
+        reservations: &Arc<[DelegatedTableWrite]>,
+    ) -> Result<Self, TableError> {
+        Self::take(
+            table_dir,
+            nattempts,
+            false,
+            Some(Arc::clone(reservations)),
+            None,
+        )
+    }
+
     /// Wait for a write lock under this task's local reservations, then reread
     /// the table. While waiting, poll the supplied cancellation check. The
     /// guard retains the reservations until it is released.
@@ -365,7 +386,7 @@ impl TableWriteLock {
     /// refuses the request even when this process owns the underlying lock.
     /// Cancellation returns a lock I/O error and releases any acquired lock.
     #[cfg(unix)]
-    pub fn acquire_reserved_to_reread(
+    pub fn acquire_reserved_interruptibly(
         table_dir: &Path,
         reservations: &Arc<[DelegatedTableWrite]>,
         cancelled: &dyn Fn() -> bool,
