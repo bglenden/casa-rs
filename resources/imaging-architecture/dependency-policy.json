@@ -138,13 +138,9 @@
    "casa-imaging-runtime",
    "casa-imaging-singledish",
    "casa-lattices",
-   "casa-logging",
    "casa-ms",
    "casa-numerics",
-   "casa-plot-data",
-   "casa-contracts",
-   "casa-tables",
-   "casa-task-runtime"
+   "casa-tables"
   ]
  },
  "device_dependency_prefixes": [
@@ -229,8 +225,7 @@
     "crates/casa-types/src",
     "crates/casa-values/src",
     "crates/casa-aipsio/src",
-    "crates/casa-measures-data/src",
-    "crates/casa-task-runtime/src"
+    "crates/casa-measures-data/src"
    ],
    "exclude_roots": [
     "crates/casa-tables/src/bin"
@@ -240,8 +235,7 @@
    ],
    "regex": "\\benv::var(?:_os)?\\s*\\(|\\bstd::env\\b(?!::current_dir\\b)",
    "grandfathered": [
-    "crates/casa-measures-data/src/lib.rs",
-    "crates/casa-task-runtime/src/storage.rs"
+    "crates/casa-measures-data/src/lib.rs"
    ]
   },
   {
@@ -267,8 +261,7 @@
     "crates/casa-types/src",
     "crates/casa-values/src",
     "crates/casa-aipsio/src",
-    "crates/casa-measures-data/src",
-    "crates/casa-task-runtime/src"
+    "crates/casa-measures-data/src"
    ],
    "exclude_roots": [
     "crates/casa-tables/src/bin"

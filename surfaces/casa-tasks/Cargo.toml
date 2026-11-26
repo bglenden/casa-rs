@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Feature-gated task adapters, contracts, and CASA return projections for casa-rs"
+description = "Feature-gated task adapters, contracts, parameter runtime, and CASA return projections for casa-rs"
 repository.workspace = true
 publish = false
 
@@ -27,7 +27,6 @@ imaging = [
 images = [
     "dep:casa-images",
     "dep:casa-lattices",
-    "dep:casa-types",
 ]
 ms = [
     "dep:casa-atmosphere",
@@ -37,10 +36,19 @@ ms = [
     "dep:casa-observation",
     "dep:casa-plot-data",
     "dep:casa-tables",
-    "dep:casa-types",
     "dep:ndarray",
     "dep:num-complex",
     "dep:tempfile",
+]
+simulation = [
+    "ms",
+    "casa-plot-data/simulation",
+    "dep:casa-calibration",
+    "dep:casa-components",
+    "dep:casa-measures-data",
+    "dep:casa-ms",
+    "dep:casa-simulation",
+    "dep:casa-tables",
 ]
 vla = ["dep:casa-ms", "dep:casa-vla"]
 
@@ -55,23 +63,26 @@ casa-contracts = { path = "../casa-contracts" }
 casa-images = { path = "../../crates/casa-images", optional = true }
 casa-imaging-application = { path = "../../crates/casa-imaging-application", optional = true }
 casa-lattices = { path = "../../crates/casa-lattices", optional = true }
+casa-logging = { path = "../../crates/casa-logging" }
 casa-measures-data = { path = "../../crates/casa-measures-data", optional = true }
 casa-ms = { path = "../../crates/casa-ms", features = ["msv4"], optional = true }
 casa-numerics = { path = "../../crates/casa-numerics", optional = true }
 casa-observation = { path = "../../crates/casa-observation", optional = true }
 casa-plot-data = { path = "../casa-plot-data", features = ["ms"], optional = true }
+casa-simulation = { path = "../../crates/casa-simulation", optional = true }
 casa-tables = { path = "../../crates/casa-tables", optional = true }
-casa-task-runtime = { path = "../../crates/casa-task-runtime" }
-casa-types = { path = "../../crates/casa-types", optional = true }
+casa-types = { path = "../../crates/casa-types" }
 casa-vla = { path = "../../crates/casa-vla", optional = true }
+fs2 = "0.4"
 ndarray = { workspace = true, optional = true }
 num-complex = { workspace = true, optional = true }
 schemars = { version = "0.8", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["raw_value"] }
 tempfile = { version = "3", optional = true }
 thiserror.workspace = true
 time = { version = "0.3", features = ["local-offset"], optional = true }
+toml = "0.8"
 tracing.workspace = true
 ureq = { version = "3", optional = true }
 

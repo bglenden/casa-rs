@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA ft task selection, prediction and provenance.
 
+use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_components::ComponentList;
 use casa_contracts::{CasaValue, NumpyScalarType, ParameterValue};
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::{
     MeasurementSet, MsSelection, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
 };
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::quanta::Quantity;
 
 use casa_calibration::ft::image::{ImageModel, TaylorTerm, prepare_image, reference_frequency};

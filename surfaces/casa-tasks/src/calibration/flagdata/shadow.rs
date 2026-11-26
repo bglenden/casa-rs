@@ -3,9 +3,9 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use crate::{TaskFailure, TaskInvocation};
 use casa_contracts::{ParameterValue, python_repr};
 use casa_ms::flagging::{ShadowAntenna, ShadowOptions};
-use casa_task_runtime::{TaskFailure, TaskInvocation};
 
 pub(super) struct ShadowParameters {
     pub(super) options: ShadowOptions,

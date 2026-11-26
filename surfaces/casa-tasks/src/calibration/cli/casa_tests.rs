@@ -4,11 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::{OpenSessionRequest, ParameterRuntime, ResolutionPatch, TaskFailure, TaskInvocation};
 use casa_contracts::{ParameterValue, TaskFailureKind, builtin_surface_bundle};
 use casa_ms::MsSelection;
-use casa_task_runtime::{
-    OpenSessionRequest, ParameterRuntime, ResolutionPatch, TaskFailure, TaskInvocation,
-};
 use serde_json::{Value, json};
 
 use super::read;

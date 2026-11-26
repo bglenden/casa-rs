@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Canonical schema contract and task front end for `concat`.
 
+use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::{CasaValue, TaskProviderContract};
 use casa_ms::concat::{ConcatReport, ConcatRequest, concat};
-use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 
 use super::front_end::ms_task_success;
 use super::task_contract::one_shot_contract;

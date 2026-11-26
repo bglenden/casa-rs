@@ -3,6 +3,7 @@
 
 use std::path::Path;
 
+use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_calibration::execute::SolvePriorApply;
 use casa_calibration::session::resolve_casa_calibration_selection;
 use casa_calibration::single_dish::gain::{Controls, GainGenerateError, generate};
@@ -12,7 +13,6 @@ use casa_calibration::{
 };
 use casa_contracts::CasaValue;
 use casa_ms::{MeasurementSet, MsSelection};
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 use super::{gain_options, selector};
 

@@ -2,9 +2,9 @@
 
 use std::num::IntErrorKind;
 
+use crate::{TaskFailure, TaskInvocation};
 use casa_contracts::ParameterValue;
 use casa_ms::flagging::{TfcropFit, TfcropOptions, TfcropPasses, TfcropWindowStats};
-use casa_task_runtime::{TaskFailure, TaskInvocation};
 
 pub(super) fn validate_types(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
     integer_setting(task, "maxnpieces")?;

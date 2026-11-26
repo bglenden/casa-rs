@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use casa_task_runtime::TaskFailure;
+use crate::TaskFailure;
 
 use super::calibration::{
     atmosphere::{Chunk, Context, Options},

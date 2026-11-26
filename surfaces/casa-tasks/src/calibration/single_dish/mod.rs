@@ -11,6 +11,7 @@ mod smooth;
 
 use std::path::{Path, PathBuf};
 
+use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_calibration::single_dish::{edges, lock_solve_output, position_switch};
 use casa_calibration::{
     CalibrationOutputMode, GencalRequest, GencalType, gencal_with_output_mode,
@@ -18,7 +19,6 @@ use casa_calibration::{
 };
 use casa_contracts::{CasaValue, ParameterValue};
 use casa_ms::{MeasurementSet, MsError, MsSelection, MsSelectionError, ResolvedMsSelection};
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 pub(crate) fn run_sdsmooth(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     smooth::run(task)

@@ -17,7 +17,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use casa_contracts::{ParameterValue, RunProductKind, TaskReply, builtin_surface_bundle};
-use casa_task_runtime::{
+use casa_tasks::{
     ParameterSession, TaskCompletion, TaskOutputValue, decode_task_completion,
     project_provider_invocation,
 };

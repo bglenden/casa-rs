@@ -5,9 +5,9 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::CasaValue;
 use casa_measures_data::MeasuresRuntime;
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use serde::Serialize;
 
 const JPL_2010_OBJECTS: &[&str] = &[

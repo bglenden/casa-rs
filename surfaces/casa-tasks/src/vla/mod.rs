@@ -5,9 +5,9 @@
 //! callback here reads the resolved run into [`ImportVlaOptions`] and
 //! imports.
 
+use crate::{ParameterOrigin, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::{ParameterValue, python_repr};
 use casa_ms::TransformTaskHistory;
-use casa_task_runtime::{ParameterOrigin, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_vla::{ImportReport, ImportVlaOptions, VlaError, import_archive_with_history};
 
 pub mod task_contract;
@@ -35,11 +35,10 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let history = task_history(task, &options)?;
     let report = run(&options, Some(&history)).map_err(failure)?;
     let text = import_text(&report);
-    Ok(TaskSuccess::new(
-        casa_task_runtime::CasaValue::None,
-        &ImportVlaTaskResult::Import(report),
-    )?
-    .with_text(text))
+    Ok(
+        TaskSuccess::new(crate::CasaValue::None, &ImportVlaTaskResult::Import(report))?
+            .with_text(text),
+    )
 }
 
 fn task_history(

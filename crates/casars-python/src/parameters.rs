@@ -3,7 +3,7 @@
 //! resolution of one surface's values, sparse TOML rendering, explicit and
 //! managed (Last) profiles, and the provider invocation a task runs with.
 //!
-//! The Rust parameter runtime (`casa-task-runtime`) owns defaults,
+//! The Rust parameter runtime (`casa-tasks`) owns defaults,
 //! validation, normalization and rendering; these functions convert Python
 //! values in and dictionaries out. A failure of the runtime raises
 //! `ValueError` with the message `reason='...'`, the reason being the Python
@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use casa_contracts::{
     ParameterValue, SurfaceContractBundle, builtin_surface_bundle, builtin_surface_catalog,
 };
-use casa_task_runtime::{
+use casa_tasks::{
     BaseSource, DiagnosticCode, ManagedProfileKind, ManagedStateStore, OpenSessionRequest,
     ParameterRuntime, ParameterRuntimeError, ParameterSession, ParameterSessionError, ProfileError,
     ResolutionPatch, format_profile_error, format_session_error, parse_profile,
@@ -200,7 +200,7 @@ pub(crate) enum ResolveFailure {
 
 impl ResolveFailure {
     fn of_session(error: ParameterRuntimeError) -> Self {
-        let wrong_type = |diagnostics: &[casa_task_runtime::Diagnostic]| {
+        let wrong_type = |diagnostics: &[casa_tasks::Diagnostic]| {
             !diagnostics.is_empty()
                 && diagnostics
                     .iter()
@@ -409,9 +409,9 @@ fn provider_invocation_with_originals(
         "single_dish" => {
             Some(casa_tasks::imaging::single_dish::tsdimaging_task_schema_bundle().protocol)
         }
-        "simobserve" => Some(casars_simulation::simobserve_protocol_descriptor()),
-        "simanalyze" => Some(casars_simulation::simanalyze_protocol_descriptor()),
-        "simalma" => Some(casars_simulation::simalma_protocol_descriptor()),
+        "simobserve" => Some(casa_tasks::simulation::simobserve_protocol_descriptor()),
+        "simanalyze" => Some(casa_tasks::simulation::simanalyze_protocol_descriptor()),
+        "simalma" => Some(casa_tasks::simulation::simalma_protocol_descriptor()),
         _ => None,
     };
     Ok(InvocationView {

@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use crate::{ParameterRuntime, TaskCommandLine, TaskFailure, TaskInvocation};
 use casa_contracts::{TaskFailureKind, builtin_surface_bundle};
 use casa_ms::MsSelection;
-use casa_task_runtime::{ParameterRuntime, TaskCommandLine, TaskFailure, TaskInvocation};
 use tempfile::TempDir;
 
 use super::read::{self, OutputFormat, Report};
@@ -233,10 +233,9 @@ fn a_table_list_reads_alike_from_a_list_or_one_string() {
             casa_contracts::ParameterValue::String("sub/../bandpass.bcal".into()),
         ]),
     ] {
-        let mut session = casa_task_runtime::ParameterSession::defaults(
-            builtin_surface_bundle("calibrate").unwrap(),
-        )
-        .unwrap();
+        let mut session =
+            crate::ParameterSession::defaults(builtin_surface_bundle("calibrate").unwrap())
+                .unwrap();
         session
             .set(
                 "vis",

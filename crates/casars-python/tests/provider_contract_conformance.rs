@@ -17,7 +17,7 @@ fn every_builtin_provider_validates_through_the_shared_envelope() {
     );
     assert_task_provider(
         "simobserve",
-        casars_simulation::simobserve_task_schema_bundle(),
+        casa_tasks::simulation::simobserve_task_schema_bundle(),
     );
     assert_task_provider(
         "mstransform",

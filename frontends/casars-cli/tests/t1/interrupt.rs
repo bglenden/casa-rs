@@ -124,8 +124,8 @@ fn an_interrupted_cube_clean_exits_130_and_leaves_nothing_behind() {
         .expect("reply");
     assert!(
         matches!(
-            casa_task_runtime::classify_task_exit(status.into(), &reply),
-            casa_task_runtime::TaskOutcome::Interrupted { .. }
+            casa_tasks::classify_task_exit(status.into(), &reply),
+            casa_tasks::TaskOutcome::Interrupted { .. }
         ),
         "{reply}"
     );

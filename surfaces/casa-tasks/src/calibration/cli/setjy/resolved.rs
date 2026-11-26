@@ -4,8 +4,8 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use crate::TaskFailure;
 use casa_ms::{MeasurementSet, MsSelection, ResolvedMsSelection};
-use casa_task_runtime::TaskFailure;
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::quanta::casacore::stream_double_precision;

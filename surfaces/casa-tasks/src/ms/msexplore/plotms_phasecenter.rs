@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Parse and validate the requested PlotMS phase center for CLI tasks.
 
+use crate::{TaskFailure, TaskInvocation};
 use casa_ms::derived::parse_phase_direction;
-use casa_task_runtime::{TaskFailure, TaskInvocation};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frame::MeasFrame;
 

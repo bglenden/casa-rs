@@ -5,9 +5,9 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::Path;
 
+use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::CasaValue;
 use casa_ms::MsSelection;
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 use casa_calibration::{SingleDishLineFinder, SingleDishLineFit, SingleDishSession};
 

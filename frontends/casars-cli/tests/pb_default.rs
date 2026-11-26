@@ -3,7 +3,7 @@
 //! Current PB defaults and explicit overrides.
 
 use casa_contracts::{ParameterValue, builtin_surface_bundle};
-use casa_task_runtime::{parse_profile, resolve_profile};
+use casa_tasks::{parse_profile, resolve_profile};
 
 #[test]
 fn current_profile_defaults_to_writing_pb_but_preserves_explicit_false() {

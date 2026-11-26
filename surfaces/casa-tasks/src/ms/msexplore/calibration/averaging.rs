@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-use casa_task_runtime::{TaskFailure, TaskInvocation};
+use crate::{TaskFailure, TaskInvocation};
 
 use super::axis::SampleCoordinates;
 use super::selection::Selection;

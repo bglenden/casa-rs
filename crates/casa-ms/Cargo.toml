@@ -20,7 +20,6 @@ msv4 = ["dep:zarrs", "dep:zarrs_filesystem", "dep:bytemuck", "dep:unsafe_cell_sl
 casa-atmosphere = { path = "../casa-atmosphere" }
 casa-coordinates = { path = "../casa-coordinates" }
 casa-fft = { path = "../casa-fft" }
-casa-logging = { path = "../casa-logging" }
 casa-measures-data = { path = "../casa-measures-data" }
 casa-numerics = { path = "../casa-numerics" }
 casa-observation = { path = "../casa-observation" }

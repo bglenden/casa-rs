@@ -75,7 +75,6 @@
 //! which refuses it before it starts.
 
 pub(crate) mod antennas;
-pub(crate) mod graphics;
 mod noise;
 mod observe;
 mod parameters;
@@ -92,6 +91,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
+use crate::plot_sink::{SimobservePlotInput, SimulationPlotSink};
 use crate::readantenna::ReadAntennaError;
 use crate::session::{Simulator, SimulatorOptions};
 use crate::simutil::SimutilError;
@@ -125,9 +125,6 @@ pub struct SimobserveOutcome {
     pub products: Vec<PathBuf>,
     /// What the run did not do that it was asked to, such as graphics.
     pub warnings: Vec<String>,
-    /// Native-prepared figures for the caller's renderer, with array views
-    /// into the file supplied to [`simobserve_with_plots`].
-    pub plots: Vec<casa_plot_data::plot_document::PlotFigure>,
 }
 
 /// What `simobserve` refuses.
@@ -188,53 +185,31 @@ impl SimobserveError {
 /// What CASA raises, with its message, and what the sky-model helpers, the
 /// antenna-list reader and the simulator sessions refuse.
 pub fn simobserve(request: &SimobserveRequest) -> Result<SimobserveOutcome, SimobserveError> {
-    run(request, None, false)
+    run(request, None)
 }
 
-/// Simulate and prepare complete figure data in a caller-owned payload file.
-/// The file must already exist; the run truncates it. The caller renders
-/// the returned documents, then removes its file. No CASA parameter names
-/// or defaults are added by this host-only transport.
+/// Simulate and emit complete figure inputs through `sink`.
 ///
 /// # Errors
 ///
-/// Simulation failures, a payload file that cannot be opened or written,
-/// or plot preparation that exceeds the session's memory policy.
-pub fn simobserve_with_plots(
+/// Simulation failures or any error reported by `sink`.
+pub fn simobserve_with_plot_sink(
     request: &SimobserveRequest,
-    payload: &Path,
+    sink: &mut dyn SimulationPlotSink,
 ) -> Result<SimobserveOutcome, SimobserveError> {
-    run(request, Some(payload), false)
-}
-
-pub(crate) fn simobserve_append_plots(
-    request: &SimobserveRequest,
-    payload: &Path,
-) -> Result<SimobserveOutcome, SimobserveError> {
-    run(request, Some(payload), true)
+    run(request, Some(sink))
 }
 
 fn run(
     request: &SimobserveRequest,
-    payload: Option<&Path>,
-    append: bool,
+    plot_sink: Option<&mut dyn SimulationPlotSink>,
 ) -> Result<SimobserveOutcome, SimobserveError> {
-    let payload = payload
-        .filter(|_| {
-            matches!(
-                request.parameters.graphics.as_str(),
-                "file" | "screen" | "both"
-            )
-        })
-        .map(|path| {
-            if append {
-                graphics::open_append(path)
-            } else {
-                graphics::open(path)
-            }
-        })
-        .transpose()?;
-    let mut run = Run::start(request, payload.is_some())?;
+    let graphics_requested = matches!(
+        request.parameters.graphics.as_str(),
+        "file" | "screen" | "both"
+    );
+    let render_plots = graphics_requested && plot_sink.is_some();
+    let mut run = Run::start(request, render_plots)?;
     let input = sky::prepare(&mut run)?;
     let array = antennas::resolve(&mut run, &input)?;
     let sky = sky::complete(&mut run, input, &array)?;
@@ -253,8 +228,47 @@ fn run(
         run.uvmode = !noise::is_total_power(&ms)?;
     }
     quick_psf::prepare(&mut run, &sky)?;
-    if let Some(payload) = payload {
-        graphics::prepare(&mut run, &sky, &array, &pointings, payload)?;
+    if render_plots && let Some(sink) = plot_sink {
+        let offsets = pointings::relative_offsets(&pointings.pointings, &sky)?;
+        let pointing_centre = if run.predict {
+            simutil::direction::median_direction(&pointings.pointings)?.centre
+        } else {
+            String::new()
+        };
+        let specrefval_ghz = simutil::qa::value_in(&sky.model.specrefval, "GHz")?;
+        let refdate_mjd = simutil::qa::value_in(&simutil::qa::read(&run.parameters.refdate)?, "d")?;
+        let config = &array.config;
+        let antenna_positions: Vec<[f64; 3]> = config
+            .x
+            .iter()
+            .zip(&config.y)
+            .zip(&config.z)
+            .map(|((&x, &y), &z)| [x, y, z])
+            .collect();
+        sink.record_simobserve(SimobservePlotInput {
+            graphics_mode: run.parameters.graphics.as_str(),
+            directory: &run.directory,
+            stem: &run.stem,
+            predict: run.predict,
+            uvmode: run.uvmode,
+            components_only: sky.components_only,
+            complist: &run.parameters.complist,
+            sky_flat: &sky.flat,
+            sky_refdir: &sky.model.refdir,
+            sky_specrefval_ghz: specrefval_ghz,
+            pointing_offsets_deg: offsets,
+            pointing_centre,
+            primary_beam_arcsec: array.primary_beam_arcsec,
+            antenna_positions,
+            antenna_diameters: &config.dish_diameter,
+            antenna_names: &config.pad_names,
+            observatory: &config.observatory,
+            measures: run.request.options.measures.clone(),
+            refdate_mjd,
+            measurement_set: run.measurement_set(),
+            quick_psf: run.file(".quick.psf"),
+            resources: run.request.options.resources,
+        })?;
     }
     noise::corrupt(&mut run, &sky, &array)?;
     run.clean_up(&sky)?;
@@ -263,7 +277,6 @@ fn run(
         stem: run.stem,
         products: run.products,
         warnings: run.warnings,
-        plots: run.plots,
     })
 }
 
@@ -285,8 +298,6 @@ struct Run<'a> {
     products: Vec<PathBuf>,
     /// The outcome's warnings.
     warnings: Vec<String>,
-    /// Renderer-neutral native figures prepared in this run.
-    plots: Vec<casa_plot_data::plot_document::PlotFigure>,
 }
 
 impl<'a> Run<'a> {
@@ -342,7 +353,6 @@ impl<'a> Run<'a> {
             antennalist,
             products: Vec::new(),
             warnings: Vec::new(),
-            plots: Vec::new(),
         };
         run.check_overwrite()?;
         run.check_sky_inputs()?;

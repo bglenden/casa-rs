@@ -3,9 +3,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::{TaskFailure, TaskInvocation};
 use casa_contracts::{CasaValue, ParameterValue};
 use casa_ms::{MsSelection, ResolvedMsSelection};
-use casa_task_runtime::{TaskFailure, TaskInvocation};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 
 use super::{

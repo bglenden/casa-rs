@@ -45,7 +45,6 @@ csv-core = "0.1.13"
 libc = "0.2"
 
 [dev-dependencies]
-casa-logging = { path = "../casa-logging" }
 casa-simulation = { path = "../casa-simulation" }
 casa-ms = { path = "../casa-ms", features = ["msv4"] }
 casa-observation = { path = "../casa-observation" }

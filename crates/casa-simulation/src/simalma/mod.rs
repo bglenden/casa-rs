@@ -2,20 +2,18 @@
 //! ALMA/ACA observation, imaging and primary-beam-weighted combination.
 mod combine;
 mod configuration;
-mod graphics;
 mod imaging;
 mod plan;
 mod pointings;
 
+use crate::plot_sink::{SimalmaCombinationInput, SimalmaFinishInput, SimulationPlotSink};
 use crate::{
     SimulatorOptions,
-    simobserve::{SimobserveError, SimobserveOutcome, simobserve},
+    simobserve::{SimobserveError, SimobserveOutcome, simobserve, simobserve_with_plot_sink},
 };
-use casa_contracts::builtin_surface_bundle;
 use casa_imaging_runtime::{Demand, admit, charge_process_caches};
-use casa_task_runtime::resolve_plain_values;
-use serde_json::{Map, Value};
-use std::path::{Path, PathBuf};
+use serde_json::{Map, Value, json};
+use std::path::PathBuf;
 
 /// CASA-named task parameters and the simulator's explicit environment.
 pub struct SimalmaRequest {
@@ -54,6 +52,64 @@ impl Parameters {
     }
 }
 
+/// Return the canonical CASA 6.7.6 `simalma` parameter defaults as plain JSON.
+#[must_use]
+pub fn default_parameters() -> Map<String, Value> {
+    let value = json!({
+        "project": "sim",
+        "dryrun": true,
+        "skymodel": "",
+        "inbright": "",
+        "indirection": "",
+        "incell": "",
+        "incenter": "",
+        "inwidth": "",
+        "complist": "",
+        "compwidth": "\"8GHz\"",
+        "setpointings": true,
+        "ptgfile": "$project.ptg.txt",
+        "integration": "10s",
+        "direction": [],
+        "mapsize": ["", ""],
+        "antennalist": ["alma.cycle1.1.cfg", "aca.cycle1.cfg"],
+        "correlator": ["BLC", "BLC", "ACASpec"],
+        "hourangle": "transit",
+        "totaltime": ["20min", "1h"],
+        "tpnant": 0,
+        "tptime": "0s",
+        "pwv": 0.5,
+        "image": true,
+        "imsize": [128, 128],
+        "imdirection": "",
+        "cell": "",
+        "niter": 0,
+        "threshold": "0.0001Jy",
+        "graphics": "both",
+        "verbose": false,
+        "overwrite": false
+    });
+    match value {
+        Value::Object(map) => map,
+        _ => unreachable!("default map is an object"),
+    }
+}
+
+fn resolve_defaults(overrides: &Map<String, Value>) -> Map<String, Value> {
+    let mut merged = default_parameters();
+    for (key, value) in overrides {
+        merged.insert(key.clone(), value.clone());
+    }
+    merged
+}
+
+fn graphics_mode(p: &Parameters) -> &str {
+    if p.text("graphics") == "screen" {
+        "both"
+    } else {
+        p.text("graphics")
+    }
+}
+
 /// Simulate each requested array and TP antenna, image, and combine them.
 ///
 /// # Errors
@@ -63,22 +119,20 @@ pub fn simalma(request: &SimalmaRequest) -> Result<SimobserveOutcome, Simobserve
     run(request, None)
 }
 
-/// Simulate and prepare figures in the caller's existing payload file.
-/// The task truncates it once and appends all child-task arrays. Rendering
-/// belongs to the Python host, and no plotting transport is a CASA parameter.
+/// Simulate and emit complete figure inputs through `sink`.
 ///
 /// # Errors
-/// Simulation errors, or a payload/plot preparation failure.
-pub fn simalma_with_plots(
+/// Simulation errors or any error reported by `sink`.
+pub fn simalma_with_plot_sink(
     request: &SimalmaRequest,
-    payload: &Path,
+    sink: &mut dyn SimulationPlotSink,
 ) -> Result<SimobserveOutcome, SimobserveError> {
-    run(request, Some(payload))
+    run(request, Some(sink))
 }
 
-fn run(
+fn run<'a, 'b>(
     request: &SimalmaRequest,
-    payload: Option<&Path>,
+    plot_sink: Option<&'a mut (dyn SimulationPlotSink + 'b)>,
 ) -> Result<SimobserveOutcome, SimobserveError> {
     let resources = request.options.resources;
     charge_process_caches(resources.host(), resources.policy()).map_err(failure)?;
@@ -99,12 +153,7 @@ fn run(
         },
     )
     .map_err(failure)?;
-    let values = resolve_plain_values(
-        builtin_surface_bundle("simalma").map_err(failure)?,
-        std::env::current_dir().map_err(failure)?,
-        &request.parameters,
-    )
-    .map_err(failure)?;
+    let values = resolve_defaults(&request.parameters);
     let p = Parameters(values);
     let mut plan = plan::prepare(&p, request)?;
     let mut outcome = SimobserveOutcome {
@@ -112,7 +161,6 @@ fn run(
         stem: plan.project.clone(),
         products: Vec::new(),
         warnings: Vec::new(),
-        plots: Vec::new(),
     };
     if p.flag("dryrun") {
         outcome.warnings.extend(plan.arrays.iter().map(|array| {
@@ -130,18 +178,15 @@ fn run(
         }
         return Ok(outcome);
     }
-    let payload = payload.filter(|_| matches!(p.text("graphics"), "file" | "screen" | "both"));
-    if p.text("graphics") != "none" && payload.is_none() {
+    let graphics_requested = matches!(p.text("graphics"), "file" | "screen" | "both");
+    if p.text("graphics") != "none" && plot_sink.is_none() {
         outcome
             .warnings
             .push("simalma PNG rendering needs the Python host".into());
     }
-    if let Some(path) = payload {
-        crate::simobserve::graphics::payload::Payload::open(path)
-            .map_err(failure)?
-            .finish()
-            .map_err(failure)?;
-        plan.observation.graphics = graphics::mode(&p).to_owned();
+    let mut sink = if graphics_requested { plot_sink } else { None };
+    if sink.is_some() {
+        plan.observation.graphics = graphics_mode(&p).to_owned();
     }
     plan::publish_directory(&p, &plan)?;
     for array in &plan.arrays {
@@ -164,9 +209,8 @@ fn run(
                 data_roots: request.data_roots.clone(),
                 options: request.options.clone(),
             },
-            payload,
+            sink.as_deref_mut(),
         )?;
-        outcome.plots.extend(result.plots);
         outcome.products.extend(result.products);
         outcome.warnings.extend(result.warnings);
     }
@@ -192,9 +236,8 @@ fn run(
                     data_roots: request.data_roots.clone(),
                     options: request.options.clone(),
                 },
-                payload,
+                sink.as_deref_mut(),
             )?;
-            outcome.plots.extend(result.plots);
             for mut path in result.products {
                 if plan.tp_antennas > 1 && path.to_string_lossy().ends_with(".ms") {
                     let mut target = path.as_os_str().to_os_string();
@@ -220,10 +263,36 @@ fn run(
         }
     }
     if p.flag("image") {
-        imaging::execute(&p, &plan, resources, payload, &mut outcome)?;
+        imaging::execute(&p, &plan, resources, sink.as_deref_mut(), &mut outcome)?;
     }
-    if let Some(path) = payload {
-        graphics::finish(&p, &plan, path, resources, &mut outcome)?;
+    if let Some(sink) = sink {
+        let combination = if p.flag("image") && !plan.tp_vis.is_empty() {
+            let best = plan
+                .arrays
+                .iter()
+                .min_by(|a, b| a.resolution.total_cmp(&b.resolution))
+                .unwrap();
+            let suffix = if plan.noisy { ".noisy" } else { "" };
+            let high_stem = if plan.arrays.len() > 1 {
+                format!("{}.concat", plan.project)
+            } else {
+                format!("{}{suffix}", best.stem)
+            };
+            Some(SimalmaCombinationInput {
+                directory: &plan.directory,
+                project: &plan.project,
+                best_stem: best.stem.clone(),
+                high_stem,
+                model_preparation_bytes: plan.model.preparation_bytes,
+                resources,
+            })
+        } else {
+            None
+        };
+        sink.finish_simalma(SimalmaFinishInput {
+            graphics_mode: p.text("graphics"),
+            combination,
+        })?;
     }
     outcome.products.sort();
     outcome.products.dedup();
@@ -241,12 +310,12 @@ fn run(
     Ok(outcome)
 }
 
-fn observe(
+fn observe<'a, 'b>(
     request: &crate::simobserve::SimobserveRequest,
-    payload: Option<&Path>,
+    plot_sink: Option<&'a mut (dyn SimulationPlotSink + 'b)>,
 ) -> Result<SimobserveOutcome, SimobserveError> {
-    match payload {
-        Some(path) => crate::simobserve::simobserve_append_plots(request, path),
+    match plot_sink {
+        Some(sink) => simobserve_with_plot_sink(request, sink),
         None => simobserve(request),
     }
 }

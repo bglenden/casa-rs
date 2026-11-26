@@ -3,9 +3,18 @@
 //! Run/family JSON inputs are described by synthetic::task::Request.
 use std::ffi::OsString;
 use std::io::Read;
+use std::path::PathBuf;
 use std::process::ExitCode;
+use std::str::FromStr;
+use std::sync::Arc;
 
+use casa_logging::{
+    CasaLogLayer, CasaLogSink, CasaPriority, CasaTableLogSink, CompositeSink, NullSink, StderrSink,
+    TableLogOpenMode,
+};
 use casa_simulation::synthetic::task::Request;
+use tracing_subscriber::Registry;
+use tracing_subscriber::layer::SubscriberExt;
 
 const USAGE: &str = "\
 Usage: synthetic-ms --json-run <request.json | ->
@@ -18,15 +27,103 @@ Logging takes the options every casa-rs tool takes: --log-table <path>,
 --log-table-priority and --log-stderr-priority (or the CASA_RS_LOG_*
 environment variables).";
 
+fn init_logging(
+    args: impl IntoIterator<Item = OsString>,
+) -> Result<(Arc<dyn CasaLogSink>, Vec<OsString>), String> {
+    let mut table_path = std::env::var_os("CASA_RS_LOG_TABLE").map(PathBuf::from);
+    let mut table_priority = match std::env::var("CASA_RS_LOG_TABLE_PRIORITY") {
+        Ok(v) => CasaPriority::from_str(&v)
+            .map_err(|_| format!("invalid CASA_RS_LOG_TABLE_PRIORITY priority {v:?}"))?,
+        Err(_) => CasaPriority::Info,
+    };
+    let is_off = |v: &str| {
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "off" | "none" | "quiet" | "false" | "0"
+        )
+    };
+    let mut stderr_priority = match std::env::var("CASA_RS_LOG_STDERR_PRIORITY") {
+        Ok(v) if is_off(&v) => None,
+        Ok(v) => Some(
+            CasaPriority::from_str(&v)
+                .map_err(|_| format!("invalid CASA_RS_LOG_STDERR_PRIORITY priority {v:?}"))?,
+        ),
+        Err(_) => Some(CasaPriority::Warn),
+    };
+    let mut filtered = Vec::new();
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        let s = arg.to_str();
+        if let Some(val) = s.and_then(|s| s.strip_prefix("--log-table=")) {
+            table_path = Some(PathBuf::from(val));
+        } else if arg == "--log-table" {
+            let val = iter
+                .next()
+                .ok_or_else(|| "missing value for --log-table".to_string())?;
+            table_path = Some(PathBuf::from(val));
+        } else if let Some(val) = s.and_then(|s| s.strip_prefix("--log-table-priority=")) {
+            table_priority = CasaPriority::from_str(val).map_err(|e| e.to_string())?;
+        } else if arg == "--log-table-priority" {
+            let val = iter
+                .next()
+                .ok_or_else(|| "missing value for --log-table-priority".to_string())?;
+            let val = val
+                .to_str()
+                .ok_or_else(|| "invalid non-UTF-8 value for --log-table-priority".to_string())?;
+            table_priority = CasaPriority::from_str(val).map_err(|e| e.to_string())?;
+        } else if let Some(val) = s.and_then(|s| s.strip_prefix("--log-stderr-priority=")) {
+            stderr_priority = if is_off(val) {
+                None
+            } else {
+                Some(CasaPriority::from_str(val).map_err(|e| e.to_string())?)
+            };
+        } else if arg == "--log-stderr-priority" {
+            let val = iter
+                .next()
+                .ok_or_else(|| "missing value for --log-stderr-priority".to_string())?;
+            let val = val
+                .to_str()
+                .ok_or_else(|| "invalid non-UTF-8 value for --log-stderr-priority".to_string())?;
+            stderr_priority = if is_off(val) {
+                None
+            } else {
+                Some(CasaPriority::from_str(val).map_err(|e| e.to_string())?)
+            };
+        } else {
+            filtered.push(arg);
+        }
+    }
+    let mut sinks: Vec<Arc<dyn CasaLogSink>> = Vec::new();
+    if let Some(path) = table_path {
+        sinks.push(Arc::new(CasaTableLogSink::new(
+            path,
+            table_priority,
+            TableLogOpenMode::CreateOrAppend,
+        )));
+    }
+    if let Some(priority) = stderr_priority {
+        sinks.push(Arc::new(StderrSink::new(priority)));
+    }
+    let sink: Arc<dyn CasaLogSink> = if sinks.is_empty() {
+        Arc::new(NullSink)
+    } else {
+        Arc::new(CompositeSink::new(sinks))
+    };
+    tracing::subscriber::set_global_default(
+        Registry::default().with(CasaLogLayer::filtered(sink.clone())),
+    )
+    .map_err(|error| format!("tracing subscriber setup failed: {error}"))?;
+    Ok((sink, filtered))
+}
+
 fn main() -> ExitCode {
-    let (logging, args) =
-        match casa_logging::init_global_from_env_and_args(std::env::args_os().skip(1)) {
-            Ok(initialized) => initialized,
-            Err(error) => {
-                eprintln!("Error: failed to initialize logging: {error}");
-                return ExitCode::FAILURE;
-            }
-        };
+    let (logging, args) = match init_logging(std::env::args_os().skip(1)) {
+        Ok(initialized) => initialized,
+        Err(error) => {
+            eprintln!("Error: failed to initialize logging: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let status = match run(&args) {
         Ok(Some(output)) => {
             println!("{output}");

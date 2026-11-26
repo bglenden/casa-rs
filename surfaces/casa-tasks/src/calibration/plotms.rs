@@ -4,12 +4,12 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
+use crate::TaskFailure;
 use casa_calibration::callib::{load_apply_specs_from_callib, parse_apply_specs};
 use casa_calibration::execute::evaluate_plot_rows;
 use casa_calibration::{ApplyMode, ApplyPlanRequest, plan_apply};
 use casa_ms::{MeasurementSet, MsSelection};
 use casa_plot_data::msexplore::{PlotMsCalibratedRow, PlotMsCalibration};
-use casa_task_runtime::TaskFailure;
 
 pub use casa_calibration::plotms::load_models;
 

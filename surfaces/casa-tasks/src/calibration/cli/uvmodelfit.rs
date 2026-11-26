@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Adapt uvmodelfit's installed CASA task surface to the shared fitter.
 
+use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_components::ComponentList;
 use casa_contracts::CasaValue;
 use casa_ms::MsSelection;
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 use casa_calibration::{VisibilityFitRequest, VisibilityFitShape, fit_visibility_component};
 

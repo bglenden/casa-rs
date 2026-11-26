@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA plotweather parameter and result adapter.
 
+use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::{CasaFloat, CasaValue};
 use casa_plot_data::calibration::weather_figure::{WeatherFigure, prepare};
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use serde::Serialize;
 
 #[derive(Serialize)]

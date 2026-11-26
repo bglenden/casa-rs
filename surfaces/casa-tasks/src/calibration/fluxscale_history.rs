@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! `Calibrater::fluxscale` task `HISTORY` provenance adapter.
 
+use crate::TaskInvocation;
 use casa_calibration::fluxscale::history::append_messages;
 use casa_calibration::{FluxScaleReport, FluxScaleRequest};
 use casa_contracts::{ParameterValue, python_repr};
-use casa_task_runtime::TaskInvocation;
 
 /// History failure is a warning after publication, as in the CASA task.
 pub(crate) fn record(

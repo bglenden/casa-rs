@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! PlotMS pointing axis parameter parsing and validation for CLI tasks.
 
+use crate::{TaskFailure, TaskInvocation};
 use casa_contracts::ParameterValue;
 use casa_plot_data::msexplore::MsAxis;
 pub use casa_plot_data::msexplore::plotms_pointing::PointingAxes;
 use casa_plot_data::msexplore::plotms_pointing::parse_axis as parse_pure_axis;
-use casa_task_runtime::{TaskFailure, TaskInvocation};
 
 const CONTROLS: [&str; 4] = ["xframe", "xinterp", "yframe", "yinterp"];
 

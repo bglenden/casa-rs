@@ -35,6 +35,7 @@
 //! from CASA is recorded in `docs/CASA (C++) bugs.md`.
 
 mod corrupt;
+pub mod plot_sink;
 pub mod predict;
 pub mod predictcomp;
 pub mod readantenna;
@@ -45,6 +46,11 @@ pub mod simobserve;
 pub mod simutil;
 pub mod synthetic;
 mod write;
+
+pub use plot_sink::{
+    SimalmaCombinationInput, SimalmaFinishInput, SimanalyzePlotInput, SimobservePlotInput,
+    SimulationPlotSink,
+};
 
 pub use session::array::{ArrayConfig, CoordinateSystem};
 pub use session::error::{CasaOutcome, SimulatorError, SimulatorResult};

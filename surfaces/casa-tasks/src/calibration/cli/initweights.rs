@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Read the CASA weight initialization task surface.
 
+use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::CasaValue;
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use std::path::Path;
 
 use casa_calibration::ApplyCalibrationTableSpec;

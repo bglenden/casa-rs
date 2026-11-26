@@ -8,19 +8,15 @@ use serde_json::json;
 
 use super::*;
 
-/// The values the catalog resolves from `overrides` over its defaults,
+/// The values resolved from `overrides` over domain defaults,
 /// with a MeasurementSet, an image name and a cell.
 pub(crate) fn resolved(
     overrides: Value,
-) -> Result<serde_json::Map<String, Value>, casa_task_runtime::ResolveError> {
+) -> Result<serde_json::Map<String, Value>, crate::TcleanRefusal> {
     let mut values = json!({ "vis": "unused.ms", "imagename": "unused", "cell": "1arcsec" });
     let fields = values.as_object_mut().expect("object");
     fields.extend(overrides.as_object().expect("overrides object").clone());
-    casa_task_runtime::resolve_plain_values(
-        casa_contracts::builtin_surface_bundle("tclean").expect("tclean surface"),
-        PathBuf::from("."),
-        fields,
-    )
+    Ok(crate::tclean::merge_tclean_defaults(fields))
 }
 
 /// The request tclean's `overrides` make, or its refusal.
@@ -83,7 +79,7 @@ fn imsize_and_cell_take_one_value_or_one_per_axis() {
     let pairs = request(json!({ "imsize": [120, 80], "cell": ["8arcsec", "6arcsec"] }));
     assert_eq!((pairs.imsize, pairs.cell), ([120, 80], [8.0, 6.0]));
     pairs.validate().expect("a non-square image");
-    assert!(resolved(json!({ "imsize": [64, 32, 16] })).is_err());
+    assert!(read(json!({ "imsize": [64, 32, 16] })).is_err());
 }
 
 /// `uvtaper` as `VisImagingWeight::setFilter` reads it: an angle is the

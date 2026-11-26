@@ -30,9 +30,13 @@ use casa_imaging_model::Projection;
 
 use crate::ImagingRequest;
 
+mod defaults;
 mod sky_polygon;
 mod user_mask;
 
+pub use defaults::default_tclean_parameters;
+#[cfg(test)]
+pub(crate) use defaults::merge_tclean_defaults;
 pub(crate) use sky_polygon::MaskPolygon;
 use user_mask::{UserMask, user_mask};
 
@@ -132,6 +136,19 @@ impl ImagingRequest {
             .validate_psf_phase_centre()
             .map_err(|error| TcleanRefusal::new(error.parameters, error.reason))?;
         Ok(request)
+    }
+
+    /// Merge sparse `tclean`-named `overrides` over
+    /// [`default_tclean_parameters`] and parse them via [`Self::from_tclean`].
+    ///
+    /// # Errors
+    ///
+    /// Returns any refusal reported by [`Self::from_tclean`].
+    pub fn from_tclean_with_defaults(
+        overrides: &Map<String, Value>,
+    ) -> Result<Self, TcleanRefusal> {
+        let merged = defaults::merge_tclean_defaults(overrides);
+        Self::from_tclean(&merged)
     }
 }
 

@@ -96,14 +96,11 @@ fn task_opening_masks_beam_and_publication_are_admitted() {
     ))
     .unpack(root.path())
     .unwrap();
-    let bundle = casa_contracts::builtin_surface_bundle("tsdimaging").unwrap();
     let sparse = json!({"infiles":root.path().join("map.ms"), "outfile":root.path().join("output"), "overwrite":true, "imsize":[128,128], "cell":"3arcsec", "phasecenter":"J2000 270deg -23deg", "gridfunction":"SF", "convsupport":6});
-    let values = casa_task_runtime::resolve_plain_values(
-        bundle,
-        root.path().to_owned(),
-        sparse.as_object().unwrap(),
-    )
-    .unwrap();
+    let mut resolved = casa_imaging_application::single_dish::default_parameters();
+    for (key, value) in sparse.as_object().unwrap() {
+        resolved.insert(key.clone(), value.clone());
+    }
     let context = RunContext {
         host: HOST,
         ..imaging::context(ResourcePolicy::Explicit {
@@ -111,7 +108,9 @@ fn task_opening_masks_beam_and_publication_are_admitted() {
             memory: AMPLE,
         })
     };
-    drop(casa_imaging_application::single_dish::image_from_parameters(&values, &context).unwrap());
+    drop(
+        casa_imaging_application::single_dish::image_from_parameters(&resolved, &context).unwrap(),
+    );
     FIXED.store(held_by_process(), Ordering::Relaxed);
     PEAK.store(0, Ordering::Relaxed);
     EXCESS.store(i64::MIN, Ordering::Relaxed);
@@ -119,7 +118,7 @@ fn task_opening_masks_beam_and_publication_are_admitted() {
     STARTED.get_or_init(Instant::now);
     BASELINE.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
     MEASURING.store(true, Ordering::Relaxed);
-    let result = casa_imaging_application::single_dish::image_from_parameters(&values, &context);
+    let result = casa_imaging_application::single_dish::image_from_parameters(&resolved, &context);
     MEASURING.store(false, Ordering::Relaxed);
     let output = result.unwrap();
     let excess = EXCESS.load(Ordering::Relaxed);

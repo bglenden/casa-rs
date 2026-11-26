@@ -471,7 +471,7 @@ def test_a_missing_executable_names_its_remedy(
     message = str(missing.value)
     assert "CASARS_FLAGMANAGER_BIN" in message
     assert (
-        "`cargo build -p casa-ms --bin flagmanager`" in message
+        "`cargo build -p casars-cli --bin flagmanager`" in message
         or "CASARS_SUITE_ROOT" in message
     ), message
 

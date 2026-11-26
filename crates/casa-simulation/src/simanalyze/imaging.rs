@@ -2,7 +2,6 @@
 //! Sequential native applications used by simanalyze.
 use super::{Parameters, failure, plan::Plan, preflight, total_power};
 use crate::{SessionResources, simobserve::SimobserveError, simutil::analysis};
-use casa_contracts::builtin_surface_bundle;
 use casa_images::{ImageInterface, PagedImage};
 use casa_imaging_application::{Cancel, ImagingRequest, RunContext};
 use casa_imaging_runtime::{Demand, admit};
@@ -10,7 +9,6 @@ use casa_ms::{
     MeasurementSet, SubtableId,
     concat::{ConcatRequest, concat_with_memory},
 };
-use casa_task_runtime::resolve_plain_values;
 use casa_types::ScalarValue;
 use serde_json::json;
 use std::path::PathBuf;
@@ -35,13 +33,8 @@ pub(super) fn execute(
     let request = if plan.inputs.synthesis.is_empty() {
         None
     } else {
-        let values = resolve_plain_values(
-            builtin_surface_bundle("tclean").map_err(failure)?,
-            std::env::current_dir().map_err(failure)?,
-            &plan.imaging,
-        )
-        .map_err(failure)?;
-        let mut request = ImagingRequest::from_tclean(&values).map_err(failure)?;
+        let mut request =
+            ImagingRequest::from_tclean_with_defaults(&plan.imaging).map_err(failure)?;
         request.backend = match resources.backend() {
             crate::BackendRequest::Cpu => casa_imaging_application::BackendRequest::Cpu,
             crate::BackendRequest::Metal => casa_imaging_application::BackendRequest::Gpu,
@@ -110,13 +103,8 @@ pub(super) fn execute(
     }
     if let Some(initial) = request {
         let _seed = start_model(p, plan, &mut parameters, resources)?;
-        let values = resolve_plain_values(
-            builtin_surface_bundle("tclean").map_err(failure)?,
-            std::env::current_dir().map_err(failure)?,
-            &parameters,
-        )
-        .map_err(failure)?;
-        let mut request = ImagingRequest::from_tclean(&values).map_err(failure)?;
+        let mut request =
+            ImagingRequest::from_tclean_with_defaults(&parameters).map_err(failure)?;
         request.backend = initial.backend;
         casa_imaging_application::execute(&request, context(resources)).map_err(failure)?;
     }

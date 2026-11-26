@@ -3,6 +3,7 @@
 
 use std::collections::HashSet;
 
+use crate::{TaskFailure, TaskInvocation};
 use casa_contracts::ParameterValue;
 use casa_ms::MeasurementSet;
 pub use casa_plot_data::msexplore::plotms_columns::{
@@ -11,7 +12,6 @@ pub use casa_plot_data::msexplore::plotms_columns::{
     uses_spectral_window_average, uses_vector_baseline_average,
 };
 use casa_plot_data::msexplore::{MsAxis, MsDataColumn};
-use casa_task_runtime::{TaskFailure, TaskInvocation};
 
 pub(super) fn check_averaged_derived_storage(
     ms: &MeasurementSet,

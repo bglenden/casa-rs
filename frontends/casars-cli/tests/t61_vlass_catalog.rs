@@ -9,10 +9,10 @@ use std::{collections::BTreeMap, error::Error, fs, path::Path};
 use casa_contracts::{ParameterValue, builtin_surface_bundle};
 use casa_contracts::{ProviderInvocation, TaskRunRequest};
 use casa_imaging_application::{AwCfSource, AwProjection, Gridder, ProductNormalization};
-use casa_task_runtime::{
+use casa_tasks::imaging::ImagingParameters;
+use casa_tasks::{
     OpenSessionRequest, ParameterRuntime, ResolutionPatch, project_provider_invocation,
 };
-use casa_tasks::imaging::ImagingParameters;
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
 
 /// The parameters an invocation sends the imager on its `--json-run`.
