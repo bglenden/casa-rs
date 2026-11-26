@@ -167,7 +167,7 @@ mod tests {
                 application.id
             );
         }
-        // The launcher is retired (#931): Python starts each task directly.
+        // Each entry names a task surface. The old launcher had no surface.
         assert!(catalog.application("casars").is_none());
     }
 

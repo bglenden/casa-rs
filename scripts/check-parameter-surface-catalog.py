@@ -48,9 +48,7 @@ def main() -> int:
     if duplicates:
         fail(f"duplicate application IDs: {duplicates}")
 
-    # Every application is a task: Python starts each one directly, and the
-    # casars launcher is retired (#931). Version 2 keeps only what a launch
-    # and the suite read (#972).
+    # Every task surface has one CLI inventory entry.
     task_ids = {entry["id"] for entry in entries if isinstance(entry, dict)}
     fields = {"id", "launch", "dataset_kinds", "include_in_suite"}
     for entry in entries:
