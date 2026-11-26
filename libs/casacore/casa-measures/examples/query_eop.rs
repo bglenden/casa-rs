@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Query EOP values for a given MJD from the standard runtime tree.
 //!
-//! Usage: cargo run --example query_eop -p casa-measures-data -- [MJD]
+//! Usage: cargo run --example query_eop -p casa-measures -- [MJD]
 //!
 //! If no MJD is given, uses J2000.0 (51544.5).
 

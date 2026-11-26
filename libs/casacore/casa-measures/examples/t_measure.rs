@@ -5,7 +5,7 @@
 //! Demonstrates epoch, position, direction, frequency, and Doppler conversions,
 //! plus record serialization.
 //!
-//! Usage: cargo run --example t_measure -p casa-measures-data
+//! Usage: cargo run --example t_measure -p casa-measures
 //!
 //! Epoch conversions read TAI−UTC from a measures runtime, discovered as the
 //! measures tests discover it (`$CASA_RS_MEASURESPATH`, then `~/.casa/data`).

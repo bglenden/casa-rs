@@ -2,7 +2,7 @@
 //! Download and install the latest CASA-compatible measures runtime.
 //!
 //! Usage:
-//! `cargo run --example update_measures -p casa-measures-data --features update -- [--data-dir DIR]`
+//! `cargo run --example update_measures -p casa-measures --features update -- [--data-dir DIR]`
 //!
 //! If no directory is given, defaults to `~/.casa/data`.
 
@@ -10,7 +10,7 @@ fn main() {
     #[cfg(not(feature = "update"))]
     {
         eprintln!("This example requires the 'update' feature:");
-        eprintln!("  cargo run --example update_measures -p casa-measures-data --features update");
+        eprintln!("  cargo run --example update_measures -p casa-measures --features update");
         std::process::exit(1);
     }
 
