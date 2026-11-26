@@ -4,7 +4,7 @@
 mod axis;
 pub use axis::LegacySpectralGrid;
 mod frame_only;
-pub use frame_only::reframe_staged_ms;
+pub use frame_only::{reframe_staged_ms, stage_frame_only_ms};
 mod interpolate;
 mod partition;
 mod shift;
@@ -72,7 +72,7 @@ struct Recent {
 }
 
 struct Frame {
-    engine: MsCalEngine,
+    engine: Arc<MsCalEngine>,
     target: MeasFrame,
     target_reference: FrequencyRef,
     metadata_reference: FrequencyRef,
@@ -100,7 +100,7 @@ impl Plan {
         let cvel = matches!(legacy, Some(LegacySpectralGrid::Cvel));
         if let Some(rows) = legacy_rows
             && !cvel
-            && let Some(layout) = frame_only::Layout::new(input, options, rows)?
+            && let Some(layout) = frame_only::Layout::new(input, options, Some(rows))?
         {
             return Self::with_field_layout(
                 input,
@@ -115,7 +115,7 @@ impl Plan {
             Some(rows) if cvel => earliest_integration(input.main_table(), rows)?,
             _ => first_selected_row,
         };
-        let frame = Frame::new(input, options, first_integration)?.map(Arc::new);
+        let frame = Frame::new(input, options, first_integration, None)?.map(Arc::new);
         let mut budget = GridBudget::new(budget_bytes, frame.is_some());
         let table = input.spectral_window().map_err(ms_error)?;
         let is_combined = combined.is_some();
@@ -198,6 +198,7 @@ impl Plan {
     ) -> Result<Self, MsTransformError> {
         let table = input.spectral_window().map_err(ms_error)?;
         let mut budget = GridBudget::new(budget_bytes, true);
+        let engine = Frame::open_engine(input, options)?;
         let mut windows = BTreeMap::<i32, Window>::new();
         let mut largest_windows = BTreeMap::<i32, i32>::new();
         for (id, origin) in layout.windows.iter().enumerate() {
@@ -206,7 +207,9 @@ impl Plan {
             let centres = table.chan_freq(row).map_err(ms_error)?;
             let widths = table.chan_width(row).map_err(ms_error)?;
             let mut bins = channel_bins[&origin.spw].clone();
-            let frame = origin.frame_at_reference(input, options)?.map(Arc::new);
+            let frame = origin
+                .frame_at_reference(input, options, &engine)?
+                .map(Arc::new);
             let window = Window::new(
                 (options, legacy),
                 method,
@@ -685,10 +688,24 @@ fn fine_grid(
 }
 
 impl Frame {
+    fn open_engine(
+        input: &MeasurementSet,
+        options: &MsRegridOptions,
+    ) -> Result<Arc<MsCalEngine>, MsTransformError> {
+        if options.outframe.eq_ignore_ascii_case("SOURCE") {
+            MsCalEngine::for_calibration(input)
+        } else {
+            MsCalEngine::new(input)
+        }
+        .map(Arc::new)
+        .map_err(ms_error)
+    }
+
     fn new(
         input: &MeasurementSet,
         options: &MsRegridOptions,
         first_row: usize,
+        engine: Option<&Arc<MsCalEngine>>,
     ) -> Result<Option<Self>, MsTransformError> {
         if options.outframe.trim().is_empty() {
             return Ok(None);
@@ -709,12 +726,10 @@ impl Frame {
         } else {
             target_reference
         };
-        let engine = if name == "SOURCE" {
-            MsCalEngine::for_calibration(input)
-        } else {
-            MsCalEngine::new(input)
-        }
-        .map_err(ms_error)?;
+        let engine = engine.map_or_else(
+            || Self::open_engine(input, options),
+            |existing| Ok(Arc::clone(existing)),
+        )?;
         let table = input.main_table();
         let reference_time =
             crate::subtables::get_f64(table, first_row, "TIME").map_err(ms_error)?;

@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 use crate::{TableError, TableWriteLock};
 
 mod copy_tree;
-pub use copy_tree::{copy_locked_external_tree, copy_locked_table_tree};
+pub use copy_tree::{
+    copy_locked_external_tree, copy_locked_table_tree, copy_locked_table_tree_with_shared_files,
+};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod bound_file;

@@ -12,11 +12,10 @@ use casa_ms::tool_history::append_tool_history;
 use casa_ms::transform::{
     HanningDataColumn, LegacyMsTool, LegacySpectralGrid, MsRegridOptions, MsTransformError,
     MsTransformRequest, MsTransformTaskOptions, ToolSpectralWindow, TransformDataColumn,
-    mstransform_task, reframe_staged_ms, tool_channel_frequencies,
+    mstransform_task, reframe_staged_ms, stage_frame_only_ms, tool_channel_frequencies,
 };
 use casa_tables::publication::{
-    check_write_access, copy_locked_table_tree, exchange_directories,
-    lock_table_tree_for_replacement_with_held,
+    check_write_access, exchange_directories, lock_table_tree_for_replacement_with_held,
 };
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::MeasFrame;
@@ -511,7 +510,7 @@ fn rewrite_attached(ms: &AttachedMs, rewrite: SpectralRewrite) -> PyResult<Optio
         .map_err(runtime_error)?;
     let staged = workspace.path().join("spectral.ms");
     if matches!(rewrite.grid, LegacySpectralGrid::FrameOnly) {
-        copy_locked_table_tree(&ms.path, &staged).map_err(runtime_error)?;
+        stage_frame_only_ms(&ms.path, &staged).map_err(runtime_error)?;
         match reframe_staged_ms(&staged, &rewrite.options) {
             Ok(true) => {}
             Ok(false) | Err(MsTransformError::RegridParameter { .. }) => return Ok(None),

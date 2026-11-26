@@ -1,24 +1,59 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Frame-only updates for legacy regridspw leave visibility cells in place.
 
-use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
+use std::collections::{BTreeMap, BTreeSet, HashMap, btree_map::Entry};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Instant;
 
-use casa_tables::publication::exchange_directories;
+use casa_tables::publication::{copy_locked_table_tree_with_shared_files, exchange_directories};
 use casa_tables::{RequiredScalarColumnValues, Table, TableOptions, TablePartNames};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Array1;
 
+use crate::derived::engine::MsCalEngine;
 use crate::subtables::{MsDataDescription, MsSpectralWindow, get_i32};
 use crate::{MeasurementSet, SubtableId};
 
-use super::super::{MsRegridOptions, MsTransformError};
+use super::super::{MsRegridOptions, MsTransformError, maybe_log_transform_progress};
 use super::{Frame, invalid, ms_error, radial_shift};
 
 const DDID: &str = "DATA_DESC_ID";
 const SPW_ID: &str = "SPECTRAL_WINDOW_ID";
 const SOURCE_ID: &str = "SOURCE_ID";
+
+/// Stage a locked MS for a frame-only `regridspw` and retain the unchanged
+/// tiled payloads outside the DATA_DESC_ID manager. The source locks must
+/// be held until the caller publishes or removes the staged table.
+///
+/// # Errors
+/// Returns an error if the input descriptor or any copied file is unreadable.
+pub fn stage_frame_only_ms(source: &Path, stage: &Path) -> Result<(), MsTransformError> {
+    let main = Table::open_metadata_only(TableOptions::new(source)).map_err(ms_error)?;
+    let reusable = main
+        .data_manager_info()
+        .iter()
+        .filter(|manager| {
+            manager.dm_type.starts_with("Tiled") && !manager.columns.iter().any(|name| name == DDID)
+        })
+        .map(|manager| manager.seq_nr)
+        .collect::<BTreeSet<_>>();
+    copy_locked_table_tree_with_shared_files(source, stage, |name| {
+        let Some((manager, cube)) = name
+            .to_str()
+            .and_then(|name| name.strip_prefix("table.f"))
+            .and_then(|name| name.split_once("_TSM"))
+        else {
+            return false;
+        };
+        cube.parse::<u32>().is_ok()
+            && manager
+                .parse::<u32>()
+                .is_ok_and(|manager| reusable.contains(&manager))
+    })
+    .map_err(ms_error)
+}
 
 /// Transform the spectral metadata of a private writable MeasurementSet.
 /// This implements the frame-only branch of CASA 6.7.6.14's `SubMS::regridSpw`.
@@ -32,18 +67,20 @@ pub fn reframe_staged_ms(
     stage: &Path,
     options: &MsRegridOptions,
 ) -> Result<bool, MsTransformError> {
-    let mut ms = MeasurementSet::open(stage).map_err(ms_error)?;
-    let paths = local_tables(ms.main_table(), stage)?;
-    let rows = (0..ms.row_count()).collect::<Vec<_>>();
-    let Some(layout) = Layout::new(&ms, options, &rows)? else {
+    let started = Instant::now();
+    let (mut ms, paths) = open_frame_tables(stage)?;
+    let Some(layout) = Layout::new(&ms, options, None)? else {
         return Ok(false);
     };
+    maybe_log_transform_progress("frame_only_plan", started.elapsed(), started.elapsed());
+    let metadata_started = Instant::now();
     let windows = ms
         .subtable(SubtableId::SpectralWindow)
         .ok_or_else(|| invalid("Missing SPECTRAL_WINDOW.".into()))?;
     let spectral = MsSpectralWindow::new(windows);
+    let engine = Frame::open_engine(&ms, options)?;
     let records = layout.window_records(windows, |_, origin, record| {
-        if let Some(frame) = origin.frame_at_reference(&ms, options)? {
+        if let Some(frame) = origin.frame_at_reference(&ms, options, &engine)? {
             update_window(
                 record,
                 &spectral,
@@ -55,20 +92,77 @@ pub fn reframe_staged_ms(
         Ok(())
     })?;
     layout.write_subtables(&paths, records)?;
+    maybe_log_transform_progress(
+        "frame_only_subtables",
+        metadata_started.elapsed(),
+        started.elapsed(),
+    );
 
-    let main = ms.main_table_mut();
-    {
-        let mut column = main.column_accessor_mut(DDID).map_err(ms_error)?;
-        for (row, value) in layout.row_descriptions.into_iter().enumerate() {
-            column
-                .set(row, Value::Scalar(ScalarValue::Int32(value)))
-                .map_err(ms_error)?;
+    let descriptions_started = Instant::now();
+    write_main_descriptions(
+        ms.main_table_mut(),
+        &layout.original_descriptions,
+        &layout.row_descriptions,
+    )?;
+    maybe_log_transform_progress(
+        "frame_only_main_descriptions",
+        descriptions_started.elapsed(),
+        started.elapsed(),
+    );
+    Ok(true)
+}
+
+fn open_frame_tables(stage: &Path) -> Result<(MeasurementSet, LocalTables), MsTransformError> {
+    let main = Table::open_metadata_only(TableOptions::new(stage)).map_err(ms_error)?;
+    let paths = local_tables(&main, stage)?;
+    let read_links = [
+        SubtableId::Antenna,
+        SubtableId::Field,
+        SubtableId::Observation,
+    ];
+    let mut links = HashMap::from([
+        (SubtableId::SpectralWindow, paths.windows.clone()),
+        (SubtableId::DataDescription, paths.descriptions.clone()),
+    ]);
+    if let Some(source) = &paths.source {
+        links.insert(SubtableId::Source, source.clone());
+    }
+    for id in read_links {
+        if let Some(path) =
+            crate::ms::linked_subtables::strict_subtable_path(&main, stage, id).map_err(ms_error)?
+        {
+            links.insert(id, path);
         }
     }
-    main.prepare_write()
-        .save_selected_columns(&[DDID])
-        .map_err(ms_error)?;
-    Ok(true)
+    let ms = MeasurementSet::open_with_subtable_paths(stage, &links).map_err(ms_error)?;
+    Ok((ms, paths))
+}
+
+fn write_main_descriptions(
+    main: &mut Table,
+    original: &[i32],
+    ddids: &[i32],
+) -> Result<(), MsTransformError> {
+    let mut changed = Vec::new();
+    {
+        let mut writer = main.row_accessor_mut().prepare(&[DDID]).map_err(ms_error)?;
+        for (row, (&previous, &value)) in original.iter().zip(ddids).enumerate() {
+            if previous == value {
+                continue;
+            }
+            writer.seek(row).map_err(ms_error)?;
+            writer
+                .set_value_at(0, Value::Scalar(ScalarValue::Int32(value)))
+                .map_err(ms_error)?;
+            changed.push(row);
+        }
+    }
+    if !changed.is_empty() {
+        main.prepare_write()
+            .save_selected_rows(&[DDID], &changed)
+            .map_err(ms_error)?;
+    }
+    Ok(())
 }
 
 struct LocalTables {
@@ -131,13 +225,14 @@ impl WindowOrigin {
         &self,
         ms: &MeasurementSet,
         options: &MsRegridOptions,
+        engine: &Arc<MsCalEngine>,
     ) -> Result<Option<Frame>, MsTransformError> {
         let Some(field) = self.field else {
             return Ok(None);
         };
         let mut options = options.clone();
         options.phasecenter = field.to_string();
-        Frame::new(ms, &options, self.first_integration)
+        Frame::new(ms, &options, self.first_integration, Some(engine))
     }
 }
 
@@ -147,13 +242,14 @@ pub(super) struct Layout {
     description_windows: Vec<i32>,
     sources: Vec<(i32, i32, i32)>,
     row_descriptions: Vec<i32>,
+    original_descriptions: Vec<i32>,
 }
 
 impl Layout {
     pub(super) fn new(
         ms: &MeasurementSet,
         options: &MsRegridOptions,
-        rows: &[usize],
+        rows: Option<&[usize]>,
     ) -> Result<Option<Self>, MsTransformError> {
         let source_frame = options.outframe.eq_ignore_ascii_case("SOURCE");
         let target = if source_frame {
@@ -186,42 +282,35 @@ impl Layout {
         if !source_frame && references.iter().all(|&reference| target == reference) {
             return Ok(None);
         }
-        let main = ms.main_table();
-        let mut scalars = main
-            .required_scalar_columns_owned_for_rows(&[DDID, "FIELD_ID", "TIME"], rows)
-            .map_err(ms_error)?;
-        let (
-            Some(RequiredScalarColumnValues::Int32(descriptions)),
-            Some(RequiredScalarColumnValues::Int32(fields)),
-            Some(RequiredScalarColumnValues::Float64(times)),
-        ) = (
-            scalars.remove(DDID),
-            scalars.remove("FIELD_ID"),
-            scalars.remove("TIME"),
-        )
-        else {
-            return Err(invalid(
-                "Invalid time, field or description column for regridding.".into(),
-            ));
-        };
+        let (descriptions, fields, times) = layout_columns(ms.main_table(), rows)?;
         let mut layout = Self {
             windows: Vec::new(),
             descriptions: Vec::new(),
             description_windows: Vec::new(),
             sources: Vec::new(),
             row_descriptions: vec![-1; ms.row_count()],
+            original_descriptions: Vec::new(),
         };
         let mut window_ids = BTreeMap::new();
         let mut description_ids = BTreeMap::new();
-        let mut sorted = (0..rows.len()).collect::<Vec<_>>();
+        let mut sorted = (0..times.len()).collect::<Vec<_>>();
         sorted.sort_by(|&left, &right| times[left].total_cmp(&times[right]));
         let mut changed = false;
         let mut source_rows = BTreeSet::new();
         let field_table = ms.field().map_err(ms_error)?;
         let has_source = ms.subtable(SubtableId::Source).is_some();
+        let mut previous_pair = None;
         for slot in sorted {
-            let row = rows[slot];
+            let row = rows.map_or(slot, |rows| rows[slot]);
             let ddid = descriptions[slot] as usize;
+            let field = fields[slot];
+            if let Some((previous_ddid, previous_field, output)) = previous_pair
+                && ddid == previous_ddid
+                && field == previous_field
+            {
+                layout.row_descriptions[row] = output;
+                continue;
+            }
             let window = *descriptions_to_windows
                 .get(ddid)
                 .ok_or_else(|| invalid(format!("Invalid MAIN DATA_DESC_ID {ddid}.")))?
@@ -231,7 +320,6 @@ impl Layout {
                 .ok_or_else(|| invalid(format!("Invalid DATA_DESCRIPTION {SPW_ID} {window}.")))?;
             let convert = reference != target || source_frame;
             changed |= convert;
-            let field = fields[slot];
             let key = (window, convert.then_some(field));
             let output_spw = match window_ids.entry(key) {
                 Entry::Occupied(entry) => *entry.get(),
@@ -264,6 +352,10 @@ impl Layout {
                 }
             }
             layout.row_descriptions[row] = output_ddid;
+            previous_pair = Some((ddid, field, output_ddid));
+        }
+        if rows.is_none() {
+            layout.original_descriptions = descriptions;
         }
         Ok(changed.then_some(layout))
     }
@@ -324,6 +416,31 @@ impl Layout {
             rewrite_sources(source, &self.sources)?;
         }
         Ok(())
+    }
+}
+
+type LayoutColumns = (Vec<i32>, Vec<i32>, Vec<f64>);
+
+fn layout_columns(main: &Table, rows: Option<&[usize]>) -> Result<LayoutColumns, MsTransformError> {
+    let columns = [DDID, "FIELD_ID", "TIME"];
+    let mut scalars = match rows {
+        Some(rows) => main.required_scalar_columns_owned_for_rows(&columns, rows),
+        None => main.required_scalar_columns_owned(&columns),
+    }
+    .map_err(ms_error)?;
+    match (
+        scalars.remove(DDID),
+        scalars.remove("FIELD_ID"),
+        scalars.remove("TIME"),
+    ) {
+        (
+            Some(RequiredScalarColumnValues::Int32(descriptions)),
+            Some(RequiredScalarColumnValues::Int32(fields)),
+            Some(RequiredScalarColumnValues::Float64(times)),
+        ) => Ok((descriptions, fields, times)),
+        _ => Err(invalid(
+            "Invalid time, field or description column for regridding.".into(),
+        )),
     }
 }
 

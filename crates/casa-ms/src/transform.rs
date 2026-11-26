@@ -84,7 +84,7 @@ use main_arrays::MainArrayBlock;
 pub use model_references::{PlotMsModelReferences, PlotMsModelSpwSelection};
 pub use regrid::{
     LegacySpectralGrid, ToolGridFrameTables, ToolGridPhaseCentre, ToolSpectralWindow,
-    reframe_staged_ms, tool_channel_frequencies, tool_grid_frame_at_epoch,
+    reframe_staged_ms, stage_frame_only_ms, tool_channel_frequencies, tool_grid_frame_at_epoch,
     tool_grid_reference_epoch,
 };
 pub use selection_metadata::selected_plotms_integration_order;

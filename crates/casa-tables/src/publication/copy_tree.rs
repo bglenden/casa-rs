@@ -18,7 +18,26 @@ use crate::lock::{LOCK_FILE_NAME, LockFile, LockOptions, read_sync_data_from_tab
 /// Returns an error for unreadable, unsupported or uncopyable entries.
 /// After failure the caller owns any partial destination.
 pub fn copy_locked_table_tree(source: &Path, target: &Path) -> io::Result<()> {
-    copy_tree(source, target, None)
+    copy_tree(source, target, None, None)
+}
+
+/// Stage a locked table for replacement, sharing selected regular files at
+/// its root that the staged operation will leave unchanged.
+///
+/// The original tree must stay locked until publication or removal of the
+/// stage. The caller must select only data payloads that will retain their
+/// bytes and metadata throughout staging. When a link cannot be created,
+/// copy the file instead. Subtables and table locks are copied independently.
+///
+/// # Errors
+/// Returns an error for unreadable, unsupported or uncopyable entries.
+/// After failure the caller owns any partial destination.
+pub fn copy_locked_table_tree_with_shared_files(
+    source: &Path,
+    target: &Path,
+    share_file: impl Fn(&OsStr) -> bool,
+) -> io::Result<()> {
+    copy_tree(source, target, None, Some(&share_file))
 }
 
 /// Copy a non-table directory, retaining the table copy rules for physical
@@ -32,12 +51,17 @@ pub fn copy_locked_external_tree(
     target: &Path,
     follow_file_link: impl Fn(&OsStr) -> bool,
 ) -> io::Result<()> {
-    copy_tree(source, target, Some(&follow_file_link))
+    copy_tree(source, target, Some(&follow_file_link), None)
 }
 
 type FileLinkSelection<'a> = Option<&'a dyn Fn(&OsStr) -> bool>;
 
-fn copy_tree(source: &Path, target: &Path, external_root: FileLinkSelection<'_>) -> io::Result<()> {
+fn copy_tree(
+    source: &Path,
+    target: &Path,
+    external_root: FileLinkSelection<'_>,
+    shared_root_files: FileLinkSelection<'_>,
+) -> io::Result<()> {
     let metadata = source.symlink_metadata()?;
     if !metadata.is_dir() {
         return Err(io::Error::new(
@@ -45,7 +69,7 @@ fn copy_tree(source: &Path, target: &Path, external_root: FileLinkSelection<'_>)
             "Expected a table directory",
         ));
     }
-    copy_directory(source, target, &metadata, external_root)
+    copy_directory(source, target, &metadata, external_root, shared_root_files)
 }
 
 fn copy_directory(
@@ -53,6 +77,7 @@ fn copy_directory(
     target: &Path,
     metadata: &Metadata,
     external_root: FileLinkSelection<'_>,
+    shared_root_files: FileLinkSelection<'_>,
 ) -> io::Result<()> {
     fs::create_dir(target)?;
     #[cfg(unix)]
@@ -67,6 +92,12 @@ fn copy_directory(
         }
         let path = entry.path();
         let output = target.join(entry.file_name());
+        if shared_root_files.is_some_and(|share| share(&entry.file_name()))
+            && entry.file_type()?.is_file()
+            && fs::hard_link(&path, &output).is_ok()
+        {
+            continue;
+        }
         if external_root.is_some_and(|follow| follow(&entry.file_name()))
             && entry.file_type()?.is_symlink()
             && path.is_file()
@@ -111,7 +142,7 @@ fn copy_entry(source: &Path, target: &Path) -> io::Result<()> {
         ));
     }
     if metadata.is_dir() {
-        return copy_directory(source, target, &metadata, None);
+        return copy_directory(source, target, &metadata, None, None);
     }
     if metadata.is_file() {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -238,6 +269,7 @@ fn next_extent(file: &std::fs::File, offset: u64, whence: libc::c_int) -> io::Re
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
+    use std::os::unix::fs::MetadataExt;
     use std::process::Command;
 
     use crate::lock::{LockOutcome, LockType, SyncData};
@@ -245,6 +277,33 @@ mod tests {
     use super::*;
 
     const SOURCE_PROBE: &str = "CASA_TABLE_COPY_TEST_SOURCE";
+
+    #[test]
+    fn stage_shares_unchanged_root_payloads_only() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let stage = root.path().join("stage");
+        let payload = "table.f2_TSM1";
+        fs::create_dir_all(source.join("SUBTABLE")).unwrap();
+        fs::write(source.join(payload), b"visibility").unwrap();
+        fs::write(source.join("SUBTABLE").join(payload), b"subtable").unwrap();
+        fs::write(source.join("table.dat"), b"original").unwrap();
+        let mut guard = open_lock(&source);
+        assert!(guard.acquire(LockType::Write, 1).unwrap().is_acquired());
+
+        copy_locked_table_tree_with_shared_files(&source, &stage, |name| name == payload).unwrap();
+        let inode = |path: &Path, file| fs::metadata(path.join(file)).unwrap().ino();
+        assert_eq!(inode(&source, payload), inode(&stage, payload));
+        assert_ne!(inode(&source, "table.lock"), inode(&stage, "table.lock"));
+        assert_ne!(
+            inode(&source.join("SUBTABLE"), payload),
+            inode(&stage.join("SUBTABLE"), payload)
+        );
+        fs::write(stage.join("table.dat"), b"reframed").unwrap();
+        assert_eq!(fs::read(source.join("table.dat")).unwrap(), b"original");
+        fs::remove_dir_all(stage).unwrap();
+        assert_eq!(fs::read(source.join(payload)).unwrap(), b"visibility");
+    }
 
     #[cfg(target_os = "macos")]
     #[test]
