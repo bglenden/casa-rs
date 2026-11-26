@@ -396,10 +396,12 @@ impl ScratchFit {
             accumulate(
                 averages,
                 self.models[slot],
-                data,
-                flags,
-                weights,
-                spectrum,
+                ScratchCells {
+                    data,
+                    flags,
+                    weights,
+                    spectrum,
+                },
                 hands,
                 old_iterator,
             )?;
@@ -440,13 +442,22 @@ impl ScratchFit {
     }
 }
 
-fn accumulate(
-    averages: &mut HashMap<BaselineKey, BaselineAverage>,
-    key: BaselineKey,
+struct ScratchCells {
     data: Option<ArrayValue>,
     flags: Option<ArrayValue>,
     weights: Option<ArrayValue>,
     spectrum: Option<ArrayValue>,
+}
+
+fn accumulate(
+    averages: &mut HashMap<BaselineKey, BaselineAverage>,
+    key: BaselineKey,
+    ScratchCells {
+        data,
+        flags,
+        weights,
+        spectrum,
+    }: ScratchCells,
     hands: &[usize],
     old_iterator: bool,
 ) -> MsResult<()> {
