@@ -278,7 +278,8 @@ def test_contsub_keeps_recorded_correlations_and_flags_an_unfitted_row(
                                    strict=True, err_msg=key)
 
 
-def test_contsub_keeps_the_union_ids_when_it_only_writes_one_window(tmp_path, measures):
+@pytest.fixture
+def two_bands(tmp_path, measures):
     casa = pinned_casa()
     source = tmp_path / "bands.ms"
     with closing(tools.simulator()) as sm:
@@ -302,6 +303,11 @@ def test_contsub_keeps_the_union_ids_when_it_only_writes_one_window(tmp_path, me
         assert table.putcol("DATA", spectrum)
         assert table.putcol("FLAG", np.zeros_like(spectrum, dtype=bool))
         assert table.putcol("FLAG_ROW", np.zeros(len(time), dtype=bool))
+    return casa, source, windows, time, frequencies
+
+
+def test_contsub_keeps_the_union_ids_when_it_only_writes_one_window(tmp_path, two_bands):
+    casa, source, _, _, frequencies = two_bands
     for api, name in ((casa, "oracle"), (tools, "native")):
         product = tmp_path / f"{name}.ms"
         with closing(api.ms()) as ms:
@@ -319,3 +325,177 @@ def test_contsub_keeps_the_union_ids_when_it_only_writes_one_window(tmp_path, me
             np.testing.assert_allclose(actual["DATA"], 0, atol=2e-5)
             axis = columns(reader, product / "SPECTRAL_WINDOW", ("CHAN_FREQ",))["CHAN_FREQ"]
             np.testing.assert_array_equal(axis, frequencies, strict=True)
+
+def test_modern_integration_solint_uses_each_window_interval(tmp_path, two_bands):
+    casa, source, windows, times, _ = two_bands
+    payload = np.broadcast_to(times - times.min() + np.arange(1, 5)[:, None], (2, 4, len(times))).astype(complex)
+    with closing(casa.table()) as table:
+        assert table.open(str(source), nomodify=False)
+        assert table.putcol("DATA", payload)
+        assert table.putcol("INTERVAL", np.where(windows == 0, 10.0, 30.0))
+    for api, name in ((casa, "oracle"), (tools, "native")):
+        target = tmp_path / f"{name}.ms"
+        copytree(source, target)
+        with closing(api.ms()) as ms:
+            assert ms.open(str(target), nomodify=False)
+            assert ms.continuumsub(solint="int", mode="model") is True
+        model = columns(casa, target, ("MODEL_DATA",))["MODEL_DATA"]
+        np.testing.assert_allclose(model[0, 0, windows == 1].reshape(3, -1)[:, 1], 12.5)
+        if api is casa:
+            expected = model
+        else:
+            np.testing.assert_allclose(model, expected, atol=1e-6, strict=True)
+
+
+@pytest.mark.parametrize("case", ["zero-weight", "repeated-baseline", "union-channel-slice"])
+def test_named_continuum_fits_complete_visibility_buffers(tmp_path, two_bands, case):
+    casa, source, windows, _, _ = two_bands
+    with closing(casa.table()) as table:
+        assert table.open(str(source), nomodify=False)
+        data = table.getcol("DATA")
+        if case == "zero-weight":
+            assert table.putcol("WEIGHT", np.zeros_like(table.getcol("WEIGHT")))
+        if case == "repeated-baseline":
+            time = table.getcol("TIME")
+            time.fill(time[0])
+            assert table.putcol("TIME", time) and table.putcol("TIME_CENTROID", time)
+            data.fill(20)
+            data[..., :10] = 10
+            flags = np.zeros_like(data, dtype=bool)
+            flags[:, 0, 10:] = True
+            assert table.putcol("DATA", data) and table.putcol("FLAG", flags)
+            assert table.putcol("WEIGHT", np.full_like(table.getcol("WEIGHT"), 4))
+    for api, name in ((casa, "oracle"), (tools, "native")):
+        output = tmp_path / f"{name}.ms"
+        with closing(api.ms()) as tool:
+            assert tool.open(str(source))
+            assert tool.contsub(str(output), fitspw="0", spw="0", fitorder=0, whichcol="data",
+                                unionspw="0:1~2" if case == "union-channel-slice" else "0") is True
+        values = columns(casa, output, ("DATA", "FLAG"))
+        assert values["DATA"].shape == (2, 4, 30)
+        if case == "zero-weight":
+            np.testing.assert_array_equal(values["DATA"], data[..., windows == 0], strict=True)
+            assert values["FLAG"].all()
+        if case == "repeated-baseline":
+            np.testing.assert_allclose(values["DATA"][0, 0, 1], -3.333334, atol=2e-5)
+        if api is casa:
+            expected = values
+        else:
+            np.testing.assert_allclose(values["DATA"], expected["DATA"], atol=2e-5, strict=True)
+            np.testing.assert_array_equal(values["FLAG"], expected["FLAG"], strict=True)
+
+
+def test_named_continuum_requires_a_fit_buffer_at_each_output_integration(tmp_path, two_bands):
+    casa, source, windows, times, _ = two_bands
+    with closing(casa.table()) as table:
+        assert table.open(str(source), nomodify=False)
+        times[windows == 1] += 1
+        assert table.putcol("TIME", times) and table.putcol("TIME_CENTROID", times)
+    for api, name in ((casa, "oracle"), (tools, "native")):
+        output = tmp_path / f"{name}.ms"
+        with closing(api.ms()) as tool:
+            assert tool.open(str(source))
+            with pytest.raises(RuntimeError, match="continuum fitter must first be initialized"):
+                tool.contsub(str(output), fitspw="0", spw="1", whichcol="data",
+                             combine="spw", unionspw="0,1")
+            assert tool.name() == str(source) and tool.nrow() == 60
+        if api is tools:
+            assert not output.exists()
+
+
+@pytest.mark.parametrize("column, expected", [("data", 3.0), ("corrected", 0.5), ("model", 0.5)])
+def test_named_continuum_uses_sigma_from_calibrated_weights(
+    tmp_path, native_dataset, baseline_fixture, column, expected,
+):
+    casa, _, _ = baseline_fixture
+    with closing(casa.ms()) as tool:
+        assert tool.open(str(native_dataset), nomodify=False)
+        assert tool.continuumsub(mode="skip-fit")
+    with closing(casa.table()) as table:
+        assert table.open(str(native_dataset), nomodify=False)
+        assert table.putcol("WEIGHT", np.full_like(table.getcol("WEIGHT"), 4))
+        assert table.putcol("SIGMA", np.full_like(table.getcol("SIGMA"), 3))
+    for api, name in ((casa, "oracle"), (tools, "native")):
+        output = tmp_path / f"{name}.ms"
+        with closing(api.ms()) as tool:
+            assert tool.open(str(native_dataset))
+            assert tool.contsub(str(output), fitspw="0", whichcol=column) is True
+        sigma = columns(casa, output, ("SIGMA",))["SIGMA"]
+        np.testing.assert_allclose(sigma, expected)
+
+
+def test_existing_scratch_column_survives_creating_its_missing_peer(
+    tmp_path, native_dataset, baseline_fixture,
+):
+    casa, _, raw = baseline_fixture
+    for missing, keep in (("CORRECTED_DATA", "MODEL_DATA"), ("MODEL_DATA", "CORRECTED_DATA")):
+        path = tmp_path / (missing + ".ms")
+        copytree(native_dataset, path)
+        with closing(casa.ms()) as tool:
+            assert tool.open(str(path), nomodify=False)
+            assert tool.continuumsub(mode="skip-fit")
+        with closing(casa.table()) as table:
+            assert table.open(str(path), nomodify=False)
+            assert table.removecols([missing])
+            assert table.putcol(keep, np.full_like(raw["data"], 3 + 2j))
+        with closing(tools.ms()) as tool:
+            assert tool.open(str(path), nomodify=False)
+            assert tool.continuumsub(mode="skip-fit")
+        output = columns(casa, path, (keep, missing))
+        np.testing.assert_array_equal(output[keep], np.full_like(raw["data"], 3 + 2j), strict=True)
+        assert output[missing].shape == raw["data"].shape
+
+
+def test_legacy_continuum_uses_actual_spectral_windows_for_reordered_descriptions(tmp_path, two_bands):
+    casa, source, windows, _, _ = two_bands
+    with closing(casa.table()) as table:
+        assert table.open(str(source / "DATA_DESCRIPTION"), nomodify=False)
+        assert table.putcol("SPECTRAL_WINDOW_ID", np.array([1, 0], dtype=np.int32))
+    with closing(casa.table()) as table:
+        assert table.open(str(source), nomodify=False)
+        data = np.broadcast_to(10 + windows, table.getcol("DATA").shape).astype(complex)
+        assert table.putcol("DATA", data)
+    expected = {"oracle": [10, 1], "native": [1, 11]}
+    for api, name in ((casa, "oracle"), (tools, "native")):
+        target = tmp_path / f"{name}.ms"
+        copytree(source, target)
+        with closing(api.ms()) as tool:
+            assert tool.open(str(target), nomodify=False)
+            assert tool.continuumsubold(fitspw="0", mode="model") is True
+        model = columns(casa, target, ("MODEL_DATA",))["MODEL_DATA"]
+        for window in (0, 1):
+            row = np.flatnonzero(windows == window)[1]
+            np.testing.assert_allclose(model[:, :, row], expected[name][window])
+
+
+def test_undefined_later_scratch_cell_cannot_partially_subtract_mms_members(
+    tmp_path, native_dataset, baseline_fixture,
+):
+    casa, _, raw = baseline_fixture
+    members = [tmp_path / f"member-{index}.ms" for index in range(2)]
+    for index, path in enumerate(members):
+        copytree(native_dataset, path)
+        with closing(casa.ms()) as tool:
+            assert tool.open(str(path), nomodify=False)
+            assert tool.continuumsub(mode="skip-fit")
+        with closing(casa.table()) as table:
+            assert table.open(str(path), nomodify=False)
+            if index == 1:
+                model = table.getcoldesc("MODEL_DATA")
+                model.update(dataManagerType="StandardStMan", dataManagerGroup="review_model")
+                assert table.removecols(["MODEL_DATA"])
+                assert table.addcols({"MODEL_DATA": model})
+            for column in ("TIME", "TIME_CENTROID"):
+                assert table.putcol(column, table.getcol(column) + 30 * index)
+    parent = tmp_path / "members.mms"
+    with closing(casa.ms()) as tool:
+        assert tool.createmultims(str(parent), list(map(str, members)), ["ANTENNA", "DATA_DESCRIPTION", "FEED"])
+        assert tool.open(str(parent))
+        physical = tool.getreferencedtables()
+    with closing(tools.ms()) as tool:
+        assert tool.open(str(parent), nomodify=False)
+        with pytest.raises(RuntimeError, match="missing or invalid MODEL_DATA cell"):
+            tool.continuumsub()
+        assert tool.name() == str(parent)
+    actual = columns(casa, physical[0], ("CORRECTED_DATA",))["CORRECTED_DATA"]
+    np.testing.assert_array_equal(actual, raw["data"], strict=True)

@@ -7,7 +7,7 @@ use casa_core::{ArrayValue, Complex32};
 use casa_ms::transform::{PreparedTransformInputView, TransformInputColumns, TransformInputView};
 use casa_ms::{MeasurementSet, MsSelection, ResolvedMsSelectionRow};
 use casa_tables::{RequiredScalarColumnValues, Table, TableError};
-use ndarray::{ArrayD, Ix2};
+use ndarray::{Array2, ArrayD, Ix2, ShapeBuilder};
 
 use super::fit::ComplexPolynomial;
 use crate::session::resolve_casa_calibration_selection;
@@ -184,7 +184,8 @@ impl FitGrid {
 
 type Baseline = (i32, i32);
 type Coefficients = HashMap<Baseline, Vec<ComplexPolynomial>>;
-type Samples = HashMap<Baseline, Vec<Vec<(f64, Complex32, f64)>>>;
+type Samples = BTreeMap<Baseline, Vec<Vec<(f64, Complex32, f64)>>>;
+type AveragingKey = (Baseline, i32, i32);
 
 fn baseline(row: &ResolvedMsSelectionRow) -> Baseline {
     (row.antenna1_id, row.antenna2_id)
@@ -257,10 +258,17 @@ fn fit_group(
     fit: &FitGrid,
     domain: FrequencyDomain,
 ) -> Result<Coefficients, TableError> {
-    let fitting = slots
+    let windows = slots
         .iter()
         .map(|&slot| &rows[slot])
-        .filter(|row| !row.flag_row && !fit.0[&row.spectral_window_id].channels.is_empty())
+        .filter(|row| !fit.0[&row.spectral_window_id].channels.is_empty())
+        .collect::<Vec<_>>();
+    if windows.is_empty() {
+        return Err(error("The continuum fitter must first be initialized."));
+    }
+    let fitting = windows
+        .into_iter()
+        .filter(|row| !row.flag_row)
         .collect::<Vec<_>>();
     if fitting.is_empty() {
         return Ok(HashMap::new());
@@ -269,17 +277,19 @@ fn fit_group(
     let data = array_cells(table, options.column, &ids)?;
     let flags = array_cells(table, "FLAG", &ids)?;
     let weights = array_cells(table, "WEIGHT", &ids)?;
-    let mut group = Samples::new();
+    let mut averages = BTreeMap::new();
     for (((row, data), flags), weight) in fitting.into_iter().zip(data).zip(flags).zip(weights) {
-        add_samples(
-            &mut group,
-            row,
+        let key = (baseline(row), row.spectral_window_id, row.field_id);
+        accumulate_row(
+            &mut averages,
+            key,
             &fit.0[&row.spectral_window_id],
-            data,
-            flags,
-            weight,
-            domain,
+            (data, flags, weight),
         )?;
+    }
+    let mut group = Samples::new();
+    for ((baseline, window, _), average) in averages {
+        average.add_to_fit(&mut group, baseline, &fit.0[&window], domain)?;
     }
     let terms = options.order.saturating_add(1);
     Ok(group
@@ -294,14 +304,13 @@ fn fit_group(
         .collect())
 }
 
-fn add_samples(
-    group: &mut Samples,
-    row: &ResolvedMsSelectionRow,
+type FitCells = (Option<ArrayValue>, Option<ArrayValue>, Option<ArrayValue>);
+
+fn accumulate_row(
+    groups: &mut BTreeMap<AveragingKey, WindowAverage>,
+    key: AveragingKey,
     window: &Window,
-    data: Option<ArrayValue>,
-    flags: Option<ArrayValue>,
-    weight: Option<ArrayValue>,
-    domain: FrequencyDomain,
+    (data, flags, weight): FitCells,
 ) -> Result<(), TableError> {
     let (
         Some(ArrayValue::Complex32(data)),
@@ -318,38 +327,98 @@ fn add_samples(
     if data.shape() != flags.shape()
         || data.nrows() != weight.len()
         || data.ncols() != window.frequencies.len()
+        || weight.is_empty()
     {
         return Err(error(
             "continuum fitting received a different channel or correlation shape",
         ));
     }
-    let samples = group
-        .entry(baseline(row))
-        .or_insert_with(|| vec![Vec::new(); data.nrows()]);
-    if samples.len() != data.nrows() {
+    let average = groups
+        .entry(key)
+        .or_insert_with(|| WindowAverage::new(data.dim()));
+    if average.sum.dim() != data.dim() {
         return Err(error(
-            "continuum fitting cannot combine unequal correlation counts",
+            "continuum fitting received different shapes for an averaged baseline",
         ));
     }
-    for &channel in &window.channels {
-        if flags.column(channel).iter().any(|&flag| flag) {
-            continue;
+    let mut good = false;
+    for (channel, flags) in flags.columns().into_iter().enumerate() {
+        if flags.iter().all(|&flag| !flag) {
+            good = true;
+            average.unflagged[channel] = true;
+            for (hand, (value, weight)) in
+                data.column(channel).iter().zip(weight.iter()).enumerate()
+            {
+                average.sum[[hand, channel]] += *value * *weight;
+            }
         }
-        let frequency = domain.coordinate(window.frequencies[channel]);
-        for (hand, &weight) in weight.iter().enumerate() {
-            let weight = if (1e-20..=1e20).contains(&weight) {
-                f64::from(weight)
-            } else {
-                1.0
-            };
-            samples[hand].push((
-                frequency,
-                data[[hand, channel]],
-                weight / data.ncols() as f64,
-            ));
+    }
+    if good {
+        for (sum, &weight) in average.weights.iter_mut().zip(weight.iter()) {
+            *sum += weight;
         }
     }
     Ok(())
+}
+
+// The old VisBuffAccumulator maintains a weight per hand of a baseline,
+// not per channel. Any unflagged channel contributes the row's weight to
+// that baseline before the continuum channel mask is applied.
+struct WindowAverage {
+    sum: Array2<Complex32>,
+    weights: Vec<f32>,
+    unflagged: Vec<bool>,
+}
+
+impl WindowAverage {
+    fn new((hands, channels): (usize, usize)) -> Self {
+        Self {
+            sum: Array2::zeros((hands, channels).f()),
+            weights: vec![0.0; hands],
+            unflagged: vec![false; channels],
+        }
+    }
+
+    fn add_to_fit(
+        self,
+        group: &mut Samples,
+        baseline: Baseline,
+        window: &Window,
+        domain: FrequencyDomain,
+    ) -> Result<(), TableError> {
+        let row_weight = (self.weights[0] + self.weights[self.weights.len() - 1]) * 0.5;
+        if row_weight <= 0.0 {
+            return Ok(());
+        }
+        let samples = group
+            .entry(baseline)
+            .or_insert_with(|| vec![Vec::new(); self.weights.len()]);
+        if samples.len() != self.weights.len() {
+            return Err(error(
+                "continuum fitting cannot combine unequal correlation counts",
+            ));
+        }
+        for &channel in &window.channels {
+            if !self.unflagged[channel] {
+                continue;
+            }
+            let frequency = domain.coordinate(window.frequencies[channel]);
+            for (hand, &weight) in self.weights.iter().enumerate() {
+                let observed = if weight > 0.0 {
+                    self.sum[[hand, channel]] / weight
+                } else {
+                    Complex32::ZERO
+                };
+                let weight = if (1e-20..=1e20).contains(&weight) {
+                    f64::from(weight)
+                } else {
+                    1.0
+                };
+                samples[hand].push((frequency, observed, weight / self.sum.ncols() as f64));
+            }
+        }
+        Ok(())
+    }
 }
 
 struct Residuals {
@@ -385,6 +454,22 @@ impl PreparedTransformInputView for Residuals {
                 }
             }
             output.insert("FLAG", cells);
+        }
+        if self.column != "DATA" && columns.contains(&"SIGMA") {
+            let mut sigmas = array_cells(input, "WEIGHT", rows)?;
+            for sigma in &mut sigmas {
+                let Some(ArrayValue::Float32(weight)) = sigma else {
+                    return Err(error("continuum fitting requires float32 WEIGHT"));
+                };
+                weight.mapv_inplace(|weight| {
+                    if weight > 0.0 {
+                        f64::from(weight).sqrt().recip() as f32
+                    } else {
+                        f32::MAX
+                    }
+                });
+            }
+            output.insert("SIGMA", sigmas);
         }
         Ok(output)
     }

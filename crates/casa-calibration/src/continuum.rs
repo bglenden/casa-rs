@@ -108,6 +108,42 @@ impl ContinuumScratchFit {
         self.fit.rows.iter().map(|row| row.row_index)
     }
 
+    /// Verify that each existing destination cell can accept the fitted data.
+    /// Call for every constituent with its write lock held before updating any.
+    ///
+    /// # Errors
+    /// A destination cell is missing, unreadable, or disagrees with the fit axes.
+    pub fn check_destinations(
+        &self,
+        ms: &MeasurementSet,
+        rows: &BTreeMap<usize, usize>,
+        [corrected, model]: [&str; 2],
+    ) -> MsResult<()> {
+        let ids: Vec<_> = rows.keys().copied().collect();
+        for &column in self.columns {
+            let name = if column == CORRECTED {
+                corrected
+            } else {
+                model
+            };
+            let shapes = scratch_shapes(ms.main_table(), name, &ids)?;
+            for ((row, &logical), shape) in rows.iter().zip(shapes) {
+                let source = &self.fit.rows[logical];
+                let hands = &self.fit.hands[&source.data_desc_id];
+                let fit = self.fit.fits.get(&self.fit.models[logical]);
+                let valid = matches!(shape.as_deref(), Some([correlations, channels])
+                    if hands.iter().all(|hand| hand < correlations)
+                        && fit.is_none_or(|fit| fit.ncols() == *channels));
+                if !valid {
+                    return Err(invalid(format!(
+                        "missing or invalid {name} cell at row {row}"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Apply the model to one physical table. The row map pairs physical row
     /// numbers with positions in [`Self::row_indices`].
     ///
@@ -504,7 +540,7 @@ fn accumulate(
 fn groups(
     ms: &MeasurementSet,
     rows: &[ResolvedMsSelectionRow],
-    mut interval: f64,
+    interval: f64,
     old_iterator: bool,
 ) -> MsResult<Vec<Vec<usize>>> {
     if rows.is_empty() {
@@ -512,13 +548,11 @@ fn groups(
     }
     let ids = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
     let table = ms.main_table();
-    if interval < 0.0 && !old_iterator {
-        let mut first = table.required_scalar_columns_owned_for_rows(&["INTERVAL"], &ids[..1])?;
-        let Some(RequiredScalarColumnValues::Float64(seconds)) = first.remove("INTERVAL") else {
-            return Err(invalid("INTERVAL must be float64"));
-        };
-        interval = seconds[0];
-    }
+    let per_description = if interval < 0.0 && !old_iterator {
+        integration_intervals(table, rows)?
+    } else {
+        BTreeMap::new()
+    };
     let mut metadata =
         table.required_scalar_columns_owned_for_rows(&["ARRAY_ID", "SCAN_NUMBER"], &ids)?;
     let (
@@ -536,7 +570,11 @@ fn groups(
             .push(slot);
     }
     let mut groups = Vec::new();
-    for rows_in_scan in buckets.values_mut() {
+    for ((_, description, _, _), rows_in_scan) in &mut buckets {
+        let interval = per_description
+            .get(description)
+            .copied()
+            .unwrap_or(interval);
         rows_in_scan.sort_by(|&a, &b| {
             rows[a]
                 .time_mjd_seconds
@@ -561,11 +599,60 @@ fn groups(
     Ok(groups)
 }
 
+fn integration_intervals(
+    table: &casa_tables::Table,
+    rows: &[ResolvedMsSelectionRow],
+) -> MsResult<BTreeMap<i32, f64>> {
+    let mut first = BTreeMap::new();
+    for row in rows {
+        first.entry(row.data_desc_id).or_insert(row.row_index);
+    }
+    let (descriptions, rows): (Vec<_>, Vec<_>) = first.into_iter().unzip();
+    let mut intervals = table.required_scalar_columns_owned_for_rows(&["INTERVAL"], &rows)?;
+    let Some(RequiredScalarColumnValues::Float64(seconds)) = intervals.remove("INTERVAL") else {
+        return Err(invalid("INTERVAL must be float64"));
+    };
+    // VI2 receives the first interval of each selected description as a Float.
+    Ok(descriptions
+        .into_iter()
+        .zip(seconds.into_iter().map(|value| f64::from(value as f32)))
+        .collect())
+}
+
 fn arrays(ms: &MeasurementSet, column: &str, rows: &[usize]) -> MsResult<Vec<Option<ArrayValue>>> {
     Ok(ms
         .main_table()
         .column_accessor(column)?
         .array_cells_owned_uncached(rows)?)
+}
+
+fn scratch_shapes(
+    table: &casa_tables::Table,
+    name: &str,
+    rows: &[usize],
+) -> MsResult<Vec<Option<Vec<usize>>>> {
+    let source = table.column_accessor(name)?;
+    if table
+        .schema()
+        .and_then(|schema| schema.column(name))
+        .and_then(|column| column.data_type())
+        != Some(casa_core::PrimitiveType::Complex32)
+    {
+        return Err(invalid(format!("invalid {name} column type")));
+    }
+    if let Ok(shapes) = source.array_shapes_uncached(rows) {
+        return Ok(shapes);
+    }
+    let mut shapes = Vec::with_capacity(rows.len());
+    for batch in rows.chunks(128) {
+        for cell in source.array_cells_owned_uncached(batch)? {
+            shapes.push(match cell {
+                Some(ArrayValue::Complex32(array)) => Some(array.shape().to_vec()),
+                _ => None,
+            });
+        }
+    }
+    Ok(shapes)
 }
 
 fn complex(cell: Option<ArrayValue>, name: &str) -> MsResult<ArrayD<Complex32>> {

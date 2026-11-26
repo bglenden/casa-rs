@@ -241,10 +241,18 @@ fn run_continuum_scratch(
     }
     let layout = VisibilityMain::open(path)?;
     written.clear();
+    let mut members = Vec::new();
     for target in layout.write_targets(&rows, &SCRATCH)? {
         layout.verify_write_layout(&written)?;
+        continuum_lock(&mut locks, &target.path)?;
+        let member = MeasurementSet::open(&target.path).map_err(runtime_error)?;
+        fit.check_destinations(&member, &target.rows, [&target.names[0], &target.names[1]])
+            .map_err(runtime_error)?;
+        members.push((target, member));
+    }
+    for (target, mut member) in members {
+        layout.verify_write_layout(&written)?;
         let lock = continuum_lock(&mut locks, &target.path)?;
-        let mut member = MeasurementSet::open(&target.path).map_err(runtime_error)?;
         fit.write_holding(
             &mut member,
             &target.rows,

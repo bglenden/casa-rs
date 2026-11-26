@@ -740,13 +740,18 @@ fn mstransform_staged(
         "" => "*",
         spw => spw,
     };
-    let spw_selection =
+    let mut spw_selection =
         input
             .resolve_spw_selector(spw)
             .map_err(|source| MsTransformError::InvalidSpw {
                 selector: request.spw.clone(),
                 reason: source.to_string(),
             })?;
+    if options.legacy_continuum_output.is_some() {
+        // The legacy group iterator receives complete buffers. Only fitspw
+        // projects the channels used in the fit itself.
+        spw_selection.keep_all_channels();
+    }
     if splitting {
         let mut windows = BTreeSet::new();
         if spw_selection

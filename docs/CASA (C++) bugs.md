@@ -12416,3 +12416,14 @@ single-window MS, `SubMS` creates the named output before checking whether
 the output window exists. Pinned CASA raises a selection error and leaves a
 zero-row MS at `outputms`. casa-rs checks and writes through the MS transform's
 private stage. The selection error leaves the requested output unpublished.
+
+On an MS with only one physical scratch column, pinned CASA can replace a
+preexisting `MODEL_DATA` with unity when it creates `CORRECTED_DATA`, or
+terminate during modelling when only `CORRECTED_DATA` exists. casa-rs
+initializes the missing column and preserves the existing cells.
+
+The scratch continuum subtractors in CASA 6.7.6.14 assume a data-description
+identifier also identifies its spectral window. When the two DATA_DESCRIPTION
+entries reference windows `[1, 0]`, `continuumsubold(fitspw='0', mode='model')`
+fits rows from window 1. casa-rs follows the DATA_DESCRIPTION mapping and
+fits window 0.
