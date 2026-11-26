@@ -5,7 +5,7 @@
 Run with CASA 6.7.6.14's Python:
 
     CASAPY -I tools/simulation/simutil_geodesy_oracle.py \\
-        --out crates/casars-python/python/tests/data/casa_simutil_geodesy.json
+        --out frontends/casars-python/python/tests/data/casa_simutil_geodesy.json
 
 It records what CASA's `simutil` returns, or the message it raises, for:
 - `getdatum` of every datum casa-rs tabulates, and of an unknown one;

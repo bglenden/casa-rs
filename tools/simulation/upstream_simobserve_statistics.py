@@ -98,7 +98,7 @@ def main():
     os.environ['SIMOBSERVE_SUITE_DATA'] = str(data)
     os.environ['CASARS_UPSTREAM_NATIVE'] = '1'
     os.environ['CASARS_ALIGN_SIMULATION_EPOCHS'] = '1'
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'crates/casars-python/python'))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'frontends/casars-python/python'))
     exec(PLUGIN, {})
     from casatasks import version_string
     if version_string() != '6.7.6.14':

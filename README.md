@@ -103,8 +103,7 @@ ia.done()
 
 Use `nomodify=False` to open a writable table. The image tool can create a
 native image, edit coordinates and write a slice with `putchunk`. See the
-[data API](docs/python/data.md) for examples and migration from the former
-`casars.data.Image` class.
+[data API](docs/python/data.md) for examples.
 
 ### Tasks and reusable parameters
 
@@ -164,7 +163,7 @@ implementation, not a wrapper around casacore C++.
 | Calibration, simulation, import | `casa-calibration`, `casa-simulation`, `casa-components`, `casa-atmosphere`, `casa-vla` |
 | Imaging | `casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`, `casa-imaging-singledish`, `casa-imaging-application` |
 | Task contracts and execution | `casa-provider-contracts`, `casa-task-runtime`, `casars-imager`, `casars-imexplore`, `casars-msconvert`, `casars-simulation` |
-| Python | `crates/casars-python/`, with its PyO3 extension `casars._core` |
+| Python | `frontends/casars-python/`, with its PyO3 extension `casars._core` |
 | Comparison and test support | `dev/casa-test-support`, `dev/casa-dev-tools`, `suites/`, `tools/science/` |
 
 The [application catalog](crates/casa-provider-contracts/resources/application-catalog.json)
@@ -314,7 +313,7 @@ you need and install the package editable:
 CARGO_INCREMENTAL=0 cargo build -p casa-calibration --bin calibrate
 python3 -m venv .venv
 source .venv/bin/activate
-CARGO_INCREMENTAL=0 python -m pip install -e 'crates/casars-python[test,plot]'
+CARGO_INCREMENTAL=0 python -m pip install -e 'frontends/casars-python[test,plot]'
 ```
 
 `cargo build -p <package> --bin <executable>` builds one task executable

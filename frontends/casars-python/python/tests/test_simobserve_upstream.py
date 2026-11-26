@@ -21,7 +21,7 @@ def sky_inputs(tmp_path_factory):
             raise
         pytest.skip(str(error))
     root = tmp_path_factory.mktemp("upstream-simobserve")
-    fixtures = Path(__file__).resolve().parents[3] / "casa-simulation/tests/data"
+    fixtures = Path(__file__).resolve().parents[4] / "crates" / "casa-simulation/tests/data"
     with tarfile.open(fixtures / "skymodel_inputs.tar.gz") as archive:
         options = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
         archive.extractall(root, **options)

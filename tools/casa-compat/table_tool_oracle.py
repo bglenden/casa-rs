@@ -18,7 +18,7 @@ a step returns, `on` the tool a step calls); the string
 record keeps, for every step, either the encoded value `tb` returned
 (`"value"`) or the exception it raised (`"error"`: its type and message).
 
-`crates/casars-python/python/tests/test_tools_table.py` replays the recorded
+`frontends/casars-python/python/tests/test_tools_table.py` replays the recorded
 steps on `casars.tools.table` and compares with `encode` below; keep
 `encode` in step with `test_tools_table.encode_value`. The fixture's path is
 written as `<TABLE>` wherever it appears in a message or a string.

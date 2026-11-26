@@ -155,7 +155,7 @@ cargo build --release --workspace --bins
 ```
 
 A Python package installed from the checkout (`pip install -e
-crates/casars-python`) runs the newest `debug` or `release` build of each
+frontends/casars-python`) runs the newest `debug` or `release` build of each
 task executable in that checkout's `target/` (or `$CARGO_TARGET_DIR`), unless
 `CASARS_SUITE_ROOT` or the task's override is set. A task whose executable
 is not built names the `cargo build -p <package> --bin <executable>` that

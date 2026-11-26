@@ -64,7 +64,7 @@ use crate::runtime::{
 };
 
 /// How a task binary's process enters a run's workspace, which its `main`
-/// hands [`TaskFrontEnd::main`]: the standard library's `set_current_dir`.
+/// hands [`TaskFrontEnd::dispatch_for_cli`]: the standard library's `set_current_dir`.
 /// The front end passes the workspace as an absolute path.
 pub type EnterWorkspace = fn(PathBuf) -> std::io::Result<()>;
 
@@ -487,7 +487,7 @@ where
 
     /// Handle one command line, without the program name. It changes no
     /// process state: a run gets its workspace but does not enter it, as
-    /// [`Self::main`]'s does.
+    /// [`Self::dispatch_for_cli`] does.
     pub fn dispatch(&self, args: &[OsString]) -> FrontEndOutput {
         self.dispatch_entering(args, None)
     }

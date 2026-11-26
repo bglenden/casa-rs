@@ -5,7 +5,7 @@
 Run with CASA 6.7.6.14's Python:
 
     CASAPY -I tools/casa-compat/measures_lists_oracle.py \\
-        --out crates/casars-python/python/tests/data/casa_measures_lists.json
+        --out frontends/casars-python/python/tests/data/casa_measures_lists.json
 
 The lists come from CASA's measures data (`geodetic/Observatories`,
 `ephemerides/Sources` and `ephemerides/Lines`). casa-rs reads the same

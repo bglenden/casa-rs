@@ -176,7 +176,7 @@
     "surfaces/casa-contracts/src",
     "surfaces/casa-tasks/src",
     "frontends/casars-cli/src",
-    "crates/casars-python/src"
+    "frontends/casars-python/src"
    ],
    "extensions": [
     ".rs"
@@ -194,7 +194,7 @@
     "surfaces/casa-contracts/src",
     "surfaces/casa-tasks/src",
     "frontends/casars-cli/src",
-    "crates/casars-python/src"
+    "frontends/casars-python/src"
    ],
    "extensions": [
     ".rs"

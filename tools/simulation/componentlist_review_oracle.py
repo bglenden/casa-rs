@@ -40,7 +40,7 @@ def capture(action):
 
 
 root = Path(__file__).resolve().parents[2]
-source = json.loads((root / 'crates/casars-python/python/tests/data/casa_componentlist_record_spectra.json').read_text())
+source = json.loads((root / 'frontends/casars-python/python/tests/data/casa_componentlist_record_spectra.json').read_text())
 tabular = next(c['record'] for c in source['cases'] if c['name'] == 'tabular')
 out = {'casatools': version_string(), 'tabular': [], 'offsets': [], 'sort': {}}
 for field, value in [('referenceFreq', 1.8e9), ('minFreq', 1.1e9), ('maxFreq', 1.9e9), ('freqRef', 'LSRK'), ('referenceFreq', 'bad'), ('minFreq', 'bad'), ('maxFreq', 'bad'), ('tabFreqVal', 'bad'), ('ival', 'bad')]:
@@ -64,7 +64,7 @@ with tempfile.TemporaryDirectory() as directory:
     out['writable_sibling_close'].update(label=a.getlabel(0), keyword=a.getkeyword('k'))
     a.done()
 
-    source = json.loads((root / 'crates/casars-python/python/tests/data/casa_componentlist_offsets.json').read_text())
+    source = json.loads((root / 'frontends/casars-python/python/tests/data/casa_componentlist_offsets.json').read_text())
     record = next(c['record'] for c in source['cases'] if c['name'] == 'frequency_identity')
     for kind in ['identity', 'Constant', 'spectral index', 'Power Logarithmic Polynomial']:
         cl = componentlist(); cl.add(record)

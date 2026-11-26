@@ -136,7 +136,7 @@ with tempfile.TemporaryDirectory(prefix="componentlist-bench-", dir=args.workdir
     add("close", lambda cl: cl.close(log=False))
     add("done", lambda cl: cl.done())
     add("construction", lambda cl: cleanup(cltool()), lambda: None)
-    inventory = json.loads((Path(__file__).resolve().parents[2] / "crates/casars-python/python/tests/data/casa_componentlist_signatures.json").read_text())["methods"]
+    inventory = json.loads((Path(__file__).resolve().parents[2] / "frontends/casars-python/python/tests/data/casa_componentlist_signatures.json").read_text())["methods"]
     assert {name.split("(")[0] for name in cases if name != "construction"} == set(inventory)
     chosen = args.cases or list(cases)
     results = {}

@@ -23,7 +23,7 @@
 //! The files are CASA's: `<stem>.skymodel` and `.skymodel.flat` (or
 //! `.compskymodel` and `.compskymodel.flat`), `.ptg.txt`, `.cal.cclist`,
 //! `.ms` (or `.sd.ms`), `.fullpol.ms` and `.fullpol.cal`, and `.noisy.ms`,
-//! `.noisier.ms` or `.noisy.sd.ms`. [`simobserve_with_plots`] also prepares
+//! `.noisier.ms` or `.noisy.sd.ms`. [`simobserve_with_plot_sink`] also prepares
 //! complete model/observation figures for the Python renderer to display
 //! or save as `.skymodel.png` and `.observe.png`. A headless caller using
 //! [`simobserve()`] gets a warning that PNG rendering needs the host.

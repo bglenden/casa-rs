@@ -111,7 +111,7 @@ CASA run, including the documented full-precision fidelity control:
 ```sh
 cargo test -p casa-images --test legacy_simulation_fits
 cargo test -p casa-simulation --test simanalyze_task_casa
-python crates/casars-python/python/tests/test_ppdisk_tutorial.py
+python frontends/casars-python/python/tests/test_ppdisk_tutorial.py
 ```
 
 ## Timing

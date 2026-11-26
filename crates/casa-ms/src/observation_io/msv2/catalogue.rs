@@ -511,7 +511,7 @@ impl Feeds {
     /// `FEED` stating receptors per time, the last row in table order is
     /// taken, as casacore's `MSIter` takes it (with a warning); XRADIO's
     /// converter refuses such rows, and a conversion reports them as a
-    /// loss ([`Self::varying`]).
+    /// loss.
     pub fn receptors(&self, antenna: i32, feed: i32, window: i32) -> Option<&Receptors> {
         self.rows
             .get(&(antenna, feed, window))
