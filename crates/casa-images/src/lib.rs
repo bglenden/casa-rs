@@ -61,7 +61,6 @@
 
 pub mod analysis;
 pub mod beam;
-mod casa_return;
 mod component_list_image;
 pub mod concat_file;
 pub mod concatenate;
@@ -83,7 +82,6 @@ mod plane;
 pub mod regrid;
 pub mod saved_region;
 pub mod subimage;
-mod task_front_end;
 pub mod temp_image;
 pub mod virtual_concat;
 
@@ -93,24 +91,19 @@ mod mask_reference;
 
 pub use analysis::{
     ExportFitsRequest, FeatherRequest, FeatherSummary, FitsExportSummary, FitsImportSummary,
-    ImageAnalysisTaskRequest, ImageAnalysisTaskResult, ImageHeaderSummary, ImageMathSummary,
-    ImageRegridSummary, ImageStatisticsSummary, ImageSubimageSummary, ImheadRequest, ImmathRequest,
-    ImmomentsRequest, ImpbcorRequest, ImportFitsRequest, ImpvRequest, ImregridRequest,
-    ImstatOutcome, ImstatPlanesSummary, ImstatRequest, ImsubimageRequest, MomentImageSummary,
+    ImageHeaderSummary, ImageMathSummary, ImageRegridSummary, ImageStatisticsSummary,
+    ImageSubimageSummary, ImheadValue, ImmathRequest, ImmomentsRequest, ImpbcorRequest,
+    ImportFitsRequest, ImportFitsValue, ImpvRequest, ImregridRequest, ImstatOutcome,
+    ImstatPlanesSummary, ImstatRequest, ImsubimageRequest, MomentAxis, MomentImageSummary,
     MomentMapSummary, PbcorBeam, PbcorRegion, PbcorSummary, PvAmount, PvImageSummary, PvPosition,
-    export_fits, exportfits, feather, image_analysis_protocol_descriptor,
-    image_analysis_task_schema_bundle, imhead, imhead_add_delete, imhead_extrema, imhead_put,
+    export_fits, exportfits, feather, imhead, imhead_add_delete, imhead_extrema, imhead_put,
     immath, immoments, impbcor, import_fits, importfits, impv, imregrid, imstat, imsubimage,
-    parse_image_channel_selection, parse_imstat_algorithm, run_image_analysis_task,
+    parse_image_channel_selection, parse_imstat_algorithm,
 };
 pub use analysis::{ImregridOutcome, ImregridTemplate};
 pub use beam::{BeamComponent, GaussianBeam, ImageBeamSet, StoredGaussianBeam};
 pub use casa_lattices::{
     ScratchSpace, StatisticsAlgorithmKind, TempStoragePlan, TempStoragePolicy,
-};
-pub use casa_return::{
-    ImheadGetError, imhead_get_value, imhead_list_record, imhead_summary_record,
-    imstat_planes_record, imstat_record,
 };
 pub use component_list_image::ComponentListImage;
 pub use convolve2d::{Convolved, convolve2d};
@@ -132,5 +125,4 @@ pub use regrid::{
 };
 pub use saved_region::{PolygonRegion, RegionStatistics};
 pub use subimage::{SubImage, SubImageMut};
-pub use task_front_end::{image_task_front_end, image_task_returning, image_task_success};
 pub use temp_image::TempImage;

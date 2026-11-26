@@ -4,6 +4,8 @@
 //! Feature-gated task adapters, schemas, parameter resolution, and CASA return
 //! projections shared between the CLI frontend and Python bindings.
 
+#[cfg(feature = "images")]
+pub mod images;
 #[cfg(feature = "imaging")]
 pub mod imaging;
 #[cfg(feature = "vla")]

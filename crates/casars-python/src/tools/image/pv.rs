@@ -253,7 +253,13 @@ fn scalar(value: Option<&Bound<'_, PyAny>>, name: &str) -> PyResult<Option<PvAmo
             .extract::<i64>()
             .map_or(PvAmount::Fractional(number), PvAmount::Whole),
         Variant::Record(_) => match parameter_value(value)? {
-            ParameterValue::Table(fields) => PvAmount::Quantity(fields),
+            param @ ParameterValue::Table(_) => {
+                match casa_contracts::parameter_value_to_casacore(&param) {
+                    Ok(casa_types::Value::Record(record)) => PvAmount::Record(record),
+                    Ok(_) => return Err(invalid()),
+                    Err(error) => return Err(raised(error)),
+                }
+            }
             _ => return Err(invalid()),
         },
         _ => return Err(invalid()),

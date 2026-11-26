@@ -344,13 +344,11 @@ name = "casa-images"
 version = "0.27.0"
 dependencies = [
  "casa-components",
- "casa-contracts",
  "casa-coordinates",
  "casa-fft",
  "casa-lattices",
  "casa-numerics",
  "casa-tables",
- "casa-task-runtime",
  "casa-test-support",
  "casa-types",
  "fitsio",
@@ -744,15 +742,18 @@ dependencies = [
  "casa-images",
  "casa-imaging-application",
  "casa-imaging-deconvolution",
+ "casa-lattices",
  "casa-ms",
  "casa-task-runtime",
  "casa-test-support",
+ "casa-types",
  "casa-vla",
  "ndarray",
  "schemars",
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror",
  "tracing",
 ]
 
@@ -847,6 +848,7 @@ dependencies = [
  "casa-images",
  "casa-imaging-application",
  "casa-imaging-deconvolution",
+ "casa-lattices",
  "casa-logging",
  "casa-ms",
  "casa-numerics",
@@ -856,28 +858,15 @@ dependencies = [
  "casa-tasks",
  "casa-test-support",
  "casa-types",
+ "fitsio",
  "flate2",
  "libc",
  "ndarray",
+ "serde",
  "serde_json",
  "tempfile",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "casars-imexplore"
-version = "0.27.0"
-dependencies = [
- "casa-contracts",
- "casa-coordinates",
- "casa-images",
- "casa-task-runtime",
- "casa-types",
- "ndarray",
- "serde_json",
- "tempfile",
- "tracing",
 ]
 
 [[package]]

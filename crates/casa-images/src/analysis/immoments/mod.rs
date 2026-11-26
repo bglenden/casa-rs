@@ -10,8 +10,8 @@ mod window;
 
 pub use tool::{ImageMomentOptions, ImageMomentProducts, make_image_moments, moment_output_names};
 
+use crate::analysis::MomentAxis;
 use crate::image::{ImageHistoryEntry, image_history_entries};
-use casa_contracts::{ParameterValue, python_repr};
 use casa_types::{RecordValue, Value};
 
 use super::axes::{subimage_coordinate_record, subimage_coordinates_with_stokes};
@@ -176,12 +176,16 @@ fn moment_units(brightness: &str, axis: &str, moment: i32) -> String {
 
 fn task_history(request: &ImmomentsRequest) -> String {
     let option = |value: Option<&str>| value.unwrap_or("").to_owned();
-    let axis = request.axis.clone().unwrap_or(ParameterValue::Integer(-1));
+    let axis = match &request.axis {
+        Some(MomentAxis::Index(index)) => index.to_string(),
+        Some(MomentAxis::Name(name)) => format!("{name:?}"),
+        None => "-1".to_string(),
+    };
     format!(
         "immoments(imagename={:?}, moments={:?}, axis={}, region={:?}, box={:?}, chans={:?}, stokes={:?}, mask={:?}, includepix={:?}, excludepix={:?}, outfile={:?}, stretch={})",
         request.imagename.display().to_string(),
         request.moments,
-        python_repr(&axis),
+        axis,
         option(request.region.as_deref()),
         option(request.box_pixels.as_deref()),
         option(request.chans.as_deref()),

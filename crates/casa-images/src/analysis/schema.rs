@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Types shared by image-analysis execution and build-time schema generation.
 
-use std::{collections::BTreeMap, path::PathBuf};
+use std::path::PathBuf;
 
-use casa_contracts::{CasaValue, ParameterValue};
+use casa_types::{ArrayD, RecordValue, Value};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -22,62 +22,6 @@ pub struct ImageExtrema {
     pub min_world: String,
     /// CASA-formatted world coordinate of the first maximum.
     pub max_world: String,
-}
-
-/// Top-level image-analysis JSON task request.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", content = "request", rename_all = "snake_case")]
-pub enum ImageAnalysisTaskRequest {
-    /// CASA `imhead(..., mode="summary")` style metadata summary.
-    Imhead(ImheadRequest),
-    /// CASA `imstat` style image statistics.
-    Imstat(ImstatRequest),
-    /// CASA `immoments` style moment map generation.
-    Immoments(ImmomentsRequest),
-    /// CASA `impv` style position-velocity extraction.
-    Impv(ImpvRequest),
-    /// CASA `imsubimage` style pixel-box/channel extraction.
-    Imsubimage(ImsubimageRequest),
-    /// CASA `immath(..., mode="evalexpr")` style image arithmetic.
-    Immath(ImmathRequest),
-    /// CASA `impbcor` style primary-beam correction.
-    Impbcor(ImpbcorRequest),
-    /// CASA `imregrid` style template-image regridding.
-    Imregrid(ImregridRequest),
-    /// CASA `feather` style Fourier-domain image combination.
-    Feather(FeatherRequest),
-    /// CASA `exportfits` style FITS image export.
-    Exportfits(ExportFitsRequest),
-    /// CASA `importfits` style FITS image import.
-    Importfits(ImportFitsRequest),
-}
-
-/// Top-level image-analysis JSON task result.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", content = "result", rename_all = "snake_case")]
-pub enum ImageAnalysisTaskResult {
-    /// Result for [`ImageAnalysisTaskRequest::Imhead`].
-    Imhead(ImageHeaderSummary),
-    /// Result for [`ImageAnalysisTaskRequest::Imstat`].
-    Imstat(ImstatOutcome),
-    /// Result for [`ImageAnalysisTaskRequest::Immoments`].
-    Immoments(MomentMapSummary),
-    /// Result for [`ImageAnalysisTaskRequest::Impv`].
-    Impv(PvImageSummary),
-    /// Result for [`ImageAnalysisTaskRequest::Imsubimage`].
-    Imsubimage(ImageSubimageSummary),
-    /// Result for [`ImageAnalysisTaskRequest::Immath`].
-    Immath(ImageMathSummary),
-    /// Result for [`ImageAnalysisTaskRequest::Impbcor`].
-    Impbcor(PbcorSummary),
-    /// Result for [`ImageAnalysisTaskRequest::Imregrid`].
-    Imregrid(ImregridOutcome),
-    /// Result for [`ImageAnalysisTaskRequest::Feather`].
-    Feather(FeatherSummary),
-    /// Result for [`ImageAnalysisTaskRequest::Exportfits`].
-    Exportfits(FitsExportSummary),
-    /// Result for [`ImageAnalysisTaskRequest::Importfits`].
-    Importfits(FitsImportSummary),
 }
 
 /// CASA `imhead` request.
@@ -306,7 +250,7 @@ pub struct ImmomentsRequest {
     pub moments: Vec<i32>,
     /// Collapse axis as a zero-based index, or a CASA axis name.
     #[serde(default)]
-    pub axis: Option<casa_contracts::ParameterValue>,
+    pub axis: Option<MomentAxis>,
     /// CASA CRTF or saved-image region.
     #[serde(default)]
     pub region: Option<String>,
@@ -336,54 +280,66 @@ pub struct ImmomentsRequest {
     pub overwrite: bool,
 }
 
-/// CASA `impv` request for a position-velocity image along a strip.
+/// Selector for `immoments` axis.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum MomentAxis {
+    /// Zero-based pixel axis index.
+    Index(i64),
+    /// Axis name accepted by CASA `immoments`.
+    Name(String),
+}
+
+/// Scalar entry in `importfits` `defaultaxesvalues` or `beam` lists.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ImportFitsValue {
+    /// String value such as a quantity or coordinate string.
+    String(String),
+    /// Signed integer scalar.
+    Integer(i64),
+    /// Floating-point scalar.
+    Float(f64),
+    /// Boolean scalar.
+    Bool(bool),
+    /// Any other value rejected during parameter validation.
+    Other,
+}
+
+/// CASA `impv` request for a position-velocity image along a strip.
+#[derive(Debug, Clone, PartialEq)]
 pub struct ImpvRequest {
     /// Input CASA image path.
     pub imagename: PathBuf,
     /// Output CASA image path.
     pub outfile: PathBuf,
     /// CASA mode, selected by the first letter of `coords` or `length`.
-    #[serde(default = "default_impv_mode")]
     pub mode: String,
     /// First endpoint in `coords` mode.
-    #[serde(default)]
     pub start: Option<PvPosition>,
     /// Second endpoint in `coords` mode.
-    #[serde(default)]
     pub end: Option<PvPosition>,
     /// Midpoint in `length` mode.
-    #[serde(default)]
     pub center: Option<PvPosition>,
     /// Distance between endpoints in pixels or angular units.
-    #[serde(default)]
     pub length: Option<PvAmount>,
     /// Sky position angle in `length` mode.
-    #[serde(default)]
     pub pa: Option<PvAmount>,
     /// Odd strip width in pixels, or a width in angular units.
-    #[serde(default = "default_impv_width")]
     pub width: PvAmount,
     /// Angular unit of the output offset coordinate.
-    #[serde(default = "default_pv_unit")]
     pub unit: String,
     /// CASA text, named, or record region. Only non-direction axes may be cropped.
-    #[serde(default)]
-    pub region: Option<ParameterValue>,
+    pub region: Option<PbcorRegion>,
     /// CASA channel expression, supporting tutorial forms like `4~12`.
-    #[serde(default)]
     pub chans: Option<String>,
     /// Stokes planes to include.
-    #[serde(default)]
     pub stokes: Option<String>,
     /// Optional LEL mask evaluated before extraction.
-    #[serde(default)]
     pub mask: Option<String>,
     /// Stretch a conforming mask over singleton or missing axes.
-    #[serde(default)]
     pub stretch: bool,
     /// Replace an existing output image.
-    #[serde(default)]
     pub overwrite: bool,
 }
 
@@ -425,8 +381,7 @@ pub enum PvPosition {
 }
 
 /// A length, width, or angle supplied to `impv`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(untagged)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PvAmount {
     /// Whole pixels.
     Whole(i64),
@@ -435,7 +390,7 @@ pub enum PvAmount {
     /// An angular value supplied as text.
     Angular(String),
     /// A CASA quanta record containing one angular value.
-    Quantity(BTreeMap<String, ParameterValue>),
+    Record(RecordValue),
 }
 
 /// CASA `imsubimage` request supporting full spatial/spectral/Stokes/mask
@@ -578,7 +533,7 @@ impl Default for ImmathRequest {
 }
 
 /// CASA `impbcor` request for primary-beam image correction.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ImpbcorRequest {
     /// Input CASA or FITS image path.
     pub imagename: PathBuf,
@@ -587,43 +542,33 @@ pub struct ImpbcorRequest {
     /// Output CASA image path.
     pub outfile: PathBuf,
     /// Correction mode. Supported values are `divide` and `multiply`.
-    #[serde(default = "default_impbcor_mode")]
     pub mode: String,
     /// Inclusive lower bound for division or upper bound for multiplication.
     /// Negative or NaN disables cutoff masking.
-    #[serde(default = "default_impbcor_cutoff")]
     pub cutoff: f64,
     /// Optional inclusive direction-plane pixel box.
-    #[serde(default, rename = "box")]
     pub box_selection: Option<String>,
     /// Optional CASA region.
-    #[serde(default)]
     pub region: Option<PbcorRegion>,
     /// Optional channel selector.
-    #[serde(default)]
     pub chans: Option<String>,
     /// Optional Stokes selector.
-    #[serde(default)]
     pub stokes: Option<String>,
     /// Optional LEL mask expression.
-    #[serde(default)]
     pub mask: Option<String>,
     /// Extend a conforming mask over singleton or missing axes.
-    #[serde(default)]
     pub stretch: bool,
     /// Replace an existing output image.
-    #[serde(default)]
     pub overwrite: bool,
 }
 
 /// Input primary beam for CASA `impbcor`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(untagged)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PbcorBeam {
     /// Path to a real-valued image with matching direction coordinates.
     Image(PathBuf),
     /// Floating-point array with the image shape or its two direction axes.
-    Pixels(Vec<ParameterValue>),
+    Pixels(ArrayD<f64>),
 }
 
 impl From<PathBuf> for PbcorBeam {
@@ -633,65 +578,52 @@ impl From<PathBuf> for PbcorBeam {
 }
 
 /// Region representations accepted by CASA `impbcor`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(untagged)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PbcorRegion {
     /// CRTF text, filename, or saved image region name.
     Text(String),
     /// Casacore region record, as returned by the region manager.
-    Record(BTreeMap<String, ParameterValue>),
+    Record(RecordValue),
 }
 
 /// CASA `imregrid` request for template-image regridding.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ImregridRequest {
     /// Input CASA image path.
     pub imagename: PathBuf,
     /// A template image, the `get` selector, or a coordinate and shape record.
     pub template: ImregridTemplate,
     /// Output CASA image path.
-    #[serde(default)]
     pub output: PathBuf,
     /// Interpolation method: `nearest`, `linear` or `cubic`, read by its
     /// first letter as casacore reads it (`casa_images::RegridMethod`).
-    #[serde(default = "default_regrid_interpolation")]
     pub interpolation: String,
     /// Regrid channels at equal radio velocity using the two rest frequencies.
-    #[serde(default = "default_true")]
     pub asvelocity: bool,
     /// Zero-based input pixel axes, or `[-1]` for matching nondegenerate axes.
-    #[serde(default)]
     pub axes: Vec<i64>,
     /// Output lengths in input axis order, or `[-1]` for CASA's inferred shape.
-    #[serde(default = "default_regrid_shape")]
     pub shape: Vec<i64>,
     /// Direction coordinate sampling interval, with zero using each pixel.
-    #[serde(default = "default_regrid_decimate")]
     pub decimate: i64,
     /// Resample in pixel space instead of using the coordinate conversion.
-    #[serde(default)]
     pub replicate: bool,
     /// Replace an existing output image.
-    #[serde(default)]
     pub overwrite: bool,
 }
 
-fn default_regrid_decimate() -> i64 {
-    10
-}
-
-fn default_regrid_shape() -> Vec<i64> {
-    vec![-1]
-}
-
 /// CASA's accepted template representations.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(untagged)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ImregridTemplate {
     /// Image path or a template selector such as `get`.
     Image(PathBuf),
     /// A `csys` and `shap` dictionary returned by `template='get'`.
-    Record(BTreeMap<String, ParameterValue>),
+    Record {
+        /// Casacore coordinate record.
+        csys: RecordValue,
+        /// Target image shape in axis order.
+        shape: Vec<usize>,
+    },
 }
 
 /// CASA `feather` request for Fourier-domain high/low image combination.
@@ -729,24 +661,12 @@ fn default_pv_unit() -> String {
     "arcsec".into()
 }
 
-fn default_regrid_interpolation() -> String {
-    "linear".to_string()
-}
-
 fn default_effdishdiam() -> f32 {
     -1.0
 }
 
 fn default_sdfactor() -> f32 {
     1.0
-}
-
-fn default_impbcor_mode() -> String {
-    "divide".to_string()
-}
-
-fn default_impbcor_cutoff() -> f64 {
-    -1.0
 }
 
 fn default_exportfits_bitpix() -> i32 {
@@ -868,13 +788,12 @@ pub struct ImageRegridSummary {
 }
 
 /// A CASA regrid returns either its template dictionary or an image product.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(untagged)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ImregridOutcome {
     /// A completed regridding operation that wrote an image.
     Product(ImageRegridSummary),
-    /// The input image's `csys` and `shap` fields as a typed CASA dictionary.
-    Template(CasaValue),
+    /// The input image's `csys` and `shap` fields as a casacore record value.
+    Template(Value),
 }
 
 /// Summary returned after writing a `feather` product.
@@ -971,9 +890,9 @@ pub struct ImportFitsRequest {
     /// Add missing standard CASA axes and order the resulting four-axis image.
     pub defaultaxes: bool,
     /// Reference values for added axes in RA, Dec, frequency, Stokes order.
-    pub defaultaxesvalues: Vec<ParameterValue>,
+    pub defaultaxesvalues: Vec<ImportFitsValue>,
     /// Override the selected FITS restoring beam with major, minor, and PA.
-    pub beam: Vec<ParameterValue>,
+    pub beam: Vec<ImportFitsValue>,
 }
 
 impl Default for ImportFitsRequest {

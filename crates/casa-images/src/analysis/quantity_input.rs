@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Quantity values accepted by CASA image metadata operations.
 
-use casa_contracts::ParameterValue;
 use casa_types::quanta::{Quantity, Unit};
+use casa_types::{ScalarValue, Value};
 
+use super::imhead_value::ImheadValue;
 use super::projection_header::cpp_number_precision;
 use crate::ImageError;
 
 /// Parse a CASA quantity string or a scalar value-and-unit record.
-pub(super) fn parse(value: &ParameterValue) -> Result<(Quantity, String), ImageError> {
+pub(super) fn parse(value: &ImheadValue) -> Result<(Quantity, String), ImageError> {
     let invalid = |message: String| ImageError::InvalidMetadata(message);
     match value {
-        ParameterValue::String(text) => {
+        ImheadValue::String(text) => {
             if text.contains('\0') {
                 return Err(invalid(
                     "Quantity strings containing NUL are unsupported (#977)".into(),
@@ -21,8 +22,8 @@ pub(super) fn parse(value: &ParameterValue) -> Result<(Quantity, String), ImageE
                 .map_err(|_| invalid(format!("Error converting {text} to Quantity")))?;
             Ok((quantity, format!("\"{text}\"")))
         }
-        ParameterValue::Table(fields) => {
-            let Some(ParameterValue::String(unit)) = fields.get("unit") else {
+        ImheadValue::Record(record) => {
+            let Some(Value::Scalar(ScalarValue::String(unit))) = record.get("unit") else {
                 return Err(invalid("Illegal Quantity record".into()));
             };
             if unit.contains('\0') {
@@ -30,28 +31,22 @@ pub(super) fn parse(value: &ParameterValue) -> Result<(Quantity, String), ImageE
                     "Quantity units containing NUL are unsupported (#977)".into(),
                 ));
             }
-            let (number, ty, rendered) = match fields.get("value") {
-                Some(ParameterValue::Float(value)) => {
+            let (number, ty, rendered) = match record.get("value") {
+                Some(Value::Scalar(ScalarValue::Float64(value))) => {
                     (*value, "Double", cpp_number_precision(*value, 6))
                 }
-                Some(ParameterValue::Integer(value)) => {
-                    let value = casa_contracts::casa_variant_integer(*value);
-                    (f64::from(value), "Int", value.to_string())
+                Some(Value::Scalar(ScalarValue::Int32(value))) => {
+                    (f64::from(*value), "Int", value.to_string())
                 }
                 _ => return Err(invalid("Illegal Quantity record".into())),
             };
             let unit_value = casa_types::quanta::casacore::casacore_unit(unit)
                 .map_err(|error| invalid(error.to_string()))?;
             let quantity = Quantity::with_unit(number, unit_value);
-            let rendered = if fields.len() == 2 {
+            let rendered = if record.fields().len() == 2 {
                 format!("  unit: String \"{unit}\"\n  value: {ty} {rendered}")
             } else {
-                let record = casa_contracts::parameter_value_to_casacore(value)
-                    .map_err(|error| invalid(error.into()))?;
-                let casa_types::Value::Record(record) = record else {
-                    unreachable!()
-                };
-                super::custom_values::format_record(&record)
+                super::custom_values::format_record(record)
             };
             Ok((quantity, rendered))
         }

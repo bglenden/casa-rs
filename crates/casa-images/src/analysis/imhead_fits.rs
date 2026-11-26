@@ -14,12 +14,9 @@ use crate::ImageError;
 use crate::fits_read::{PrimaryHdu, image_info_from_fits_header};
 
 /// Read an unconsumed FITS header field as image miscellaneous metadata.
-pub(super) fn custom_value(
-    path: &Path,
-    key: &str,
-) -> Result<casa_contracts::CasaValue, ImageError> {
-    use casa_contracts::CasaValue;
+pub(super) fn custom_value(path: &Path, key: &str) -> Result<casa_types::Value, ImageError> {
     use casa_coordinates::{FitsHeader, FitsValue};
+    use casa_types::{ScalarValue, Value};
     let upper = key.to_ascii_uppercase();
     let internal = [
         "SIMPLE", "BITPIX", "NAXIS", "EXTEND", "BLOCKED", "BLANK", "BSCALE", "BZERO", "XTENSION",
@@ -48,11 +45,11 @@ pub(super) fn custom_value(
     let references = cards.iter().map(String::as_str).collect::<Vec<_>>();
     let header = FitsHeader::from_cards(&references);
     match header.get(&upper) {
-        Some(FitsValue::String(value)) => Ok(CasaValue::string(value)),
+        Some(FitsValue::String(value)) => Ok(Value::Scalar(ScalarValue::String(value.clone()))),
         Some(FitsValue::Integer(value)) if i32::try_from(*value).is_ok() => {
-            Ok(CasaValue::Int { value: *value })
+            Ok(Value::Scalar(ScalarValue::Int32(*value as i32)))
         }
-        Some(FitsValue::Float(value)) => Ok(CasaValue::float(*value)),
+        Some(FitsValue::Float(value)) => Ok(Value::Scalar(ScalarValue::Float64(*value))),
         Some(FitsValue::Logical(_)) => Err(ImageError::InvalidMetadata(
             "Unhandled data type Bool for user defined type. Send us a bug report".into(),
         )),

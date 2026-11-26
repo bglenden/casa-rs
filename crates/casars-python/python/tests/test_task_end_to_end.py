@@ -275,7 +275,7 @@ def test_imhead_custom_records_from_python(image: Path) -> None:
 
 def test_imhead_reads_casa_complex_scalars(tmp_path: Path) -> None:
     require_executables("imhead")
-    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/custom_complex.im"
+    fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/custom_complex.im"
     image = tmp_path / "complex.im"
     shutil.copytree(fixture, image)
     record = tasks.imhead(str(image), mode="get", hdkey="custom")
@@ -288,7 +288,7 @@ def test_imhead_writes_complex_records_and_roundtrips_profiles(tmp_path: Path) -
     import numpy as np
 
     require_executables("imhead")
-    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/normal.im"
     image = tmp_path / "complex-write.im"
     shutil.copytree(fixture, image)
     value = {"scalar": 1.25 - 2.5j, "nested": {"imag": -3j},
@@ -319,7 +319,7 @@ def test_imhead_writes_numpy_complex_matrix_in_record(tmp_path: Path) -> None:
     import numpy as np
 
     require_executables("imhead")
-    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/normal.im"
     image = tmp_path / "complex-array.im"
     shutil.copytree(fixture, image)
     matrix = np.array([[1 + 2j, 3 + 4j, 5 + 6j], [7 + 8j, 9 + 10j, 11 + 12j]], dtype=np.complex64)
@@ -345,7 +345,7 @@ def test_imhead_empty_numpy_arrays_preserve_casa_dtype_and_shape(tmp_path: Path)
     import numpy as np
 
     require_executables("imhead")
-    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/normal.im"
     image = tmp_path / "empty-arrays.im"
     shutil.copytree(fixture, image)
     cases = [(np.bool_, np.bool_), (np.int16, np.int64), (np.float32, np.float64),
@@ -370,7 +370,7 @@ def test_imhead_reads_casa_created_empty_array_records(tmp_path: Path) -> None:
     import numpy as np
 
     require_executables("imhead")
-    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix"
+    root = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix"
     image = tmp_path / "casa-empty.im"
     shutil.copytree(root / "custom_empty_arrays.im", image)
     expected = json.loads((root / "custom_empty_arrays_expected.json").read_text())["record"]
@@ -385,7 +385,7 @@ def test_imhead_nonfinite_header_values_roundtrip(tmp_path: Path) -> None:
     import numpy as np
 
     require_executables("imhead")
-    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/normal.im"
     image = tmp_path / "nonfinite.im"
     shutil.copytree(fixture, image)
     assert tasks.imhead(str(image), mode="add", hdkey="scalar", hdvalue=float("nan")) is None
@@ -412,7 +412,7 @@ def test_imhead_reads_casa_created_nonfinite_record(tmp_path: Path) -> None:
     import numpy as np
 
     require_executables("imhead")
-    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix"
+    root = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix"
     image = tmp_path / "casa-nonfinite.im"
     shutil.copytree(root / "custom_nonfinite.im", image)
     expected = json.loads((root / "custom_nonfinite_expected.json").read_text())
@@ -431,7 +431,7 @@ def test_imhead_nonzenithal_spectral_reference_matches_casa(tmp_path: Path, proj
     import numpy as np
 
     require_executables("imhead")
-    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix"
+    root = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix"
     image = tmp_path / f"{projection}.im"
     shutil.copytree(root / f"{projection}.im", image)
     cases = json.loads((root / "axis_quantity_expected.json").read_text())["cases"]
@@ -448,7 +448,7 @@ def test_imhead_nonzenithal_spectral_reference_matches_casa(tmp_path: Path, proj
 @pytest.mark.parametrize("ignored", [[1, 2], {"ignored": "yes"}])
 def test_imhead_delete_ignores_compound_value(tmp_path: Path, key: str, ignored: object) -> None:
     require_executables("imhead")
-    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_put/base.im"
+    fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_put/base.im"
     image = tmp_path / f"{key}.im"
     shutil.copytree(fixture, image)
     value = "K" if key == "bunit" else "Existing"
@@ -463,7 +463,7 @@ def test_imhead_fits_returns_casa_python_types(tmp_path: Path) -> None:
     import numpy as np
 
     require_executables("imhead")
-    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_fits"
+    root = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_fits"
     oracle = json.loads((root / "expected.json").read_text())
     describe = runpy.run_path(str(REPO_ROOT / "tools/casa-compat/record_casa_returns.py"))["describe"]
     image = tmp_path / "image.fits"
@@ -507,7 +507,7 @@ def test_imhead_zero_dim_numpy_record_values_match_casa(tmp_path: Path) -> None:
     import numpy as np
 
     require_executables("imhead")
-    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix"
+    root = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix"
     oracle = json.loads((root / "zero_dim_expected.json").read_text())
     for index, case in enumerate(oracle["cases"]):
         image = tmp_path / f"zero-dim-{index}.im"
@@ -533,7 +533,7 @@ def test_imhead_zero_dim_direct_array_matches_casa_error_on_get(tmp_path: Path, 
     import numpy as np
 
     require_executables("imhead")
-    source = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    source = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/normal.im"
     image = tmp_path / "zero-dim-direct.im"
     shutil.copytree(source, image)
     assert tasks.imhead(str(image), mode="put", hdkey="custom", hdvalue=np.array(value)) is None
@@ -546,7 +546,7 @@ def test_imhead_ignores_zero_dim_arrays_inside_flat_lists(tmp_path: Path) -> Non
     import numpy as np
 
     require_executables("imhead")
-    source = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    source = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/normal.im"
     image = tmp_path / "zero-dim-list.im"
     shutil.copytree(source, image)
     values = {"mixed": [1, np.array(2), 3], "empty": [np.array(4)]}
@@ -564,7 +564,7 @@ def test_imhead_numpy_scalars_match_casa_by_context(tmp_path: Path) -> None:
     import numpy as np
 
     require_executables("imhead")
-    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix"
+    root = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix"
     oracle = json.loads((root / "numpy_scalar_expected.json").read_text())
     for index, case in enumerate(oracle["cases"]):
         value = complex(*case["input"]) if case["dtype"].startswith("complex") else case["input"]
@@ -608,7 +608,7 @@ def test_imhead_ignored_elements_in_multidimensional_arrays_match_casa(tmp_path:
     import numpy as np
 
     require_executables("imhead")
-    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix"
+    root = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix"
     expected = json.loads((root / "ignored_matrix_expected.json").read_text())["cases"]
     cases = {
         "integers": [[1, np.array(2)], [np.array(3), 4]],
@@ -644,7 +644,7 @@ def test_imhead_large_integer_record_uses_casa_conversion(tmp_path: Path) -> Non
     import numpy as np
 
     require_executables("imhead")
-    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/normal.im"
     image = tmp_path / "large-integers.im"
     shutil.copytree(fixture, image)
     value = {"scalar": 2147483648, "integers": [2147483648, 4294967295],
@@ -663,7 +663,7 @@ def test_imhead_unsigned_record_array_uses_casa_dtype(tmp_path: Path) -> None:
     import numpy as np
 
     require_executables("imhead")
-    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix"
+    root = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix"
     image = tmp_path / "unsigned.im"
     shutil.copytree(root / "custom_uint32.im", image)
     expected = json.loads((root / "custom_uint32_expected.json").read_text())
@@ -692,7 +692,7 @@ def test_imhead_casa_record_multidimensional_arrays(tmp_path: Path) -> None:
     import numpy as np
 
     require_executables("imhead")
-    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/custom_record.im"
+    fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/custom_record.im"
     image = tmp_path / "record.im"
     shutil.copytree(fixture, image)
     record = tasks.imhead(str(image), mode="get", hdkey="custom")
@@ -702,7 +702,7 @@ def test_imhead_casa_record_multidimensional_arrays(tmp_path: Path) -> None:
 
 def test_imhead_put_accepts_rest_frequency_quantity_record(tmp_path: Path) -> None:
     require_executables("imhead")
-    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/normal.im"
     image = tmp_path / "spectral.im"
     shutil.copytree(fixture, image)
     assert tasks.imhead(str(image), mode="put", hdkey="restfreq", hdvalue={"value": 1.5, "unit": "GHz"}) is None
@@ -718,7 +718,7 @@ def test_imhead_put_accepts_rest_frequency_quantity_record(tmp_path: Path) -> No
 
 def test_imhead_edits_and_removes_a_restoring_beam(tmp_path: Path) -> None:
     require_executables("imhead")
-    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/beam.im"
+    fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/beam.im"
     image = tmp_path / "beam.im"
     shutil.copytree(fixture, image)
     assert tasks.imhead(str(image), mode="put", hdkey="bmaj", hdvalue={"value": 40.0, "unit": "arcsec"}) is None
@@ -732,7 +732,7 @@ def test_imhead_verbose_preserves_summary_record(tmp_path: Path) -> None:
     import numpy as np
 
     require_executables("imhead")
-    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/verbose_beams.im"
+    fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/verbose_beams.im"
     image = tmp_path / "verbose.im"
     shutil.copytree(fixture, image)
     normal = tasks.imhead(str(image), mode="summary", verbose=False)
@@ -750,7 +750,7 @@ def test_imhead_edits_stokes_reference_values(tmp_path: Path) -> None:
     import numpy as np
 
     require_executables("imhead")
-    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/stokes_four.im"
+    fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/stokes_four.im"
     image = tmp_path / "stokes.im"
     shutil.copytree(fixture, image)
     assert tasks.imhead(str(image), mode="put", hdkey="crval3", hdvalue=["V", "U", "Q", "I"]) is None
@@ -759,7 +759,7 @@ def test_imhead_edits_stokes_reference_values(tmp_path: Path) -> None:
 
 def test_imhead_edits_direction_reference(tmp_path: Path) -> None:
     require_executables("imhead")
-    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    fixture = REPO_ROOT / "frontends/casars-cli/tests/data/imhead_crpix/normal.im"
     image = tmp_path / "direction.im"
     shutil.copytree(fixture, image)
     assert tasks.imhead(str(image), mode="put", hdkey="equinox", hdvalue="GAL") is None
