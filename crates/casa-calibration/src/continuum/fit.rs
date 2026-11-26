@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Fit a complex continuum to the time-averaged spectrum of each baseline.
 
+use casa_core::Complex32;
 use casa_numerics::solve_weighted_least_squares;
-use casa_types::Complex32;
 use ndarray::{Array2, ArrayView2};
 
 pub(super) struct BaselineAverage {

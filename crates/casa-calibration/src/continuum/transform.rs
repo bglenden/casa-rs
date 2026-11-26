@@ -3,10 +3,10 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use casa_core::{ArrayValue, Complex32};
 use casa_ms::transform::{PreparedTransformInputView, TransformInputColumns, TransformInputView};
 use casa_ms::{MeasurementSet, MsSelection, ResolvedMsSelectionRow};
 use casa_tables::{RequiredScalarColumnValues, Table, TableError};
-use casa_types::{ArrayValue, Complex32};
 use ndarray::{ArrayD, Ix2};
 
 use super::fit::ComplexPolynomial;
