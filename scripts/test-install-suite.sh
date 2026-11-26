@@ -83,7 +83,7 @@ while read -r binary; do
 done < <(scripts/list-suite-binaries.py)
 work="$tmp_root/work"
 mkdir -p "$work" "$bin_dir"
-tar -xzf crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz -C "$work"
+tar -xzf libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz -C "$work"
 cp scripts/install-suite.sh "$tmp_root/install-suite.sh"
 # A link an older suite left for the retired casars launcher, and a user's
 # own command with a suite command's name, which the installer must keep.

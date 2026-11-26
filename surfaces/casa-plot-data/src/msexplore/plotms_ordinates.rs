@@ -17,7 +17,7 @@ use super::{
 use casa_ms::MeasurementSet;
 use casa_ms::selection::ChannelRange;
 use casa_ms::subtables::data_description::MsDataDescription;
-use casa_ms::transform::{
+use casa_mstransform::{
     WeightKind, centered_time_and_interval, sigma_from_weight, weight_from_sigma,
 };
 

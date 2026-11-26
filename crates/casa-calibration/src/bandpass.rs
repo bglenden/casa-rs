@@ -17,8 +17,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use casa_core::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
+use casa_ms::MeasurementSet;
 use casa_ms::MsError;
-use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
 use casa_ms::selection::MsSelection;
 use casa_tables::{ColumnSchema, TableError, TableSchema};

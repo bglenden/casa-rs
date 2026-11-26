@@ -430,7 +430,7 @@ fn only_an_empty_phase_centre_reads_the_moving_field_time() {
 /// table, and on a fixed centre.
 #[test]
 fn a_moving_field_keeps_its_geometry_in_msv4() {
-    use casa_ms::observation_io::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
+    use casa_mstransform::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
     let observation = moving_track();
     let converted = observation.scratch("moving.ps.zarr");
     to_msv4(

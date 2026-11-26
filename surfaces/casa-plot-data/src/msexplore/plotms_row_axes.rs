@@ -16,7 +16,7 @@ use casa_ms::subtables::get_string;
 use casa_ms::{MeasurementSet, SubtableId};
 
 pub(super) fn averaged_uvw_cache_index(
-    groups: &casa_ms::transform::PlotTimeGroups,
+    groups: &casa_mstransform::PlotTimeGroups,
     group: usize,
     bins: usize,
     channel: usize,

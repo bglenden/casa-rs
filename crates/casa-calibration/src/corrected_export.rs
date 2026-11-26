@@ -4,15 +4,16 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use casa_ms::ms::MeasurementSet;
+use casa_ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
+use casa_ms::selection::MsSelection;
 use casa_ms::{
     MeasurementSetColumnStorage, MeasurementSetColumnWriteMode, MeasurementSetMutationBatch,
     MeasurementSetMutationColumnBatch, MeasurementSetMutationColumnValues,
     MeasurementSetWriteColumnPlan, MeasurementSetWritePlan, MeasurementSetWriteResources,
-    MeasurementSetWriteSession, MsError, MsTransformRequest, TransformDataColumn,
-    maximum_visibility_cell_elements, mstransform, selection::MsSelection,
+    MeasurementSetWriteSession, MsError, maximum_visibility_cell_elements,
 };
+use casa_mstransform::{MsTransformRequest, TransformDataColumn, mstransform};
 use casa_tables::TableError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

@@ -4,7 +4,7 @@ Behaviour is compared with what CASA 6.7.6.14 returned for the scripted calls
 in `data/casa_table_tool.json`, written by
 `tools/casa-compat/table_tool_oracle.py`. Each scenario starts from a fresh
 copy of its fixture (the python fixture table, or the small MeasurementSet in
-`crates/casa-ms/tests/fixtures`) and replays its steps on a tool; a step's
+`libs/casacore/casa-ms/tests/fixtures`) and replays its steps on a tool; a step's
 value must equal CASA's in type, NumPy dtype, shape and contents, or raise
 the error type CASA raised with CASA's message. The path of the table
 appears in the record as `<TABLE>`.
@@ -133,7 +133,7 @@ def fixtures(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
         check=True,
     )
     with tarfile.open(
-        REPO_ROOT / "crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz", "r:gz"
+        REPO_ROOT / "libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz", "r:gz"
     ) as archive:
         # `filter` is missing from Python 3.10 before 3.10.12 and 3.11 before 3.11.4.
         extract = {"filter": "data"} if sys.version_info >= (3, 12) else {}

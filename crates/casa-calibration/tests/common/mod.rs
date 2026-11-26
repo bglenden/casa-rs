@@ -8,12 +8,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use casa_core::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
+use casa_ms::MeasurementSet;
 use casa_ms::MeasurementSetBuilder;
-use casa_ms::column_def::{ColumnDef, ColumnKind, build_table_schema};
-use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::main_table::OptionalMainColumn;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::schema::{self as ms_schema, SubtableId};
+use casa_ms::{ColumnDef, ColumnKind, build_table_schema};
 use casa_tables::{ColumnSchema, DataManagerKind, Table, TableInfo, TableOptions, TableSchema};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 #[cfg(feature = "slow-tests")]

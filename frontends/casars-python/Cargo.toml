@@ -17,14 +17,16 @@ extension-module = ["pyo3/extension-module"]
 
 [dependencies]
 casa-imageanalysis.workspace = true
-casa-atmosphere = { path = "../../crates/casa-atmosphere" }
+casa-flagging.workspace = true
+casa-mstransform.workspace = true
+casa-atmosphere.workspace = true
 casa-calibration = { path = "../../crates/casa-calibration" }
 casa-components.workspace = true
 casa-coordinates.workspace = true
 casa-images.workspace = true
 casa-lattices.workspace = true
 casa-measures.workspace = true
-casa-ms = { path = "../../crates/casa-ms" }
+casa-ms.workspace = true
 casa-contracts = { path = "../../surfaces/casa-contracts" }
 casa-plot-data = { path = "../../surfaces/casa-plot-data", features = ["ms", "simulation"] }
 casa-simulation = { path = "../../crates/casa-simulation" }

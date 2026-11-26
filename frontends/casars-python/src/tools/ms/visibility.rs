@@ -8,13 +8,13 @@ use std::sync::{Arc, OnceLock};
 use casa_coordinates::StokesType;
 use casa_core::RecordValue;
 use casa_core::measures::MeasuresProvider;
-use casa_ms::tool_iteration::{
+use casa_ms::{MeasurementSet, MsError, MsSelection};
+use casa_mstransform::tool_iteration::{
     LegacyIterationOptions, LegacyToolIteration, ToolIteration, Vi1ToolIteration,
 };
-use casa_ms::tool_range::ToolRangeRequest;
-use casa_ms::tool_visibility::{self, VisibilityChannels, VisibilityPolarization};
-use casa_ms::transform::{HanningColumns, HanningDataColumn, smooth_ms_hanning};
-use casa_ms::{MeasurementSet, MsError, MsSelection};
+use casa_mstransform::tool_range::ToolRangeRequest;
+use casa_mstransform::tool_visibility::{self, VisibilityChannels, VisibilityPolarization};
+use casa_mstransform::{HanningColumns, HanningDataColumn, smooth_ms_hanning};
 use casa_tables::{PlainReferenceRead, Table, TableOptions, TablePartNames, TableWriteLock};
 use pyo3::exceptions::{PySystemError, PyTypeError};
 use pyo3::prelude::*;

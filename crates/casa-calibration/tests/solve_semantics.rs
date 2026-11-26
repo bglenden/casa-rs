@@ -21,7 +21,7 @@ use casa_calibration::{
     RefAntSelector, execute_apply_from_path, solve_calibration,
 };
 use casa_core::{ArrayValue, Complex32, ScalarValue, Value};
-use casa_ms::ms::MeasurementSet;
+use casa_ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_tables::{Table, TableOptions};
 use common::{SyntheticGainFixtureKind, SyntheticGainSolutionRow, SyntheticGainTimeCluster};

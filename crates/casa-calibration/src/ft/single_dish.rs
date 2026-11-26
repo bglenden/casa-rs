@@ -13,7 +13,7 @@ use casa_imaging_operator::PolarizationRouting;
 use casa_imaging_runtime::{Demand, HostResources, ResourcePolicy, admit};
 use casa_imaging_singledish::{GridFunction, KernelParameters, KernelTable};
 use casa_ms::derived::engine::MsCalEngine;
-use casa_ms::virtual_model::ft_record::{FirstBuffer, GridFt, casa_spectral};
+use casa_ms::schema::ft_record::{FirstBuffer, GridFt, casa_spectral};
 use casa_ms::{
     MeasurementSet, MsResult, ResolvedMsSelection, SubtableId,
     convert_frequency_to_frame_with_frame,

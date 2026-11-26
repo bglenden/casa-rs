@@ -832,7 +832,7 @@ fn model(
                 ))
                 .at("vis")
             })?;
-            let virtual_fields = casa_ms::scratch_columns::virtual_model_fields(&ms);
+            let virtual_fields = casa_ms::virtual_model_fields(&ms);
             if !virtual_fields.is_empty() {
                 return Err(TaskFailure::validation(format!(
                     "smodel=[] reads the virtual model of field(s) {virtual_fields:?} (setjy with \

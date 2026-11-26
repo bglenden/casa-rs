@@ -6,10 +6,8 @@ use std::path::{Path, PathBuf};
 
 use casa_core::{ArrayValue, Complex32, ScalarValue};
 use casa_ms::schema::main_table::{VisibilityDataColumn, initial_model_visibility};
-use casa_ms::write_session::{
-    MeasurementSetMutationBatch, MeasurementSetWriteError, MeasurementSetWriteSession,
-};
 use casa_ms::{MeasurementSet, MsError, MsResult, MsSelection, ResolvedMsSelectionRow};
+use casa_ms::{MeasurementSetMutationBatch, MeasurementSetWriteError, MeasurementSetWriteSession};
 use casa_tables::{Table, TableInfo, TableWriteLock};
 use ndarray::{ArrayD, Axis, IxDyn};
 

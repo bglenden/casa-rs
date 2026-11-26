@@ -13,7 +13,7 @@ fn unpack_small_ms() -> (TempDir, PathBuf) {
     let dir = tempfile::tempdir().expect("tempdir");
     let fixture = File::open(
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz"),
+            .join("../../libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz"),
     )
     .expect("small MS fixture");
     tar::Archive::new(GzDecoder::new(fixture))

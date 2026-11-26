@@ -1,7 +1,7 @@
 {
   "schema": "casa-rs-direct-solver-oracle-expected-v1",
   "fixture": {
-    "measurement_set": "crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz",
+    "measurement_set": "libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz",
     "selection": "field=1, spw=1",
     "shape": [64, 64],
     "cell_arcsec": 0.02,

@@ -1,0 +1,38 @@
+[package]
+publish = true
+name = "casa-vla"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Native VLA archive disk-reader support for importvla-style workflows"
+repository.workspace = true
+autotests = false
+
+[features]
+default = []
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-flagging.workspace = true
+casa-mstransform.workspace = true
+casa-measures.workspace = true
+casa-ms.workspace = true
+casa-tables.workspace = true
+casa-core.workspace = true
+ndarray.workspace = true
+schemars = { version = "0.8", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror.workspace = true
+tracing.workspace = true
+
+
+
+
+[[test]]
+name = "api"
+path = "tests/api.rs"

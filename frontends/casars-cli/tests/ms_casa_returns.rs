@@ -6,7 +6,7 @@
 //! `tools/casa-compat/record_casa_returns.py`. The CASA values casa-rs does
 //! not implement yet are refused before the task starts, naming #978.
 
-#[path = "../../../crates/casa-ms/tests/common/mod.rs"]
+#[path = "../../../libs/casacore/casa-ms/tests/common/mod.rs"]
 mod common;
 
 use std::io::Write;
@@ -107,12 +107,12 @@ fn flagmanager_returns_casas_version_list() {
     };
     // The recording's sequence: two flagdata backups, then a saved version.
     for action in [
-        casa_ms::FlagDataAction::Flag,
-        casa_ms::FlagDataAction::Unflag,
+        casa_flagging::FlagDataAction::Flag,
+        casa_flagging::FlagDataAction::Unflag,
     ] {
-        casa_ms::flagdata_path(
+        casa_flagging::flagdata_path(
             &vis,
-            &casa_ms::FlagDataRequest {
+            &casa_flagging::FlagDataRequest {
                 action,
                 flagbackup: true,
                 ..Default::default()
@@ -158,10 +158,10 @@ fn saving_a_version_name_again_keeps_the_old_version() {
         returned(binary, surface, values, workspace.path())
     };
     let flagged = || {
-        let summary = casa_ms::flagdata_path(
+        let summary = casa_flagging::flagdata_path(
             &vis,
-            &casa_ms::FlagDataRequest {
-                mode: casa_ms::FlagDataMode::Summary,
+            &casa_flagging::FlagDataRequest {
+                mode: casa_flagging::FlagDataMode::Summary,
                 ..Default::default()
             },
         )
@@ -176,9 +176,9 @@ fn saving_a_version_name_again_keeps_the_old_version() {
         )
     };
     save("first");
-    casa_ms::flagdata_path(
+    casa_flagging::flagdata_path(
         &vis,
-        &casa_ms::FlagDataRequest {
+        &casa_flagging::FlagDataRequest {
             flagbackup: false,
             ..Default::default()
         },

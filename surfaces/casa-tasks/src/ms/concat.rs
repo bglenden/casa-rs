@@ -3,7 +3,7 @@
 
 use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::{CasaValue, TaskProviderContract};
-use casa_ms::concat::{ConcatReport, ConcatRequest, concat};
+use casa_mstransform::concat::{ConcatReport, ConcatRequest, concat};
 
 use super::front_end::ms_task_success;
 use super::task_contract::one_shot_contract;
@@ -13,7 +13,7 @@ pub fn concat_task_schema_bundle() -> TaskProviderContract {
     one_shot_contract::<ConcatRequest, ConcatReport>("casa_ms_concat_task", &["concat"])
 }
 
-/// The command-line host; all scientific work is in [`casa_ms::concat::concat()`].
+/// The command-line host; all scientific work is in [`casa_mstransform::concat::concat()`].
 pub fn concat_front_end()
 -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
     TaskFrontEnd::new_with_deferred_schema("concat", concat_task_schema_bundle(), &["concat"], run)

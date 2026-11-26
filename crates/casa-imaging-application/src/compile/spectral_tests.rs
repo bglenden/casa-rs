@@ -45,7 +45,7 @@ fn fixture(rows: Vec<RecordValue>) -> MeasurementSet {
         })
         .copied()
         .collect::<Vec<_>>();
-    let schema = casa_ms::column_def::build_table_schema(&columns).unwrap();
+    let schema = casa_ms::build_table_schema(&columns).unwrap();
     *ms.subtable_mut(SubtableId::Source).unwrap() =
         Table::from_rows_with_schema_memory(rows, schema).unwrap();
     ms
@@ -169,7 +169,7 @@ fn set_active_doppler(ms: &mut MeasurementSet) {
         .iter()
         .find(|column| column.name == "DOPPLER_ID")
         .unwrap();
-    let schema = casa_ms::column_def::build_table_schema(&[*column]).unwrap();
+    let schema = casa_ms::build_table_schema(&[*column]).unwrap();
     *ms.subtable_mut(SubtableId::SpectralWindow).unwrap() = Table::from_rows_with_schema_memory(
         vec![RecordValue::new(vec![integer("DOPPLER_ID", 7)])],
         schema,

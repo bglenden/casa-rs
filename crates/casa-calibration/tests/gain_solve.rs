@@ -12,7 +12,7 @@ use casa_calibration::{
     summarize_table,
 };
 use casa_core::{ArrayValue, ScalarValue, Value};
-use casa_ms::ms::MeasurementSet;
+use casa_ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_tables::{Table, TableOptions};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};

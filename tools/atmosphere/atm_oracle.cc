@@ -2,7 +2,7 @@
 // The C++ oracle for casa-atmosphere's tests: it links CASA's ATM sources and
 // writes what they compute for a fixed set of inputs. Build and run it with
 // tools/atmosphere/build-atm-oracle.sh, which writes the fixtures into
-// crates/casa-atmosphere/tests/data/.
+// libs/casa/casa-atmosphere/tests/data/.
 //
 // Every input is printed with 17 significant digits, so the Rust tests read
 // back exactly the doubles the C++ used.

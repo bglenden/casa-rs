@@ -17,7 +17,7 @@ fn unpack_fixture_ms(archive_name: &str) -> (tempfile::TempDir, PathBuf) {
     let archive_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
-        .join("crates")
+        .join("libs/casacore")
         .join("casa-ms")
         .join("tests")
         .join("fixtures")

@@ -23,7 +23,7 @@ use casa_imaging_operator::{
 use casa_imaging_runtime::pass::{WORKER_STACK_BYTES, WorkerTeam};
 use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_ms::derived::engine::MsCalEngine;
-use casa_ms::virtual_model::ft_record::{
+use casa_ms::schema::ft_record::{
     FirstBuffer, GridFt, casa_spectral, legacy_common_mosaic, legacy_image_mosaic, legacy_mosaic,
     legacy_multi_term, set_grid_motion, set_grid_tangent,
 };

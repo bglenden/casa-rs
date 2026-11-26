@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
-use casa_ms::ms::MeasurementSet;
+use casa_ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
 use casa_ms::{MeasurementSetBuilder, MsError};
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};

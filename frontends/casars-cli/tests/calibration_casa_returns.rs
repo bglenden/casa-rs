@@ -12,7 +12,7 @@
 
 #[path = "../../../crates/casa-calibration/tests/common/mod.rs"]
 mod common;
-#[path = "../../../crates/casa-ms/tests/common/mod.rs"]
+#[path = "../../../libs/casacore/casa-ms/tests/common/mod.rs"]
 mod ms_common;
 
 use std::io::Write;
@@ -321,7 +321,7 @@ fn combined_fields_keep_casas_interval_boundaries() {
         dir.path(),
         &[cluster(130.0, 2), cluster(131.0, 2), cluster(132.0, 2)],
     );
-    let mut opened = casa_ms::ms::MeasurementSet::open(&ms).expect("open");
+    let mut opened = casa_ms::MeasurementSet::open(&ms).expect("open");
     for time_seconds in [100.0, 101.0, 102.0] {
         common::append_gain_solve_cluster_for_field(&mut opened, 1, &cluster(time_seconds, 1));
     }
@@ -363,7 +363,7 @@ fn share_window_zero(ms: &Path, cross_hands: bool) {
     use casa_core::{ArrayValue, ScalarValue, Value as CellValue};
     use casa_ms::schema::{self as ms_schema, SubtableId};
     let int = |value| CellValue::Scalar(ScalarValue::Int32(value));
-    let mut opened = casa_ms::ms::MeasurementSet::open(ms).expect("open");
+    let mut opened = casa_ms::MeasurementSet::open(ms).expect("open");
     let polarization_id = if cross_hands {
         let products = ndarray::ArrayD::from_shape_vec(vec![2, 2], vec![0, 1, 1, 0]).unwrap();
         let types = ndarray::ArrayD::from_shape_vec(vec![2], vec![6, 7]).unwrap();
@@ -748,7 +748,7 @@ fn gaincal_and_bandpass_use_the_unit_model_for_an_empty_virtual_record() {
     let dir = TempDir::new().unwrap();
     let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
     {
-        let mut opened = casa_ms::ms::MeasurementSet::open(&ms).expect("open");
+        let mut opened = casa_ms::MeasurementSet::open(&ms).expect("open");
         let keywords = opened.main_table_mut().keywords_mut();
         keywords.upsert(
             "definedmodel_field_0",

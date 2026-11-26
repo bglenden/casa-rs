@@ -16,11 +16,11 @@ out="${1:-target/ms-trial/interop}"
 mkdir -p "$out"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-fixtures="crates/casa-ms/tests/fixtures/ms_trial"
+fixtures="libs/casacore/casa-ms/tests/fixtures/ms_trial"
 tar -xzf "$fixtures/ms_trial_ephemeris.ms.tgz" -C "$work"
 tar -xzf "$fixtures/ms_trial_ephemeris.ps.zarr.tgz" -C "$work"
 
-cargo run -q -p casa-ms --features msv4 --example ms_trial_convert -- \
+cargo run -q -p casa-mstransform --features msv4 --example ms_trial_convert -- \
   to-msv4 "$work/ms_trial_ephemeris.ms" "$work/rust.ps.zarr" --accept sigma,tables,columns \
   >"$out/ephemeris_conversion.json"
 uv run -q --project tools/ms-trial python tools/ms-trial/check_ephemeris.py \

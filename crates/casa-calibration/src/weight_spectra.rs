@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use casa_core::{ArrayValue, PrimitiveType};
-use casa_ms::write_session::TARGET_BATCH_BYTES;
+use casa_ms::TARGET_BATCH_BYTES;
 use casa_ms::{MsError, MsResult};
 use casa_tables::streamed_tiled::{
     StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType, StreamingTiledShapeWriter,

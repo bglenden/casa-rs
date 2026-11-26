@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_ms::MsSelection;
-use casa_ms::tool_statistics::{ToolStatisticsOptions, tool_statistics};
+use casa_mstransform::tool_statistics::{ToolStatisticsOptions, tool_statistics};
 use pyo3::prelude::*;
 
 use super::owned_record::visibility_record;

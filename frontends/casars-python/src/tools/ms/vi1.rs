@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use casa_ms::tool_iteration::Vi1ToolIteration;
+use casa_mstransform::tool_iteration::Vi1ToolIteration;
 use pyo3::exceptions::PySystemError;
 use pyo3::prelude::*;
 

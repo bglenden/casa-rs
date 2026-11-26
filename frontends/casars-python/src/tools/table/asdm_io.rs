@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use casa_ms::asdm_table::read_asdm_table;
+use casa_ms::read_asdm_table;
 use casa_tables::{DataManagerKind, TableOptions};
 use pyo3::prelude::*;
 

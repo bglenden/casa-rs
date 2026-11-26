@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{TaskFailure, TaskInvocation};
 use casa_contracts::ParameterValue;
-use casa_ms::flagging::RFlagThresholdReport;
+use casa_flagging::RFlagThresholdReport;
 
 pub(super) const SAVED_FIELDS: &[&str] = &[
     "ntime",

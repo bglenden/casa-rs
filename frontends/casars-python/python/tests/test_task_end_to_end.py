@@ -19,7 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 SMALL_MS_ARCHIVE = Path(
     os.environ.get(
         "CASARS_SMALL_MS_ARCHIVE",
-        REPO_ROOT / "crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz",
+        REPO_ROOT / "libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz",
     )
 )
 
@@ -709,7 +709,7 @@ def test_imhead_edits_direction_reference(tmp_path: Path) -> None:
 def test_msconvert_converts_both_ways_and_reports_its_losses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    fixtures = REPO_ROOT / "crates/casa-ms/tests/fixtures/ms_trial"
+    fixtures = REPO_ROOT / "libs/casacore/casa-ms/tests/fixtures/ms_trial"
     with tarfile.open(fixtures / "ms_trial.ms.tgz", "r:gz") as archive:
         extract = {"filter": "data"} if sys.version_info >= (3, 12) else {}
         archive.extractall(tmp_path, **extract)

@@ -11,11 +11,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use casa_contracts::{CasaFloat, CasaValue, FloatDtype, ParameterValue};
-use casa_ms::flagging::{
+use casa_flagging::{FlagDataReport, FlagDataRequest};
+use casa_flagging::{
     flagdata_calibration_agent_rows, flagdata_calibration_agents,
     validate_calibration_flag_averaging,
 };
-use casa_ms::{FlagDataReport, FlagDataRequest, MeasurementSet, MsSelection};
+use casa_ms::{MeasurementSet, MsSelection};
 use casa_tasks::ms::flagdata_named_summary_record;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;

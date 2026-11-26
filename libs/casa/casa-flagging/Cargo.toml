@@ -1,0 +1,35 @@
+[package]
+name = "casa-flagging"
+description = "MeasurementSet flagging and flag versions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = true
+autotests = false
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-core.workspace = true
+casa-ms.workspace = true
+casa-numerics.workspace = true
+casa-tables.workspace = true
+ndarray.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+casa-components.workspace = true
+libc = "0.2"
+schemars = { version = "0.8", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+
+[[test]]
+name = "api"
+path = "tests/api.rs"
+
+[dev-dependencies]
+casa-test-support = { path = "../../../dev/casa-test-support" }

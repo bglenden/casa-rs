@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use casa_coordinates::StokesType;
-use casa_ms::tool_visibility::{
+use casa_mstransform::tool_visibility::{
     LegacyVisibilityAxes, LegacyVisibilityWriteGrid, VisibilityChannels, VisibilityPolarization,
     VisibilityReadOptions,
 };

@@ -1,0 +1,106 @@
+[package]
+publish = true
+name = "casa-ms"
+description = "Typed MeasurementSet (MS) API for radio interferometry data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+autotests = false
+
+[features]
+default = []
+slow-tests = []
+performance-tests = ["casa-test-support/performance-tests"]
+# The MSv4 (XRADIO VisibilityXds 4.0.1, local Zarr v3) adapter.
+msv4 = ["casa-mstransform/msv4", "dep:zarrs", "dep:zarrs_filesystem", "dep:bytemuck", "dep:unsafe_cell_slice"]
+
+[dependencies]
+casa-coordinates.workspace = true
+casa-measures.workspace = true
+casa-numerics.workspace = true
+casa-observation.workspace = true
+casa-tables.workspace = true
+casa-core.workspace = true
+libc = "0.2"
+ndarray.workspace = true
+num-complex = { workspace = true, features = ["bytemuck"] }
+# CASA selector regexes and the bounded byte engine for FIELD lookahead.
+regex = "1"
+fancy-regex = { version = "0.20.2", default-features = false, features = ["std"] }
+fitsio = { version = "0.21", features = ["fitsio-src", "src-cmake"] }
+rayon = "1"
+schemars = { version = "0.8", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sofars.workspace = true
+tempfile = "3"
+thiserror.workspace = true
+tracing.workspace = true
+bytemuck = { version = "1.25", optional = true }
+unsafe_cell_slice = { version = "=0.2.2", optional = true }
+zarrs = { version = "=0.23.14", default-features = false, features = ["filesystem", "blosc", "zstd"], optional = true }
+# The store zarrs re-exports as `zarrs::filesystem`, pinned beside it: its
+# per-key lock registry and file handling were audited at this version (one
+# lock per key touched, never removed, so it grows with the distinct keys a
+# process visits, not with passes).
+zarrs_filesystem = { version = "=0.3.14", optional = true }
+quick-xml = { version = "0.42", default-features = false }
+
+[dev-dependencies]
+casa-mstransform.workspace = true
+casa-simulation = { path = "../../../crates/casa-simulation" }
+casa-observation.workspace = true
+casa-test-support = { path = "../../../dev/casa-test-support" }
+flate2 = "1"
+tar = "0.4"
+
+[lints]
+workspace = true
+
+[[example]]
+name = "ms_trial_interop"
+required-features = ["msv4"]
+
+
+[[example]]
+name = "ms_trial_read_passes"
+required-features = ["msv4"]
+
+[[example]]
+name = "ms_trial_update_pass"
+required-features = ["msv4"]
+
+[[test]]
+name = "selector_width_memory"
+path = "tests/selector_width_memory.rs"
+
+[[test]]
+name = "msv2_opening_memory"
+path = "tests/msv2_opening_memory.rs"
+
+[[test]]
+name = "msv4_opening_memory"
+path = "tests/msv4_opening_memory.rs"
+required-features = ["msv4"]
+
+[[test]]
+name = "msv2_update_memory"
+path = "tests/msv2_update_memory.rs"
+
+[[test]]
+name = "creation_write_memory"
+path = "tests/creation_write_memory.rs"
+
+[[test]]
+name = "creation_plan_memory"
+path = "tests/creation_plan_memory.rs"
+
+[[test]]
+name = "subtable_overrides"
+path = "tests/subtable_overrides.rs"
+
+[[test]]
+name = "api"
+path = "tests/api.rs"

@@ -32,7 +32,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use casa_core::{Complex32, ScalarValue, Value};
-use casa_ms::ms::MeasurementSet;
+use casa_ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_ms::{ChannelSelection, MsError};
 use casa_tables::{Table, TableError, TableOptions};

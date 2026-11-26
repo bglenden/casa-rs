@@ -6,10 +6,8 @@ use casa_core::ScalarValue;
 use casa_images::{ImageInterface, PagedImage};
 use casa_imaging_application::{Cancel, ImagingRequest, RunContext};
 use casa_imaging_runtime::{Demand, admit};
-use casa_ms::{
-    MeasurementSet, SubtableId,
-    concat::{ConcatRequest, concat_with_memory},
-};
+use casa_ms::{MeasurementSet, SubtableId};
+use casa_mstransform::concat::{ConcatRequest, concat_with_memory};
 use serde_json::json;
 use std::path::PathBuf;
 

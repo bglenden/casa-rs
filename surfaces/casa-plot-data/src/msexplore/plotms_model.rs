@@ -16,10 +16,10 @@ use super::{
     },
     selected_i32_values, uses_extended_averaging,
 };
-use casa_ms::PlotMsModelReferences;
 use casa_ms::selection::ResolvedMsSelectionRow;
-use casa_ms::virtual_model::{VirtualModelEntry, selected_model_combinations, virtual_model};
-use casa_ms::{MeasurementSet, initial_model_visibility, scratch_columns::virtual_model_fields};
+use casa_ms::{MeasurementSet, initial_model_visibility, virtual_model_fields};
+use casa_ms::{VirtualModelEntry, selected_model_combinations, virtual_model};
+use casa_mstransform::PlotMsModelReferences;
 
 pub(super) fn needs_model_references(
     ms: &MeasurementSet,

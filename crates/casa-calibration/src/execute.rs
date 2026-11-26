@@ -29,17 +29,17 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 use casa_core::{ArrayValue, Complex32, ScalarValue, Value};
-use casa_ms::column_def::build_table_schema;
+use casa_flagging::{FlaggingError, save_next_flag_backup};
+use casa_ms::MeasurementSet;
+use casa_ms::build_table_schema;
 use casa_ms::derived::engine::MsCalEngine;
-use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::selection::ResolvedMsSelection;
 use casa_ms::{
-    FlaggingError, MeasurementSetColumnStorage, MeasurementSetColumnWriteMode,
-    MeasurementSetMutationBatch, MeasurementSetMutationColumnBatch,
-    MeasurementSetMutationColumnValues, MeasurementSetWriteColumnPlan, MeasurementSetWritePlan,
-    MeasurementSetWriteResources, MeasurementSetWriteSession, MsError, MsResult,
-    save_next_flag_backup,
+    MeasurementSetColumnStorage, MeasurementSetColumnWriteMode, MeasurementSetMutationBatch,
+    MeasurementSetMutationColumnBatch, MeasurementSetMutationColumnValues,
+    MeasurementSetWriteColumnPlan, MeasurementSetWritePlan, MeasurementSetWriteResources,
+    MeasurementSetWriteSession, MsError, MsResult,
 };
 use casa_tables::{ColumnSchema, Table, TableError, TableOptions, TableWriteLock};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
@@ -5856,11 +5856,12 @@ fn ensure_corrected_data_column(
     }
 
     // CASA's `addScrCols` clears the cached sort keywords first.
-    casa_ms::scratch_columns::prepare_write(ms, VisibilityDataColumn::CorrectedData, true)
-        .map_err(|error| match error {
+    casa_ms::prepare_write(ms, VisibilityDataColumn::CorrectedData, true).map_err(|error| {
+        match error {
             MsError::Table(error) => error,
             other => TableError::Storage(other.to_string()),
-        })?;
+        }
+    })?;
     let column_def = *VisibilityDataColumn::CorrectedData
         .optional_column()
         .column_def();

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_ms::tool_scan_summary::{ToolScanSummary, tool_scan_summary};
+use casa_ms::{ToolScanSummary, tool_scan_summary};
 use pyo3::prelude::*;
 
 use super::{PyMsTool, runtime_error};

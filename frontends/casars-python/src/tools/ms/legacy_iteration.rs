@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use casa_ms::tool_iteration::{LegacyIterationOptions, LegacyToolIteration};
+use casa_mstransform::tool_iteration::{LegacyIterationOptions, LegacyToolIteration};
 use pyo3::exceptions::{PySystemError, PyTypeError};
 use pyo3::prelude::*;
 

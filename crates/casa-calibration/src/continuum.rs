@@ -12,8 +12,8 @@ use std::ops::Range;
 use casa_core::quanta::{Quantity, Unit};
 use casa_core::{ArrayValue, Complex32, Correlation};
 use casa_ms::schema::main_table::VisibilityDataColumn;
-use casa_ms::write_session::{MeasurementSetMutationBatch, MeasurementSetWriteSession};
 use casa_ms::{MeasurementSet, MsError, MsResult, MsSelection, ResolvedMsSelectionRow};
+use casa_ms::{MeasurementSetMutationBatch, MeasurementSetWriteSession};
 use casa_tables::{RequiredScalarColumnValues, TableWriteLock};
 use ndarray::{ArrayD, Ix2};
 

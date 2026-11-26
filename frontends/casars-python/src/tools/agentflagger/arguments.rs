@@ -4,11 +4,12 @@
 use std::collections::BTreeMap;
 
 use casa_contracts::ParameterValue;
-use casa_ms::flagging::{
+use casa_flagging::FlagDataRequest;
+use casa_flagging::{
     FlagDataAction, FlagDataColumn, FlagDataMode, QuackMode, TfcropFit, TfcropOptions,
     TfcropPasses, TfcropWindowStats,
 };
-use casa_ms::{FlagDataRequest, MsSelection};
+use casa_ms::MsSelection;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 

@@ -16,7 +16,7 @@ use casa_images::PagedImage;
 use casa_imaging_operator::PolarizationRouting;
 use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_imaging_singledish::{GridFunction, KernelTable};
-use casa_ms::{MeasurementSet, voltage_pattern};
+use casa_ms::MeasurementSet;
 use casa_numerics::BeamPattern;
 use ndarray::{ArrayD, Axis, Ix2};
 
@@ -208,7 +208,7 @@ impl PreparedModel {
             let custom = match record.get("casars_sd_primary_beam") {
                 None => None,
                 Some(Value::Record(beam)) => {
-                    Some(voltage_pattern::radial_pattern(beam).map_err(model_error)?)
+                    Some(casa_ms::radial_pattern(beam).map_err(model_error)?)
                 }
                 _ => return Err(model_error("invalid saved single-dish primary beam")),
             };

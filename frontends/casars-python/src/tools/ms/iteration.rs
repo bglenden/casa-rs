@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 
-use casa_ms::tool_iteration::ToolIteration;
-use casa_ms::tool_visibility::{VisibilityChannels, VisibilityPolarization};
+use casa_mstransform::tool_iteration::ToolIteration;
+use casa_mstransform::tool_visibility::{VisibilityChannels, VisibilityPolarization};
 use pyo3::exceptions::{PySystemError, PyTypeError};
 use pyo3::prelude::*;
 

@@ -34,6 +34,8 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 casa-imageanalysis.workspace = true
+casa-flagging.workspace = true
+casa-mstransform = { workspace = true, features = ["msv4"] }
 casa-measures.workspace = true
 base64 = "0.22"
 casa-calibration = { path = "../../crates/casa-calibration" }
@@ -41,7 +43,7 @@ casa-coordinates.workspace = true
 casa-images.workspace = true
 casa-imaging-deconvolution = { path = "../../crates/casa-imaging-deconvolution" }
 casa-lattices.workspace = true
-casa-ms = { path = "../../crates/casa-ms", features = ["msv4"] }
+casa-ms = { workspace = true, features = ["msv4"] }
 casa-numerics.workspace = true
 casa-plot-data = { path = "../../surfaces/casa-plot-data", features = ["ms"] }
 casa-simulation = { path = "../../crates/casa-simulation" }

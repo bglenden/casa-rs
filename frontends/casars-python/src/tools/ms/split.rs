@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_ms::{
-    selection::MsSelection,
-    transform::{LegacyMsTool, LegacyTimeOptions, MsTransformTaskOptions},
-};
+use casa_ms::selection::MsSelection;
+
+use casa_mstransform::{LegacyMsTool, LegacyTimeOptions, MsTransformTaskOptions};
 use numpy::PyUntypedArray;
 use pyo3::exceptions::{PySystemError, PyTypeError};
 use pyo3::prelude::*;

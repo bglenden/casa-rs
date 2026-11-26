@@ -11,7 +11,7 @@ use casa_images::PagedImage;
 use casa_imaging_operator::{LegacyEpConvolution, LegacyPbWConvolution};
 use casa_imaging_runtime::{Demand, HostResources, ResourcePolicy, admit};
 use casa_ms::derived::engine::MsCalEngine;
-use casa_ms::virtual_model::ft_record::{FirstBuffer, GridFt, casa_spectral};
+use casa_ms::schema::ft_record::{FirstBuffer, GridFt, casa_spectral};
 use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection};
 use ndarray::{ArrayD, Axis, IxDyn, ShapeBuilder, Slice};
 

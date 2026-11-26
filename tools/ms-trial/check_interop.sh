@@ -21,7 +21,7 @@ out="${1:-target/ms-trial/interop}"
 mkdir -p "$out"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-fixtures="crates/casa-ms/tests/fixtures/ms_trial"
+fixtures="libs/casacore/casa-ms/tests/fixtures/ms_trial"
 tar -xzf "$fixtures/ms_trial.ms.tgz" -C "$work"
 tar -xzf "$fixtures/ms_trial.ps.zarr.tgz" -C "$work"
 

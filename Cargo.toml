@@ -7,7 +7,7 @@ members = [
     "frontends/casars-cli",
     "frontends/casars-python",
     "libs/casacore/casa-core",
-    "crates/casa-vla",
+    "libs/casa/casa-vla",
     "libs/casacore/casa-aipsio",
     "libs/casacore/casa-numerics",
     "libs/casacore/casa-fft",
@@ -27,9 +27,11 @@ members = [
     "crates/casa-imaging-singledish",
     "crates/casa-imaging-metal",
     "crates/casa-simulation",
-    "crates/casa-atmosphere",
+    "libs/casa/casa-atmosphere",
     "libs/casacore/casa-measures",
-    "crates/casa-ms",
+    "libs/casacore/casa-ms",
+    "libs/casa/casa-mstransform",
+    "libs/casa/casa-flagging",
     "libs/casacore/casa-observation",
     "dev/casa-test-support",
     "dev/casa-dev-tools",
@@ -47,6 +49,11 @@ description = "Rust implementation of casacore-compatible persistent data I/O"
 repository = "https://github.com/bglenden/casa-rs"
 
 [workspace.dependencies]
+casa-atmosphere = { path = "libs/casa/casa-atmosphere", version = "0.27.0" }
+casa-flagging = { path = "libs/casa/casa-flagging", version = "0.27.0" }
+casa-ms = { path = "libs/casacore/casa-ms", version = "0.27.0" }
+casa-mstransform = { path = "libs/casa/casa-mstransform", version = "0.27.0" }
+casa-vla = { path = "libs/casa/casa-vla", version = "0.27.0" }
 casa-aipsio = { path = "libs/casacore/casa-aipsio", version = "0.27.0" }
 casa-components = { path = "libs/casa/casa-components", version = "0.27.0" }
 casa-coordinates = { path = "libs/casacore/casa-coordinates", version = "0.27.0" }
@@ -85,6 +92,10 @@ opt-level = 2
 [profile.test.package.casa-tables]
 opt-level = 2
 [profile.test.package.casa-aipsio]
+opt-level = 2
+[profile.test.package.casa-flagging]
+opt-level = 2
+[profile.test.package.casa-mstransform]
 opt-level = 2
 [profile.test.package.casa-ms]
 opt-level = 2

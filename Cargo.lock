@@ -245,6 +245,7 @@ dependencies = [
  "casa-coordinates",
  "casa-core",
  "casa-fft",
+ "casa-flagging",
  "casa-imageanalysis",
  "casa-images",
  "casa-imaging-model",
@@ -254,6 +255,7 @@ dependencies = [
  "casa-lattices",
  "casa-measures",
  "casa-ms",
+ "casa-mstransform",
  "casa-numerics",
  "casa-observation",
  "casa-simulation",
@@ -352,6 +354,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "casa-flagging"
+version = "0.27.0"
+dependencies = [
+ "casa-components",
+ "casa-core",
+ "casa-ms",
+ "casa-numerics",
+ "casa-tables",
+ "casa-test-support",
+ "libc",
+ "ndarray",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "casa-imageanalysis"
 version = "0.27.0"
 dependencies = [
@@ -406,6 +428,7 @@ dependencies = [
  "casa-imaging-runtime",
  "casa-imaging-singledish",
  "casa-ms",
+ "casa-mstransform",
  "casa-numerics",
  "casa-observation",
  "casa-simulation",
@@ -588,12 +611,10 @@ name = "casa-ms"
 version = "0.27.0"
 dependencies = [
  "bytemuck",
- "casa-atmosphere",
- "casa-components",
  "casa-coordinates",
  "casa-core",
- "casa-fft",
  "casa-measures",
+ "casa-mstransform",
  "casa-numerics",
  "casa-observation",
  "casa-simulation",
@@ -603,7 +624,6 @@ dependencies = [
  "fitsio",
  "flate2",
  "libc",
- "libm",
  "ndarray",
  "num-complex",
  "quick-xml",
@@ -620,6 +640,32 @@ dependencies = [
  "unsafe_cell_slice",
  "zarrs",
  "zarrs_filesystem",
+]
+
+[[package]]
+name = "casa-mstransform"
+version = "0.27.0"
+dependencies = [
+ "casa-coordinates",
+ "casa-core",
+ "casa-fft",
+ "casa-flagging",
+ "casa-measures",
+ "casa-ms",
+ "casa-numerics",
+ "casa-observation",
+ "casa-tables",
+ "casa-test-support",
+ "ndarray",
+ "num-complex",
+ "rayon",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]
@@ -689,6 +735,7 @@ dependencies = [
  "casa-imaging-runtime",
  "casa-measures",
  "casa-ms",
+ "casa-mstransform",
  "casa-simulation",
  "casa-tables",
  "casa-test-support",
@@ -714,6 +761,7 @@ dependencies = [
  "casa-coordinates",
  "casa-core",
  "casa-fft",
+ "casa-flagging",
  "casa-imageanalysis",
  "casa-images",
  "casa-imaging-application",
@@ -725,6 +773,7 @@ dependencies = [
  "casa-lattices",
  "casa-measures",
  "casa-ms",
+ "casa-mstransform",
  "casa-numerics",
  "casa-tables",
  "casa-test-support",
@@ -772,6 +821,7 @@ dependencies = [
  "casa-components",
  "casa-contracts",
  "casa-core",
+ "casa-flagging",
  "casa-imageanalysis",
  "casa-images",
  "casa-imaging-application",
@@ -779,6 +829,7 @@ dependencies = [
  "casa-lattices",
  "casa-measures",
  "casa-ms",
+ "casa-mstransform",
  "casa-numerics",
  "casa-observation",
  "casa-plot-data",
@@ -825,12 +876,12 @@ name = "casa-vla"
 version = "0.27.0"
 dependencies = [
  "casa-core",
+ "casa-flagging",
  "casa-measures",
  "casa-ms",
+ "casa-mstransform",
  "casa-tables",
- "casa-test-support",
  "ndarray",
- "pkg-config",
  "schemars",
  "serde",
  "serde_json",
@@ -851,8 +902,10 @@ dependencies = [
  "casa-lattices",
  "casa-measures",
  "casa-ms",
+ "casa-observation",
  "casa-tables",
  "casa-test-support",
+ "casa-vla",
  "ndarray",
  "num-complex",
  "pkg-config",
@@ -871,6 +924,7 @@ dependencies = [
  "casa-contracts",
  "casa-coordinates",
  "casa-core",
+ "casa-flagging",
  "casa-imageanalysis",
  "casa-images",
  "casa-imaging-application",
@@ -878,6 +932,7 @@ dependencies = [
  "casa-lattices",
  "casa-measures",
  "casa-ms",
+ "casa-mstransform",
  "casa-numerics",
  "casa-plot-data",
  "casa-simulation",
@@ -908,11 +963,13 @@ dependencies = [
  "casa-contracts",
  "casa-coordinates",
  "casa-core",
+ "casa-flagging",
  "casa-imageanalysis",
  "casa-images",
  "casa-lattices",
  "casa-measures",
  "casa-ms",
+ "casa-mstransform",
  "casa-plot-data",
  "casa-simulation",
  "casa-tables",

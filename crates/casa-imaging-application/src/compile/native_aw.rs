@@ -374,8 +374,8 @@ mod tests {
 
     use casa_core::{ArrayValue, ScalarValue, Value};
     use casa_ms::observation_io::Msv4Observation;
-    use casa_ms::observation_io::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
     use casa_ms::{MeasurementSet, SubtableId};
+    use casa_mstransform::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
 
     use super::*;
 
@@ -449,7 +449,7 @@ mod tests {
     /// `angle` on both receptors.
     fn trial(root: &Path, angle: f64) -> (PathBuf, MeasurementSet) {
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
+            .join("../../libs/casacore/casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
         tar::Archive::new(flate2::read::GzDecoder::new(
             std::fs::File::open(fixture).expect("the fixture"),
         ))

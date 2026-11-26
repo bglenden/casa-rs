@@ -3,7 +3,7 @@
 
 use casa_imaging_products::SavedRadialPrimaryBeam;
 use casa_imaging_runtime::{Admitted, Demand, admit};
-use casa_ms::voltage_pattern::{VoltagePatternTable, radial_pattern};
+use casa_ms::{VoltagePatternTable, radial_pattern};
 use casa_numerics::{BeamPattern, PrimaryBeam};
 use std::path::Path;
 

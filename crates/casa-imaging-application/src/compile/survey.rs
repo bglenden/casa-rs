@@ -929,7 +929,7 @@ mod tests {
     fn a_survey_charges_the_selected_pb_antenna_bitmap() {
         let root = tempfile::tempdir().expect("temporary fixture");
         let archive = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
+            .join("../../libs/casacore/casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
         tar::Archive::new(flate2::read::GzDecoder::new(
             std::fs::File::open(archive).unwrap(),
         ))
@@ -995,7 +995,7 @@ mod tests {
         ] {
             let root = tempfile::tempdir().expect("temporary fixture");
             let archive = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
+                .join("../../libs/casacore/casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
             tar::Archive::new(flate2::read::GzDecoder::new(
                 std::fs::File::open(archive).unwrap(),
             ))
@@ -1092,7 +1092,7 @@ mod tests {
     fn aw_cross_times(rows: [(bool, bool, bool); 2]) -> (Option<f64>, Vec<f64>) {
         let root = tempfile::tempdir().expect("a temporary directory");
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
+            .join("../../libs/casacore/casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
         tar::Archive::new(flate2::read::GzDecoder::new(
             std::fs::File::open(fixture).expect("the fixture"),
         ))
@@ -1276,10 +1276,10 @@ mod tests {
     #[test]
     fn an_msv4_survey_counts_its_acquisitions_not_its_padding() {
         use casa_ms::observation_io::Msv4Observation;
-        use casa_ms::observation_io::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
+        use casa_mstransform::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
         let root = tempfile::tempdir().expect("a temporary directory");
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
+            .join("../../libs/casacore/casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
         tar::Archive::new(flate2::read::GzDecoder::new(
             std::fs::File::open(fixture).expect("the fixture"),
         ))
@@ -1388,7 +1388,7 @@ mod tests {
     fn a_scan_selection_surveys_only_its_scans_times() {
         let root = tempfile::tempdir().expect("a temporary directory");
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../casa-ms/tests/fixtures/mssel_test_small.ms.tgz");
+            .join("../../libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz");
         tar::Archive::new(flate2::read::GzDecoder::new(
             std::fs::File::open(fixture).expect("the fixture"),
         ))

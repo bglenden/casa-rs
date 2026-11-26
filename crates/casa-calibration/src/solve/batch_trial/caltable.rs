@@ -8,14 +8,14 @@ use std::path::{Path, PathBuf};
 
 use casa_core::measures::frequency::FrequencyRef;
 use casa_core::{Complex32, ScalarValue};
+use casa_ms::MeasurementSet;
 use casa_ms::MeasurementSetBuilder;
-use casa_ms::ms::MeasurementSet;
-use casa_ms::observation_io::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
 use casa_ms::observation_io::{
     Msv4Codec, NamespaceAntenna, NamespaceRows, NamespaceWindow, OpenOptions, PersistedNamespace,
     open, persisted_namespace,
 };
 use casa_ms::selection::MsSelection;
+use casa_mstransform::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
 use casa_observation::{
     AccessRequest, AntennaId, BatchBuffers, BindingTolerance, CorrelationRequest, Grouping,
     Observation, ObservationError, PartitionId, ReadEvent, Roles, TimeSelection, WeightRequest,
@@ -372,7 +372,7 @@ fn a_caltable_rebinds_to_a_store_numbered_otherwise() {
             ],
             ..conversion_options()
         };
-        casa_ms::observation_io::convert::to_msv2(
+        casa_mstransform::convert::to_msv2(
             &converted,
             &Path::new(&keep).join("without_v4.ms"),
             &options,

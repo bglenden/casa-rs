@@ -9,8 +9,8 @@ array into a Rust constant, so the tables are never transcribed by hand:
   python3 tools/atmosphere/extract_atm_tables.py \
       ~/SoftwareProjects/casa/casatools/src/code/atmosphere/ATM
 
-writes `crates/casa-atmosphere/src/refractivity/tables/*.rs` and
-`crates/casa-atmosphere/src/profile/tables.rs`, as `static` arrays. Each value is parsed with
+writes `libs/casa/casa-atmosphere/src/refractivity/tables/*.rs` and
+`libs/casa/casa-atmosphere/src/profile/tables.rs`, as `static` arrays. Each value is parsed with
 correct rounding and printed as the shortest decimal that reads back to the
 same `f64`, so the Rust constants hold the doubles the C++ compiler made.
 
@@ -36,7 +36,7 @@ import sys
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-CRATE = ROOT / "crates" / "casa-atmosphere" / "src"
+CRATE = ROOT / "libs" / "casa" / "casa-atmosphere" / "src"
 CORRECTIONS = pathlib.Path(__file__).resolve().parent / "atm-corrections.patch"
 SOURCES = ("ATMRefractiveIndex.cc", "ATMProfile.cc")
 

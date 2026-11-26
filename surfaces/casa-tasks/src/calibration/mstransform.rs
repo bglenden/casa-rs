@@ -11,7 +11,7 @@ use casa_calibration::{CallibError, transform_callibrary, transform_model_input}
 use casa_contracts::{CasaValue, DefaultSpec, NumpyScalarType, ParameterValue, python_repr};
 use casa_core::quanta::{Quantity, Unit};
 use casa_ms::selection::MsSelection;
-use casa_ms::{
+use casa_mstransform::{
     ContinuumFitOptions, MsPartitionAxis, MsRegridOptions, MsTransformError,
     MsTransformMultiMsOptions, MsTransformRequest, MsTransformTaskOptions, MsTransformTiling,
     TimeAverageOptions, TransformDataColumn, TransformTaskHistory, mstransform_task,
@@ -159,7 +159,7 @@ fn continuum_options(
 
 fn callibrary(
     task: &TaskInvocation<'_>,
-) -> Result<Option<std::sync::Arc<dyn casa_ms::TransformInputView>>, TaskFailure> {
+) -> Result<Option<std::sync::Arc<dyn casa_mstransform::TransformInputView>>, TaskFailure> {
     if task.surface() != "mstransform" || !task.flag("docallib")? {
         return Ok(None);
     }

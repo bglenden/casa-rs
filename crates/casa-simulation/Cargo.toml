@@ -16,8 +16,10 @@ workspace = true
 
 [dependencies]
 casa-imageanalysis.workspace = true
+casa-flagging.workspace = true
+casa-mstransform.workspace = true
 casa-measures.workspace = true
-casa-atmosphere = { path = "../casa-atmosphere" }
+casa-atmosphere.workspace = true
 casa-calibration = { path = "../casa-calibration" }
 casa-components.workspace = true
 casa-coordinates.workspace = true
@@ -30,7 +32,7 @@ casa-imaging-products = { path = "../casa-imaging-products" }
 casa-imaging-runtime = { path = "../casa-imaging-runtime" }
 casa-imaging-singledish = { path = "../casa-imaging-singledish" }
 casa-lattices.workspace = true
-casa-ms = { path = "../casa-ms" }
+casa-ms.workspace = true
 casa-numerics.workspace = true
 casa-tables.workspace = true
 casa-core.workspace = true

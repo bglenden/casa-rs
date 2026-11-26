@@ -15,7 +15,7 @@ use super::axis::{Axis, SampleCoordinates};
 use super::selection::Expressions;
 use super::table_data::{array, integer, number, subtable, text};
 use casa_ms::selection::syntax::parse_numeric_id_selector;
-use casa_ms::{MeasurementSet, SubtableId, ms::subtable_path_from_main};
+use casa_ms::{MeasurementSet, SubtableId, subtable_path_from_main};
 
 #[derive(Clone, Copy)]
 pub(super) struct SplineDisplay {

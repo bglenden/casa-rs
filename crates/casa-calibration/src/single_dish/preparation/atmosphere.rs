@@ -9,12 +9,10 @@ use std::path::Path;
 
 use casa_atmosphere::{AtmosphereType, ProfileParameters};
 use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
-use casa_ms::{
-    MeasurementSet,
-    transform::{
-        MsTransformReport, MsTransformRequest, SpectrumBaseline, SpectrumRow, SpectrumWeights,
-        transform_baseline_spectra,
-    },
+use casa_ms::MeasurementSet;
+use casa_mstransform::{
+    MsTransformReport, MsTransformRequest, SpectrumBaseline, SpectrumRow, SpectrumWeights,
+    transform_baseline_spectra,
 };
 use ndarray::{ArrayD, Axis};
 

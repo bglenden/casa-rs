@@ -231,7 +231,7 @@ impl Simulator {
             fields: Vec::new(),
             times,
             elevation_limit_rad: 8.0_f64.to_radians(),
-            shadow_fraction_limit: casa_ms::shadowing::CASA_SHADOW_FRACTION_LIMIT,
+            shadow_fraction_limit: casa_flagging::shadowing::CASA_SHADOW_FRACTION_LIMIT,
             autocorrelation_weight: 1.0,
             observations: Vec::new(),
             states: Vec::new(),

@@ -11,7 +11,7 @@ use super::*;
 fn state_partitions(separate: bool, flagged: bool) -> (tempfile::TempDir, OpenedStore) {
     let root = tempfile::tempdir().unwrap();
     let archive = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
+        .join("../../libs/casacore/casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
     tar::Archive::new(flate2::read::GzDecoder::new(
         std::fs::File::open(archive).unwrap(),
     ))

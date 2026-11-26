@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Selected MAIN column ranges through the public MS tool.
 
-use casa_ms::tool_range::ToolRangeRequest;
+use casa_mstransform::tool_range::ToolRangeRequest;
 use pyo3::exceptions::{PySystemError, PyTypeError};
 use pyo3::prelude::*;
 

@@ -196,7 +196,7 @@ pub type PlotMsCalibrationLoader = fn(
     &Path,
 ) -> Result<PlotMsCalibration, TaskFailure>;
 
-pub use casa_ms::{PlotMsModelReferences, PlotMsModelSpwSelection};
+pub use casa_mstransform::{PlotMsModelReferences, PlotMsModelSpwSelection};
 pub use casa_plot_data::msexplore::PlotMsModelLoader;
 
 /// Use the existing PlotMS front end with caller-provided calibration and model sources.
