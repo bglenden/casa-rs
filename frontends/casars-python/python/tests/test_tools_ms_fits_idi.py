@@ -119,8 +119,15 @@ def test_fromfitsidi_replacement_and_failed_input_preserve_state(tmp_path):
         assert not importer.iswritable()
         with pytest.raises(RuntimeError):
             importer.fromfitsidi(str(output), str(second))
+        with pytest.raises(RuntimeError, match="still open"):
+            importer.fromfitsidi(str(output), str(second), nomodify=False)
         assert importer.name() == str(output) and importer.nrow() == 504
         assert importer.close()
+        for factory in (tools.ms, tools.table):
+            with closing(factory()) as holder:
+                assert holder.open(str(output))
+                with pytest.raises(RuntimeError, match="still open"):
+                    importer.fromfitsidi(str(output), str(second), nomodify=False)
         invalid = tmp_path / "invalid.idi"
         invalid.write_bytes(source.read_bytes()[:2880])
         with pytest.raises(RuntimeError):
@@ -129,6 +136,44 @@ def test_fromfitsidi_replacement_and_failed_input_preserve_state(tmp_path):
         assert importer.fromfitsidi(str(output), str(second), nomodify=False)
         assert importer.nrow() == 8496 and importer.iswritable()
     assert read(casa, output, ["TIME"])["TIME"].size == 8496
+
+
+def test_fromfitsidi_weather_columns_and_flag_channel_range(tmp_path):
+    casa = pinned_casa()
+    fixture = idi_fixture(FIXTURES[0][0])
+    source = tmp_path / "auxiliary.fits"
+    weather_columns = [
+        ("TIME", "1D"), ("TIME_INTERVAL", "1E"), ("ANTENNA_NO", "1J"),
+        ("DEWPOINT", "1E"), ("TEMPERATURE", "1E"), ("PRESSURE", "1E"),
+        ("WIND_VELOCITY", "1E"), ("WIND_DIRECTION", "1E"), ("WVR_H2O", "1E"),
+        ("IONOS_ELECTRON", "1E"),
+    ]
+    weather = struct.pack(">dfi7f", 0.5, 1 / 24, 2, 7, 13, 1013, 4, 90, 1.25, 2.5)
+    flag_columns = [
+        ("SOURCE_ID", "1J"), ("ARRAY", "1J"), ("ANTS", "2J"), ("FREQID", "1J"),
+        ("TIMERANG", "2E"), ("BANDS", "4J"), ("CHANS", "2J"), ("PFLAGS", "4J"),
+        ("REASON", "16A"), ("SEVERITY", "1J"),
+    ]
+    flag = struct.pack(">5i2f10i16si", 0, 0, 0, 0, 1, 0.4, 0.5, 1, 1, 1, 1, 2, 4,
+                       1, 1, 1, 1, b"channel range   ", 3)
+    flag_hdu = fits_binary_header("FLAG", len(flag), 1, flag_columns)
+    flag_hdu.extend([("NO_BAND", 4), ("NO_STKD", 1), ("STK_1", -1)])
+    source.write_bytes(
+        fixture.read_bytes()
+        + fits_header(fits_binary_header("WEATHER", len(weather), 1, weather_columns))
+        + weather.ljust(2880, b"\0")
+        + fits_header(flag_hdu)
+        + flag.ljust(2880, b"\0")
+    )
+    output = tmp_path / "auxiliary.ms"
+    with closing(tools.ms()) as importer:
+        assert importer.fromfitsidi(str(output), str(source))
+    result = read(casa, output / "WEATHER", ("H2O", "IONOS_ELECTRON"))
+    np.testing.assert_array_equal(result["H2O"], np.array([1.25], dtype=np.float32), strict=True)
+    np.testing.assert_array_equal(
+        result["IONOS_ELECTRON"], np.array([2.5], dtype=np.float32), strict=True
+    )
+    assert read(casa, output / "FLAG_CMD", ("COMMAND",))["COMMAND"][-1] == "spw='0,1,2,3:1~3'"
 
 
 def test_fromfitsidi_phase_calibration_subtable(tmp_path):

@@ -81,8 +81,8 @@ pub(super) fn earth_orientation(
     let time = fits.column::<f64>("TIME", 1)?;
     let utc = fits.column::<f64>("UT1-UTC", 1)?;
     let motion = fits.column::<f64>("WOBXY", 2)?;
-    let ut1_types = fits.column::<String>("UT1 TYPE", 1)?;
-    let motion_types = fits.column::<String>("WOB TYPE", 1)?;
+    let ut1_types = fits.strings("UT1 TYPE")?;
+    let motion_types = fits.strings("WOB TYPE")?;
     for row in 0..fits.rows {
         let types = [ut1_types[row].trim_end(), motion_types[row].trim_end()];
         let kind = [("E", "PREDICTED"), ("P", "PRELIMINARY"), ("F", "FINAL")]

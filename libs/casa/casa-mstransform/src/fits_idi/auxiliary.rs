@@ -194,7 +194,7 @@ pub(super) fn flag_commands(
     let band_flags = table.column_or_replicate::<i32>("BANDS", bands)?;
     let channels = table.column::<i32>("CHANS", 2)?;
     let flags = table.column::<i32>("PFLAGS", 4)?;
-    let reasons = table.column::<String>("REASON", 1)?;
+    let reasons = table.strings("REASON")?;
     let severities = table.column::<i32>("SEVERITY", 1)?;
     for row in 0..table.rows {
         if arrays[row] != 0 {

@@ -40,7 +40,7 @@ pub(super) fn write_geometry(
         epoch
     };
     let numbers = table.column::<i32>("NOSTA", 1)?;
-    let names = table.column::<String>("ANNAME", 1)?;
+    let names = table.strings("ANNAME")?;
     let offset = table.column::<f64>("STAXOF", 3)?;
     let positions = table.column::<f64>("STABXYZ", 3)?;
     let mounts = table.column::<i32>("MNTSTA", 1)?;
@@ -190,8 +190,8 @@ pub(super) fn write_feeds(
     let levels = table.column::<i32>("NO_LEVELS", 1)?;
     let times = table.column::<f64>("TIME", 1)?;
     let intervals = table.column::<f64>("TIME_INTERVAL", 1)?;
-    let pol_a = table.column::<String>("POLTYA", 1)?;
-    let pol_b = table.column::<String>("POLTYB", 1)?;
+    let pol_a = table.strings("POLTYA")?;
+    let pol_b = table.strings("POLTYB")?;
     let angle_a = table.column_or_replicate::<f64>("POLAA", bands)?;
     let angle_b = table.column_or_replicate::<f64>("POLAB", bands)?;
     for (row, number) in numbers.into_iter().enumerate() {
@@ -247,8 +247,8 @@ pub(super) fn write_fields(
         },
         1,
     )?;
-    let names = table.column::<String>("SOURCE", 1)?;
-    let codes = table.column::<String>("CALCODE", 1)?;
+    let names = table.strings("SOURCE")?;
+    let codes = table.strings("CALCODE")?;
     let ra = table.column::<f64>("RAEPO", 1)?;
     let dec = table.column::<f64>("DECEPO", 1)?;
     let apparent_ra = table.column::<f64>("RAAPP", 1)?;
@@ -257,7 +257,7 @@ pub(super) fn write_fields(
     let motion_dec = table.column::<f64>("PMDEC", 1)?;
     let frames = if table.has("EQUINOX") {
         table
-            .column::<String>("EQUINOX", 1)?
+            .strings("EQUINOX")?
             .into_iter()
             .map(|value| {
                 if value.contains("J2000") {
@@ -426,6 +426,10 @@ impl<'a> IdiTable<'a> {
                 .any(|column| column.name == name && column.data_type.repeat != 0),
             _ => false,
         }
+    }
+
+    pub(super) fn strings(&mut self, name: &str) -> MsResult<Vec<String>> {
+        casa_ms::fits_visibility::reader_support::fixed_text_column(self.fits, self.hdu, name)
     }
 
     pub(super) fn column<T: ReadsCol>(&mut self, name: &str, width: usize) -> MsResult<Vec<T>> {

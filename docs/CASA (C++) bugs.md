@@ -12486,3 +12486,34 @@ parameters. Its importer then uses that parameter as a zero-based MS ID.
 On the eight-antenna stock fixture with a station renamed to 300, the
 pinned reader imports `ARRAY_ID` 1 for the original array 0. Native
 import converts the one-based FITS parameter back to the original MS ID.
+
+## FITS-IDI overwrite can discard the previous MeasurementSet when conversion fails
+
+CASA 6.7.6.14 deletes a detached destination before reading the FITS-IDI
+payload when `ms.fromfitsidi(nomodify=False)` is called. Import the upstream
+`emerlin_multiuv.IDI1`, close the tool, and attempt to replace its 504-row
+MeasurementSet using a copy of the FITS primary header with no UV_DATA
+extension. The pinned reader raises and the original table disappears.
+casa-rs completes conversion in a private sibling directory and publishes the
+replacement atomically. A failed conversion leaves the original table readable.
+
+## FITS-IDI weather can treat missing data as measurements and duplicate electron values
+
+The WEATHER extension of the upstream
+`VLBA_TL015A_tl015arecor_BIN0_SRC0_1_201020T164655.idifits` fixture declares
+`WVR_H2O` and `IONOS_ELECTRON` as zero-width FITS columns. CASA 6.7.6.14
+creates output columns for both and copies values despite the missing FITS
+payload. When both inputs contain real values, the same reader attaches the
+water-vapor column handle to the electron column and writes the electron value
+to both outputs. casa-rs omits zero-width measurements and reads each defined
+column independently.
+
+## FITS-IDI channel flags can save an invalid spectral selection
+
+The pinned FITS-IDI importer appends a quote when it finishes a channel
+range and a second quote when it finishes the spectral-window expression.
+It also replaces a selected frequency setup with a wildcard when all its
+bands are flagged. On an upstream e-MERLIN file with a flag extension for
+channels 2 through 4 of all four bands in frequency setup 1, casa-rs
+persists the selection `spw='0,1,2,3:1~3'` with a single closing quote and
+explicit window IDs.

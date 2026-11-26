@@ -36,16 +36,29 @@ pub struct FitsIdiOptions {
 
 /// Convert the FITS-IDI visibility buffers and extension metadata to MSv2.
 ///
+/// Returns diagnostics for corrections requested by the correlator metadata
+/// that CASA does not apply.
+///
 /// # Errors
 /// Returns an error for an unreadable source, inconsistent visibility axes
 /// or linked identifiers, and when the destination cannot be created.
-pub fn import_fits_idi(input: &Path, output: &Path, options: FitsIdiOptions) -> MsResult<()> {
+pub fn import_fits_idi(
+    input: &Path,
+    output: &Path,
+    options: FitsIdiOptions,
+) -> MsResult<Vec<String>> {
     let mut fits = open_file(input)?;
-    if output.try_exists().map_err(invalid)? && !options.overwrite {
-        return Err(invalid(format!(
-            "FITS-IDI output already exists: {}",
-            output.display()
-        )));
+    if output.file_name().is_none() {
+        return Err(invalid("FITS-IDI output filename is missing"));
+    }
+    if output.try_exists().map_err(invalid)? {
+        if !options.overwrite {
+            return Err(invalid(format!(
+                "FITS-IDI output already exists: {}",
+                output.display()
+            )));
+        }
+        check_replacement_target(output)?;
     }
     let catalog = Catalog::read(&mut fits)?;
     let (layout, visibility, row_count) = catalog.visibility(&mut fits)?;
@@ -97,13 +110,15 @@ pub fn import_fits_idi(input: &Path, output: &Path, options: FitsIdiOptions) -> 
         write_history(&mut ms, &mut fits, uv)?;
     }
     write_observation(&mut ms, &mut fits, first, &geometry, &times)?;
-    write_optional_subtables(&mut ms, &mut fits, &catalog, &geometry, resolutions.len())?;
+    let diagnostics =
+        write_optional_subtables(&mut ms, &mut fits, &catalog, &geometry, resolutions.len())?;
     let calibration = calibration_subtables(&mut ms, &mut fits, &catalog, &geometry, &times)?;
     columns.finish(&mut ms, &staging)?;
     for (name, table) in calibration {
         table.save(TableOptions::new(staging.join(name)))?;
     }
-    publish_import(&staging, output, options.overwrite)
+    publish_import(&staging, output, options.overwrite)?;
+    Ok(diagnostics)
 }
 
 fn idi_builder(layout: &DataLayout, catalog: &Catalog) -> MeasurementSetBuilder {
@@ -152,23 +167,34 @@ fn publish_import(staging: &Path, output: &Path, overwrite: bool) -> MsResult<()
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn replace_import(staging: &Path, output: &Path) -> MsResult<()> {
-    use casa_tables::publication::{exchange_directories, lock_table_tree_for_replacement};
+fn check_replacement_target(output: &Path) -> MsResult<()> {
     if !output.symlink_metadata().map_err(invalid)?.is_dir() || !output.join("table.dat").is_file()
     {
         return Err(invalid(
             "FITS-IDI overwrite requires an existing casacore table directory",
         ));
     }
+    casa_tables::publication::check_write_access(output).map_err(invalid)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn replace_import(staging: &Path, output: &Path) -> MsResult<()> {
+    use casa_tables::publication::{exchange_directories, lock_table_tree_for_replacement};
+    check_replacement_target(output)?;
     let _guards = lock_table_tree_for_replacement(output)?;
     exchange_directories(staging, output).map_err(invalid)
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn replace_import(_staging: &Path, _output: &Path) -> MsResult<()> {
+fn check_replacement_target(_output: &Path) -> MsResult<()> {
     Err(invalid(
         "Atomic MeasurementSet replacement is unavailable on this platform",
     ))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn replace_import(_staging: &Path, output: &Path) -> MsResult<()> {
+    check_replacement_target(output)
 }
 
 fn calibration_subtables(
@@ -207,7 +233,8 @@ fn write_optional_subtables(
     catalog: &Catalog,
     geometry: &metadata::Geometry,
     spectral_windows: usize,
-) -> MsResult<()> {
+) -> MsResult<Vec<String>> {
+    let mut diagnostics = Vec::new();
     for (name, extensions) in &catalog.extensions {
         for &index in extensions {
             match name.as_str() {
@@ -223,11 +250,28 @@ fn write_optional_subtables(
                     let hdu = read_extension(fits, index)?;
                     auxiliary::weather(ms, fits, &hdu, geometry)?;
                 }
+                "MODEL_COMPS" if geometry.name == "VLBA" => {
+                    let hdu = read_extension(fits, index)?;
+                    let fft = optional_key::<i32>(&hdu, fits, "FFT_TWID")?.unwrap_or_default();
+                    let taper = optional_key::<String>(&hdu, fits, "TAPER_FN")?.unwrap_or_default();
+                    if fft != 1 {
+                        diagnostics.push(
+                            "Data needs FFT artifact corrections; this is not yet implemented."
+                                .to_owned(),
+                        );
+                    }
+                    if taper.trim() != "UNIFORM" {
+                        diagnostics.push(format!(
+                            "Data was correlated with {} taper; support for this taper is not yet implemented.",
+                            taper.trim(),
+                        ));
+                    }
+                }
                 _ => (),
             }
         }
     }
-    Ok(())
+    Ok(diagnostics)
 }
 
 fn configure_main(ms: &mut MeasurementSet) {

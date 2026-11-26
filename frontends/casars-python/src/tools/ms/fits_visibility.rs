@@ -12,6 +12,7 @@ use pyo3::prelude::*;
 
 use super::partition::{all_if_minus_one, optional_expression};
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool, table_cache_name};
+use crate::tools::{LogLine, emit};
 
 #[pymethods]
 impl PyMsTool {
@@ -61,18 +62,34 @@ impl PyMsTool {
             observation_type: obstype as i32,
             overwrite: !nomodify,
         };
-        py.detach(|| {
+        let diagnostics = py.detach(|| -> PyResult<_> {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
             let output = Path::new(msfile);
-            import_fits_idi(Path::new(fitsfile), output, options).map_err(runtime_error)?;
+            if options.overwrite && output.try_exists().map_err(runtime_error)? {
+                let path = output.canonicalize().map_err(runtime_error)?;
+                if crate::tools::table::replacement_target_is_in_use(&path) {
+                    return Err(runtime_error(format!(
+                        "Table {} cannot be deleted: table is still open in this process",
+                        path.display()
+                    )));
+                }
+            }
+            let diagnostics =
+                import_fits_idi(Path::new(fitsfile), output, options).map_err(runtime_error)?;
             *attached = Some(AttachedMs::open(
                 table_cache_name(output).map_err(runtime_error)?,
                 !nomodify,
                 lock,
                 false,
             )?);
-            Ok(true)
-        })
+            Ok(diagnostics)
+        })?;
+        let logs = diagnostics
+            .into_iter()
+            .map(LogLine::error)
+            .collect::<Vec<_>>();
+        emit(py, "casars.tools.ms", &logs)?;
+        Ok(true)
     }
 
     /// Export the current MeasurementSet view as a UVFITS file.

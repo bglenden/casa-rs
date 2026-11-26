@@ -22,7 +22,7 @@ pub mod reader_support {
     };
     pub use super::import_columns::{ImportColumns, MainRow, MainSamples, Spectra};
     pub use super::invalid;
-    pub use super::metadata::history;
+    pub use super::metadata::{fixed_text_column, history};
     pub use super::uvfits_ms::{
         column_keyword, configure_references, fits_date, insert, write_polarization,
     };

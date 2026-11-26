@@ -91,6 +91,7 @@ struct AttachedMs {
     exact_time_metadata: Option<Arc<metadata_link::MetadataLink>>,
     write_locks: BTreeMap<PathBuf, TableWriteLock>,
     read_locks: BTreeMap<PathBuf, Table>,
+    _cached_paths: Arc<Vec<PathBuf>>,
 }
 
 impl AttachedMs {
@@ -129,6 +130,11 @@ impl AttachedMs {
         };
         let plain_rows = matches!(part_names, TablePartNames::Plain(_))
             .then(|| attachment_info::PlainRows::new(&path));
+        let cached_paths = crate::tools::table::attach_table_paths(
+            std::iter::once(path.clone())
+                .chain(sources.iter().filter(|source| *source != &path).cloned())
+                .collect(),
+        );
         let mut attached = Self {
             name,
             path,
@@ -153,6 +159,7 @@ impl AttachedMs {
             exact_time_metadata: None,
             write_locks: BTreeMap::new(),
             read_locks: BTreeMap::new(),
+            _cached_paths: cached_paths,
         };
         if writable {
             for source in attached.sources.iter().chain(&physical_parts) {
