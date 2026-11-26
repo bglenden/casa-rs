@@ -14,11 +14,18 @@ use crate::storage::{
 };
 use crate::table_path::rebase_table_keywords;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReferenceRoot {
+    LockPath,
+    Plain,
+    Any,
+}
+
 /// Ordered RefTable descriptors from the view to its root. No cells are read
-/// and the returned path is the one whose process lock covers the view.
+/// and the returned path locates the backing table.
 fn reference_chain(
     mut path: PathBuf,
-    lock_probe: bool,
+    root: ReferenceRoot,
 ) -> Result<(PathBuf, Vec<RefTableDatContents>), TableError> {
     let mut seen = std::collections::HashSet::new();
     let mut chain = Vec::new();
@@ -28,8 +35,10 @@ fn reference_chain(
             // The descriptor of a plain base may be absent or incomplete
             // while its writer holds the lock. Wait at that directory and
             // defer validation to the locked open.
-            Ok(false) if lock_probe || chain.is_empty() => return Ok((path, chain)),
-            Err(_) if lock_probe => return Ok((path, chain)),
+            Ok(false) if root != ReferenceRoot::Plain || chain.is_empty() => {
+                return Ok((path, chain));
+            }
+            Err(_) if root == ReferenceRoot::LockPath => return Ok((path, chain)),
             Err(error) => return Err(error.into()),
             Ok(_) => {}
         }
@@ -57,7 +66,7 @@ fn reference_chain(
 }
 
 pub(super) fn reference_lock_path(path: &Path) -> Result<PathBuf, TableError> {
-    reference_chain(path.to_path_buf(), true).map(|(root, _)| root)
+    reference_chain(path.to_path_buf(), ReferenceRoot::LockPath).map(|(root, _)| root)
 }
 
 fn base_name<'a>(chain: &'a [RefTableDatContents], mut name: &'a str) -> &'a str {
@@ -79,7 +88,8 @@ fn base_row(chain: &[RefTableDatContents], mut row: usize) -> Result<usize, Tabl
 /// The writable physical cells of selected rows in a saved RefTable.
 #[doc(hidden)]
 pub struct ReferenceWriteProjection {
-    /// The root MAIN directory whose write lock protects these cells.
+    /// The root MAIN directory. For a concatenation, the member locks
+    /// protect its payloads.
     pub path: PathBuf,
     /// Root row numbers in the requested logical row order.
     pub rows: Vec<usize>,
@@ -289,13 +299,37 @@ impl Table {
         rows: &[usize],
         columns: &[&str],
     ) -> Result<Option<ReferenceWriteProjection>, TableError> {
+        self.reference_projection(rows, columns, ReferenceRoot::Plain)
+    }
+
+    /// Resolve saved row and column maps through to a plain or concatenated
+    /// root. Rows are in logical input order, including any repetitions.
+    /// A caller that writes cells must resolve a concatenated root to its
+    /// member tables and verify the layout under those members' write locks.
+    /// # Errors
+    /// A requested cell is outside the view or a descriptor is unreadable.
+    #[doc(hidden)]
+    pub fn reference_root_projection(
+        &self,
+        rows: &[usize],
+        columns: &[&str],
+    ) -> Result<Option<ReferenceWriteProjection>, TableError> {
+        self.reference_projection(rows, columns, ReferenceRoot::Any)
+    }
+
+    fn reference_projection(
+        &self,
+        rows: &[usize],
+        columns: &[&str],
+        root: ReferenceRoot,
+    ) -> Result<Option<ReferenceWriteProjection>, TableError> {
         let Some(source) = &self.source_path else {
             return Ok(None);
         };
         if !self.is_reference_table()? {
             return Ok(None);
         }
-        let (root, chain) = reference_chain(source.clone(), false)?;
+        let (root, chain) = reference_chain(source.clone(), root)?;
         let rows = rows
             .iter()
             .map(|&row| base_row(&chain, row))
@@ -322,7 +356,7 @@ impl Table {
             return Ok(None);
         }
         let source = self.source_path.as_ref().expect("saved reference");
-        let (root, chain) = reference_chain(source.clone(), false)?;
+        let (root, chain) = reference_chain(source.clone(), ReferenceRoot::Plain)?;
         let root_table = Table::open_metadata_only(TableOptions::new(root))?;
         let name = base_name(&chain, column);
         Ok(root_table
@@ -346,7 +380,7 @@ impl Table {
             self.require_writable_column(column)?;
         }
         let source = self.source_path.as_ref().expect("saved reference");
-        let (root, chain) = reference_chain(source.clone(), false)?;
+        let (root, chain) = reference_chain(source.clone(), ReferenceRoot::Plain)?;
         self.check_reference_base(&root)?;
         let mut base = Table::open(TableOptions::new(&root))?;
         let mut selected_columns: Vec<_> =
@@ -434,7 +468,7 @@ impl Table {
         {
             return Ok(false);
         }
-        let (root, chain) = reference_chain(destination.to_path_buf(), false)?;
+        let (root, chain) = reference_chain(destination.to_path_buf(), ReferenceRoot::Plain)?;
         self.check_reference_base(&root)?;
         let mut table = Table::open(TableOptions::new(&root))?;
         let view = self.source_path.as_deref().expect("saved reference");

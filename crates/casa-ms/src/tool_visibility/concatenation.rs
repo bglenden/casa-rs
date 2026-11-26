@@ -13,6 +13,7 @@ use crate::MsResult;
 pub(crate) struct MemberRows<'a> {
     table: &'a Table,
     rows: Vec<usize>,
+    output_positions: Vec<usize>,
 }
 
 pub(crate) fn member_rows<'a>(
@@ -22,14 +23,27 @@ pub(crate) fn member_rows<'a>(
 ) -> Vec<MemberRows<'a>> {
     if tables.is_empty()
         || rows.is_empty()
-        || !rows.is_sorted()
-        || rows.last().is_some_and(|&row| row >= total_rows)
         || tables.iter().map(Table::row_count).sum::<usize>() != total_rows
     {
         return Vec::new();
     }
-    let mut offset = 0;
+    let mut permutation = Vec::new();
+    let ordered_rows;
     let mut tail = rows;
+    if !rows.is_sorted() {
+        permutation.extend(0..rows.len());
+        permutation.sort_unstable_by_key(|&slot| rows[slot]);
+        ordered_rows = permutation
+            .iter()
+            .map(|&slot| rows[slot])
+            .collect::<Vec<_>>();
+        tail = &ordered_rows;
+    }
+    if tail.last().is_some_and(|&row| row >= total_rows) {
+        return Vec::new();
+    }
+    let mut offset = 0;
+    let mut positions = permutation.as_slice();
     let mut selected = Vec::new();
     for table in tables {
         if tail.is_empty() {
@@ -39,15 +53,38 @@ pub(crate) fn member_rows<'a>(
         let count = tail.partition_point(|&row| row < end);
         let (local, remaining) = tail.split_at(count);
         if !local.is_empty() {
+            let output_positions = if positions.is_empty() {
+                Vec::new()
+            } else {
+                let (assigned, next) = positions.split_at(count);
+                positions = next;
+                assigned.to_vec()
+            };
             selected.push(MemberRows {
                 table,
                 rows: local.iter().map(|row| row - offset).collect(),
+                output_positions,
             });
         }
         tail = remaining;
         offset = end;
     }
     selected
+}
+
+fn restore_order<T: Copy>(values: Vec<T>, members: &[MemberRows<'_>], elements: usize) -> Vec<T> {
+    if values.is_empty() || members[0].output_positions.is_empty() {
+        return values;
+    }
+    let mut restored = vec![values[0]; values.len()];
+    let positions = members
+        .iter()
+        .flat_map(|part| part.output_positions.iter().copied());
+    for (source, destination) in values.chunks_exact(elements).zip(positions) {
+        let start = destination * elements;
+        restored[start..start + elements].copy_from_slice(source);
+    }
+    restored
 }
 
 pub(crate) fn concatenate_scalars(
@@ -76,6 +113,19 @@ pub(crate) fn concatenate_scalars(
             }
         }
     }
+    if members
+        .first()
+        .is_some_and(|member| !member.output_positions.is_empty())
+    {
+        for column in values.values_mut() {
+            match column {
+                Bool(values) => *values = restore_order(std::mem::take(values), members, 1),
+                Int32(values) => *values = restore_order(std::mem::take(values), members, 1),
+                Float32(values) => *values = restore_order(std::mem::take(values), members, 1),
+                Float64(values) => *values = restore_order(std::mem::take(values), members, 1),
+            }
+        }
+    }
     Ok(values)
 }
 
@@ -83,33 +133,47 @@ pub(super) fn concatenate_arrays(
     members: &[MemberRows<'_>],
     read: impl Fn(&Table, &[usize]) -> MsResult<ArrayValue>,
 ) -> MsResult<ArrayValue> {
-    let (first, members) = members.split_first().expect("nonempty selected members");
-    let first = read(first.table, &first.rows)?;
-    if members.is_empty() {
+    let (initial_member, remaining) = members.split_first().expect("nonempty selected members");
+    let first = read(initial_member.table, &initial_member.rows)?;
+    if remaining.is_empty() && initial_member.output_positions.is_empty() {
         return Ok(first);
     }
-    let total_rows = members.iter().map(|part| part.rows.len()).sum::<usize>();
+    let total_rows = remaining.iter().map(|part| part.rows.len()).sum::<usize>();
     macro_rules! concatenate {
         ($variant:ident, $first:ident) => {{
             let mut shape = $first.shape().to_vec();
             let axis = shape.len() - 1;
+            if shape[axis] != initial_member.rows.len() {
+                return Err(input(
+                    "concatenated array row count does not match its selection",
+                ));
+            }
             let initial = mem_order(&$first)?;
+            let elements = shape[..axis].iter().product();
             let expected = (shape[axis] + total_rows)
-                .checked_mul(shape[..axis].iter().product())
+                .checked_mul(elements)
                 .ok_or_else(|| input("concatenated visibility array is too large"))?;
-            let mut values = Vec::with_capacity(expected);
-            values.extend_from_slice(initial);
-            for part in members {
+            let mut values = if initial_member.output_positions.is_empty() || initial.is_empty() {
+                Vec::with_capacity(expected)
+            } else {
+                vec![initial[0]; expected]
+            };
+            append_cells(&mut values, initial, initial_member, elements);
+            drop($first);
+            for part in remaining {
                 let ArrayValue::$variant(block) = read(part.table, &part.rows)? else {
                     return Err(input("concatenated array columns have different types"));
                 };
-                if block.ndim() != shape.len() || block.shape()[..axis] != shape[..axis] {
+                if block.ndim() != shape.len()
+                    || block.shape()[..axis] != shape[..axis]
+                    || block.shape()[axis] != part.rows.len()
+                {
                     return Err(input(
                         "concatenated array columns have different cell shapes",
                     ));
                 }
                 shape[axis] += block.shape()[axis];
-                values.extend_from_slice(mem_order(&block)?);
+                append_cells(&mut values, mem_order(&block)?, part, elements);
             }
             Ok(ArrayValue::$variant(shaped(&shape, values)?))
         }};
@@ -119,7 +183,24 @@ pub(super) fn concatenate_arrays(
         ArrayValue::Float32(values) => concatenate!(Float32, values),
         ArrayValue::Float64(values) => concatenate!(Float64, values),
         ArrayValue::Complex32(values) => concatenate!(Complex32, values),
+        ArrayValue::Complex64(values) => concatenate!(Complex64, values),
         _ => Err(input("unsupported concatenated array column type")),
+    }
+}
+
+fn append_cells<T: Copy>(
+    output: &mut Vec<T>,
+    cells: &[T],
+    member: &MemberRows<'_>,
+    elements: usize,
+) {
+    if member.output_positions.is_empty() {
+        output.extend_from_slice(cells);
+    } else if elements != 0 {
+        for (cell, &position) in cells.chunks_exact(elements).zip(&member.output_positions) {
+            let first = position * elements;
+            output[first..first + elements].copy_from_slice(cell);
+        }
     }
 }
 

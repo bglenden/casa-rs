@@ -12307,6 +12307,24 @@ The second listing has an empty header after the file's only `END` card.
 Casa-rs emits one listing for the stored HDU, then reports end of file
 (#1030).
 
+## `ms.putdata()` can assign reordered Multi-MS view records to the wrong rows
+
+In CASA 6.7.6.14 a persisted reference across two Multi-MS members can
+return visibilities in the saved row order through `getdata()`, then assign
+an edited cube to different physical rows through `putdata()`. With saved
+rows `[43, 2, 30, 1, 43]` on two 30-row members, the pinned `putdata()`
+places the third and first logical inputs in rows 1 and 2 of the first
+member. Both inputs belong to the second member. Opening with automatic
+or permanent locking, or reading the cube before the write, gives the same
+result. The monotone view puts the values in the expected cells.
+
+`ms::putdata` advances its visibility iterator and passes consecutive
+sections of the input cube to `putitem`. The writer's iterator can visit the
+rows in a different order than `getdata()` exposed. casa-rs writes each cube
+position through the saved reference to its physical cell. The last logical
+position wins when multiple positions address the same physical cell, as in
+the CASA monotone case.
+
 
 ## `oldstatwt()` can crash, bypass read-only access and overwrite correlation flags
 
