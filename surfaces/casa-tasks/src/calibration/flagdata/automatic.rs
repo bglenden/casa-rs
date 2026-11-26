@@ -3,8 +3,8 @@
 
 use crate::{TaskFailure, TaskInvocation};
 use casa_contracts::{EmptyArrayType, NumpyScalarType, ParameterValue};
+use casa_core::quanta::Quantity;
 use casa_ms::FlagDataMode;
-use casa_types::quanta::Quantity;
 
 use super::is_calibration_table;
 

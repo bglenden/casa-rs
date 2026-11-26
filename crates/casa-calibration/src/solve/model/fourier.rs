@@ -13,6 +13,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType};
+use casa_core::measures::MeasFrame;
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use casa_images::PagedImage;
 use casa_imaging_model::GridFtProjection;
 use casa_imaging_operator::{
@@ -24,10 +28,6 @@ use casa_imaging_operator::{
 use casa_imaging_runtime::Reservation;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{MeasurementSet, convert_frequency_to_frame};
-use casa_types::measures::MeasFrame;
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis};
 
 use super::{FocusSample, GainSolveError, SelectedSolveRow, model_error};

@@ -9,7 +9,7 @@ use casa_coordinates::{
     CoordinateError, CoordinateSystem, FitsHeader, FitsValue, ProjectionType,
     fits::{coordinate_util::fallback_fits_linear_coordinates, from_fits_header},
 };
-use casa_types::ArrayD;
+use casa_core::ArrayD;
 use fitsio::{FitsFile, hdu::HduInfo, images::ImageType as FitsImageType};
 use ndarray::{IxDyn, ShapeBuilder};
 
@@ -199,7 +199,7 @@ impl PrimaryHdu {
 
     pub(crate) fn beam_set(
         &mut self,
-    ) -> Result<Option<(ImageBeamSet, casa_types::RecordValue)>, ImageError> {
+    ) -> Result<Option<(ImageBeamSet, casa_core::RecordValue)>, ImageError> {
         beams::read_beams(self)
     }
 }

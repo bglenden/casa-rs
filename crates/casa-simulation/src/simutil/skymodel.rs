@@ -67,8 +67,8 @@ use casa_components::{ComponentError, ComponentListError};
 use casa_coordinates::{
     CoordinateError, CoordinateSystem, CoordinateType, ObsInfo, Projection, ProjectionType,
 };
+use casa_core::measures::epoch::{EpochRef, MEpoch};
 use casa_images::{AnyPagedImage, ImageError, PagedImage};
-use casa_types::measures::epoch::{EpochRef, MEpoch};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use thiserror::Error;
 
@@ -232,7 +232,7 @@ pub(crate) fn zeros(shape: &[usize]) -> ArrayD<f32> {
 mod frame_tests {
     use super::*;
     use casa_coordinates::DirectionCoordinate;
-    use casa_types::measures::direction::DirectionRef;
+    use casa_core::measures::direction::DirectionRef;
 
     #[test]
     fn sky_model_refuses_a_distinct_direction_conversion_frame() {
@@ -256,7 +256,7 @@ mod frame_tests {
     #[test]
     fn a_spectral_coordinate_with_no_pixel_axis_is_absent_from_the_sky_grid() {
         use casa_coordinates::SpectralCoordinate;
-        use casa_types::measures::frequency::FrequencyRef;
+        use casa_core::measures::frequency::FrequencyRef;
 
         let mut coordinates = CoordinateSystem::new();
         coordinates.add_coordinate(SpectralCoordinate::new(

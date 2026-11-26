@@ -3,10 +3,10 @@
 
 use std::collections::BTreeMap;
 
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::epoch::{EpochRef, MEpoch};
 use casa_ms::MeasurementSet;
 use casa_ms::derived::engine::{MsCalEngine, resolve_direction_reference_selected};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::epoch::{EpochRef, MEpoch};
 
 use super::MsAxis;
 

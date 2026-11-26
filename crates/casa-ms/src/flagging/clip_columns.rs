@@ -4,8 +4,8 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
+use casa_core::{ArrayValue, Complex32, Complex64, PrimitiveType};
 use casa_tables::Table;
-use casa_types::{ArrayValue, Complex32, Complex64, PrimitiveType};
 use ndarray::{ArrayD, IxDyn};
 
 use super::clip_average::{ChannelBins, ChannelReduction};

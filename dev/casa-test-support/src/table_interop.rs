@@ -2,8 +2,8 @@
 use crate::TableOracle;
 use std::path::Path;
 
+use casa_core::{RecordValue, Value};
 use casa_tables::{ColumnBinding, EndianFormat, Table, TableError, TableOptions, TableSchema};
-use casa_types::{RecordValue, Value};
 
 use crate::CppTableFixture;
 
@@ -480,7 +480,7 @@ fn build_table_from_fixture(fixture: &TableFixture) -> Result<Table, TableError>
 
     // Copy table keywords
     for field in fixture.table_keywords.fields() {
-        table.keywords_mut().push(casa_types::RecordField::new(
+        table.keywords_mut().push(casa_core::RecordField::new(
             field.name.clone(),
             field.value.clone(),
         ));
@@ -629,7 +629,7 @@ fn values_equal(a: &Value, b: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use casa_types::{PrimitiveType, RecordField, ScalarValue};
+    use casa_core::{PrimitiveType, RecordField, ScalarValue};
 
     fn scalar_fixture() -> TableFixture {
         let schema = TableSchema::new(vec![

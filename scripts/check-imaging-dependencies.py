@@ -595,19 +595,24 @@ def rule_violations(rule: dict) -> set[str]:
     return violating
 
 
-def source_rules(policy: dict) -> list[dict]:
+def source_rules(policy: dict, metadata: dict) -> list[dict]:
     """The policy's source rules, a `"definitional"` root naming the
     definitional packages' sources."""
-    definitional = [f"crates/{name}/src" for name in policy["definitional_packages"]]
+    names = set(policy["definitional_packages"])
+    definitional = [
+        str((Path(package["manifest_path"]).parent / "src").relative_to(REPO_ROOT))
+        for package in metadata["packages"]
+        if package["name"] in names
+    ]
     return [
         {**rule, "roots": definitional} if rule["roots"] == "definitional" else rule
         for rule in policy["source_rules"]
     ]
 
 
-def check_source_rules(policy: dict) -> list[str]:
+def check_source_rules(policy: dict, metadata: dict) -> list[str]:
     failures: list[str] = []
-    for rule in source_rules(policy):
+    for rule in source_rules(policy, metadata):
         grandfathered = set(rule.get("grandfathered", []))
         violating = rule_violations(rule)
         for path in sorted(violating - grandfathered):
@@ -620,8 +625,8 @@ def check_source_rules(policy: dict) -> list[str]:
     return failures
 
 
-def print_grandfather(policy: dict) -> None:
-    for rule in source_rules(policy):
+def print_grandfather(policy: dict, metadata: dict) -> None:
+    for rule in source_rules(policy, metadata):
         print(json.dumps({"id": rule["id"], "grandfathered": sorted(rule_violations(rule))}, indent=1))
 
 
@@ -633,10 +638,11 @@ def main() -> int:
     if args.self_test:
         return self_test()
     policy = json.loads(POLICY.read_text(encoding="utf-8"))
+    metadata = cargo_metadata()
     if args.grandfather:
-        print_grandfather(policy)
+        print_grandfather(policy, metadata)
         return 0
-    failures = check_layering(policy, cargo_metadata()) + check_source_rules(policy)
+    failures = check_layering(policy, metadata) + check_source_rules(policy, metadata)
     for failure in failures:
         print(f"imaging-dependencies: {failure}", file=sys.stderr)
     if failures:

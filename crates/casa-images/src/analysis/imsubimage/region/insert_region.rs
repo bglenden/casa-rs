@@ -3,7 +3,7 @@
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate,
 };
-use casa_types::measures::{MeasFrame, direction::MDirection};
+use casa_core::measures::{MeasFrame, direction::MDirection};
 
 use crate::ImageError;
 

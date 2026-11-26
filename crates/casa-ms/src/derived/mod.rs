@@ -4,7 +4,7 @@
 //!
 //! The [`engine::MsCalEngine`] caches antenna positions, field directions, and
 //! the observatory position extracted from an MS, then computes derived
-//! quantities on demand using the `casa_types::measures` conversion
+//! quantities on demand using the `casa_core::measures` conversion
 //! machinery.
 //!
 //! Cf. C++ `DerivedMC::MSCalEngine`, `DerivedColumn`.
@@ -12,8 +12,8 @@
 pub mod columns;
 pub mod engine;
 
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::quanta::{Quantity, Unit};
 
 /// Parse two angular quantities with an optional direction frame, as CASA
 /// tasks accept for an explicit phase center.

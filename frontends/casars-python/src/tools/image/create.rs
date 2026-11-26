@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 
 use casa_components::ComponentList;
 use casa_coordinates::CoordinateSystem;
+use casa_core::{RecordValue, Value};
 use casa_images::{ComponentListImage, ImagePixelType};
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{TableWriteLock, lexical_absolute};
-use casa_types::{RecordValue, Value};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 

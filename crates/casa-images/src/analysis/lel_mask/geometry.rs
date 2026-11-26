@@ -5,8 +5,8 @@ use std::any::Any;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::CoordinateSystem;
+use casa_core::{ArrayD, Complex64, RecordValue};
 use casa_lattices::{Lattice, LatticeError};
-use casa_types::{ArrayD, Complex64, RecordValue};
 
 use crate::expr_parser::{HashMapResolver, referenced_images, subimage_mask_builder};
 use crate::fits_read::FitsToolImport;

@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use casa_types::measures::{MPosition, MeasuresProvider};
+use casa_core::measures::{MPosition, MeasuresProvider};
 
 use crate::SessionResources;
 use crate::simobserve::SimobserveError;

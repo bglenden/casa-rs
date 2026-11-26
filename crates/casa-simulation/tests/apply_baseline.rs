@@ -34,8 +34,8 @@ fn supplied_baseline_tables_match_casa() {
 
 #[test]
 fn baseline_inverse_scales_generated_additive_noise_only() {
+    use casa_core::{ArrayValue, Complex32, ScalarValue};
     use casa_tables::{Table, TableOptions};
-    use casa_types::{ArrayValue, Complex32, ScalarValue};
     let directory = tempfile::tempdir().unwrap();
     let case = serde_json::json!({"kind": "M Mueller", "interp": "linear",
         "input_fixture": "sm_baseline/m_mueller"});

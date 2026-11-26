@@ -23,7 +23,7 @@
 
 use std::{collections::BTreeSet, fmt, str::FromStr};
 
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::quanta::{Quantity, Unit};
 use serde_json::{Map, Value, json};
 
 use casa_imaging_model::Projection;

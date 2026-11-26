@@ -8,11 +8,11 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use casa_core::measures::{MPosition, MeasuresProvider, direction::MDirection};
 use casa_imaging_runtime::charge_process_caches;
 use casa_simulation::{
     SessionResources, simobserve::SimobserveError, simutil::analysis::ImageStatistics,
 };
-use casa_types::measures::{MPosition, MeasuresProvider, direction::MDirection};
 
 use super::failure;
 use super::{document, ephemeris, image, observation};

@@ -4,18 +4,18 @@
 use std::f64::consts::{PI, TAU};
 use std::sync::{Arc, Mutex};
 
-use casa_measures_data::PlanetaryEphemeris;
+use casa_core::measures::baseline::{baseline_rotation, j2000_baseline_uvw};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::epoch::EpochRef;
+use casa_core::measures::frame::MeasFrame;
+use casa_core::measures::position::MPosition;
+use casa_core::measures::{MeasureError, MeasuresProvider};
+use casa_core::quanta::{Quantity, Unit, constants};
+use casa_core::{ScalarValue, Value};
+use casa_measures::PlanetaryEphemeris;
 use casa_tables::taql::ast::Expr;
 use casa_tables::taql::eval::{ArrayValue, EvalContext, ExprValue, eval_constant};
 use casa_tables::taql::{BoundRowFunction, IndexStyle, TaqlError, UvwWavelengthScale};
-use casa_types::measures::baseline::{baseline_rotation, j2000_baseline_uvw};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::epoch::EpochRef;
-use casa_types::measures::frame::MeasFrame;
-use casa_types::measures::position::MPosition;
-use casa_types::measures::{MeasureError, MeasuresProvider};
-use casa_types::quanta::{Quantity, Unit, constants};
-use casa_types::{ScalarValue, Value};
 
 use super::taql_selection::taql_error;
 use crate::subtables::SubTable;

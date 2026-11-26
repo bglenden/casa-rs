@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_core::measures::direction::MDirection;
 use casa_tables::{RequiredScalarColumnValues, Table};
-use casa_types::measures::direction::MDirection;
 
 use crate::{MsError, MsResult};
 

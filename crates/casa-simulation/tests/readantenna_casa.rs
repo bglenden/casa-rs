@@ -30,11 +30,11 @@
 
 use std::path::{Path, PathBuf};
 
+use casa_core::measures::{MPosition, MeasuresProvider};
 use casa_simulation::readantenna::{
     AntennaConfigFile, ObservatorySource, ReadAntennaError, geodesy, read_antenna_config,
     read_antenna_config_str,
 };
-use casa_types::measures::{MPosition, MeasuresProvider};
 use serde_json::Value;
 
 #[path = "support/casa_observatories.rs"]

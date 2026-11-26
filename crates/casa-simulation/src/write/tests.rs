@@ -22,13 +22,13 @@ use casa_coordinates::{
     CoordinateSystem as ImageCoordinates, DirectionCoordinate, Projection, ProjectionType,
     SpectralCoordinate, StokesCoordinate, StokesType,
 };
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_images::PagedImage;
 use casa_imaging_runtime::pass::BackendChoice;
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_test_support::ms_digest::measurement_set_manifest;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::{EpochRef, MEpoch};
 use ndarray::{ArrayD, IxDyn};
 
 use super::data::DataStage;

@@ -5,10 +5,10 @@
 
 #![cfg(all(feature = "performance-tests", has_casacore_cpp))]
 
-use casa_tables::table_measures::*;
+use casa_core::*;
+use casa_measures::table_measures::*;
 use casa_tables::{ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
 use casa_test_support::table_measures_interop::*;
-use casa_types::*;
 use std::time::Instant;
 
 const NROWS: usize = 10_000;

@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, Write};
 
 use casa_coordinates::StokesType;
-use casa_types::{ArrayValue, RecordValue, Value};
+use casa_core::{ArrayValue, RecordValue, Value};
 
 use crate::selection::{ResolvedMsSelection, resolve_casa_selection_with_system_budget};
 use crate::tool_iteration::ToolIteration;

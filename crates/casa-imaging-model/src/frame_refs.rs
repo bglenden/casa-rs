@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The `casa-types` measures frame of each imaging frame.
 
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::epoch::EpochRef;
-use casa_types::measures::frequency::FrequencyRef;
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::epoch::EpochRef;
+use casa_core::measures::frequency::FrequencyRef;
 
 use crate::geometry::{DirectionFrame, FrequencyFrame, TimeScale};
 

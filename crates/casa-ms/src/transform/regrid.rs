@@ -19,13 +19,13 @@ pub use tool_grid::{
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use casa_core::measures::MeasFrame;
+use casa_core::measures::doppler::{DopplerRef, MDoppler};
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::frequency_conversion::PreparedFrequencyConversion;
+use casa_core::measures::radial_velocity::RadialVelocityRef;
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_tables::{RequiredScalarColumnValues, Table, TableError, TableOptions};
-use casa_types::measures::MeasFrame;
-use casa_types::measures::doppler::{DopplerRef, MDoppler};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::frequency_conversion::PreparedFrequencyConversion;
-use casa_types::measures::radial_velocity::RadialVelocityRef;
-use casa_types::{ArrayValue, ScalarValue, Value};
 use ndarray::{Array1, Ix2, Ix3};
 
 use crate::MeasurementSet;

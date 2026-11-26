@@ -4,8 +4,8 @@
 
 use std::{collections::BTreeSet, sync::Arc};
 
+use casa_core::Correlation;
 use casa_observation::PartitionId;
-use casa_types::Correlation;
 use thiserror::Error;
 
 mod uv;

@@ -4,9 +4,9 @@
 
 use std::sync::Arc;
 
+use casa_core::measures::MeasuresProvider;
 use casa_imaging_model::{CompiledProblem, GeometryPlan};
 use casa_imaging_runtime::{Admitted, RunSummary, run_phase};
-use casa_types::measures::MeasuresProvider;
 
 use super::NativeError;
 use crate::ApplicationRuntime;

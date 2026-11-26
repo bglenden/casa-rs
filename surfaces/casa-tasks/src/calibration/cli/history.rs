@@ -5,8 +5,8 @@ use std::path::Path;
 
 use crate::TaskInvocation;
 use casa_contracts::{ParameterValue, python_repr};
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 pub(super) fn record_applycal(task: &TaskInvocation<'_>, vis: &Path) {
     let _phase = casa_calibration::timing::Phase::start("applycal_history");

@@ -7,11 +7,11 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::Path;
 
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_ms::MeasurementSet;
 use casa_ms::selection::ChannelRange;
 use casa_ms::subtables::{MsAntenna, MsField, MsSpectralWindow};
 use casa_tables::{Table, TableOptions, add_directory};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use serde::Serialize;
 use tempfile::NamedTempFile;
 

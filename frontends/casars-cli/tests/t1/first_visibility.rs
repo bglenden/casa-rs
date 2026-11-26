@@ -13,11 +13,11 @@
 //! partition key has no array), so the survey reads their arrays.
 
 use casa_coordinates::CoordinateModel;
+use casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_images::PagedImage;
+use casa_measures::table_measures::{MeasureType, TableMeasDesc};
 use casa_ms::{MeasurementSet, SubtableId};
-use casa_tables::table_measures::{MeasureType, TableMeasDesc};
 use casa_tables::{ColumnSchema, RowRange};
-use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use serde_json::json;
 
 use super::fixture::{Component, Observation, PHASE_CENTER_RAD, Setup};

@@ -5,9 +5,9 @@
 //!
 //! Cf. C++ `MSAntennaColumns::positionMeas()`.
 
+use casa_core::ArrayValue;
+use casa_core::measures::MPosition;
 use casa_tables::Table;
-use casa_types::ArrayValue;
-use casa_types::measures::MPosition;
 
 use crate::error::{MsError, MsResult};
 use crate::subtables::get_array;
@@ -60,7 +60,7 @@ mod tests {
     use crate::column_def::build_table_schema;
     use crate::schema;
     use crate::subtables::antenna::MsAntennaMut;
-    use casa_types::measures::PositionRef;
+    use casa_core::measures::PositionRef;
 
     #[test]
     fn read_position_as_mposition() {

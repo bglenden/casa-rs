@@ -66,8 +66,7 @@
   "casars-python": "frontend"
  },
  "definitional_packages": [
-  "casa-values",
-  "casa-types",
+  "casa-core",
   "casa-coordinates"
  ],
  "native_package_workspace_dependencies": {
@@ -138,6 +137,7 @@
    "casa-imaging-runtime",
    "casa-imaging-singledish",
    "casa-lattices",
+   "casa-measures",
    "casa-ms",
    "casa-numerics",
    "casa-tables"
@@ -215,32 +215,31 @@
     "crates/casa-imaging-metal/src",
     "crates/casa-imaging-application/src",
     "crates/casa-simulation/src",
-    "crates/casa-fft/src",
+    "libs/casacore/casa-fft/src",
     "crates/casa-ms/src",
-    "crates/casa-tables/src",
+    "libs/casacore/casa-tables/src",
     "crates/casa-images/src",
-    "crates/casa-coordinates/src",
-    "crates/casa-lattices/src",
-    "crates/casa-numerics/src",
-    "crates/casa-types/src",
-    "crates/casa-values/src",
-    "crates/casa-aipsio/src",
-    "crates/casa-measures-data/src"
+    "libs/casacore/casa-coordinates/src",
+    "libs/casacore/casa-lattices/src",
+    "libs/casacore/casa-numerics/src",
+    "libs/casacore/casa-core/src",
+    "libs/casacore/casa-aipsio/src",
+    "libs/casacore/casa-measures/src"
    ],
    "exclude_roots": [
-    "crates/casa-tables/src/bin"
+    "libs/casacore/casa-tables/src/bin"
    ],
    "extensions": [
     ".rs"
    ],
    "regex": "\\benv::var(?:_os)?\\s*\\(|\\bstd::env\\b(?!::current_dir\\b)",
    "grandfathered": [
-    "crates/casa-measures-data/src/lib.rs"
+    "libs/casacore/casa-measures/src/lib.rs"
    ]
   },
   {
    "id": "no-eprintln-in-imaging-crates",
-   "message": "library crates on the imaging path emit through tracing, never eprintln! (ADR-0016, #658); casa-logging, the tracing sink itself, is not on the list",
+   "message": "library crates on the imaging path emit through tracing, never eprintln! (ADR-0016, #658); the log sink is an output boundary",
    "roots": [
     "crates/casa-imaging-model/src",
     "crates/casa-imaging-operator/src",
@@ -251,20 +250,20 @@
     "crates/casa-imaging-metal/src",
     "crates/casa-imaging-application/src",
     "crates/casa-simulation/src",
-    "crates/casa-fft/src",
+    "libs/casacore/casa-fft/src",
     "crates/casa-ms/src",
-    "crates/casa-tables/src",
+    "libs/casacore/casa-tables/src",
     "crates/casa-images/src",
-    "crates/casa-coordinates/src",
-    "crates/casa-lattices/src",
-    "crates/casa-numerics/src",
-    "crates/casa-types/src",
-    "crates/casa-values/src",
-    "crates/casa-aipsio/src",
-    "crates/casa-measures-data/src"
+    "libs/casacore/casa-coordinates/src",
+    "libs/casacore/casa-lattices/src",
+    "libs/casacore/casa-numerics/src",
+    "libs/casacore/casa-core/src",
+    "libs/casacore/casa-aipsio/src",
+    "libs/casacore/casa-measures/src"
    ],
    "exclude_roots": [
-    "crates/casa-tables/src/bin"
+    "libs/casacore/casa-tables/src/bin",
+    "libs/casacore/casa-tables/src/log_table.rs"
    ],
    "extensions": [
     ".rs"

@@ -7,7 +7,7 @@
 
 use super::super::casa_regridded_image_axis_hz;
 use super::*;
-use casa_types::measures::doppler::DopplerRef;
+use casa_core::measures::doppler::DopplerRef;
 
 /// `refim_point.ms` spectral window 0 as its `CHAN_FREQ` stores it.
 fn ascending_hz() -> Vec<f64> {

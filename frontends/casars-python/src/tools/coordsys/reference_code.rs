@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType, DirectionCoordinate, ObsInfo};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::measures::{MPosition, MeasFrame};
-use casa_types::{ArrayValue, ScalarValue, Value};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::measures::{MPosition, MeasFrame};
+use casa_core::{ArrayValue, ScalarValue, Value};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::PyBool;

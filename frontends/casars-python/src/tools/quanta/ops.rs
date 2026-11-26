@@ -8,11 +8,11 @@
 //! `getvalue`, `getunit` and `convert` also take quantity records holding
 //! arrays. A failure CASA raises is a `RuntimeError` with CASA's message.
 
-use casa_types::quanta::casacore;
-use casa_types::quanta::format::{
+use casa_core::quanta::casacore;
+use casa_core::quanta::format::{
     CalendarDate, angle_format, format_angle, format_time, time_format,
 };
-use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim, UnitVal, unique_prefix_index};
+use casa_core::quanta::{Dimension, Quantity, Unit, UnitDim, UnitVal, unique_prefix_index};
 
 use crate::convert::holder::frequency_hz;
 use crate::convert::quantum::{self, Quantum, quantum_holder};
@@ -34,7 +34,7 @@ fn record(quantity: &Quantity) -> CasaValue {
 
 /// Define a user unit in casacore's process-wide unit registry.
 pub(super) fn define(name: &str, value: &Variant) -> ConvertResult<CasaValue> {
-    casa_types::quanta::registry::global_registry().define_user(name, "User defined", || {
+    casa_core::quanta::registry::global_registry().define_user(name, "User defined", || {
         let quantity = quantity(value)?;
         let unit = quantity.unit().val();
         Ok::<_, ConvertError>(UnitVal::new(quantity.value() * unit.factor, unit.dim))
@@ -478,7 +478,7 @@ pub(super) fn map(v: &str) -> CasaValue {
     let Some(sections) = map_sections(v) else {
         return CasaValue::Text("Unknown mapping requested\n".to_string());
     };
-    let registry = casa_types::quanta::registry::global_registry();
+    let registry = casa_core::quanta::registry::global_registry();
     let mut out = String::new();
     for &section in sections {
         out.push_str(&format!("== {section} ====\n"));
@@ -499,7 +499,7 @@ pub(super) fn maprec(v: &str) -> CasaValue {
             CasaValue::Text("Unknown mapping requested".to_string()),
         )]);
     };
-    let registry = casa_types::quanta::registry::global_registry();
+    let registry = casa_core::quanta::registry::global_registry();
     let mut fields = std::collections::BTreeMap::new();
     for &section in sections {
         let entries = registry.map_section(section);

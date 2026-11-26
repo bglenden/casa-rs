@@ -5,10 +5,10 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::TaskFailure;
+use casa_core::measures::frame::MeasFrame;
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::quanta::casacore::stream_double_precision;
 use casa_ms::{MeasurementSet, MsSelection, ResolvedMsSelection};
-use casa_types::measures::frame::MeasFrame;
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::quanta::casacore::stream_double_precision;
 
 use super::{CalibratorSpectrum, ManualFlux, MsCalEngine, execution};
 use casa_calibration::ft::image::ImageModel;

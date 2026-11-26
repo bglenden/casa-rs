@@ -5,8 +5,8 @@
 //!
 //! Cf. C++ `MSPolarizationColumns`.
 
+use casa_core::{ArrayValue, ScalarValue};
 use casa_tables::Table;
-use casa_types::{ArrayValue, ScalarValue};
 
 use crate::column_def::ColumnDef;
 use crate::error::{MsError, MsResult};
@@ -138,7 +138,7 @@ fn extract_i32_vec(arr: &ArrayValue) -> MsResult<Vec<i32>> {
 mod tests {
     use super::*;
     use crate::column_def::build_table_schema;
-    use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+    use casa_core::{RecordField, RecordValue, ScalarValue, Value};
     use ndarray::ArrayD;
 
     #[test]

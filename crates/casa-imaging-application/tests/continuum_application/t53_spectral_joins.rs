@@ -255,13 +255,13 @@ fn optical_cube_publishes_only_the_original_table_and_extrapolates_remaining_pla
         .expect("published spectral axis");
     let record = coordinates.to_record();
     let spectral = record.get("spectral2").expect("spectral coordinate record");
-    let casa_types::Value::Record(spectral) = spectral else {
+    let casa_core::Value::Record(spectral) = spectral else {
         panic!("spectral coordinate record");
     };
-    let Some(casa_types::Value::Record(table)) = spectral.get("tabular") else {
+    let Some(casa_core::Value::Record(table)) = spectral.get("tabular") else {
         panic!("the published frequency axis retains its CASA table");
     };
-    let Some(casa_types::Value::Array(casa_types::ArrayValue::Float64(values))) =
+    let Some(casa_core::Value::Array(casa_core::ArrayValue::Float64(values))) =
         table.get("worldvalues")
     else {
         panic!("the spectral coordinate contains its frequency values");

@@ -10,8 +10,8 @@ use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate, Projection,
     ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
 };
+use casa_core::measures::{direction::DirectionRef, frequency::FrequencyRef};
 use casa_images::{AnyPagedImage, ImagePixel, PagedImage};
-use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
 use ndarray::{ArrayD, IxDyn};
 use serde_json::{Value, json};
 

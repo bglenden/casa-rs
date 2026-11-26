@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Display the coordinate frame in the casacore stream format.
 
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::radial_velocity::RadialVelocityRef;
-use casa_types::measures::{EpochRef, MeasFrame, MeasureError, MjdHighPrec};
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::radial_velocity::RadialVelocityRef;
+use casa_core::measures::{EpochRef, MeasFrame, MeasureError, MjdHighPrec};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 

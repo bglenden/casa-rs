@@ -13,13 +13,13 @@ mod predict_support;
 
 use std::path::Path;
 
+use casa_core::measures::{EpochRef, MEpoch};
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_simulation::{
     CasaOutcome, NoiseSpec, PredictionOptions, Simulator, SimulatorOptions, SimulatorResult,
     VoltagePatternSpec,
 };
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::{EpochRef, MEpoch};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use predict_support::{
     CHANNELS, REFERENCE_MJD, bits, data, extended_model, predict_spec, read_main, resources, scan,
@@ -50,8 +50,8 @@ fn simple_noise(sigma_jy: f64) -> NoiseSpec {
 
 #[test]
 fn openfromms_accepts_distinct_channel_and_reference_frequency_frames() {
+    use casa_measures::table_measures::{MeasureType, TableMeasDesc};
     use casa_ms::{MeasurementSet, SubtableId};
-    use casa_tables::table_measures::{MeasureType, TableMeasDesc};
 
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("mixed-frames.ms");
@@ -73,8 +73,8 @@ fn openfromms_accepts_distinct_channel_and_reference_frequency_frames() {
 
 #[test]
 fn openfromms_uses_the_measurement_set_frequency_code_mapping() {
+    use casa_measures::table_measures::{MeasureType, TableMeasDesc};
     use casa_ms::{MeasurementSet, SubtableId};
-    use casa_tables::table_measures::{MeasureType, TableMeasDesc};
 
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("remapped-frame.ms");
@@ -479,8 +479,8 @@ fn write_points(path: &Path) {
     use casa_components::{
         ComponentList, ComponentShape, Flux, SkyComponent, SpectralKind, SpectralModel,
     };
-    use casa_types::measures::direction::{DirectionRef, MDirection};
-    use casa_types::measures::frequency::{FrequencyRef, MFrequency};
+    use casa_core::measures::direction::{DirectionRef, MDirection};
+    use casa_core::measures::frequency::{FrequencyRef, MFrequency};
     let mut list = ComponentList::new();
     for (north_rad, flux) in [(0.0, 1.0), (1.5e-5, 0.5)] {
         list.push(SkyComponent::new(
@@ -549,8 +549,8 @@ fn components_under_the_beam_and_total_power_predict_after_openfromms_as_before(
 /// POINTING while the visibility phase remains on FIELD.
 #[test]
 fn a_moved_pointing_is_phased_on_its_field_after_openfromms() {
+    use casa_core::measures::direction::{DirectionRef, MDirection};
     use casa_simulation::{ObserveManySpec, Pointing, PredictSpec, VoltagePatternSpec};
-    use casa_types::measures::direction::{DirectionRef, MDirection};
     let directory = tempfile::tempdir().expect("temporary directory");
     let point = &directory.path().join("point.cl");
     write_point_list(point, predict_support::CENTRE_RAD, 1.0);
@@ -639,7 +639,7 @@ fn add_scratch_columns(path: &Path) {
             .add_column(
                 casa_tables::ColumnSchema::array_variable(
                     name,
-                    casa_types::PrimitiveType::Complex32,
+                    casa_core::PrimitiveType::Complex32,
                     Some(2),
                 ),
                 None,
@@ -670,7 +670,7 @@ fn add_scratch_columns(path: &Path) {
 }
 
 /// MAIN's `column` of `path`, each cell `[channel][correlation]`.
-fn read_column(path: &Path, column: &str) -> Vec<Vec<casa_types::Complex32>> {
+fn read_column(path: &Path, column: &str) -> Vec<Vec<casa_core::Complex32>> {
     use casa_ms::MeasurementSet;
     use casa_ms::columns::data_columns::DataColumn;
     let ms = MeasurementSet::open(path).expect("open");
@@ -719,7 +719,7 @@ fn the_scratch_columns_follow_data_and_none_is_created() {
         bits(&read_column(&predicted, "CORRECTED_DATA")),
         bits(&data)
     );
-    let one = casa_types::Complex32::new(1.0, 0.0);
+    let one = casa_core::Complex32::new(1.0, 0.0);
     assert!(
         read_column(&predicted, "MODEL_DATA")
             .iter()

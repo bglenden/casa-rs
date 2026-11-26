@@ -6,9 +6,9 @@
 
 use std::collections::HashMap;
 
+use casa_core::measures::MjdHighPrec;
 use casa_imaging_runtime::pass::SourceError;
 use casa_observation::{BatchBuffers, ReadEvent};
-use casa_types::measures::MjdHighPrec;
 
 use super::StoreRoute;
 use super::requests;

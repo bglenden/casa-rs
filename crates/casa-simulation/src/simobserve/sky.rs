@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use casa_components::ComponentList;
-use casa_types::quanta::Quantity;
+use casa_core::quanta::Quantity;
 
 use super::antennas::Array;
 use super::{Run, SimobserveError, entry_exists, exists, make_way, python, remove};

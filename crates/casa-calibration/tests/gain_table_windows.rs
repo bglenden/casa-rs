@@ -15,9 +15,9 @@ use casa_calibration::{
     GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest, GainType,
     RefAntSelector, solve_calibration,
 };
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_ms::selection::MsSelection;
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use tempfile::TempDir;
 
 /// One window row: the columns a gain table collapses.

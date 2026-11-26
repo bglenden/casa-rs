@@ -4,8 +4,8 @@
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{CoordinateModel, CoordinateType, StokesType};
-use casa_types::ArrayD;
-use casa_types::quanta::{
+use casa_core::ArrayD;
+use casa_core::quanta::{
     Quantity,
     casacore::{casacore_unit, get_conformant_value},
 };
@@ -38,8 +38,8 @@ struct PolInputs {
     mask_override: Option<ArrayD<bool>>,
     ref_coords: casa_coordinates::CoordinateSystem,
     ref_image_info: crate::ImageInfo,
-    ref_misc_info: casa_types::RecordValue,
-    ref_legacy_coords: Option<casa_types::RecordValue>,
+    ref_misc_info: casa_core::RecordValue,
+    ref_legacy_coords: Option<casa_core::RecordValue>,
     out_shape: Vec<usize>,
     sel: ImmathSelection,
 }

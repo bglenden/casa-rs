@@ -3,7 +3,7 @@
 
 use super::*;
 use casa_coordinates::LinearCoordinate;
-use casa_types::measures::{EpochRef, MEpoch};
+use casa_core::measures::{EpochRef, MEpoch};
 
 #[test]
 fn legacy_observation_date_is_replaced_with_the_full_epoch() {

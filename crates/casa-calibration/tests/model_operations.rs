@@ -3,12 +3,12 @@
 mod common;
 
 use casa_calibration::{delete_calibration_model, reset_calibration_set};
+use casa_core::{ArrayValue, Complex32, RecordValue, Value};
 use casa_ms::column_def::build_table_schema;
 use casa_ms::schema::main_table::OptionalMainColumn;
 use casa_ms::virtual_model::{put_virtual_model, virtual_model};
 use casa_ms::{MeasurementSet, MsSelection, VirtualModelEntry, VirtualModelKind};
 use casa_tables::TableWriteLock;
-use casa_types::{ArrayValue, Complex32, RecordValue, Value};
 use ndarray::{ArrayD, IxDyn};
 use tempfile::TempDir;
 
@@ -511,7 +511,7 @@ fn attached_mutation_rereads_selection_with_main_locked() {
     use casa_calibration::{
         AttachmentError, AttachmentMode, AttachmentOptions, CalibrationAttachment,
     };
-    use casa_types::ScalarValue;
+    use casa_core::ScalarValue;
     use std::process::Command;
 
     const PROBE_PATH: &str = "CASARS_TEST_CALIBRATION_ATTACHMENT_PROBE";

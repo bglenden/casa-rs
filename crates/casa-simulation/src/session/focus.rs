@@ -6,10 +6,10 @@ use super::{
     observe::Scan,
 };
 use crate::write::geometry::{ArrayGeometry, RowGeometry};
+use casa_core::ArrayValue;
 use casa_imaging_model::GridFtProjection;
 use casa_imaging_runtime::{Admitted, Demand, admit};
 use casa_ms::MeasurementSet;
-use casa_types::ArrayValue;
 use std::{collections::HashMap, sync::Arc};
 
 type Chunk = (i32, usize, usize);

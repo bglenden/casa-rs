@@ -52,11 +52,11 @@ impl PySimutil {
         ms: Option<std::path::PathBuf>,
         cofa: Option<Variant>,
     ) -> PyResult<()> {
-        use casa_plot_data::simulation::{EphemerisPlotRequest, ephemeris_plot};
-        use casa_types::measures::{
+        use casa_core::measures::{
             MPosition,
             direction::{DirectionRef, MDirection},
         };
+        use casa_plot_data::simulation::{EphemerisPlotRequest, ephemeris_plot};
         use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyValueError};
         use std::str::FromStr;
 

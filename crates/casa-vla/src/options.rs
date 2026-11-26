@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use casa_types::quanta::Quantity;
+use casa_core::quanta::Quantity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -157,11 +157,10 @@ impl ImportVlaOptions {
             argument: "frequencytol",
             message: error.to_string(),
         })?;
-        let hz =
-            casa_types::quanta::Unit::new("Hz").map_err(|error| VlaError::InvalidArgument {
-                argument: "frequencytol",
-                message: error.to_string(),
-            })?;
+        let hz = casa_core::quanta::Unit::new("Hz").map_err(|error| VlaError::InvalidArgument {
+            argument: "frequencytol",
+            message: error.to_string(),
+        })?;
         parsed
             .get_value_in(&hz)
             .map_err(|error| VlaError::InvalidArgument {

@@ -7,7 +7,7 @@ use super::{
     LoadedCalibrationTable, across_fields,
 };
 use crate::interpolation::{Curve, sample_polar, spline_derivatives, unwrap_phase};
-use casa_types::Complex32;
+use casa_core::Complex32;
 use std::collections::HashMap;
 use std::path::Path;
 

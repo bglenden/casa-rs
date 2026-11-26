@@ -3,11 +3,11 @@
 //! observations and states, what a scan captures when it is observed, and
 //! the MeasurementSet `close` writes.
 
+use casa_core::measures::EpochRef;
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::{ScalarValue, Value};
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_ms::{MeasurementSet, SubTable};
-use casa_types::measures::EpochRef;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::{ScalarValue, Value};
 
 use super::observe::PlannedRows;
 use super::*;

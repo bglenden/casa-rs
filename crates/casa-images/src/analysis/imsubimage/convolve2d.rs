@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
-use casa_types::quanta::{Quantity, Unit};
-use casa_types::{RecordValue, ScalarValue, Value};
+use casa_core::quanta::{Quantity, Unit};
+use casa_core::{RecordValue, ScalarValue, Value};
 
 use crate::convolve2d::{
     GaussianSamples, sampled_beam_convolution, sky_per_pixel, unwrap_position_angle,

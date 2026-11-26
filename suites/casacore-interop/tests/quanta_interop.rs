@@ -3,8 +3,8 @@
 
 #![cfg(all(feature = "cpp-interop-tests", has_casacore_cpp))]
 
+use casa_core::quanta::{MvAngle, MvTime, Unit, constants};
 use casa_test_support::quanta_interop::QuantaOracle;
-use casa_types::quanta::{MvAngle, MvTime, Unit, constants};
 
 fn assert_close(a: f64, b: f64, tol: f64, label: &str) {
     let scale = a.abs().max(b.abs()).max(1e-30);
@@ -215,7 +215,7 @@ fn cross_validate_qc_planck() {
 #[test]
 fn cross_validate_all_qc_constants() {
     // (C++ name, Rust accessor, notes)
-    let constants_table: Vec<(&str, &dyn Fn() -> &'static casa_types::quanta::Quantity)> = vec![
+    let constants_table: Vec<(&str, &dyn Fn() -> &'static casa_core::quanta::Quantity)> = vec![
         ("c", &constants::c),
         ("G", &constants::gravitational),
         ("h", &constants::h),

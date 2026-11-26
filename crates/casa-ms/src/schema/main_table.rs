@@ -7,8 +7,8 @@
 //!
 //! Cf. C++ `MSMainEnums.h` and `MSTableImpl::colMapDef` for the main table.
 
-use casa_tables::table_measures::MeasureType;
-use casa_types::PrimitiveType;
+use casa_core::PrimitiveType;
+use casa_measures::table_measures::MeasureType;
 
 use crate::column_def::{ColumnDef, ColumnKind, KeywordDef, KeywordValueType};
 use crate::schema::SubtableId;
@@ -552,13 +552,13 @@ impl VisibilityDataColumn {
 /// casa-rs writer that adds `MODEL_DATA` fills it with this; a model
 /// prediction written later replaces it.
 #[must_use]
-pub fn initial_model_visibility(code: i32) -> casa_types::Complex32 {
-    use casa_types::Correlation;
+pub fn initial_model_visibility(code: i32) -> casa_core::Complex32 {
+    use casa_core::Correlation;
     match Correlation::from_casacore_code(code) {
         Some(Correlation::RL | Correlation::LR | Correlation::XY | Correlation::YX) => {
-            casa_types::Complex32::new(0.0, 0.0)
+            casa_core::Complex32::new(0.0, 0.0)
         }
-        _ => casa_types::Complex32::new(1.0, 0.0),
+        _ => casa_core::Complex32::new(1.0, 0.0),
     }
 }
 
@@ -727,7 +727,7 @@ mod tests {
     /// included.
     #[test]
     fn initial_model_is_casas_unit_point_source() {
-        use casa_types::{Complex32, Correlation};
+        use casa_core::{Complex32, Correlation};
         for correlation in Correlation::ALL {
             let zero = matches!(
                 correlation,

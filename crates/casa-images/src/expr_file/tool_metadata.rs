@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_types::{ArrayD, ArrayValue, Complex64, RecordField, RecordValue, ScalarValue, Value};
+use casa_core::{ArrayD, ArrayValue, Complex64, RecordField, RecordValue, ScalarValue, Value};
 use serde_json::{Map, Value as Json, json};
 
 use crate::ImageError;

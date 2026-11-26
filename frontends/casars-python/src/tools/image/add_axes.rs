@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 use casa_coordinates::{
     CoordinateModel, CoordinateSystem, StokesCoordinate, StokesType, TabularCoordinate, defaults,
 };
+use casa_core::{RecordValue, ScalarValue, Value};
 use casa_images::analysis::ensure_outfile_does_not_alias_input;
 use casa_images::image::image_history_rows;
 use casa_images::{ImageInterface, ImagePixel};
-use casa_types::{RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, Dimension, IxDyn, indices};
 use pyo3::prelude::*;
 

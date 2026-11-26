@@ -12,10 +12,10 @@ workspace = true
 
 [dependencies]
 bytemuck = { version = "1.25", features = ["extern_crate_alloc"] }
-casa-coordinates = { path = "../casa-coordinates" }
-casa-fft = { path = "../casa-fft" }
+casa-coordinates.workspace = true
+casa-fft.workspace = true
 casa-imaging-model = { path = "../casa-imaging-model" }
-casa-numerics = { path = "../casa-numerics" }
+casa-numerics.workspace = true
 libm = "0.2"
 ndarray.workspace = true
 num-complex = { workspace = true, features = ["bytemuck"] }
@@ -24,4 +24,4 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-casa-types = { path = "../casa-types" }
+casa-core.workspace = true

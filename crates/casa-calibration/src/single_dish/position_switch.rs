@@ -4,9 +4,9 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use casa_core::ArrayValue;
 use casa_ms::MeasurementSet;
 use casa_tables::RequiredScalarColumnValues;
-use casa_types::ArrayValue;
 
 use super::spectrum::{self, ReferenceTimestamp, SkySpectrum};
 use crate::CalibrationOutputMode;

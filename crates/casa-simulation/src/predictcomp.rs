@@ -4,11 +4,11 @@
 use std::path::{Path, PathBuf};
 
 use casa_components::{SkyComponent, SpectralKind};
+use casa_core::measures::baseline::UvwFrame;
+use casa_core::measures::direction::{DirectionRef, MDirection, RiseSetTimes};
+use casa_core::measures::epoch::{EpochRef, MEpoch};
+use casa_core::measures::frame::MeasFrame;
 use casa_ms::open_measures_runtime;
-use casa_types::measures::baseline::UvwFrame;
-use casa_types::measures::direction::{DirectionRef, MDirection, RiseSetTimes};
-use casa_types::measures::epoch::{EpochRef, MEpoch};
-use casa_types::measures::frame::MeasFrame;
 
 use crate::readantenna::read_antenna_config;
 

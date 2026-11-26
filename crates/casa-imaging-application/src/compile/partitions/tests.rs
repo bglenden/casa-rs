@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Intent selection against real partitions sharing one observing mode.
 
+use casa_core::{ScalarValue, Value};
 use casa_imaging_model::UvSelection;
 use casa_ms::observation_io::Msv2Observation;
 use casa_ms::{MeasurementSet, SubtableId};
-use casa_types::{ScalarValue, Value};
 
 use super::*;
 

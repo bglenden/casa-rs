@@ -46,12 +46,12 @@
 
 use std::collections::BTreeMap;
 
+use casa_core::measures::PreparedFrequencyConversion;
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::frequency::FrequencyRef;
 use casa_imaging_model::FrequencyBands;
 use casa_ms::{CubeSpectralSetup, derived::engine::MsCalEngine};
 use casa_observation::Catalogue;
-use casa_types::measures::PreparedFrequencyConversion;
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::frequency::FrequencyRef;
 
 use super::PrepareError;
 use super::envelope::{epoch_frame, selection_band};

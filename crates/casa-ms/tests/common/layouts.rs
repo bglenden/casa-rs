@@ -6,10 +6,10 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use casa_core::{ArrayValue, PrimitiveType, Value};
 use casa_ms::MeasurementSet;
 use casa_simulation::synthetic::{ObservationRequest, generate_unflagged, tutorial_vla_a_antennas};
 use casa_tables::{ColumnBinding, ColumnSchema, DataManagerKind, Table, TableOptions};
-use casa_types::{ArrayValue, PrimitiveType, Value};
 use num_complex::Complex32;
 
 /// A VLA-A track of two-second integrations for `seconds` in `channels`

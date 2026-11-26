@@ -18,11 +18,11 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use casa_test_support::table_sync::{persisted_table_shape, published_table_sync};
 use casa_test_support::{CppTableFixture, TableOracle, casacore_oracle_available};
 
+use casa_core::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{
     ColumnBinding, ColumnSchema, DataManagerKind, LockMode, LockOptions, LockType, Table,
     TableOptions, TableSchema, TableWriteLock,
 };
-use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
 /// Build the same table as the C++ `write_with_lock_impl` fixture:
 /// schema (id: Int, name: String), 1 row: (42, "from_rust").

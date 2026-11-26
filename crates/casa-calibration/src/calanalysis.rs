@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, ScalarValue, Value};
 
 use crate::constants::{
     COL_ANTENNA1, COL_ANTENNA2, COL_FIELD_ID, COL_PARAMERR, COL_TIME, KEY_MS_NAME, KEY_PAR_TYPE,

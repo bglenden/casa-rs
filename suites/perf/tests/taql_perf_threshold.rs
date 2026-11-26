@@ -97,8 +97,8 @@ fn save_bench_table(n: usize) -> (tempfile::TempDir, std::path::PathBuf) {
 
 /// Save a variable-shape array bench table to disk.
 fn save_varshape_bench_table(n: usize) -> (tempfile::TempDir, std::path::PathBuf) {
+    use casa_core::*;
     use casa_tables::{ColumnSchema, TableSchema};
-    use casa_types::*;
     use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
     let tmp = tempfile::tempdir().expect("tempdir");

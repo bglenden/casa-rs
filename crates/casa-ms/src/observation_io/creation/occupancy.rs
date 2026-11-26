@@ -8,8 +8,8 @@
 //! and a cell two inputs both acquire is refused, naming them. Times are
 //! compared as `MainRows` writes them, MJD seconds from the grid's origin.
 
+use casa_core::measures::MjdHighPrec;
 use casa_observation::{ObservationError, ObservationId, OrderedBaseline, TimeBaselineGrid};
-use casa_types::measures::MjdHighPrec;
 use ndarray::Axis;
 
 use super::combine::Combined;

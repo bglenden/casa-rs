@@ -3,7 +3,7 @@
 use super::{replace, scalar};
 use crate::convert::Variant;
 use crate::convert::holder::{CasaMeasure, Measure, MeasureKind};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 
 pub(super) fn normalize(
     input: &RecordValue,
@@ -25,8 +25,8 @@ pub(super) fn normalize(
         return Err("Illegal quantity in MeasureHolder::fromRecord\n".into());
     }
     let mut record = match measure.to_casa().map_err(|e| e.to_string())? {
-        CasaMeasure::Direction(direction) => casa_types::measures::direction_to_record(&direction),
-        CasaMeasure::Frequency(frequency) => casa_types::measures::frequency_to_record(&frequency),
+        CasaMeasure::Direction(direction) => casa_core::measures::direction_to_record(&direction),
+        CasaMeasure::Frequency(frequency) => casa_core::measures::frequency_to_record(&frequency),
         _ => unreachable!("only direction and frequency component fields"),
     };
     if let Some(offset) = input.get("offset") {

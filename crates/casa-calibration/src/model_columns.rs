@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 use std::path::Path;
 
+use casa_core::{ArrayValue, Complex32, PrimitiveType};
 use casa_ms::schema::main_table::{
     OptionalMainColumn, VisibilityDataColumn, initial_model_visibility,
 };
@@ -18,11 +19,11 @@ use casa_ms::write_session::{
     MeasurementSetWriteSession, maximum_visibility_cell_elements,
 };
 use casa_ms::{MeasurementSet, MsError, MsResult, MsSelection};
-use casa_tables::{
-    RequiredScalarColumnValues, StreamedTiledShapeColumn, StreamedTiledShapeCubeLayout,
-    StreamedTiledShapeValueType, StreamingTiledShapeWriter, TableWriteLock, TileLayoutPlanner,
+use casa_tables::streamed_tiled::{
+    StreamedTiledShapeColumn, StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType,
+    StreamingTiledShapeWriter,
 };
-use casa_types::{ArrayValue, Complex32, PrimitiveType};
+use casa_tables::{RequiredScalarColumnValues, TableWriteLock, TileLayoutPlanner};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use crate::session::resolve_casa_calibration_selection;

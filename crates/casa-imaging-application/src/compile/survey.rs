@@ -16,6 +16,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use casa_core::measures::MjdHighPrec;
 use casa_imaging_model::{
     CorrelationProduct, IdSelection, PartitionSelection, RowSelection, UvSelection,
 };
@@ -26,7 +27,6 @@ use casa_observation::{
     OrderedBaseline, PartitionEntry, ReadEvent, Roles, TimeSelection, VisibilityBatch,
     WeightRequest,
 };
-use casa_types::measures::MjdHighPrec;
 
 use super::PrepareError;
 use super::partitions::{Candidate, Candidates, field_selection};
@@ -103,7 +103,7 @@ pub(super) struct Survey {
     pub(super) samples: u64,
     /// The selected partitions' spectral windows, in one source frame.
     pub(super) spectral_windows: Vec<SourceSpectralWindow>,
-    pub(super) source_frequency_reference: casa_types::measures::frequency::FrequencyRef,
+    pub(super) source_frequency_reference: casa_core::measures::frequency::FrequencyRef,
     pub(super) fields: BTreeSet<i32>,
     /// The field of CASA's first visibility buffer: the least
     /// (`DATA_DESC_ID`, `FIELD_ID`) of the selected samples, an MSv4's
@@ -915,9 +915,9 @@ mod tests {
         }
     }
 
+    use casa_core::{ArrayValue, ScalarValue, Value};
     use casa_imaging_model::{IdSelection, IntentSelection};
     use casa_ms::MeasurementSet;
-    use casa_types::{ArrayValue, ScalarValue, Value};
 
     use super::*;
 
@@ -1402,12 +1402,12 @@ mod tests {
                 .filter(|row| {
                     matches!(
                         main.cell_accessor(*row, "SCAN_NUMBER").unwrap().scalar().unwrap(),
-                        casa_types::ScalarValue::Int32(number) if *number == scan
+                        casa_core::ScalarValue::Int32(number) if *number == scan
                     )
                 })
                 .map(
                     |row| match main.cell_accessor(row, "TIME").unwrap().scalar().unwrap() {
-                        casa_types::ScalarValue::Float64(time) => *time,
+                        casa_core::ScalarValue::Float64(time) => *time,
                         other => panic!("TIME is {other:?}"),
                     },
                 )

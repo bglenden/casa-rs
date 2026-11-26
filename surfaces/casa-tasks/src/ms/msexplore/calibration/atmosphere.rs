@@ -7,11 +7,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::{TaskFailure, TaskInvocation};
-use casa_measures_data::{MeasuresRuntime, RuntimePolicy};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
+use casa_core::{ArrayValue, ScalarValue, Value};
+use casa_measures::{MeasuresRuntime, RuntimePolicy};
 use casa_tables::Table;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
-use casa_types::{ArrayValue, ScalarValue, Value};
 
 use super::PlotSeries;
 use super::axis::Axis;

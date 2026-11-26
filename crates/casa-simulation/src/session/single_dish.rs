@@ -84,7 +84,7 @@ impl Simulator {
             .correlations_for_scan(&self.scans[0])
             .iter()
             .map(|&code| {
-                casa_types::Correlation::from_casacore_code(code).expect("validated correlation")
+                casa_core::Correlation::from_casacore_code(code).expect("validated correlation")
             })
             .collect::<Vec<_>>();
         let transformed = self.transformed_image_beam(&model, &correlations, beam)?;
@@ -171,7 +171,7 @@ impl Simulator {
         Ok(prediction)
     }
     fn epoch_dependent_total_power_frame(model: &SkyModel) -> bool {
-        use casa_types::measures::direction::DirectionRef::*;
+        use casa_core::measures::direction::DirectionRef::*;
         !matches!(
             model.tangent_direction().refer(),
             // FK4 B1950 has an epoch term even for a fixed pointing.
@@ -189,7 +189,7 @@ impl Simulator {
                 self.scans.iter().map(|scan| scan.pointing_rad),
             ));
         }
-        use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
+        use casa_core::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
         let capacity = self.planned_rows();
         let indices: std::collections::HashMap<_, _> = self
             .scans
@@ -228,10 +228,10 @@ impl Simulator {
             let [x, y, z] = self.antennas[0].position_itrf_m;
             let current = if alt_az {
                 f64::from(
-                    casa_types::measures::direction::MDirection::from_angles(
+                    casa_core::measures::direction::MDirection::from_angles(
                         scan.phase_center_rad[0],
                         scan.phase_center_rad[1],
-                        casa_types::measures::direction::DirectionRef::J2000,
+                        casa_core::measures::direction::DirectionRef::J2000,
                     )
                     .parallactic_angle(&frame.clone().with_position(MPosition::new_itrf(x, y, z)))
                     .map_err(|error| SimulatorError::raised(error.to_string()))?

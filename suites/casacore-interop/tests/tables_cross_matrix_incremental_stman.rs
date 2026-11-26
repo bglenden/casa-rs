@@ -3,6 +3,9 @@
 
 use std::collections::HashMap;
 
+use casa_core::{
+    ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
+};
 use casa_tables::{
     ColumnOptions, ColumnOverrides, ColumnSchema, DataManagerKind, EndianFormat,
     GeneratedScalarColumn, Table, TableOptions, TableSchema,
@@ -15,9 +18,6 @@ use casa_test_support::table_interop::{
     run_read_cross_matrix, run_table_cross_matrix,
 };
 use casa_test_support::{CppTableFixture, TableOracle};
-use casa_types::{
-    ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
-};
 use ndarray::ShapeBuilder;
 
 fn ism_scalar_primitives_fixture() -> TableFixture {

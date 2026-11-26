@@ -2,8 +2,8 @@
 //! Unit tests of `readantenna` on small inline configuration files. The
 //! comparison with CASA's own results is `tests/readantenna_casa.rs`.
 
-use casa_types::measures::ObservatoryPosition;
-use casa_types::quanta::unique_prefix_position;
+use casa_core::measures::ObservatoryPosition;
+use casa_core::quanta::unique_prefix_position;
 
 use super::geodesy::{self, WGS84};
 use super::*;

@@ -4,8 +4,8 @@
 use std::borrow::Cow;
 use std::ops::{AddAssign, Div, Mul};
 
+use casa_core::ArrayValue;
 use casa_tables::TableError;
-use casa_types::ArrayValue;
 use ndarray::{Array1, Array2, ArrayD, ArrayView1, ArrayView2, Ix1, Ix2};
 
 use crate::schema::main_table::OptionalMainColumn;

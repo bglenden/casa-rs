@@ -4,8 +4,8 @@
 use std::path::Path;
 
 use crate::{TaskFailure, TaskInvocation};
-use casa_types::ArrayValue;
-use casa_types::quanta::{MvAngle, MvTime};
+use casa_core::ArrayValue;
+use casa_core::quanta::{MvAngle, MvTime};
 
 use super::iteration::Panel;
 use super::table_data::{CalibrationTable, array, subtable, text};

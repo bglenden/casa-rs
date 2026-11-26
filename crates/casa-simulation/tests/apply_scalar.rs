@@ -85,10 +85,10 @@ fn malformed_scalar_g_tables_raise_as_casa_does() {
     use casa_calibration::{
         SimulatedJones, SimulatedSolution, SolutionValues, write_simulated_jones_table,
     };
+    use casa_core::Complex32;
+    use casa_core::measures::{EpochRef, MEpoch};
     use casa_ms::MeasurementSet;
     use casa_simulation::{ApplySpec, CasaOutcome, Simulator, SimulatorOptions};
-    use casa_types::Complex32;
-    use casa_types::measures::{EpochRef, MEpoch};
     use predict_support::{ANTENNAS, REFERENCE_MJD, resources, scan, session};
     let mut text = String::new();
     GzDecoder::new(&include_bytes!("data/sm_apply_scalar_casa.json.gz")[..])

@@ -5,12 +5,12 @@ use casa_coordinates::display::{
     format_stream_value_with_precision,
 };
 use casa_coordinates::{CoordinateModel, CoordinateType, QualityType, StokesType};
-use casa_types::measures::{
+use casa_core::measures::{
     MeasFrame,
     direction::{DirectionRef, MDirection},
     doppler::{DopplerRef, MDoppler},
 };
-use casa_types::{RecordValue, Value};
+use casa_core::{RecordValue, Value};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
@@ -209,7 +209,7 @@ pub(in crate::tools) fn nested_axis_display(
     value: f64,
     increment: f64,
 ) -> PyResult<Option<(String, String, String)>> {
-    use casa_types::quanta::{Quantity, Unit};
+    use casa_core::quanta::{Quantity, Unit};
 
     if !matches!(model, CoordinateModel::System(_)) {
         return Ok(None);
@@ -304,7 +304,7 @@ impl<'a> Values<'a> {
         full_coordinate: Option<CoordinateModel>,
         converted: bool,
     ) -> PyResult<Self> {
-        use casa_types::quanta::{Quantity, Unit};
+        use casa_core::quanta::{Quantity, Unit};
         let visible = |units: Vec<String>| {
             if units.len() == visible_axes.len() {
                 units

@@ -2,10 +2,10 @@
 //! Independent controls for context collisions, wrapped phase and invalid shapes.
 use super::{fixture, predict_support, time_support};
 use casa_calibration::{GencalRequest, GencalType, gencal};
+use casa_core::measures::{EpochRef, MEpoch};
+use casa_core::{ArrayValue, Complex32, ScalarValue, Value};
 use casa_simulation::{Simulator, SimulatorOptions};
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::{EpochRef, MEpoch};
-use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 use std::path::Path;
 

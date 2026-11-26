@@ -5,8 +5,8 @@ use super::{
     ReservationWindow, Simulator, SimulatorOptions, alone, charge_process_caches, configured,
     excess_now, reserved_memory, resources, scan,
 };
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use std::path::Path;
 
 fn polynomial(path: &Path, terms: usize) {
@@ -138,7 +138,7 @@ fn selected_polynomial_chunks_keep_their_admitted_snapshot() {
 pub(super) fn chunked_ms(
     path: &Path,
     count: usize,
-    measures: &std::sync::Arc<dyn casa_types::measures::MeasuresProvider>,
+    measures: &std::sync::Arc<dyn casa_core::measures::MeasuresProvider>,
 ) -> usize {
     let mut initial = configured(path, measures, 512 << 20, 4);
     initial.observe(&scan(count.div_ceil(21))).unwrap();

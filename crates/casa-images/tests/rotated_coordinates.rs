@@ -11,12 +11,12 @@
 
 use casa_coordinates::{
     CoordinateModel, CoordinateSystem, DirectionCoordinate, Projection, ProjectionType,
-    StokesCoordinate, stokes::StokesType,
+    StokesCoordinate, StokesType,
 };
+use casa_core::measures::direction::DirectionRef;
+use casa_core::{ArrayValue, Value};
 use casa_images::PagedImage;
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::direction::DirectionRef;
-use casa_types::{ArrayValue, Value};
 
 fn rotated() -> CoordinateSystem {
     let arcsec = std::f64::consts::PI / 648_000.0;

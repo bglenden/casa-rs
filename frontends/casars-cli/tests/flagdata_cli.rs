@@ -7,10 +7,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use casa_logging::validate_log_table;
+use casa_core::{ArrayValue, Complex32, ScalarValue, Value};
 use casa_ms::{MeasurementSet, MeasurementSetBuilder};
+use casa_tables::log_table::validate_log_table;
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 use tempfile::tempdir;
 

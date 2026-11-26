@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_core::quanta::{Quantity, Unit};
 use casa_images::{ImageInterface, ImagePixel, analysis::statistics_flux_scale};
-use casa_types::quanta::{Quantity, Unit};
 
 use crate::convert::holder::C_MPS;
 

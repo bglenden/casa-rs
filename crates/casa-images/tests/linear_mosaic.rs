@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use casa_coordinates::{CoordinateSystem, DirectionCoordinate, Projection, ProjectionType};
+use casa_core::measures::direction::DirectionRef;
 use casa_images::{Image, linearmosaic};
-use casa_types::measures::direction::DirectionRef;
 use ndarray::{IxDyn, ShapeBuilder};
 
 fn write(path: &Path, nx: usize, centre: f64, value: impl Fn(usize) -> f32) {

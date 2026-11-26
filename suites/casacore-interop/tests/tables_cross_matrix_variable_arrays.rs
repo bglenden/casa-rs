@@ -4,13 +4,13 @@
 
 #![cfg(feature = "cpp-interop-tests")]
 
+use casa_core::{ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, Value};
 use casa_tables::{ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
 use casa_test_support::CppTableFixture;
 use casa_test_support::table_interop::{
     ManagerKind, TableFixture, run_endian_cross_matrix, run_full_cross_matrix,
 };
 use casa_test_support::{TableOracle, casacore_oracle_available};
-use casa_types::{ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, Value};
 use ndarray::ShapeBuilder;
 
 /// Build the standard 4-row Float32 variable-shape fixture.

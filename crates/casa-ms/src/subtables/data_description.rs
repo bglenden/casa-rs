@@ -5,8 +5,8 @@
 //!
 //! Cf. C++ `MSDataDescColumns`.
 
+use casa_core::ScalarValue;
 use casa_tables::Table;
-use casa_types::ScalarValue;
 
 use crate::column_def::ColumnDef;
 use crate::error::MsResult;
@@ -116,7 +116,7 @@ impl SubTable for MsDataDescriptionMut<'_> {
 mod tests {
     use super::*;
     use crate::column_def::build_table_schema;
-    use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+    use casa_core::{RecordField, RecordValue, ScalarValue, Value};
 
     #[test]
     fn read_data_description() {

@@ -8,7 +8,7 @@ use casa_calibration::{
     validate_callibrary_record,
 };
 use casa_contracts::{ParameterValue, casacore_value_to_casa, parameter_value_to_casacore};
-use casa_types::{RecordValue, Value};
+use casa_core::{RecordValue, Value};
 use pyo3::exceptions::{PyRuntimeError, PySystemError, PyTypeError};
 use pyo3::{
     prelude::*,

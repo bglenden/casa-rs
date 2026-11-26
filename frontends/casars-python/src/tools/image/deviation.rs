@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use casa_core::quanta::Quantity;
 use casa_images::{
     ImageInterface,
     analysis::{
@@ -9,7 +10,6 @@ use casa_images::{
     },
     regrid::RegridMethod,
 };
-use casa_types::quanta::Quantity;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyString};
 

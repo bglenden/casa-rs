@@ -215,7 +215,7 @@ mod tests {
     use crate::builder::MeasurementSetBuilder;
     use crate::ms::MeasurementSet;
     use crate::test_helpers::default_value;
-    use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+    use casa_core::{RecordField, RecordValue, ScalarValue, Value};
 
     fn make_ms_with_row() -> MeasurementSet {
         let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
@@ -249,7 +249,7 @@ mod tests {
         {
             use crate::schema;
             use crate::test_helpers::default_value_for_def;
-            use casa_types::ArrayValue;
+            use casa_core::ArrayValue;
             use ndarray::ArrayD;
 
             let field_table = ms.subtable_mut(crate::schema::SubtableId::Field).unwrap();

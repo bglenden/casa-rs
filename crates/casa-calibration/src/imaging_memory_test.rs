@@ -71,7 +71,7 @@ pub(crate) fn cube_coordinates(
         CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate,
         StokesCoordinate,
     };
-    use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
+    use casa_core::measures::{direction::DirectionRef, frequency::FrequencyRef};
 
     let mut coordinates = CoordinateSystem::new();
     coordinates.add_coordinate(DirectionCoordinate::new(

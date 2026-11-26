@@ -9,8 +9,8 @@
 
 use std::sync::Arc;
 
+use casa_core::measures::{EpochView, MjdHighPrec};
 use casa_observation::{AntennaEntry, AntennaId, ObservationError, PointingSeries};
-use casa_types::measures::{EpochView, MjdHighPrec};
 use ndarray::ArrayView1;
 use serde_json::json;
 use zarrs::array::ArraySubset;
@@ -34,7 +34,7 @@ pub(super) fn write_pointing(
     path: &str,
     antennas: &[(AntennaId, &AntennaEntry)],
     series: &PointingSeries,
-    scale: casa_types::measures::EpochRef,
+    scale: casa_core::measures::EpochRef,
     origin: MjdHighPrec,
 ) -> Result<(), ObservationError> {
     let columns: Vec<_> = antennas

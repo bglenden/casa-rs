@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 
+use casa_core::ArrayValue;
 use casa_ms::{MeasurementSet, MsSelection};
 use casa_plot_data::msexplore::{
     DEFAULT_MAX_PLOT_POINTS, MsExploreSpec, MsFlagAction, MsFlagEditSpec, MsFlagRegion,
@@ -16,7 +17,6 @@ use casa_plot_data::msexplore::{
     preview_msexplore_flag_edit, preview_msexplore_flag_edit_for_request,
 };
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
-use casa_types::ArrayValue;
 use ndarray::Ix2;
 use serde_json::json;
 use tempfile::tempdir;

@@ -413,7 +413,7 @@ impl CasacoreOracleRuntime {
 /// would open, which is the one the measures laws read on the Rust side.
 #[cfg(has_casacore_cpp)]
 fn discovered_measures_root() -> Option<std::path::PathBuf> {
-    casa_measures_data::MeasuresRuntime::discover_candidates()
+    casa_measures::MeasuresRuntime::discover_candidates()
         .ok()?
         .into_iter()
         .find(|candidate| candidate.complete)

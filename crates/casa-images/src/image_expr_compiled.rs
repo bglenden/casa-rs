@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_coordinates::CoordinateSystem;
+use casa_core::{ArrayD, RecordValue};
 use casa_lattices::execution::{
     CursorMapWriteConfig, ExecutionInputs, ExecutionMode, ExecutionResources,
     OrderedCursorMapWriteExecutionStrategy, ParallelReadChunkConfig, SourceResidency,
@@ -16,7 +17,6 @@ use casa_lattices::{
     TraversalCursorIter, TraversalSpec,
 };
 use casa_tables::{TilePixel, TiledArrayStorage};
-use casa_types::{ArrayD, RecordValue};
 use ndarray::{IxDyn, Zip};
 
 use crate::error::ImageError;
@@ -2947,7 +2947,7 @@ fn compiled_map_strategy<T: ImageExprValue>(
 }
 
 pub(crate) fn bounded_read_cursor(shape: Vec<usize>) -> Result<Vec<usize>, LatticeError> {
-    let element_bytes = std::mem::size_of::<casa_types::Complex64>();
+    let element_bytes = std::mem::size_of::<casa_core::Complex64>();
     Ok(TiledShape::new(shape, element_bytes)?.tile_shape().to_vec())
 }
 

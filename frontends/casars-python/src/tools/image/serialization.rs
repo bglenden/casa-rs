@@ -3,9 +3,9 @@
 use std::path::Path;
 
 use casa_coordinates::{CoordinateError, CoordinateSystem, ObsInfo};
+use casa_core::measures::{EpochRef, MEpoch};
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use casa_images::{ImageInfo, ImageType};
-use casa_types::measures::{EpochRef, MEpoch};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis};
 use num_complex::Complex32;
 use pyo3::prelude::*;

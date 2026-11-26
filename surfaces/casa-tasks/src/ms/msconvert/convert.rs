@@ -8,13 +8,13 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::TaskFailure;
+use casa_core::quanta::MvTime;
 use casa_ms::observation_io::convert::{
     ChunkShape, ConversionOptions, ConversionReport, LossKind, Msv4Conversion, to_msv2,
     to_msv4_with, xradio_chunks,
 };
 use casa_ms::observation_io::creation::Replacement;
 use casa_observation::ObservationError;
-use casa_types::quanta::MvTime;
 
 use super::BATCH_BYTES;
 use super::request::{MsconvertRequest, StoreFormat};

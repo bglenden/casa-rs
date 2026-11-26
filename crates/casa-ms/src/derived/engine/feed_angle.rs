@@ -162,8 +162,8 @@ fn signed_azimuth((azimuth, elevation): (f64, f64)) -> (f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use casa_types::measures::direction::{DirectionRef, MDirection};
-    use casa_types::measures::position::MPosition;
+    use casa_core::measures::direction::{DirectionRef, MDirection};
+    use casa_core::measures::position::MPosition;
 
     #[test]
     fn mounts_parse_as_casacore_reads_them() {

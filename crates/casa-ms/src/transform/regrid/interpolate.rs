@@ -3,8 +3,8 @@
 
 use std::ops::{Add, Div, Mul, Sub};
 
+use casa_core::ArrayValue;
 use casa_tables::TableError;
-use casa_types::ArrayValue;
 use ndarray::{Array2, ArrayView2, ArrayView3, Ix2, ShapeBuilder};
 
 #[derive(Clone, Copy, PartialEq, Eq)]

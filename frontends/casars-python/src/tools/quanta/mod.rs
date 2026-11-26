@@ -70,7 +70,7 @@ pub(crate) struct PyQuanta;
 
 /// Runs `work` with the GIL released and returns its value as Python.
 fn call(py: Python<'_>, work: impl Fn() -> ConvertResult<CasaValue> + Send) -> PyResult<Py<PyAny>> {
-    py.detach(|| casa_types::quanta::registry::global_registry().with_stable_units(work))?
+    py.detach(|| casa_core::quanta::registry::global_registry().with_stable_units(work))?
         .into_python(py)
 }
 
@@ -367,7 +367,7 @@ impl PyQuanta {
 
     /// Register CASA's process-wide FITS unit aliases.
     fn fits(&self, py: Python<'_>) -> bool {
-        py.detach(|| casa_types::quanta::registry::global_registry().add_fits_units());
+        py.detach(|| casa_core::quanta::registry::global_registry().add_fits_units());
         true
     }
 
@@ -391,7 +391,7 @@ impl PyQuanta {
         prec: i64,
     ) -> PyResult<Py<PyAny>> {
         let written = py.detach(|| {
-            casa_types::quanta::registry::global_registry()
+            casa_core::quanta::registry::global_registry()
                 .with_stable_units(|| ops::formxxx(&v, &format, prec))
         })?;
         if written.is_none() {

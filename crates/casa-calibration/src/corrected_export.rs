@@ -431,7 +431,7 @@ fn clone_corrected_tiles(
         .add_column(
             casa_tables::ColumnSchema::array_variable(
                 &temporary,
-                casa_types::PrimitiveType::Complex32,
+                casa_core::PrimitiveType::Complex32,
                 Some(2),
             ),
             None,

@@ -11,12 +11,12 @@ publish = false
 workspace = true
 
 [dependencies]
-casa-coordinates = { path = "../casa-coordinates" }
-casa-fft = { path = "../casa-fft" }
+casa-coordinates.workspace = true
+casa-fft.workspace = true
 casa-images = { path = "../casa-images" }
 casa-imaging-model = { path = "../casa-imaging-model" }
-casa-numerics = { path = "../casa-numerics" }
-casa-types = { path = "../casa-types" }
+casa-numerics.workspace = true
+casa-core.workspace = true
 ndarray.workspace = true
 num-complex.workspace = true
 num-traits = "0.2"

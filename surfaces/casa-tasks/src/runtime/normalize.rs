@@ -8,7 +8,7 @@ use casa_contracts::{
     ParameterType, ParameterValue, SelectorGrammar, SurfaceParameterBinding,
     validate_parameter_value, validate_selector_capabilities,
 };
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::quanta::{Quantity, Unit};
 use thiserror::Error;
 
 mod casa_numeric;

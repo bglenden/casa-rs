@@ -8,8 +8,8 @@ mod writer;
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::TAU;
 
+use casa_core::ArrayValue;
 use casa_ms::{MeasurementSet, MsError};
-use casa_types::ArrayValue;
 use num_complex::Complex64;
 
 use self::basis::SampleBasis;

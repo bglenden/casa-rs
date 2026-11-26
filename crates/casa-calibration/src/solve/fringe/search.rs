@@ -4,9 +4,9 @@
 use std::f64::consts::FRAC_PI_2;
 use std::ops::Range;
 
+use casa_core::Complex32;
 use casa_fft::Fft2;
 use casa_ms::MsSelectionIoBudget;
-use casa_types::Complex32;
 
 use super::{FringeParameters, FringeSample};
 use crate::GainSolveError;

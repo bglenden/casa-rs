@@ -3,8 +3,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use casa_core::Complex32;
 use casa_ms::ChannelSelection;
-use casa_types::Complex32;
 use num_complex::Complex64;
 
 use super::{

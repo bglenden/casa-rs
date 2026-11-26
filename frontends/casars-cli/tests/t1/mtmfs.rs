@@ -691,8 +691,8 @@ fn check_signed_taylor_moments(gridder: &str) {
 /// Stokes flag rule, even when the other three hands have useful data.
 #[test]
 fn taylor_imaging_explains_the_fully_flagged_first_correlation() {
+    use casa_core::{ArrayValue, Value};
     use casa_ms::MeasurementSet;
-    use casa_types::{ArrayValue, Value};
 
     let observation = Observation::synthesise_polarized(
         Setup::vla_q_band(4),

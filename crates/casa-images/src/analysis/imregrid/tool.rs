@@ -5,8 +5,8 @@ use std::f64::consts::{PI, TAU};
 use std::path::Path;
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
+use casa_core::RecordValue;
 use casa_lattices::{ScratchSpace, TempStoragePolicy};
-use casa_types::RecordValue;
 
 use crate::analysis::axes::stokes_for_axis;
 use crate::analysis::ensure_outfile_does_not_alias_input;

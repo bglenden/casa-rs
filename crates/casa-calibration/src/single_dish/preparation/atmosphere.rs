@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use casa_atmosphere::{AtmosphereType, ProfileParameters};
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use casa_ms::{
     MeasurementSet,
     transform::{
@@ -15,7 +16,6 @@ use casa_ms::{
         transform_baseline_spectra,
     },
 };
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis};
 
 use super::{SingleDishSession, data_column};

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::*;
-use casa_types::{PrimitiveType, RecordValue};
+use casa_core::{PrimitiveType, RecordValue};
 use std::sync::Mutex;
 use tempfile::tempdir;
 
@@ -590,7 +590,7 @@ fn cpp_backend_matches_build_configuration() {
 
 #[test]
 fn flatten_and_reshape_cover_all_array_variants() {
-    use casa_types::{Complex32, Complex64};
+    use casa_core::{Complex32, Complex64};
 
     let cases = vec![
         ArrayValue::Bool(

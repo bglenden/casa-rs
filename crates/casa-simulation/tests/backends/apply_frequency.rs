@@ -39,7 +39,7 @@ fn check_time_mode(mode: &str, full: bool) {
     sm.close().unwrap();
     let ms = casa_ms::MeasurementSet::open(&reference).unwrap();
     let table = directory.path().join("frequency.cal");
-    let casa_types::ScalarValue::Float64(first) = ms
+    let casa_core::ScalarValue::Float64(first) = ms
         .main_table()
         .cell_accessor(0, "TIME")
         .unwrap()
@@ -118,8 +118,8 @@ fn check_time_mode(mode: &str, full: bool) {
 }
 
 fn full_leakage(path: &std::path::Path) {
+    use casa_core::{ArrayValue, ScalarValue, Value};
     use casa_tables::{Table, TableOptions};
-    use casa_types::{ArrayValue, ScalarValue, Value};
     use ndarray::{ArrayD, IxDyn, ShapeBuilder};
     let mut table = Table::open(TableOptions::new(path)).unwrap();
     for row in 0..table.row_count() {

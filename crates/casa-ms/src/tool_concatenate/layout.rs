@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Admission checks for fixed-shape visibility storage.
 
+use casa_core::{ArrayValue, Value};
 use casa_tables::{ArrayShapeContract, ColumnType, Table, TableOptions};
-use casa_types::{ArrayValue, Value};
 
 use crate::subtables::SubTable;
 use crate::{MeasurementSet, MsError, MsResult};

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! In-place Hanning smoothing as exposed by the MeasurementSet tool.
 
+use casa_core::ArrayValue;
 use casa_tables::{Table, TableWriteLock};
-use casa_types::ArrayValue;
 
 use crate::write_session::{
     MeasurementSetColumnStorage, MeasurementSetColumnWriteMode, MeasurementSetMutationBatch,

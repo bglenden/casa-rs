@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Ordered sample arithmetic, separated from per-row array addressing.
 
+use casa_core::Complex32;
 use casa_ms::{ChannelSelection, MeasurementSet};
-use casa_types::Complex32;
 use ndarray::{ArrayD, ArrayView2, Axis, Ix2, IxDyn, ShapeBuilder};
 use num_complex::Complex64;
 use std::borrow::Cow;

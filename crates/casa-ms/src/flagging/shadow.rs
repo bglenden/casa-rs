@@ -4,9 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::mem::size_of;
 use std::sync::Arc;
 
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame, MeasuresProvider, UvwFrame};
-use casa_types::{ArrayValue, ScalarValue};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{EpochRef, MEpoch, MPosition, MeasFrame, MeasuresProvider, UvwFrame};
+use casa_core::{ArrayValue, ScalarValue};
 
 use crate::derived::engine::MsCalEngine;
 use crate::selection::syntax::ChannelSelection;

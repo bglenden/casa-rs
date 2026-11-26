@@ -28,9 +28,9 @@ use casa_components::{
     ComponentShape, Ellipse, EllipseErrors, Flux, Polarisation, PowerLogPolynomial, ShapeKind,
     ShapeType, SkyComponent, SpectralIndex, SpectralKind, SpectralModel,
 };
-use casa_types::measures::MeasuresProvider;
-use casa_types::measures::direction::MDirection;
-use casa_types::quanta::{Dimension, UnitDim};
+use casa_core::measures::MeasuresProvider;
+use casa_core::measures::direction::MDirection;
+use casa_core::quanta::{Dimension, UnitDim};
 use num_complex::Complex64;
 
 use crate::convert::{ConvertError, ConvertResult, Variant, complex_values, measures, quantity};

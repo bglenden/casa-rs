@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_core::measures::record::frequency_to_record;
+use casa_core::quanta::{Dimension, Quantity, Unit, UnitDim, casacore, constants};
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_ms::columns::frequency_columns::ChanFreqColumn;
 use casa_ms::{MsError, MsResult, MsSpectralWindow, SubTable};
-use casa_types::measures::record::frequency_to_record;
-use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim, casacore, constants};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use numpy::IntoPyArray;
 use pyo3::prelude::*;
 

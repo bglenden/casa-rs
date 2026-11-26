@@ -297,7 +297,7 @@ fn casa_values_become_the_request_casa_rs_runs() {
         json!({ "specmode": "cube", "nchan": 12, "veltype": "optical", "outframe": "bary" }),
     );
     assert_eq!(cube.channel_count, Some(12));
-    assert_eq!(cube.veltype, casa_types::measures::doppler::DopplerRef::Z);
+    assert_eq!(cube.veltype, casa_core::measures::doppler::DopplerRef::Z);
     assert_eq!(
         request(json!({ "gridder": "gridft" })).gridder,
         Gridder::Standard {
@@ -533,7 +533,7 @@ fn the_reader_preserves_optical_velocity_and_dimensionless_doppler_values() {
         request(json!({ "specmode": "cube", "veltype": "optical", "width": "20000km/s" }));
     assert_eq!(
         velocity.veltype,
-        casa_types::measures::doppler::DopplerRef::Z
+        casa_core::measures::doppler::DopplerRef::Z
     );
     assert_eq!(velocity.width.as_deref(), Some("20000km/s"));
     let doppler = request(json!({ "specmode": "cube", "veltype": "z", "start": "0.01" }));
@@ -1085,7 +1085,7 @@ fn restoration_is_read() {
 /// is read, the first the image's.
 #[test]
 fn mfs_reads_its_frame_and_rest_frequencies() {
-    use casa_types::measures::frequency::FrequencyRef;
+    use casa_core::measures::frequency::FrequencyRef;
     let bary = request(json!({ "outframe": "bary", "restfreq": ["1.4GHz"] }));
     assert_eq!(bary.outframe, FrequencyRef::BARY);
     assert_eq!(bary.restfreq, [1.4e9]);

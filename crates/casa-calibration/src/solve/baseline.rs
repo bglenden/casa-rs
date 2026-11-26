@@ -3,8 +3,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use casa_core::Complex32;
 use casa_ms::MeasurementSet;
-use casa_types::Complex32;
 
 use super::grouping::{
     PriorCalibrationMode, SelectedSolveRow, SolveAccumulator, SolveGroupOptions, SolveInputRows,

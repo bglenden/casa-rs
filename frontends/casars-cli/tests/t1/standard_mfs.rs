@@ -3,8 +3,8 @@
 //! Standard-gridder MFS with point, multiscale and maximum-entropy solvers.
 
 use casa_coordinates::CoordinateModel;
+use casa_core::measures::direction::DirectionRef;
 use casa_tasks::imaging::{ImagerCleanStopReason, ImagerRunReport};
-use casa_types::measures::direction::DirectionRef;
 use serde_json::{Value, json};
 
 use super::fixture::{

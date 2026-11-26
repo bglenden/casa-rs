@@ -30,6 +30,9 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
                 .map_err(|error| TaskFailure::execution(error.to_string()))?;
             let partition = task.with_session(&session);
             if let Err(error) = run_one(&partition, &part, true) {
+                if error.kind == casa_contracts::TaskFailureKind::Interrupted {
+                    return Err(error);
+                }
                 tracing::warn!(task = task.surface(), partition = %part.display(), error = %error.message, "Multi-MS partition failed");
             }
         }
@@ -40,8 +43,16 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
 }
 
 fn run_one(task: &TaskInvocation<'_>, path: &Path, partition: bool) -> Result<(), TaskFailure> {
-    let mut lock = acquire_write(task, path)
-        .map_err(|error| TaskFailure::execution(error.to_string()).at("vis"))?;
+    let mut lock = acquire_write(task, path).map_err(|error| {
+        if task
+            .native_options()
+            .is_some_and(crate::NativeTaskOptions::is_cancelled)
+        {
+            TaskFailure::interrupted(error.to_string()).at("vis")
+        } else {
+            TaskFailure::execution(error.to_string()).at("vis")
+        }
+    })?;
     let mut ms = MeasurementSet::open(path)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("vis"))?;
     if !partition {

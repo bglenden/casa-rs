@@ -4,7 +4,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use casa_types::{RecordValue, ScalarValue, Value};
+use casa_core::{RecordValue, ScalarValue, Value};
 
 use crate::beam::{GaussianBeam, ImageBeamSet};
 use crate::error::ImageError;

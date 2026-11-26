@@ -2,9 +2,9 @@
 
 use std::path::Path;
 
+use casa_core::quanta::{Quantity, Unit, casacore::stream_double};
+use casa_core::{RecordValue, ScalarValue, Value};
 use casa_images::{BeamComponent, ImagePixelType, StoredGaussianBeam};
-use casa_types::quanta::{Quantity, Unit, casacore::stream_double};
-use casa_types::{RecordValue, ScalarValue, Value};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 

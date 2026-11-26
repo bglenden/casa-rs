@@ -8,13 +8,13 @@ use std::{
 };
 
 use casa_coordinates::{CoordinateModel, StokesType};
+use casa_core::ArrayValue;
 use casa_images::{ImageBeamSet, PagedImage};
 use casa_imaging_application::{ImagingOutcome, ResourcePolicy, execute};
 use casa_ms::{
     MeasurementSet, MsSelection, MsSelectionIoBudget, ResolvedMsSelectionRow, VisibilityDataColumn,
 };
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
-use casa_types::ArrayValue;
 use serde_json::json;
 
 #[path = "common/imaging.rs"]
@@ -240,7 +240,7 @@ fn product_diagnostics(product: &str, rust: &Product, casa: &Product) {
             .iter()
             .map(|index| rust.values[*index])
             .collect::<Vec<_>>();
-        let casa_values = indices
+        let casa_core = indices
             .iter()
             .map(|index| casa.values[*index])
             .collect::<Vec<_>>();
@@ -264,14 +264,14 @@ fn product_diagnostics(product: &str, rust: &Product, casa: &Product) {
             .copied()
             .map(f32::abs)
             .fold(0.0_f32, f32::max);
-        let casa_peak = casa_values
+        let casa_peak = casa_core
             .iter()
             .copied()
             .map(f32::abs)
             .fold(0.0_f32, f32::max);
         eprintln!(
             "issue607_product_plane product={product} plane={plane} nrms={:.9e} rust_valid={rust_valid} casa_valid={casa_valid} rust_peak={rust_peak:.9e} casa_peak={casa_peak:.9e}",
-            normalized_rms(&rust_values, &casa_values, &valid)
+            normalized_rms(&rust_values, &casa_core, &valid)
         );
     }
 }

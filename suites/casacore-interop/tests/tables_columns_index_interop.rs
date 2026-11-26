@@ -17,9 +17,9 @@
 
 #![cfg(feature = "cpp-interop-tests")]
 
+use casa_core::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{ColumnSchema, ColumnsIndex, DataManagerKind, Table, TableOptions, TableSchema};
 use casa_test_support::{CppTableFixture, TableOracle, casacore_oracle_available};
-use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
 fn table_cell<'a>(
     table: &'a Table,

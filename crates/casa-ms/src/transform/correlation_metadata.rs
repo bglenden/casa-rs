@@ -3,8 +3,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use casa_core::{ArrayValue, Correlation, RecordValue, ScalarValue, Value};
 use casa_tables::TableError;
-use casa_types::{ArrayValue, Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis};
 
 use crate::selection::MsSelection;

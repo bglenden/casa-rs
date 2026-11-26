@@ -2,11 +2,11 @@
 
 mod common;
 
+use casa_core::{ArrayValue, Complex32};
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::selection::MsSelection;
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, Complex32};
 use ndarray::Ix2;
 use tempfile::TempDir;
 
@@ -404,47 +404,47 @@ fn solve_bandpass_with_combine_scan_writes_one_solution_group_across_scans() {
     let dir = TempDir::new().expect("tempdir");
     let prior_gains = [
         [
-            casa_types::Complex32::new(1.0, 0.0),
-            casa_types::Complex32::new(1.0, 0.0),
+            casa_core::Complex32::new(1.0, 0.0),
+            casa_core::Complex32::new(1.0, 0.0),
         ],
         [
-            casa_types::Complex32::new(0.9887711, 0.14943813),
-            casa_types::Complex32::new(0.9689124, -0.24740396),
+            casa_core::Complex32::new(0.9887711, 0.14943813),
+            casa_core::Complex32::new(0.9689124, -0.24740396),
         ],
         [
-            casa_types::Complex32::new(0.9950042, -0.09983342),
-            casa_types::Complex32::new(0.9393727, 0.3428978),
+            casa_core::Complex32::new(0.9950042, -0.09983342),
+            casa_core::Complex32::new(0.9393727, 0.3428978),
         ],
     ];
     let bandpass_gains = [
         [
             [
-                casa_types::Complex32::new(1.0, 0.0),
-                casa_types::Complex32::new(1.0, 0.0),
+                casa_core::Complex32::new(1.0, 0.0),
+                casa_core::Complex32::new(1.0, 0.0),
             ],
             [
-                casa_types::Complex32::new(1.0, 0.0),
-                casa_types::Complex32::new(1.0, 0.0),
-            ],
-        ],
-        [
-            [
-                casa_types::Complex32::new(1.05, 0.10),
-                casa_types::Complex32::new(0.95, -0.05),
-            ],
-            [
-                casa_types::Complex32::new(0.90, 0.02),
-                casa_types::Complex32::new(1.08, 0.03),
+                casa_core::Complex32::new(1.0, 0.0),
+                casa_core::Complex32::new(1.0, 0.0),
             ],
         ],
         [
             [
-                casa_types::Complex32::new(0.92, -0.08),
-                casa_types::Complex32::new(1.03, 0.04),
+                casa_core::Complex32::new(1.05, 0.10),
+                casa_core::Complex32::new(0.95, -0.05),
             ],
             [
-                casa_types::Complex32::new(1.10, -0.03),
-                casa_types::Complex32::new(0.97, 0.06),
+                casa_core::Complex32::new(0.90, 0.02),
+                casa_core::Complex32::new(1.08, 0.03),
+            ],
+        ],
+        [
+            [
+                casa_core::Complex32::new(0.92, -0.08),
+                casa_core::Complex32::new(1.03, 0.04),
+            ],
+            [
+                casa_core::Complex32::new(1.10, -0.03),
+                casa_core::Complex32::new(0.97, 0.06),
             ],
         ],
     ];

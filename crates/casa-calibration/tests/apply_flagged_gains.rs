@@ -6,8 +6,8 @@ mod common;
 use casa_calibration::{
     ApplyCalibrationTableSpec, ApplyMode, ApplyPlanRequest, execute_apply_from_path,
 };
+use casa_core::{ArrayValue, Complex32};
 use casa_ms::{MeasurementSet, MsSelection};
-use casa_types::{ArrayValue, Complex32};
 
 #[test]
 fn flagged_antenna_keeps_valid_partner_correction_and_weight_scale() {

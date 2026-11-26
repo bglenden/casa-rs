@@ -12,9 +12,9 @@
 
 use std::path::{Path, PathBuf};
 
+use casa_core::{PrimitiveType, RecordField, RecordValue, Value};
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casa_test_support::{TableOracle, casacore_oracle_available};
-use casa_types::{PrimitiveType, RecordField, RecordValue, Value};
 
 fn table_ref(target: &Path) -> Value {
     Value::table_ref(target.to_string_lossy())

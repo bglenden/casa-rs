@@ -4,12 +4,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use casa_ms::{MeasurementSet, SubtableId};
-use casa_tables::{Table, TableOptions};
-use casa_types::{
+use casa_core::{
     ArrayValue, ScalarValue, Value,
     measures::{MPosition, PositionRef},
 };
+use casa_ms::{MeasurementSet, SubtableId};
+use casa_tables::{Table, TableOptions};
 
 use super::{error_text, model::GroundConditions};
 
@@ -349,7 +349,7 @@ fn mount_flag(command: &str) -> Result<(&str, f64), String> {
         .split_once('~')
         .ok_or("Malformed mount flag time range.")?;
     let time = |text| {
-        casa_types::quanta::Quantity::read(text)
+        casa_core::quanta::Quantity::read(text)
             .map(|value| value.get_si_value())
             .map_err(error_text)
     };

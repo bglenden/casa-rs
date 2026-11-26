@@ -5,9 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use casa_components::ComponentList;
+use casa_core::{RecordValue, ScalarValue, Value};
 use casa_ms::{MeasurementSet, MsSelection, SubtableId};
 use casa_tables::RequiredScalarColumnValues;
-use casa_types::{RecordValue, ScalarValue, Value};
 
 use crate::attachment::OpenedMs;
 use crate::bandpass::{BandpassFrequencyInterval, BandpassSolveControls, GatherFrequencyLayout};

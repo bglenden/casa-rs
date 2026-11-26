@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
+use casa_core::{ArrayValue, PrimitiveType, ScalarValue};
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::write_session::{
     MeasurementSetMutationColumnBatch, MeasurementSetMutationColumnValues,
@@ -12,11 +13,10 @@ use casa_ms::write_session::{
 use casa_ms::{
     MeasurementSet, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow, scratch_columns,
 };
-use casa_tables::{
-    ColumnSchema, ComplexCompression, CompressedComplexArray, StreamedTiledShapeCubeLayout,
-    StreamedTiledShapeValueType, StreamingTiledShapeWriter, TableWriteLock,
+use casa_tables::streamed_tiled::{
+    StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType, StreamingTiledShapeWriter,
 };
-use casa_types::{ArrayValue, PrimitiveType, ScalarValue};
+use casa_tables::{ColumnSchema, ComplexCompression, CompressedComplexArray, TableWriteLock};
 
 use super::{CORRECTED, MODEL, invalid, model_polarizations, observed_column, reset_batch};
 
@@ -137,7 +137,7 @@ fn packing_layout(
 }
 
 struct PackedScratch {
-    packed: casa_tables::StreamedTiledShapeColumn,
+    packed: casa_tables::streamed_tiled::StreamedTiledShapeColumn,
     scales: Vec<Option<ScalarValue>>,
     offsets: Vec<Option<ScalarValue>>,
 }

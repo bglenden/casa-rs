@@ -9,9 +9,9 @@
 
 use std::path::{Path, PathBuf};
 
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_tables::{Table, TableOptions};
 use casa_test_support::{CppTableFixture, TableOracle, casacore_oracle_available};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use ndarray::ShapeBuilder;
 
 const ROWS: usize = 5;
@@ -160,7 +160,7 @@ fn multi_cell(column: &str, row: usize, patched: bool) -> ArrayValue {
             ndarray::Array::from_shape_vec(
                 shape,
                 index
-                    .map(|i| casa_types::Complex32::new(3000.0 + base + i, -(i + 1.0)))
+                    .map(|i| casa_core::Complex32::new(3000.0 + base + i, -(i + 1.0)))
                     .collect(),
             )
             .expect("cell"),

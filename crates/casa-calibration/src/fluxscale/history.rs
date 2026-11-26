@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use super::{FluxScaleError, FluxScaleRequest};
 

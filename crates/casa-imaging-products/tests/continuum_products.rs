@@ -24,6 +24,7 @@ use common::continuum::{
 use common::synthetic_pass::{Scene, continue_round, two_cycle_round};
 use common::{GeneratedProducts, ImageOutput, full_window};
 
+use casa_core::Value;
 use casa_images::PagedImage;
 use casa_imaging_deconvolution::{
     ImageDomainReconstructionMaskPlans, MajorCycleCompletion, MaskBox, ReconstructionMask,
@@ -39,7 +40,6 @@ use casa_imaging_products::{
     PlannedContinuumGeneration, ProductStoragePlan, ProductsError, gaussian_beam_image,
     produce_continuum_members,
 };
-use casa_types::Value;
 
 /// One fixture round: two major cycles, the initial one over the empty model
 /// forming the PSF and a refresh after a nonzero model delta.

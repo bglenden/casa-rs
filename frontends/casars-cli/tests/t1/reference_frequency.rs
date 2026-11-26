@@ -5,7 +5,7 @@
 //! (CAS-9518), and an `mtmfs` Taylor expansion's reference frequency.
 
 use casa_contracts::TaskReply;
-use casa_types::{ScalarValue, Value as CellValue};
+use casa_core::{ScalarValue, Value as CellValue};
 use serde_json::json;
 
 use super::casa_return::json_run;

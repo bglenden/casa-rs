@@ -2,9 +2,9 @@
 //! Place spectra through the observation's POINTING window, in the image frame.
 use super::{TotalPowerError, failure};
 use casa_coordinates::{Coordinate, DirectionCoordinate};
+use casa_core::measures::{direction::MDirection, frame::MeasFrame};
 use casa_imaging_singledish::Pointing;
 use casa_observation::{Observation, PointingDirection, PointingRequest, VisibilityBatch};
-use casa_types::measures::{direction::MDirection, frame::MeasFrame};
 
 type ProjectedPointings = (Vec<Option<[f64; 2]>>, Vec<Pointing>);
 
@@ -12,7 +12,7 @@ pub(super) fn pixels(
     observation: &dyn Observation,
     batch: &VisibilityBatch<'_>,
     coordinate: &DirectionCoordinate,
-    measures: &std::sync::Arc<dyn casa_types::measures::MeasuresProvider>,
+    measures: &std::sync::Arc<dyn casa_core::measures::MeasuresProvider>,
     selected_antennas: &[casa_observation::AntennaId],
 ) -> Result<ProjectedPointings, TotalPowerError> {
     let times = batch.time.offsets_s();
@@ -100,7 +100,7 @@ fn selected_direction(
     series: &casa_observation::AntennaPointing,
     time: f64,
     interval: f64,
-    frame: casa_types::measures::direction::DirectionRef,
+    frame: casa_core::measures::direction::DirectionRef,
 ) -> Result<Option<MDirection>, TotalPowerError> {
     let epsilon = time.abs() * f64::EPSILON;
     let selected = if let Some(intervals) = series.intervals_s() {

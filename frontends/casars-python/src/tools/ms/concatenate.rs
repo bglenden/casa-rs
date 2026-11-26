@@ -2,15 +2,15 @@
 
 use std::path::Path;
 
+use casa_core::quanta::{
+    Unit,
+    casacore::{get_value, stream_double},
+};
 use casa_ms::tool_concatenate::{
     PhysicalConcatenation, TestConcatenation, VirtualConcatenation, concatenate, test_concatenate,
     virtual_concatenate,
 };
 use casa_tables::table_cache_name;
-use casa_types::quanta::{
-    Unit,
-    casacore::{get_value, stream_double},
-};
 use pyo3::prelude::*;
 
 use crate::convert::{Variant, quantity};

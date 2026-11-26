@@ -3,8 +3,8 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use casa_core::{ArrayValue, ScalarValue, Value, quanta::time::MvTime};
 use casa_ms::{MeasurementSet, schema::SubtableId};
-use casa_types::{ArrayValue, ScalarValue, Value, quanta::time::MvTime};
 
 use super::{GencalError, GencalRequest, get_string};
 

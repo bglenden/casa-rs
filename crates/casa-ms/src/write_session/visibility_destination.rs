@@ -3,8 +3,8 @@
 
 use std::ops::Range;
 
+use casa_core::{ArrayValue, Complex32, RecordField, ScalarValue, Value};
 use casa_tables::{ComplexCompression, ComplexScale, Table};
-use casa_types::{ArrayValue, Complex32, RecordField, ScalarValue, Value};
 
 use super::{
     MeasurementSetColumnStorage, MeasurementSetColumnWriteMode, MeasurementSetMutationColumnBatch,

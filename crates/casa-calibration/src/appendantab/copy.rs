@@ -53,7 +53,7 @@ fn stage_linked(
         .main_table()
         .keywords()
         .get(name)
-        .and_then(casa_types::Value::as_table_ref)
+        .and_then(casa_core::Value::as_table_ref)
     else {
         return Ok(conventional);
     };

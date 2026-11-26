@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 use std::path::Path;
 
+use casa_core::ArrayValue;
 use casa_tables::TableError;
-use casa_types::ArrayValue;
 
 use crate::MeasurementSet;
 use crate::selection::ResolvedMsSelectionRow;

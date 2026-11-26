@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem};
-use casa_types::quanta::Unit;
-use casa_types::{ArrayD, ArrayValue, ScalarValue, Value};
+use casa_core::quanta::Unit;
+use casa_core::{ArrayD, ArrayValue, ScalarValue, Value};
 use ndarray::{Axis, Ix2};
 use numpy::{PyArrayDescrMethods, PyReadonlyArrayDyn, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::PyRuntimeError;

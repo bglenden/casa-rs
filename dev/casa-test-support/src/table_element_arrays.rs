@@ -15,12 +15,10 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use casa_core::{ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, Value};
 use casa_tables::{
     ColumnOptions, ColumnOverrides, ColumnSchema, DataManagerKind, EndianFormat,
     GeneratedArrayColumn, GeneratedArrayValueRun, Table, TableError, TableOptions, TableSchema,
-};
-use casa_types::{
-    ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, Value,
 };
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 

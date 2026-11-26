@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
+use casa_core::measures::direction::DirectionRef;
 use casa_imaging_model::DirectionCoordinateSpec;
-use casa_types::measures::direction::DirectionRef;
 
 use super::PrepareError;
 use crate::tclean::MaskPolygon;

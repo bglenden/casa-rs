@@ -362,15 +362,15 @@ mod tests {
     fn a_default_channel_cube_spans_the_combined_band() {
         use crate::spectral_selection::{CubeAxisConfig, CubeSpecMode, CubeSpectralSetup};
 
-        let observatory = casa_types::measures::position::MPosition::new_itrf(
+        let observatory = casa_core::measures::position::MPosition::new_itrf(
             -1_601_185.4,
             -5_041_977.5,
             3_554_875.9,
         );
-        let direction = casa_types::measures::direction::MDirection::from_angles(
+        let direction = casa_core::measures::direction::MDirection::from_angles(
             0.0,
             std::f64::consts::FRAC_PI_4,
-            casa_types::measures::direction::DirectionRef::J2000,
+            casa_core::measures::direction::DirectionRef::J2000,
         );
         let engine = crate::derived::engine::MsCalEngine::from_parts(
             vec![observatory.clone()],
@@ -386,7 +386,7 @@ mod tests {
         let axis = |windows: &[(Vec<f64>, Vec<f64>)]| {
             let (frequencies, widths) = combined(windows);
             CubeSpectralSetup::for_casa_cube_axis(
-                casa_types::measures::frequency::FrequencyRef::TOPO,
+                casa_core::measures::frequency::FrequencyRef::TOPO,
                 &frequencies,
                 &widths,
                 None,

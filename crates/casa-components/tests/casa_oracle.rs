@@ -36,9 +36,9 @@ use casa_components::{
     PowerLogPolynomial, ShapeKind, SkyComponent, SpectralIndex, SpectralKind, SpectralModel,
     TabularSpectrum,
 };
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::quanta::Quantity;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::quanta::Quantity;
 use common::{assert_matches_casa, assert_same_list, copy_dir, copy_table, fixture_dir, load_json};
 use num_complex::Complex64;
 use serde_json::Value;

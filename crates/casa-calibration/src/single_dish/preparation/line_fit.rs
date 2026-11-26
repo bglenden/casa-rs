@@ -9,15 +9,15 @@ use std::io::{BufWriter, Write};
 use std::ops::RangeInclusive;
 use std::path::Path;
 
+use casa_core::{
+    ArrayValue,
+    quanta::{Quantity, Unit},
+};
 use casa_images::analysis::{ChannelLineShape, fit_channel_lines};
 use casa_ms::MeasurementSet;
 use casa_ms::transform::{
     MsTransformRequest, MsTransformTaskOptions, SpectrumBaseline, SpectrumRow, SpectrumWeights,
     TimeAverageOptions, transform_baseline_spectra,
-};
-use casa_types::{
-    ArrayValue,
-    quanta::{Quantity, Unit},
 };
 use ndarray::{ArrayD, Axis};
 

@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use casa_core::{ArrayValue, Value};
 use casa_tables::{PlainReferenceRead, Table, TableOptions};
-use casa_types::{ArrayValue, Value};
 
 use super::ToolIteration;
 use crate::error::{MsError, MsResult};

@@ -9,8 +9,8 @@ mod read;
 mod spectral_record;
 mod write;
 
+use casa_core::PrimitiveType;
 use casa_tables::{ColumnOptions, ColumnSchema, TableDescHeader, TableSchema};
-use casa_types::PrimitiveType;
 
 pub(crate) use measures::casacore_angles;
 pub(crate) use read::{read_bytes, read_component_list};

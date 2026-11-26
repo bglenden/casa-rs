@@ -5,9 +5,9 @@
 //! metadata, iterates in chunks, and exercises mask operations.
 
 use casa_coordinates::CoordinateSystem;
+use casa_core::{RecordValue, ScalarValue, Value};
 use casa_images::{GaussianBeam, Image, ImageBeamSet, ImageInfo, ImageType, TempImage};
 use casa_lattices::{LatticeIterExt, LatticeMut, TraversalSpec};
-use casa_types::{RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
 fn main() {

@@ -3,9 +3,9 @@ use casa_components::{
     ComponentShape, Ellipse, EllipseErrors, Flux, ShapeKind, SkyComponent, SpectralIndex,
     SpectralKind, SpectralModel,
 };
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
 use casa_imaging_model::GridFtProjection;
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 
 use super::*;
 use crate::predict::PrimaryBeam;

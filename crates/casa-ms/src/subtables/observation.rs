@@ -3,7 +3,7 @@
 //!
 //! Cf. C++ `MSObservationColumns`.
 
-use casa_types::measures::{MPosition, MeasuresProvider};
+use casa_core::measures::{MPosition, MeasuresProvider};
 
 use crate::schema::{self, SubtableId};
 use crate::{MsError, MsResult};

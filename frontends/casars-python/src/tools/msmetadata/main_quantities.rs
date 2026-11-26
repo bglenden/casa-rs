@@ -3,9 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_ms::{MeasurementSet, MsError, MsResult};
 use casa_tables::{Table, TableColumn};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use ndarray::{ArrayView2, Ix2};
 use pyo3::prelude::*;
 

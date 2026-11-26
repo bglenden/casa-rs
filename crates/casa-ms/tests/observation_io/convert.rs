@@ -240,7 +240,7 @@ fn the_reference_frequency_is_the_windows() {
         windows
             .cell_accessor_mut(row, "REF_FREQUENCY")
             .and_then(|mut cell| {
-                cell.set(casa_types::Value::Scalar(casa_types::ScalarValue::Float64(
+                cell.set(casa_core::Value::Scalar(casa_core::ScalarValue::Float64(
                     hz,
                 )))
             })
@@ -365,8 +365,8 @@ pub(crate) fn rows_and_sigmas(path: &Path) -> (usize, Vec<(f32, f32)>) {
         .zip(column("SIGMA"))
         .flat_map(|(weight, sigma)| {
             let (
-                Some(casa_types::ArrayValue::Float32(weight)),
-                Some(casa_types::ArrayValue::Float32(sigma)),
+                Some(casa_core::ArrayValue::Float32(weight)),
+                Some(casa_core::ArrayValue::Float32(sigma)),
             ) = (weight, sigma)
             else {
                 panic!("float WEIGHT and SIGMA cells");
@@ -743,7 +743,7 @@ fn subtable_strings(path: &Path, id: casa_ms::SubtableId, column: &str) -> Vec<S
                 .cell_accessor(row, column)
                 .and_then(|cell| cell.scalar())
             {
-                Ok(casa_types::ScalarValue::String(name)) => name.clone(),
+                Ok(casa_core::ScalarValue::String(name)) => name.clone(),
                 other => panic!("{column} of row {row}: {other:?}"),
             }
         })
@@ -759,7 +759,7 @@ fn main_ints(ms: &casa_ms::MeasurementSet, column: &str) -> Vec<i32> {
                 .cell_accessor(row, column)
                 .and_then(|cell| cell.scalar())
             {
-                Ok(casa_types::ScalarValue::Int32(value)) => *value,
+                Ok(casa_core::ScalarValue::Int32(value)) => *value,
                 other => panic!("{column} of row {row}: {other:?}"),
             }
         })
@@ -788,7 +788,7 @@ pub(super) fn split_sessions(path: &Path, early: bool) {
                 .cell_accessor(row, "TIME")
                 .and_then(|cell| cell.scalar())
             {
-                Ok(casa_types::ScalarValue::Float64(time)) => *time,
+                Ok(casa_core::ScalarValue::Float64(time)) => *time,
                 other => panic!("TIME of row {row}: {other:?}"),
             }
         })
@@ -801,13 +801,13 @@ pub(super) fn split_sessions(path: &Path, early: bool) {
             ms.main_table_mut()
                 .cell_accessor_mut(row, "OBSERVATION_ID")
                 .and_then(|mut cell| {
-                    cell.set(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(1)))
+                    cell.set(casa_core::Value::Scalar(casa_core::ScalarValue::Int32(1)))
                 })
                 .expect("second session");
         }
     }
     let string_array = |values: &[&str]| {
-        casa_types::Value::Array(casa_types::ArrayValue::String(
+        casa_core::Value::Array(casa_core::ArrayValue::String(
             ndarray::ArrayD::from_shape_vec(
                 vec![values.len()],
                 values.iter().map(ToString::to_string).collect(),
@@ -815,34 +815,31 @@ pub(super) fn split_sessions(path: &Path, early: bool) {
             .expect("shape"),
         ))
     };
-    let scalar = |value: casa_types::ScalarValue| casa_types::Value::Scalar(value);
-    let session = casa_types::RecordValue::new(vec![
-        casa_types::RecordField::new("FLAG_ROW", scalar(casa_types::ScalarValue::Bool(false))),
-        casa_types::RecordField::new("LOG", string_array(&[])),
-        casa_types::RecordField::new(
+    let scalar = |value: casa_core::ScalarValue| casa_core::Value::Scalar(value);
+    let session = casa_core::RecordValue::new(vec![
+        casa_core::RecordField::new("FLAG_ROW", scalar(casa_core::ScalarValue::Bool(false))),
+        casa_core::RecordField::new("LOG", string_array(&[])),
+        casa_core::RecordField::new(
             "OBSERVER",
-            scalar(casa_types::ScalarValue::String("second".to_string())),
+            scalar(casa_core::ScalarValue::String("second".to_string())),
         ),
-        casa_types::RecordField::new(
+        casa_core::RecordField::new(
             "PROJECT",
-            scalar(casa_types::ScalarValue::String("trial".to_string())),
+            scalar(casa_core::ScalarValue::String("trial".to_string())),
         ),
-        casa_types::RecordField::new(
-            "RELEASE_DATE",
-            scalar(casa_types::ScalarValue::Float64(0.0)),
-        ),
-        casa_types::RecordField::new("SCHEDULE", string_array(&[])),
-        casa_types::RecordField::new(
+        casa_core::RecordField::new("RELEASE_DATE", scalar(casa_core::ScalarValue::Float64(0.0))),
+        casa_core::RecordField::new("SCHEDULE", string_array(&[])),
+        casa_core::RecordField::new(
             "SCHEDULE_TYPE",
-            scalar(casa_types::ScalarValue::String(String::new())),
+            scalar(casa_core::ScalarValue::String(String::new())),
         ),
-        casa_types::RecordField::new(
+        casa_core::RecordField::new(
             "TELESCOPE_NAME",
-            scalar(casa_types::ScalarValue::String("VLA".to_string())),
+            scalar(casa_core::ScalarValue::String("VLA".to_string())),
         ),
-        casa_types::RecordField::new(
+        casa_core::RecordField::new(
             "TIME_RANGE",
-            casa_types::Value::Array(casa_types::ArrayValue::Float64(
+            casa_core::Value::Array(casa_core::ArrayValue::Float64(
                 ndarray::ArrayD::from_shape_vec(vec![2], vec![middle, middle]).expect("shape"),
             )),
         ),
@@ -887,7 +884,7 @@ fn partitions_of_one_window_share_its_name_and_rows() {
     let ranges: Vec<Vec<f64>> = (0..2)
         .map(
             |row| match sessions.array(row, "TIME_RANGE").expect("TIME_RANGE") {
-                casa_types::ArrayValue::Float64(range) => range.iter().copied().collect(),
+                casa_core::ArrayValue::Float64(range) => range.iter().copied().collect(),
                 other => panic!("TIME_RANGE of row {row}: {other:?}"),
             },
         )
@@ -911,32 +908,32 @@ fn keys_and_subtable_rows_the_destination_drops_are_losses() {
     let mut ms = casa_ms::MeasurementSet::open(&v2).expect("ms");
     ms.main_table_mut()
         .cell_accessor_mut(0, "ARRAY_ID")
-        .and_then(|mut cell| cell.set(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(1))))
+        .and_then(|mut cell| cell.set(casa_core::Value::Scalar(casa_core::ScalarValue::Int32(1))))
         .expect("a second array");
     let processors = ms
         .subtable(casa_ms::SubtableId::Processor)
         .expect("PROCESSOR")
         .row_count();
-    let radiometer = casa_types::RecordValue::new(vec![
-        casa_types::RecordField::new(
+    let radiometer = casa_core::RecordValue::new(vec![
+        casa_core::RecordField::new(
             "FLAG_ROW",
-            casa_types::Value::Scalar(casa_types::ScalarValue::Bool(false)),
+            casa_core::Value::Scalar(casa_core::ScalarValue::Bool(false)),
         ),
-        casa_types::RecordField::new(
+        casa_core::RecordField::new(
             "MODE_ID",
-            casa_types::Value::Scalar(casa_types::ScalarValue::Int32(-1)),
+            casa_core::Value::Scalar(casa_core::ScalarValue::Int32(-1)),
         ),
-        casa_types::RecordField::new(
+        casa_core::RecordField::new(
             "SUB_TYPE",
-            casa_types::Value::Scalar(casa_types::ScalarValue::String(String::new())),
+            casa_core::Value::Scalar(casa_core::ScalarValue::String(String::new())),
         ),
-        casa_types::RecordField::new(
+        casa_core::RecordField::new(
             "TYPE",
-            casa_types::Value::Scalar(casa_types::ScalarValue::String("RADIOMETER".to_string())),
+            casa_core::Value::Scalar(casa_core::ScalarValue::String("RADIOMETER".to_string())),
         ),
-        casa_types::RecordField::new(
+        casa_core::RecordField::new(
             "TYPE_ID",
-            casa_types::Value::Scalar(casa_types::ScalarValue::Int32(-1)),
+            casa_core::Value::Scalar(casa_core::ScalarValue::Int32(-1)),
         ),
     ]);
     for _ in processors..2 {
@@ -1029,7 +1026,7 @@ fn a_flag_category_held_in_any_row_is_a_loss() {
     ms.main_table_mut()
         .cell_accessor_mut(middle, "FLAG_CATEGORY")
         .and_then(|mut cell| {
-            cell.set(casa_types::Value::Array(casa_types::ArrayValue::Bool(
+            cell.set(casa_core::Value::Array(casa_core::ArrayValue::Bool(
                 ndarray::ArrayD::from_shape_vec(shape, vec![false; cells]).expect("shape"),
             )))
         })
@@ -1067,13 +1064,13 @@ fn antennas_no_baseline_names_are_a_loss() {
     for column in ["NAME", "STATION"] {
         spare.upsert(
             column,
-            casa_types::Value::Scalar(casa_types::ScalarValue::String("SPARE".to_string())),
+            casa_core::Value::Scalar(casa_core::ScalarValue::String("SPARE".to_string())),
         );
     }
     let mut feed = first_row(&ms, casa_ms::SubtableId::Feed);
     feed.upsert(
         "ANTENNA_ID",
-        casa_types::Value::Scalar(casa_types::ScalarValue::Int32(
+        casa_core::Value::Scalar(casa_core::ScalarValue::Int32(
             i32::try_from(antennas).expect("few antennas"),
         )),
     );
@@ -1147,9 +1144,7 @@ fn processors_are_lost_only_when_named_or_not_a_correlator() {
         ms.main_table_mut()
             .cell_accessor_mut(row, "PROCESSOR_ID")
             .and_then(|mut cell| {
-                cell.set(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(
-                    -1,
-                )))
+                cell.set(casa_core::Value::Scalar(casa_core::ScalarValue::Int32(-1)))
             })
             .expect("no processor");
     }
@@ -1166,19 +1161,19 @@ fn processors_are_lost_only_when_named_or_not_a_correlator() {
         "{:?}",
         report.losses
     );
-    let scalar = |value| casa_types::Value::Scalar(value);
-    let radiometer = casa_types::RecordValue::new(vec![
-        casa_types::RecordField::new("FLAG_ROW", scalar(casa_types::ScalarValue::Bool(false))),
-        casa_types::RecordField::new("MODE_ID", scalar(casa_types::ScalarValue::Int32(-1))),
-        casa_types::RecordField::new(
+    let scalar = |value| casa_core::Value::Scalar(value);
+    let radiometer = casa_core::RecordValue::new(vec![
+        casa_core::RecordField::new("FLAG_ROW", scalar(casa_core::ScalarValue::Bool(false))),
+        casa_core::RecordField::new("MODE_ID", scalar(casa_core::ScalarValue::Int32(-1))),
+        casa_core::RecordField::new(
             "SUB_TYPE",
-            scalar(casa_types::ScalarValue::String(String::new())),
+            scalar(casa_core::ScalarValue::String(String::new())),
         ),
-        casa_types::RecordField::new(
+        casa_core::RecordField::new(
             "TYPE",
-            scalar(casa_types::ScalarValue::String("RADIOMETER".to_string())),
+            scalar(casa_core::ScalarValue::String("RADIOMETER".to_string())),
         ),
-        casa_types::RecordField::new("TYPE_ID", scalar(casa_types::ScalarValue::Int32(-1))),
+        casa_core::RecordField::new("TYPE_ID", scalar(casa_core::ScalarValue::Int32(-1))),
     ]);
     let mut ms = casa_ms::MeasurementSet::open(&v2).expect("ms");
     assert_eq!(
@@ -1226,7 +1221,7 @@ fn a_round_trip_keeps_the_antenna_order() {
         ms.main_table_mut()
             .cell_accessor_mut(row, "OBSERVATION_ID")
             .and_then(|mut cell| {
-                cell.set(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(
+                cell.set(casa_core::Value::Scalar(casa_core::ScalarValue::Int32(
                     session,
                 )))
             })
@@ -1263,19 +1258,17 @@ fn an_unused_moving_field_is_written_only_where_every_field_is() {
         .expect("a field");
     comet.upsert(
         "NAME",
-        casa_types::Value::Scalar(casa_types::ScalarValue::String("comet".to_string())),
+        casa_core::Value::Scalar(casa_core::ScalarValue::String("comet".to_string())),
     );
     comet.upsert(
         "EPHEMERIS_ID",
-        casa_types::Value::Scalar(casa_types::ScalarValue::Int32(0)),
+        casa_core::Value::Scalar(casa_core::ScalarValue::Int32(0)),
     );
     let fields = ms.subtable_mut(casa_ms::SubtableId::Field).expect("FIELD");
     fields
         .add_column(
-            casa_tables::ColumnSchema::scalar("EPHEMERIS_ID", casa_types::PrimitiveType::Int32),
-            Some(casa_types::Value::Scalar(casa_types::ScalarValue::Int32(
-                -1,
-            ))),
+            casa_tables::ColumnSchema::scalar("EPHEMERIS_ID", casa_core::PrimitiveType::Int32),
+            Some(casa_core::Value::Scalar(casa_core::ScalarValue::Int32(-1))),
         )
         .expect("no ephemerides");
     fields.add_row(comet).expect("an unused comet");

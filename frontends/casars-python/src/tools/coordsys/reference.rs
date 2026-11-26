@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_coordinates::tabular::TabularEdit;
+use casa_coordinates::TabularEdit;
 use casa_coordinates::{CoordinateModel, CoordinateSystem};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;

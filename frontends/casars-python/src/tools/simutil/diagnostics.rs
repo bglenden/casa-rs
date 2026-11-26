@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Numerical simulation-planning diagnostics over native Rust calculations.
 
+use casa_core::quanta::{Dimension, Unit, UnitDim};
 use casa_simulation::simutil::beam::spheroidal_beam;
 use casa_simulation::simutil::sensitivity::{SensitivitySpec, array_sensitivity, sensitivity};
 use casa_simulation::{ExecutionControls, SessionResources, SimulatorOptions};
-use casa_types::quanta::{Dimension, Unit, UnitDim};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 

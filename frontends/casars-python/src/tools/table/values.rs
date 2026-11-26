@@ -10,8 +10,8 @@
 
 use std::path::Path;
 
+use casa_core::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use casa_tables::add_directory;
-use casa_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
 use num_complex::Complex64;
 

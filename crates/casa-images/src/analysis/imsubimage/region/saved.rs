@@ -4,8 +4,8 @@
 use std::path::Path;
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem};
-use casa_types::quanta::{Quantity, Unit};
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+use casa_core::quanta::{Quantity, Unit};
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::analysis::world_axes_for_plane;
 use crate::saved_region::map_world_region_axes;

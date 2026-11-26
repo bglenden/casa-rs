@@ -10,9 +10,9 @@
 //! The column names and types match the C++ casacore `MS*Enums.h` headers
 //! exactly, ensuring binary compatibility with C++-created MeasurementSets.
 
-use casa_tables::table_measures::MeasureType;
+use casa_core::PrimitiveType;
+use casa_measures::table_measures::MeasureType;
 use casa_tables::{ColumnSchema, SchemaError, TableSchema};
-use casa_types::PrimitiveType;
 
 /// Describes the shape contract for a column in the MS schema.
 ///
@@ -43,7 +43,7 @@ pub enum ColumnKind {
 /// Each MS table module exports `REQUIRED_COLUMNS` and `OPTIONAL_COLUMNS`
 /// arrays of these. The metadata is sufficient to:
 /// 1. Build a [`TableSchema`] via [`build_table_schema`].
-/// 2. Attach MEASINFO keywords via [`casa_tables::table_measures::TableMeasDesc`].
+/// 2. Attach MEASINFO keywords via [`casa_measures::table_measures::TableMeasDesc`].
 /// 3. Attach QuantumUnits keywords via [`casa_tables::table_quantum::TableQuantumDesc`].
 ///
 /// Cf. C++ `MSTableImpl::colMapDef` which populates `SimpleOrderedMap`

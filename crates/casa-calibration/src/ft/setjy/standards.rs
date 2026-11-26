@@ -3,11 +3,11 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_measures_data::MeasuresRuntime;
+use casa_core::measures::direction::MDirection;
+use casa_core::{ArrayValue, ScalarValue};
+use casa_measures::MeasuresRuntime;
 use casa_ms::MsResult;
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::direction::MDirection;
-use casa_types::{ArrayValue, ScalarValue};
 use time::{Date, Month};
 
 use crate::ft::invalid;

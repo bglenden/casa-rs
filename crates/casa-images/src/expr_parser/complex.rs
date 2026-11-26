@@ -7,7 +7,7 @@ use super::{
 };
 use crate::ImageError;
 use crate::image_expr_ops::{apply_binary, apply_unary};
-use casa_types::Complex32;
+use casa_core::Complex32;
 use std::sync::Arc;
 
 fn error(position: usize) -> impl FnOnce(ImageError) -> ExprParseError {

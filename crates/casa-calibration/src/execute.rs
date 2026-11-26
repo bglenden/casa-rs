@@ -28,6 +28,7 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Instant;
 
+use casa_core::{ArrayValue, Complex32, ScalarValue, Value};
 use casa_ms::column_def::build_table_schema;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::ms::MeasurementSet;
@@ -41,7 +42,6 @@ use casa_ms::{
     save_next_flag_backup,
 };
 use casa_tables::{ColumnSchema, Table, TableError, TableOptions, TableWriteLock};
-use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -6094,13 +6094,13 @@ mod tests {
     use std::fs;
     use std::sync::{Mutex, OnceLock};
 
-    use casa_ms::{MeasurementSet, MeasurementSetBuilder, OptionalMainColumn};
-    use casa_tables::{ArrayShapeContract, ColumnSchema, ColumnType, Table};
-    use casa_types::measures::direction::{DirectionRef, MDirection};
-    use casa_types::measures::position::MPosition;
-    use casa_types::{
+    use casa_core::measures::direction::{DirectionRef, MDirection};
+    use casa_core::measures::position::MPosition;
+    use casa_core::{
         ArrayValue, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
     };
+    use casa_ms::{MeasurementSet, MeasurementSetBuilder, OptionalMainColumn};
+    use casa_tables::{ArrayShapeContract, ColumnSchema, ColumnType, Table};
     use ndarray::{ArrayD, IxDyn, ShapeBuilder};
     use tempfile::TempDir;
 

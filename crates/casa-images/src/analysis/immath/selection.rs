@@ -8,8 +8,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use casa_coordinates::{CoordinateSystem, CoordinateType, StokesType};
+use casa_core::{ArrayD, RecordValue, Value};
 use casa_lattices::{Lattice, LatticeError};
-use casa_types::{ArrayD, RecordValue, Value};
 use ndarray::{Axis, IxDyn, Slice, SliceInfoElem, Zip};
 
 use crate::expr_parser::referenced_images;

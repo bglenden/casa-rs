@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! A component's integrated flux, CASA's `Flux<Double>`.
 
-use casa_types::quanta::Unit;
+use casa_core::quanta::Unit;
 use num_complex::Complex64;
 
 use crate::component_type::Polarisation;

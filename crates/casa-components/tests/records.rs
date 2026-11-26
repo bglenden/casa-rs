@@ -12,7 +12,7 @@
 mod common;
 
 use casa_components::ComponentList;
-use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use common::{copy_table, fixture_dir, load_json};
 use serde_json::Value as Json;
 

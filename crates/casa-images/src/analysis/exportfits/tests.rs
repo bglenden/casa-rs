@@ -6,8 +6,8 @@ use casa_coordinates::{
     DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate, StokesCoordinate,
     StokesType,
 };
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::frequency::FrequencyRef;
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::frequency::FrequencyRef;
 
 #[test]
 fn export_axis_plan_places_spectral_before_stokes_when_stokeslast() {

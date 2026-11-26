@@ -4,11 +4,11 @@
 use std::f64::consts::PI;
 
 use casa_coordinates::{Coordinate, DirectionCoordinate};
-use casa_types::measures::{
+use casa_core::measures::{
     MeasFrame,
     direction::{DirectionRef, MDirection},
 };
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::quanta::{Quantity, Unit};
 
 use crate::analysis::imsubimage::region::parse_world_angle;
 use crate::{ImageError, ImpvRequest, PvAmount, PvPosition};

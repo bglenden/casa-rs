@@ -3,9 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use casa_core::ScalarValue;
 use casa_ms::{MeasurementSet, MsError, MsResult, MsSpectralWindow, SubTable};
 use casa_tables::{Table, TableOptions};
-use casa_types::ScalarValue;
 use numpy::IntoPyArray;
 use pyo3::prelude::*;
 

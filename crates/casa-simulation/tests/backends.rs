@@ -53,13 +53,13 @@ mod trop_test_ramp;
 
 use std::path::Path;
 
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_simulation::{
     BackendRequest, NoiseSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions,
     VoltagePatternSpec,
 };
 use casa_test_support::ms_digest::measurement_set_manifest;
-use casa_types::measures::{EpochRef, MEpoch};
 use num_complex::Complex32;
 use pass_summary::{PassSummary, capture};
 use predict_support::{

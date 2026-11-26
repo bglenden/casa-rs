@@ -27,9 +27,9 @@
 
 use std::path::Path;
 
+use casa_core::Value;
 use casa_observation::{Catalogue, FieldEphemeris, ObservationError};
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
-use casa_types::Value;
 
 use super::{Loss, LossKind};
 use crate::observation_io::update::{request_error, storage};
@@ -143,7 +143,7 @@ pub(super) fn scan_bytes(catalogue: &Catalogue) -> usize {
         catalogue.partitions.iter().map(each).max().unwrap_or(0)
     };
     let cell = widest(|entry| entry.frequencies_hz.len() * entry.correlations.len());
-    let categories = CATEGORY_CHUNK * (3 * cell + size_of::<Option<casa_types::ArrayValue>>());
+    let categories = CATEGORY_CHUNK * (3 * cell + size_of::<Option<casa_core::ArrayValue>>());
     keys.max(categories)
 }
 

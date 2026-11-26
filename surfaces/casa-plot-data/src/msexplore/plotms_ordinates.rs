@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use casa_types::{Complex32, Complex64};
+use casa_core::{Complex32, Complex64};
 use ndarray::ArrayView2;
 
 use super::MsAxis;

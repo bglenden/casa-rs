@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 use std::mem::size_of;
 
-use casa_types::ArrayValue;
-use casa_types::quanta::format::{YMD, format_time};
+use casa_core::ArrayValue;
+use casa_core::quanta::format::{YMD, format_time};
 
 use crate::selection::syntax::ChannelSelection;
 use crate::{MeasurementSet, MsReadPlan, MsResult, MsSelectionIoBudget};

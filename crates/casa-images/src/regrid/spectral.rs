@@ -267,7 +267,7 @@ mod tests {
     #[test]
     fn spectral_plan_converts_between_axis_units() {
         use casa_coordinates::SpectralCoordinate;
-        use casa_types::measures::frequency::FrequencyRef;
+        use casa_core::measures::frequency::FrequencyRef;
 
         let input = CoordinateModel::Spectral(Box::new(SpectralCoordinate::new(
             FrequencyRef::LSRK,
@@ -291,14 +291,14 @@ mod tests {
         first_hz: f64,
         step_hz: f64,
         channels: usize,
-        frame: casa_types::measures::frequency::FrequencyRef,
+        frame: casa_core::measures::frequency::FrequencyRef,
         value: impl Fn(usize) -> f32,
     ) -> crate::TempImage<f32> {
         use casa_coordinates::{
             CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate,
             StokesCoordinate, StokesType,
         };
-        use casa_types::measures::direction::DirectionRef;
+        use casa_core::measures::direction::DirectionRef;
         let mut coordinates = CoordinateSystem::new();
         coordinates.add_coordinate(DirectionCoordinate::new(
             DirectionRef::J2000,
@@ -329,7 +329,7 @@ mod tests {
     /// the input's ends takes the end channel's value, masked.
     #[test]
     fn a_cube_is_regridded_along_frequency_as_casacore_regrids_it() {
-        use casa_types::measures::frequency::FrequencyRef;
+        use casa_core::measures::frequency::FrequencyRef;
         let input = cube(1.0e9, 1.0e8, 4, FrequencyRef::LSRK, |k| {
             10.0 * (k as f32 + 1.0)
         });
@@ -374,7 +374,7 @@ mod tests {
     /// spectral axis out of it: the start model's linear pass is not theirs.
     #[test]
     fn the_direction_regrid_refuses_a_spectral_axis_that_differs() {
-        use casa_types::measures::frequency::FrequencyRef;
+        use casa_core::measures::frequency::FrequencyRef;
         let input = cube(1.0e9, 1.0e8, 4, FrequencyRef::LSRK, |k| k as f32);
         let template = RegridTemplate::of(&cube(0.95e9, 1.0e8, 6, FrequencyRef::LSRK, |_| 0.0));
         let error = regrid(&input, &template, RegridMethod::Linear).unwrap_err();

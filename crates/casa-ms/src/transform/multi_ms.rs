@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use casa_core::{RecordValue, Value};
 use casa_tables::{Table, TableError, TableInfo, TableOptions};
-use casa_types::{RecordValue, Value};
 
 use super::subtable_copy::{attached_subtable_name, copy_dir_recursive};
 use super::{

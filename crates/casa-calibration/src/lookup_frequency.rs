@@ -4,7 +4,7 @@ use crate::interpolation::{
     Curve, array_spline_derivatives, sample, spline_derivatives, unwrap_phase,
 };
 use crate::{ApplyExecutionError, CalibrationTableLookup, ComplexSolution};
-use casa_types::Complex32;
+use casa_core::Complex32;
 
 pub(crate) fn relative_axis(axis: &[f64]) -> Vec<f64> {
     let center = axis.iter().sum::<f64>() / axis.len() as f64;
@@ -338,7 +338,7 @@ fn registered_flag(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use casa_types::Complex32;
+    use casa_core::Complex32;
     #[test]
     fn natural_spline_matches_the_closed_form_at_every_half_knot() {
         // For unit-spaced amplitudes [1,2,1/2,5/4], the interior

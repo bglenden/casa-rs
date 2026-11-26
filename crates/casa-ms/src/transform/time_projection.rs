@@ -4,8 +4,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use casa_core::{ArrayValue, ScalarValue};
 use casa_tables::{Table, TableError};
-use casa_types::{ArrayValue, ScalarValue};
 use ndarray::{Array1, Zip};
 
 use super::channel_average::SpectrumCells;

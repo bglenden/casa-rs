@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use casa_types::Complex32;
+use casa_core::Complex32;
 use ndarray::{ArrayD, Ix2};
 
 use crate::lookup::complex_from_casa_polar;

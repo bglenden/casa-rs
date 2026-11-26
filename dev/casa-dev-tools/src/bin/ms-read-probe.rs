@@ -7,13 +7,13 @@ use std::path::PathBuf;
 use std::process;
 use std::time::{Duration, Instant};
 
+use casa_core::{ArrayValue, ScalarValue};
 use casa_ms::{
     MeasurementSet, MsSelection, MsSelectionIoBudget, ResolvedMsSelectionRow, SourcePartition,
     SourcePartitionId, VisibilityBuffer, VisibilityBufferColumnReport, VisibilityBufferRequest,
     VisibilityBufferTimings, VisibilityComplexSamples, VisibilityDataColumn,
     VisibilityFloatSamples,
 };
-use casa_types::{ArrayValue, ScalarValue};
 use serde::Serialize;
 
 fn main() {

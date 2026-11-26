@@ -6,7 +6,7 @@ use super::State;
 use crate::convert::{ConvertError, ConvertResult};
 use crate::tools::LogLine;
 use casa_components::ComponentList;
-use casa_types::RecordValue;
+use casa_core::RecordValue;
 
 impl State {
     pub(crate) fn add_record(

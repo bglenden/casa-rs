@@ -3,8 +3,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{ArrayShapeContract, ColumnType, EncodedArrayAppend, RecordAppendOptions, Table};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, IxDyn};
 use rayon::prelude::*;
 
@@ -78,7 +78,7 @@ pub(super) fn prepare(
         return Ok(None);
     }
     let read = || scalar_columns(source, SCALARS);
-    let (scalars, attached_scan) = rayon::join(read, || {
+    let (scalars, attached_scan) = super::join_with_tracing(read, || {
         if destination.row_count() == 0 {
             Ok(None)
         } else {
@@ -111,16 +111,19 @@ pub(super) fn prepare(
         .unwrap_or_default();
     let scans = bounds.offsets(&scalars, &map.observations)?;
     let rows = (0..source.row_count()).collect::<Vec<_>>();
+    let dispatch = tracing::dispatcher::get_default(Clone::clone);
     let arrays = materialized
         .par_iter()
         .map(|&name| {
-            let cells = source
-                .column_accessor(name)?
-                .array_cells_owned_uncached(&rows)?;
-            Ok((
-                VisibilityWriteDestination::for_append(destination, name)?,
-                cells.into_iter(),
-            ))
+            tracing::dispatcher::with_default(&dispatch, || {
+                let cells = source
+                    .column_accessor(name)?
+                    .array_cells_owned_uncached(&rows)?;
+                Ok((
+                    VisibilityWriteDestination::for_append(destination, name)?,
+                    cells.into_iter(),
+                ))
+            })
         })
         .collect::<MsResult<Vec<_>>>()?;
     let mut arrays = arrays;

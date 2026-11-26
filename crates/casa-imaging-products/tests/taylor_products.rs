@@ -1120,8 +1120,8 @@ fn cube_primary_beam_reduction_rejects_invalid_inputs() {
 #[test]
 fn two_product_families_share_staging_with_distinct_coordinates() {
     use casa_coordinates::{CoordinateType, SpectralCoordinate, defaults};
+    use casa_core::measures::frequency::FrequencyRef;
     use casa_imaging_products::CasaImageWriter;
-    use casa_types::measures::frequency::FrequencyRef;
 
     let products = [
         ProductKind::Psf,

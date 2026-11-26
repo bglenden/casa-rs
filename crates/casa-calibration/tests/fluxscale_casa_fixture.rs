@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use casa_calibration::{FluxScaleOptions, FluxScaleRequest, fluxscale};
+use casa_core::{Complex32, ScalarValue, Value};
 use casa_tables::{Table, TableOptions};
-use casa_types::{Complex32, ScalarValue, Value};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -226,7 +226,7 @@ fn partial_antenna_samples_do_not_move_the_casa_incremental_reference_time() {
         table
             .cell_accessor_mut(index, "FLAG")
             .unwrap()
-            .set(Value::Array(casa_types::ArrayValue::from_bool_vec(
+            .set(Value::Array(casa_core::ArrayValue::from_bool_vec(
                 vec![false; 2],
             )))
             .unwrap();
@@ -282,7 +282,7 @@ fn unmatched_transfer_field_does_not_discard_another_fields_valid_flux() {
     let untouched = output.cell_accessor(2, "CPARAM").unwrap().array().unwrap();
     assert_eq!(
         untouched,
-        &casa_types::ArrayValue::from_complex32_vec(vec![Complex32::new(3., 0.); 2])
+        &casa_core::ArrayValue::from_complex32_vec(vec![Complex32::new(3., 0.); 2])
     );
 }
 

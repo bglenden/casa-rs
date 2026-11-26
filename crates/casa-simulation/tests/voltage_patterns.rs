@@ -2,11 +2,11 @@
 //! Saved voltage-pattern tables affect simulated image and component DATA.
 mod existing_ms_calculations;
 
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{
     BackendRequest, PredictSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions,
     VoltagePatternSpec,
 };
-use casa_types::measures::{EpochRef, MEpoch};
 use existing_ms_calculations::{copy, predict_support as support};
 use flate2::read::GzDecoder;
 use serde_json::Value;

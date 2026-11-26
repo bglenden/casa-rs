@@ -8,11 +8,11 @@ use std::process::ExitCode;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use casa_logging::{
+use casa_simulation::synthetic::task::Request;
+use casa_tables::log_table::{
     CasaLogLayer, CasaLogSink, CasaPriority, CasaTableLogSink, CompositeSink, NullSink, StderrSink,
     TableLogOpenMode,
 };
-use casa_simulation::synthetic::task::Request;
 use tracing_subscriber::Registry;
 use tracing_subscriber::layer::SubscriberExt;
 

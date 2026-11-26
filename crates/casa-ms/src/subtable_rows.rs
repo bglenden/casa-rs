@@ -3,7 +3,7 @@
 //! column at its default, with the values a writer gives overriding them.
 //! The simulator and the converter fill subtables through these.
 
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
 use num_complex::Complex32;
 
@@ -40,12 +40,12 @@ pub(crate) fn row_from_defs(defs: &[ColumnDef], overrides: &[(&str, Value)]) -> 
 fn default_value(definition: &ColumnDef) -> Value {
     match definition.column_kind {
         ColumnKind::Scalar => match definition.data_type {
-            casa_types::PrimitiveType::Bool => b(false),
-            casa_types::PrimitiveType::Int32 => i(0),
-            casa_types::PrimitiveType::Float64 => f(0.0),
-            casa_types::PrimitiveType::String => s(""),
-            casa_types::PrimitiveType::Float32 => Value::Scalar(ScalarValue::Float32(0.0)),
-            casa_types::PrimitiveType::Complex32 => {
+            casa_core::PrimitiveType::Bool => b(false),
+            casa_core::PrimitiveType::Int32 => i(0),
+            casa_core::PrimitiveType::Float64 => f(0.0),
+            casa_core::PrimitiveType::String => s(""),
+            casa_core::PrimitiveType::Float32 => Value::Scalar(ScalarValue::Float32(0.0)),
+            casa_core::PrimitiveType::Complex32 => {
                 Value::Scalar(ScalarValue::Complex32(Complex32::new(0.0, 0.0)))
             }
             _ => i(0),
@@ -53,10 +53,10 @@ fn default_value(definition: &ColumnDef) -> Value {
         ColumnKind::FixedArray { shape } => {
             let total = shape.iter().product();
             match definition.data_type {
-                casa_types::PrimitiveType::Bool => bool_array(&vec![false; total], shape.to_vec()),
-                casa_types::PrimitiveType::Float32 => f32_array(&vec![0.0; total], shape.to_vec()),
-                casa_types::PrimitiveType::Int32 => i32_array(&vec![0; total], shape.to_vec()),
-                casa_types::PrimitiveType::String => string_array(&vec![""; total], shape.to_vec()),
+                casa_core::PrimitiveType::Bool => bool_array(&vec![false; total], shape.to_vec()),
+                casa_core::PrimitiveType::Float32 => f32_array(&vec![0.0; total], shape.to_vec()),
+                casa_core::PrimitiveType::Int32 => i32_array(&vec![0; total], shape.to_vec()),
+                casa_core::PrimitiveType::String => string_array(&vec![""; total], shape.to_vec()),
                 _ => f64_array(&vec![0.0; total], shape.to_vec()),
             }
         }
@@ -64,11 +64,11 @@ fn default_value(definition: &ColumnDef) -> Value {
             let shape = vec![1; ndim];
             let total = shape.iter().product();
             match definition.data_type {
-                casa_types::PrimitiveType::Bool => bool_array(&vec![false; total], shape),
-                casa_types::PrimitiveType::Float32 => f32_array(&vec![0.0; total], shape),
-                casa_types::PrimitiveType::Int32 => i32_array(&vec![0; total], shape),
-                casa_types::PrimitiveType::String => string_array(&vec![""; total], shape),
-                casa_types::PrimitiveType::Complex32 => {
+                casa_core::PrimitiveType::Bool => bool_array(&vec![false; total], shape),
+                casa_core::PrimitiveType::Float32 => f32_array(&vec![0.0; total], shape),
+                casa_core::PrimitiveType::Int32 => i32_array(&vec![0; total], shape),
+                casa_core::PrimitiveType::String => string_array(&vec![""; total], shape),
+                casa_core::PrimitiveType::Complex32 => {
                     complex_array(&vec![Complex32::new(0.0, 0.0); total], shape)
                 }
                 _ => f64_array(&vec![0.0; total], shape),

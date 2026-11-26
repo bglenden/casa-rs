@@ -17,8 +17,8 @@
 //!   a complex number to the complex types;
 //! - a scalar `Int` also goes to a Boolean (non-zero is true).
 
+use casa_core::{ArrayValue, Complex32, Complex64, PrimitiveType, ScalarValue, Value};
 use casa_tables::ColumnType;
-use casa_types::{ArrayValue, Complex32, Complex64, PrimitiveType, ScalarValue, Value};
 use ndarray::ArrayD;
 
 use super::state::Fail;

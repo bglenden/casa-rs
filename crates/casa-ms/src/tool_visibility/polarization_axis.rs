@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use casa_coordinates::StokesType;
-use casa_types::ArrayValue;
+use casa_core::ArrayValue;
 use ndarray::ArrayD;
 
 use super::{input, shaped};

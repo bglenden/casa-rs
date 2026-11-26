@@ -11,9 +11,9 @@
 
 use std::str::FromStr;
 
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::{EpochRef, MEpoch, MeasFrame, PositionRef};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::{EpochRef, MEpoch, MeasFrame, PositionRef};
 use pyo3::PyResult;
 
 use super::{FrameValue, State, no_measures, record};
@@ -190,7 +190,7 @@ pub(super) fn convert(
         && source == destination
     {
         let value = if raze {
-            casa_types::measures::MjdHighPrec::new(value.day(), 0.0)
+            casa_core::measures::MjdHighPrec::new(value.day(), 0.0)
         } else {
             value
         };
@@ -205,7 +205,7 @@ pub(super) fn convert(
         return super::geometry::convert(state, measure, target);
     }
     if let MeasureValue::Doppler(value) = measure.value {
-        let converted = casa_types::measures::doppler::MDoppler::new(
+        let converted = casa_core::measures::doppler::MDoppler::new(
             value,
             crate::convert::holder::doppler_ref(measure.refer)
                 .map_err(pyo3::exceptions::PyRuntimeError::new_err)?,
@@ -250,14 +250,14 @@ fn convert_native(
         &MDirection,
         DirectionRef,
     )
-        -> Result<MDirection, casa_types::measures::MeasureError>,
+        -> Result<MDirection, casa_core::measures::MeasureError>,
 ) -> Result<Measure, String> {
     if measure.refer == target && !target.starts_with("R_") {
         return Ok(measure);
     }
     let unsupported =
         |kind: &str| format!("the {target} {kind} frame is not yet implemented in casa-rs");
-    let error = |error: casa_types::measures::MeasureError| error.to_string();
+    let error = |error: casa_core::measures::MeasureError| error.to_string();
     let converted = match measure.to_casa()? {
         CasaMeasure::Epoch(epoch) => {
             let (reference, raze) = epoch_ref(target).map_err(|_| unsupported("epoch"))?;
@@ -321,7 +321,7 @@ pub(super) fn convert_direction(
     direction: &MDirection,
     target: DirectionRef,
     frame: &MeasFrame,
-) -> Result<MDirection, casa_types::measures::MeasureError> {
+) -> Result<MDirection, casa_core::measures::MeasureError> {
     if direction.refer() == target {
         return direction.convert_to(target, frame);
     }
@@ -333,9 +333,9 @@ pub(super) fn resolve_direction(
     state: &mut State,
     direction: &MDirection,
     frame: &MeasFrame,
-) -> Result<(MDirection, f64), casa_types::measures::MeasureError> {
-    use casa_measures_data::PlanetaryTable;
-    use casa_types::measures::MeasureError;
+) -> Result<(MDirection, f64), casa_core::measures::MeasureError> {
+    use casa_core::measures::MeasureError;
+    use casa_measures::PlanetaryTable;
 
     let refer = direction.refer();
     if refer == DirectionRef::COMET {
@@ -347,7 +347,7 @@ pub(super) fn resolve_direction(
     if frame.epoch().is_none() {
         return Err(MeasureError::MissingFrameData { what: "epoch" });
     }
-    let model_error = |error: casa_measures_data::MeasuresDataError| MeasureError::ModelError {
+    let model_error = |error: casa_measures::MeasuresDataError| MeasureError::ModelError {
         model: "DE200",
         reason: error.to_string(),
     };

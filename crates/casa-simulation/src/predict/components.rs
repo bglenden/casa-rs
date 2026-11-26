@@ -44,9 +44,9 @@
 //! Native direction references retain their axes when evaluating shapes.
 
 use casa_components::{ComponentList, Polarisation, ShapeTransform, SkyComponent};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{EpochRef, MEpoch, MeasFrame, UvwMachine};
 use casa_imaging_runtime::{Admitted, Reservation};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, MEpoch, MeasFrame, UvwMachine};
 use num_complex::{Complex32, Complex64};
 use std::sync::Arc;
 

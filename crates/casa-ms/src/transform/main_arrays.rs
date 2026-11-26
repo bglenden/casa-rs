@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
+use casa_core::ArrayValue;
 use casa_tables::{Table, TableError};
-use casa_types::ArrayValue;
 
 use super::visibility_columns::VisibilityColumns;
 use super::{MsTransformError, PreparedTransformInputView, TransformInputColumns};

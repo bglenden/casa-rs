@@ -4,12 +4,12 @@
 
 #![allow(dead_code)]
 
+use casa_core::Correlation;
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, CfKey, GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator,
     PaddingFactor, Placement, PolarizationRouting, SampleBuffer, Spheroidal,
 };
-use casa_types::Correlation;
 use num_complex::{Complex32, Complex64};
 
 pub const IMAGE: usize = 64;

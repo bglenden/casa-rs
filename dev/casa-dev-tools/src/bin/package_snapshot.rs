@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use casa_measures_tools::{create_packaged_snapshot, runtime_root_candidates};
+use casa_measures::snapshot::{create_packaged_snapshot, runtime_root_candidates};
 
 fn main() {
     if let Err(error) = run() {
@@ -53,8 +53,7 @@ fn default_archive_path() -> PathBuf {
         .expect("dev dir")
         .parent()
         .expect("repo root")
-        .join("crates")
-        .join("casa-measures-data")
+        .join("libs/casacore/casa-measures")
         .join("data")
         .join("casa-measures-runtime.tar.gz")
 }
@@ -65,8 +64,7 @@ fn default_provenance_path() -> PathBuf {
         .expect("dev dir")
         .parent()
         .expect("repo root")
-        .join("crates")
-        .join("casa-measures-data")
+        .join("libs/casacore/casa-measures")
         .join("data")
         .join("casa-measures-runtime.provenance.json")
 }
@@ -75,5 +73,7 @@ fn print_help() {
     println!("Usage: package_snapshot [--input PATH] [--archive PATH] [--provenance PATH]");
     println!();
     println!("Packages the CASA-table runtime subset used by casa-rs into the");
-    println!("fallback archive plus provenance JSON stored under casa-measures-data/data/.");
+    println!(
+        "fallback archive plus provenance JSON stored under libs/casacore/casa-measures/data/."
+    );
 }

@@ -8,9 +8,9 @@
 use std::collections::BTreeSet;
 use std::f64::consts::TAU;
 
+use casa_core::{Complex32, Complex64, ScalarValue, Value};
 use casa_images::PagedImage;
 use casa_ms::{MeasurementSet, VirtualModelEntry, VirtualModelKind, virtual_model};
-use casa_types::{Complex32, Complex64, ScalarValue, Value};
 use serde_json::json;
 
 use super::fixture::{Component, Geometry, Observation, component_pixel, peak};
@@ -154,8 +154,8 @@ fn mem_saves_a_virtual_model_for_the_selected_channel() {
 /// Saving the virtual model must use the mapped frequency frame.
 #[test]
 fn virtual_model_uses_the_measurement_set_frequency_mapping() {
+    use casa_measures::table_measures::{MeasureType, TableMeasDesc};
     use casa_ms::SubtableId;
-    use casa_tables::table_measures::{MeasureType, TableMeasDesc};
 
     let observation = Observation::synthesise(&[("point", POINT)]);
     let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();

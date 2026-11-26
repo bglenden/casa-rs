@@ -3,8 +3,8 @@
 //! Separately centred PSFs for mosaic continuum and cube imaging (#1062).
 
 use casa_coordinates::{Coordinate, CoordinateModel};
+use casa_core::measures::direction::DirectionRef;
 use casa_images::PagedImage;
-use casa_types::measures::direction::DirectionRef;
 use serde_json::json;
 
 use super::fixture::{Component, Observation, Product, Setup};

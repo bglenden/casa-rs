@@ -21,11 +21,11 @@
 
 use std::sync::Arc;
 
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
 use casa_observation::{
     ObservationError, SourceEntry, SourceId, SourceRecord, SourceWindow, Velocity, WindowId,
 };
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use serde_json::{Map, Value};
 use zarrs::array::ArraySubset;
 use zarrs::filesystem::FilesystemStore;

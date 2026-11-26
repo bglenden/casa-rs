@@ -8,15 +8,15 @@
 //!
 //! Cf. C++ `DerivedMC::MSCalEngine`.
 
+use casa_core::measures::MeasuresProvider;
+use casa_core::measures::baseline::UvwFrame;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::epoch::{EpochRef, MEpoch};
+use casa_core::measures::frame::MeasFrame;
+use casa_core::measures::position::MPosition;
+use casa_core::{ArrayD, ArrayValue, ScalarValue, Value};
+use casa_measures::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_tables::Table;
-use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
-use casa_types::measures::MeasuresProvider;
-use casa_types::measures::baseline::UvwFrame;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::epoch::{EpochRef, MEpoch};
-use casa_types::measures::frame::MeasFrame;
-use casa_types::measures::position::MPosition;
-use casa_types::{ArrayD, ArrayValue, ScalarValue, Value};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -415,11 +415,11 @@ impl MsCalEngine {
         time_mjd_sec: f64,
         field_id: usize,
         ephemeris: &PhaseCentreEphemeris,
-    ) -> MsResult<casa_types::measures::radial_velocity::MRadialVelocity> {
+    ) -> MsResult<casa_core::measures::radial_velocity::MRadialVelocity> {
         let sample = ephemeris
             .sample(field_id, self.ephemeris_mjd_utc(time_mjd_sec)?)
             .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        Ok(casa_types::measures::radial_velocity::MRadialVelocity::new(
+        Ok(casa_core::measures::radial_velocity::MRadialVelocity::new(
             sample.radial_velocity_m_per_s,
             sample.velocity_reference,
         ))
@@ -429,7 +429,7 @@ impl MsCalEngine {
         &self,
         time_mjd_sec: f64,
         field_id: usize,
-    ) -> MsResult<Option<casa_types::measures::radial_velocity::MRadialVelocity>> {
+    ) -> MsResult<Option<casa_core::measures::radial_velocity::MRadialVelocity>> {
         self.field_series(field_id)?
             .map(|(series, _)| series.radial_velocity(self.ephemeris_mjd_utc(time_mjd_sec)?))
             .transpose()
@@ -508,7 +508,7 @@ impl MsCalEngine {
     ) -> MsResult<MDirection> {
         let frame =
             self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
-        Ok(casa_types::measures::ephemeris::topocentric_j2000(
+        Ok(casa_core::measures::ephemeris::topocentric_j2000(
             sample.geocentric_position_metres,
             sample.position_reference,
             &self.observatory_position,
@@ -576,7 +576,7 @@ impl MsCalEngine {
         }
         let direction = self.field_body_direction(time_mjd_sec, ephemeris)?;
         Ok(Cow::Owned(
-            casa_types::measures::ephemeris::offset_true_angle(&direction, offset)?,
+            casa_core::measures::ephemeris::offset_true_angle(&direction, offset)?,
         ))
     }
 
@@ -1670,10 +1670,10 @@ mod tests {
     use crate::builder::MeasurementSetBuilder;
     use crate::schema;
     use crate::test_helpers::default_value_for_def;
+    use casa_core::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+    use casa_measures::table_measures::default_direction_ref_map;
+    use casa_measures::table_measures::{MeasureType, TableMeasDesc};
     use casa_tables::ColumnSchema;
-    use casa_tables::table_measures::default_direction_ref_map;
-    use casa_tables::table_measures::{MeasureType, TableMeasDesc};
-    use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
     use ndarray::{ArrayD, ShapeBuilder};
 
     /// VLA approximate ITRF position.

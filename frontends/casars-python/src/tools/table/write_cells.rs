@@ -10,8 +10,8 @@
 //! `TableWritePlan::save_selected_rows`; no other cell and no other storage
 //! manager is touched. The lock handling is [`State::write_with`]'s.
 
+use casa_core::{Complex32, Complex64, PrimitiveType, Value};
 use casa_tables::{ArrayShapeContract, ColumnSchema, ColumnType, Table};
-use casa_types::{Complex32, Complex64, PrimitiveType, Value};
 use numpy::{PyArray3, PyArrayDescrMethods, PyArrayMethods, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 

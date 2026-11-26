@@ -10,6 +10,7 @@ mod common;
 #[path = "aw_laws/pointing_origin.rs"]
 mod pointing_origin;
 
+use casa_core::Correlation;
 use casa_imaging_model::{
     EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequestInput, NativeAwTerms,
     PolarizationCoordinate,
@@ -22,7 +23,6 @@ use casa_imaging_operator::{
     RowContext, SampleBuffer, SpectralAxis, SpectralKernel, SpectralResampler, TapLayout,
     WeightingGeneration, Work,
 };
-use casa_types::Correlation;
 use common::{IMAGE, Rng, buffer, placements, samples};
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};

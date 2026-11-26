@@ -3,15 +3,15 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_measures_data::CometTable;
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::ephemeris::offset_true_angle;
+use casa_core::measures::radial_velocity::{MRadialVelocity, RadialVelocityRef};
+use casa_core::measures::{EpochRef, MEpoch, MeasFrame};
+use casa_core::quanta::casacore::casacore_unit;
+use casa_core::quanta::{Dimension, UnitDim};
+use casa_core::{ArrayValue, ScalarValue, Value};
+use casa_measures::CometTable;
 use casa_tables::Table;
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::ephemeris::offset_true_angle;
-use casa_types::measures::radial_velocity::{MRadialVelocity, RadialVelocityRef};
-use casa_types::measures::{EpochRef, MEpoch, MeasFrame};
-use casa_types::quanta::casacore::casacore_unit;
-use casa_types::quanta::{Dimension, UnitDim};
-use casa_types::{ArrayValue, ScalarValue, Value};
 
 use crate::ephemeris::{PhaseCentreEphemerisError, find_ephemeris_in_field};
 use crate::{MeasurementSet, MsError, MsResult, SubTable, open_measures_runtime};

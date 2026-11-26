@@ -25,8 +25,8 @@
 //! (CASA's constant spectrum reports one zero error although it has no
 //! parameters; casa-rs writes the same.)
 
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::quanta::{Quantity, Unit, UnitDim};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::quanta::{Quantity, Unit, UnitDim};
 
 use crate::component_type::SpectralType;
 use crate::error::ComponentError;

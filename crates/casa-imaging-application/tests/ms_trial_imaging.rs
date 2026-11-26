@@ -19,6 +19,7 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use casa_core::Correlation;
 use casa_images::PagedImage;
 use casa_imaging_application::{GridPrecision, ResourcePolicy};
 use casa_imaging_model::PolarizationCoordinate;
@@ -33,7 +34,6 @@ use casa_imaging_runtime::pass::{
 };
 use casa_ms::observation_io::{OpenOptions, open as open_store};
 use casa_observation::{Observation, PartitionId};
-use casa_types::Correlation;
 use flate2::read::GzDecoder;
 use ndarray::{Array2, ArrayD, Axis};
 use source::{BatchSource, SourceTrace, per_times, request};

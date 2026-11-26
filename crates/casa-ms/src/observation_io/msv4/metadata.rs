@@ -4,10 +4,10 @@
 
 use std::sync::Arc;
 
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::{EpochRef, MjdHighPrec};
 use casa_observation::{ObservationError, VisibilityUnits};
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::{EpochRef, MjdHighPrec};
 use serde_json::{Map, Value};
 use zarrs::array::{Array, ArrayMetadata, ArraySubset};
 use zarrs::filesystem::FilesystemStore;

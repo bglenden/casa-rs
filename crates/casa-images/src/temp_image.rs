@@ -33,11 +33,11 @@ use std::any::Any;
 use std::path::Path;
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
+use casa_core::{ArrayD, RecordValue, Value};
 use casa_lattices::{
     Lattice, LatticeError, LatticeMut, ScratchSpace, TempLattice, TempStoragePolicy,
     TraversalCacheHint, TraversalCacheScope, TraversalCursorIter, TraversalSpec,
 };
-use casa_types::{ArrayD, RecordValue, Value};
 use ndarray::IxDyn;
 
 use crate::component_list_image::{ComponentListImage, ComponentTable};
@@ -881,8 +881,8 @@ mod paged_mask_tests;
 mod tests {
     use super::*;
     use casa_coordinates::CoordinateSystem;
+    use casa_core::{Complex32, Complex64, RecordValue, ScalarValue, Value};
     use casa_lattices::{Lattice, LatticeIterExt, LatticeMut, TraversalSpec};
-    use casa_types::{Complex32, Complex64, RecordValue, ScalarValue, Value};
     use ndarray::IxDyn;
 
     use crate::beam::{GaussianBeam, ImageBeamSet};

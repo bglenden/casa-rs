@@ -5,8 +5,8 @@
 use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, StokesCoordinate, StokesType,
 };
+use casa_core::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use casa_lattices::LatticeError;
-use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{Axis, Dimension, IxDyn, ShapeBuilder, Zip};
 
 use crate::error::ImageError;

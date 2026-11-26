@@ -3,8 +3,8 @@
 //! code adds one (`MSSource::requiredTableDesc`, then the MS keyword that
 //! names it).
 
+use casa_core::{RecordField, Value};
 use casa_tables::Table;
-use casa_types::{RecordField, Value};
 
 use super::{MeasurementSet, apply_column_metadata};
 use crate::column_def::build_table_schema;

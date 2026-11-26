@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Match antenna identities and reconcile the feeds of each input antenna.
 
-use casa_tables::{
-    Table,
-    table_quantum::{ArrayQuantColumn, ScalarQuantColumn, TableQuantumDesc},
-};
-use casa_types::{
+use casa_core::{
     RecordValue, ScalarValue, Value,
     measures::MPosition,
     quanta::{Quantity, Unit},
+};
+use casa_tables::{
+    Table,
+    table_quantum::{ArrayQuantColumn, ScalarQuantColumn, TableQuantumDesc},
 };
 
 use crate::columns::position_columns::AntennaPositionColumn;
@@ -297,7 +297,7 @@ fn seconds_in_column(table: &Table, column: &str, value: f64) -> MsResult<f64> {
     let unit = TableQuantumDesc::reconstruct(table, column)
         .and_then(|quantity| quantity.units().first().cloned())
         .unwrap_or_else(|| "s".into());
-    let error = |error: casa_types::quanta::UnitError| MsError::InvalidInput(error.to_string());
+    let error = |error: casa_core::quanta::UnitError| MsError::InvalidInput(error.to_string());
     let quantity = Quantity::new(value, "s").map_err(error)?;
     quantity
         .get_value_in(&Unit::new(&unit).map_err(error)?)

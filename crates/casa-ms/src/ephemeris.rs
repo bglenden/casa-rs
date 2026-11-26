@@ -9,13 +9,13 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
 };
 
-use casa_measures_data::CometTable;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::radial_velocity::RadialVelocityRef;
+use casa_core::quanta::Unit;
+use casa_core::{ScalarValue, Value};
+use casa_measures::CometTable;
 use casa_observation::FieldEphemeris;
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::radial_velocity::RadialVelocityRef;
-use casa_types::quanta::Unit;
-use casa_types::{ScalarValue, Value};
 use thiserror::Error;
 
 use crate::subtables::SubTable;
@@ -296,7 +296,7 @@ pub(crate) fn reference_direction(
         evaluate(series, mjd_utc).map_err(|error| MsError::InvalidInput(error.to_string()))?;
     let body =
         MDirection::from_cosines(sample.geocentric_position_metres, sample.position_reference);
-    Ok(casa_types::measures::ephemeris::offset_true_angle(
+    Ok(casa_core::measures::ephemeris::offset_true_angle(
         &body, offset_rad,
     )?)
 }
@@ -340,8 +340,8 @@ impl AttachedFieldEphemeris {
     pub fn radial_velocity(
         &self,
         mjd: f64,
-    ) -> MsResult<casa_types::measures::radial_velocity::MRadialVelocity> {
-        use casa_types::measures::radial_velocity::MRadialVelocity;
+    ) -> MsResult<casa_core::measures::radial_velocity::MRadialVelocity> {
+        use casa_core::measures::radial_velocity::MRadialVelocity;
         match self {
             Self::Inertial(series) => {
                 let sample = evaluate(series, mjd)
@@ -393,7 +393,7 @@ impl AttachedFieldEphemeris {
                             "MJD {mjd} is outside the apparent ephemeris interpolation range"
                         ))
                     })?;
-                Ok(casa_types::measures::ephemeris::offset_true_angle(
+                Ok(casa_core::measures::ephemeris::offset_true_angle(
                     &sample.direction,
                     offset,
                 )?)
@@ -812,8 +812,8 @@ pub enum PhaseCentreEphemerisError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casa_core::{PrimitiveType, RecordField, RecordValue};
     use casa_tables::{ColumnSchema, TableSchema};
-    use casa_types::{PrimitiveType, RecordField, RecordValue};
 
     const TARGET: &str = "T41_TEST_TARGET";
 

@@ -26,8 +26,8 @@ use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate, Projection,
     ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
 };
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::quanta::Quantity;
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::quanta::Quantity;
 use ndarray::{ArrayD, Axis, IxDyn, ShapeBuilder};
 
 use super::{
@@ -597,9 +597,9 @@ pub(super) fn check_increments(increments: &[f64]) -> Result<(), SkyModelError> 
 }
 
 /// casacore's unit `name`.
-fn unit(name: &str) -> casa_types::quanta::Unit {
-    casa_types::quanta::casacore::casacore_unit(name)
-        .unwrap_or_else(|_| casa_types::quanta::Unit::dimensionless())
+fn unit(name: &str) -> casa_core::quanta::Unit {
+    casa_core::quanta::casacore::casacore_unit(name)
+        .unwrap_or_else(|_| casa_core::quanta::Unit::dimensionless())
 }
 
 #[cfg(test)]
@@ -613,7 +613,7 @@ mod tests {
         let pixels = ArrayD::from_elem(IxDyn(&[4, 1, 2]), 1.0_f32);
         let mut coordinates = CoordinateSystem::new();
         coordinates.add_coordinate(DirectionCoordinate::new(
-            casa_types::measures::direction::DirectionRef::J2000,
+            casa_core::measures::direction::DirectionRef::J2000,
             Projection::new(ProjectionType::SIN),
             [1.0, -0.5],
             [-0.001, 0.001],
@@ -621,7 +621,7 @@ mod tests {
         ));
         coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
         coordinates.add_coordinate(SpectralCoordinate::new(
-            casa_types::measures::frequency::FrequencyRef::LSRK,
+            casa_core::measures::frequency::FrequencyRef::LSRK,
             1.4e9,
             1e6,
             0.0,
@@ -655,7 +655,7 @@ mod tests {
         let output = scratch.path().join("four-axes.image");
         let mut coordinates = CoordinateSystem::new();
         coordinates.add_coordinate(DirectionCoordinate::new(
-            casa_types::measures::direction::DirectionRef::J2000,
+            casa_core::measures::direction::DirectionRef::J2000,
             Projection::new(ProjectionType::SIN),
             [1., -0.5],
             [-1e-6, 1e-6],

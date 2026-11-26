@@ -2,6 +2,10 @@
 
 use std::sync::Arc;
 
+use casa_core::measures::MeasuresProvider;
+use casa_core::measures::epoch::{EpochRef, MEpoch};
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::quanta::Quantity;
 use casa_ms::selection::MsSelectionIoBudget;
 use casa_ms::subtables::{MetadataDirection, MsField, MsSpectralWindow, linked_subtable_row};
 use casa_ms::transform::{
@@ -11,10 +15,6 @@ use casa_ms::transform::{
 };
 use casa_ms::{MsError, MsResult, SubtableId};
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::MeasuresProvider;
-use casa_types::measures::epoch::{EpochRef, MEpoch};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::quanta::Quantity;
 use numpy::{PyArray1, PyUntypedArray};
 use pyo3::exceptions::{PySystemError, PyTypeError};
 use pyo3::prelude::*;

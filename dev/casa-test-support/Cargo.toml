@@ -17,13 +17,13 @@ performance-tests = []
 workspace = true
 
 [dependencies]
-casa-aipsio = { path = "../../crates/casa-aipsio" }
+casa-aipsio.workspace = true
 casa-images = { path = "../../crates/casa-images" }
-casa-coordinates = { path = "../../crates/casa-coordinates" }
-casa-lattices = { path = "../../crates/casa-lattices" }
-casa-measures-data = { path = "../../crates/casa-measures-data" }
-casa-tables = { path = "../../crates/casa-tables" }
-casa-types = { path = "../../crates/casa-types" }
+casa-coordinates.workspace = true
+casa-lattices.workspace = true
+casa-measures.workspace = true
+casa-tables.workspace = true
+casa-core.workspace = true
 libc = "0.2"
 ndarray.workspace = true
 sofars.workspace = true

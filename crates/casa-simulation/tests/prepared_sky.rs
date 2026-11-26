@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Sky overrides, prepared pixels/coordinates and selected predicted DATA.
 mod existing_ms_calculations;
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_images::PagedImage;
 use casa_simulation::simutil::skymodel::{ModelOverrides, modify_model};
 use casa_simulation::{BackendRequest, PredictSpec, SessionResources, Simulator, SimulatorOptions};
-use casa_types::measures::{EpochRef, MEpoch};
 use existing_ms_calculations::{copy, predict_support as support};
 use flate2::read::GzDecoder;
 use serde_json::Value;

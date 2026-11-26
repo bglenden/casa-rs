@@ -25,6 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 use casa_coordinates::SpectralCoordinate;
+use casa_core::{ArrayValue, Complex32};
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::virtual_model::selected_model_combinations;
 use casa_ms::write_session::{
@@ -35,7 +36,6 @@ use casa_ms::{
     VirtualModelEntry,
 };
 use casa_tables::TableWriteLock;
-use casa_types::{ArrayValue, Complex32};
 use ndarray::{ArrayD, Axis, IxDyn};
 
 use crate::model_columns::{
@@ -69,7 +69,7 @@ pub fn model_entry(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
     kind: casa_ms::VirtualModelKind,
-    container: casa_types::RecordValue,
+    container: casa_core::RecordValue,
 ) -> MsResult<VirtualModelEntry> {
     let windows: BTreeSet<_> = selected
         .selected_rows

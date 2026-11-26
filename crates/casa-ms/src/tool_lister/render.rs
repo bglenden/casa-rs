@@ -2,7 +2,7 @@
 
 use std::io::{BufRead, Write};
 
-use casa_types::quanta::format::{NO_TIME, TIME, YMD, format_time};
+use casa_core::quanta::format::{NO_TIME, TIME, YMD, format_time};
 
 use super::{ListingChunk, ListingSpectra, ListingWindow, listing_error, valid_index};
 use crate::MsResult;

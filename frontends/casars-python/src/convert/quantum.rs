@@ -4,14 +4,14 @@
 //! `QuantumHolder` reads them and written as its records.
 //!
 //! The arithmetic is casacore's, not [`Quantity`]'s operators
-//! ([`casa_types::quanta::casacore`]): conversions scale by the ratio of
+//! ([`casa_core::quanta::casacore`]): conversions scale by the ratio of
 //! the unit factors (at 360 degrees a day between angles and times, keeping
 //! the remaining SI dimensions otherwise); sums take the first unit; products
 //! and quotients name their unit `km.s`, `km/(s)` and `(s)-1`. Frequencies
 //! and wavelengths do not convert to each other.
 
-use casa_types::quanta::casacore::{self, QuantumError, conversion};
-use casa_types::quanta::{Quantity, Unit};
+use casa_core::quanta::casacore::{self, QuantumError, conversion};
+use casa_core::quanta::{Quantity, Unit};
 
 use super::value::CasaValue;
 use super::{

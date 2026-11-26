@@ -20,7 +20,7 @@
 //! **CASA's numbers to the last bit.** Pointing lists are compared with
 //! CASA's as strings, so the arithmetic follows CASA's: every `qa` call goes
 //! through casacore's `Quantum` arithmetic
-//! ([`casa_types::quanta::casacore`]), which converts units as casacore
+//! ([`casa_core::quanta::casacore`]), which converts units as casacore
 //! rounds and names them as casacore names them, and numbers that CASA
 //! writes into strings and reads back (`str(x)+"arcsec"`,
 //! `'%17.12fdeg' % x`) are written and read back the same way. The tests
@@ -95,8 +95,8 @@ pub enum SimutilError {
     TooManyPointings,
 }
 
-impl From<casa_types::quanta::casacore::QuantumError> for SimutilError {
-    fn from(error: casa_types::quanta::casacore::QuantumError) -> Self {
+impl From<casa_core::quanta::casacore::QuantumError> for SimutilError {
+    fn from(error: casa_core::quanta::casacore::QuantumError) -> Self {
         Self::Arithmetic(error.0)
     }
 }

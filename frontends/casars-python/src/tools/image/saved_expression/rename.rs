@@ -6,9 +6,9 @@ use std::fs::Metadata;
 use std::io::ErrorKind;
 use std::path::Path;
 
+use casa_core::RecordValue;
 use casa_images::image_expr::ImageExprValue;
 use casa_tables::publication::check_write_access;
-use casa_types::RecordValue;
 use pyo3::prelude::*;
 
 use super::{SavedExpressionDirectory, expression_storage};

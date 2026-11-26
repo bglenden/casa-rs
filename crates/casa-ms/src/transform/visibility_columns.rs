@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
-use casa_tables::StreamedTiledShapeValueType;
-use casa_types::ArrayValue;
+use casa_core::ArrayValue;
+use casa_tables::streamed_tiled::StreamedTiledShapeValueType;
 
 use crate::MeasurementSet;
 use crate::schema::main_table::OptionalMainColumn;

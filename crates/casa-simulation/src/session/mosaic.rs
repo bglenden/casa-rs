@@ -155,11 +155,11 @@ impl MosaicGeometry {
     pub(super) fn offset(
         &self,
         pointing: [f64; 2],
-        frame: &casa_types::measures::MeasFrame,
+        frame: &casa_core::measures::MeasFrame,
     ) -> Result<Option<[f64; 2]>, PredictError> {
         let mut frame = frame.clone();
         if let Some([x, y, z]) = self.observer {
-            frame = frame.with_position(casa_types::measures::MPosition::new_itrf(x, y, z));
+            frame = frame.with_position(casa_core::measures::MPosition::new_itrf(x, y, z));
         }
         self.geometry.offset(pointing, &frame)
     }
@@ -206,7 +206,7 @@ impl Simulator {
         {
             return Ok(None);
         }
-        casa_types::measures::MPosition::from_observatory_name(
+        casa_core::measures::MPosition::from_observatory_name(
             self.observing_telescope(),
             self.options.measures.as_ref(),
         )

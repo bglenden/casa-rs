@@ -3,8 +3,8 @@
 //! Standard-gridder MFS with the final model
 //! predicted into `MODEL_DATA`.
 
+use casa_core::{ArrayValue, Complex32, Value};
 use casa_ms::{MeasurementSet, VisibilityDataColumn};
-use casa_types::{ArrayValue, Complex32, Value};
 use serde_json::json;
 
 use super::fixture::{Component, Observation, Product, box_sum, component_pixel};

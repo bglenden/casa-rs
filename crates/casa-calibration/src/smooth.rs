@@ -6,9 +6,9 @@ mod fringe;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use casa_core::{ArrayValue, Complex32, Value};
 use casa_ms::MeasurementSet;
 use casa_tables::{RequiredScalarColumnValues, Table, TableOptions};
-use casa_types::{ArrayValue, Complex32, Value};
 
 use crate::solution_edit::{edit_calibration_table, error_text};
 

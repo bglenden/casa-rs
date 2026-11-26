@@ -5,7 +5,7 @@
 //! a TOPO cube gridded through LSRK as CASA grids it.
 
 use casa_contracts::{CasaKey, CasaValue, TaskReply};
-use casa_types::Complex32;
+use casa_core::Complex32;
 use serde_json::json;
 
 use super::casa_return::json_run;
@@ -199,8 +199,8 @@ fn sixteen_channel_cube_follows_the_injected_spectrum_under_natural_and_briggs()
 /// row's `WEIGHT` and images as before (#980).
 #[test]
 fn a_plane_at_casas_empty_sum_weight_bound_is_empty() {
+    use casa_core::{ArrayValue, Value};
     use casa_ms::{MeasurementSet, OptionalMainColumn};
-    use casa_types::{ArrayValue, Value};
     const TINY: std::ops::Range<usize> = 6..9;
     let observation = Observation::synthesise_band(CHANNELS, &[("point", POINT)]);
     let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
@@ -272,7 +272,7 @@ fn a_plane_at_casas_empty_sum_weight_bound_is_empty() {
 /// observed frequencies; casa-rs writes it the same way (#980).
 #[test]
 fn a_data_frame_cube_declares_no_frame() {
-    use casa_types::{ScalarValue, Value};
+    use casa_core::{ScalarValue, Value};
     const DATA_CHANNELS: usize = 4;
     let observation = Observation::synthesise_band(DATA_CHANNELS, &[("point", POINT)]);
     let (_, products) = observation.image(
@@ -315,9 +315,9 @@ fn a_data_frame_cube_declares_no_frame() {
 /// (`test_cube_1`'s sidelobe 0.128 against CASA's 0.138).
 #[test]
 fn a_topo_cube_of_topo_rows_is_doppler_tracked_as_casa_grids_it() {
+    use casa_core::measures::frequency::FrequencyRef;
     use casa_imaging_deconvolution::{PlaneShape, PsfSummary};
     use casa_ms::MeasurementSet;
-    use casa_types::measures::frequency::FrequencyRef;
     const CHANNELS: usize = 6;
     let observation = Observation::synthesise_band(CHANNELS, &[("point", POINT)]);
     let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
@@ -450,8 +450,8 @@ fn a_cube_over_two_windows_is_the_cubes_of_its_windows_side_by_side() {
 /// differs between the cubes but not for an interior plane.
 #[test]
 fn a_cube_over_two_topo_windows_is_the_cubes_of_its_windows_side_by_side() {
+    use casa_core::measures::frequency::FrequencyRef;
     use casa_ms::MeasurementSet;
-    use casa_types::measures::frequency::FrequencyRef;
     const WINDOW_CHANNELS: usize = 10;
     let (observation, _) = adjacent_windows(WINDOW_CHANNELS);
     let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
@@ -538,8 +538,8 @@ fn assert_interior_planes_match(
 /// Briggs weights, below natural weighting's.
 #[test]
 fn a_one_channel_cube_has_a_per_channel_briggs_density() {
+    use casa_core::measures::frequency::FrequencyRef;
     use casa_ms::MeasurementSet;
-    use casa_types::measures::frequency::FrequencyRef;
     let observation = Observation::synthesise_band(4, &[("point", POINT)]);
     let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
     ms.spectral_window_mut()
@@ -588,8 +588,8 @@ fn a_one_channel_cube_has_a_per_channel_briggs_density() {
 /// first's alone.
 #[test]
 fn a_cube_density_counts_a_window_its_axis_misses() {
+    use casa_core::{ScalarValue, Value};
     use casa_ms::MeasurementSet;
-    use casa_types::{ScalarValue, Value};
     let (observation, _) = adjacent_windows(30);
     let cube = |name: &str, spw: &str| {
         observation.image(
@@ -838,8 +838,8 @@ fn a_cube_without_nchan_counts_the_channels_from_its_start() {
 /// whole.
 #[test]
 fn a_cube_reads_at_each_time_the_channels_its_band_selects_then() {
+    use casa_core::measures::frequency::FrequencyRef;
     use casa_ms::MeasurementSet;
-    use casa_types::measures::frequency::FrequencyRef;
     const NAMED: usize = 30;
     // 2 kHz channels at 44 GHz: an hour's LSRK drift is several channels.
     let mut setup = super::fixture::Setup::vla_q_band(NAMED + 10);
@@ -982,8 +982,8 @@ fn a_per_channel_density_follows_each_times_bands() {
 
 /// The same track with a chosen native channel width.
 fn drifting_track_with_width(width_hz: f64) -> Observation {
+    use casa_core::measures::frequency::FrequencyRef;
     use casa_ms::MeasurementSet;
-    use casa_types::measures::frequency::FrequencyRef;
     let mut setup = super::fixture::Setup::vla_q_band(40);
     setup.spectral_windows[0].channel_width_hz = width_hz;
     let observation = Observation::synthesise_setup(setup, &[("point", POINT)]);
@@ -1343,9 +1343,9 @@ fn final_prediction_excludes_continuum_fit_only_channels() {
 /// without a visibility write, even when nsigma is enabled.
 #[test]
 fn corrected_only_nsigma_uses_the_tuned_continuum_rows() {
+    use casa_core::{ArrayValue, PrimitiveType, Value};
     use casa_ms::MeasurementSet;
     use casa_tables::ColumnSchema;
-    use casa_types::{ArrayValue, PrimitiveType, Value};
 
     let observation = drifting_track_with_width(20_000.0);
     let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();

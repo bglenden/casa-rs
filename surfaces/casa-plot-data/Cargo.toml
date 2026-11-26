@@ -14,7 +14,7 @@ ms = [
     "dep:casa-atmosphere",
     "dep:casa-ms",
     "dep:casa-tables",
-    "dep:casa-types",
+    "dep:casa-core",
     "dep:ndarray",
     "dep:serde_json",
     "dep:tracing",
@@ -22,7 +22,7 @@ ms = [
 calibration = [
     "ms",
     "dep:casa-calibration",
-    "dep:casa-measures-data",
+    "dep:casa-measures",
     "dep:num-complex",
 ]
 simulation = [
@@ -46,11 +46,11 @@ casa-components = { path = "../../crates/casa-components", optional = true }
 casa-images = { path = "../../crates/casa-images", optional = true }
 casa-imaging-products = { path = "../../crates/casa-imaging-products", optional = true }
 casa-imaging-runtime = { path = "../../crates/casa-imaging-runtime", optional = true }
-casa-measures-data = { path = "../../crates/casa-measures-data", optional = true }
+casa-measures = { workspace = true, optional = true }
 casa-ms = { path = "../../crates/casa-ms", optional = true }
 casa-simulation = { path = "../../crates/casa-simulation", optional = true }
-casa-tables = { path = "../../crates/casa-tables", optional = true }
-casa-types = { path = "../../crates/casa-types", optional = true }
+casa-tables = { workspace = true, optional = true }
+casa-core = { workspace = true, optional = true }
 ndarray = { workspace = true, optional = true }
 num-complex = { workspace = true, optional = true }
 schemars = { version = "0.8", features = ["derive"] }
@@ -61,12 +61,12 @@ thiserror.workspace = true
 tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
-casa-coordinates = { path = "../../crates/casa-coordinates" }
+casa-coordinates.workspace = true
 casa-images = { path = "../../crates/casa-images" }
 casa-imaging-runtime = { path = "../../crates/casa-imaging-runtime" }
-casa-tables = { path = "../../crates/casa-tables" }
+casa-tables.workspace = true
 casa-test-support = { path = "../../dev/casa-test-support" }
-casa-types = { path = "../../crates/casa-types" }
+casa-core.workspace = true
 flate2 = "1"
 ndarray.workspace = true
 num-complex.workspace = true

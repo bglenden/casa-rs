@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Scale a reopened SetJyGridFT by its recorded LSRK flux spectrum.
 
-use casa_types::{ArrayValue, RecordValue, Value};
+use casa_core::{ArrayValue, RecordValue, Value};
 
 use super::{GainSolveError, model_error};
 

@@ -3,9 +3,9 @@
 use std::path::Path;
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
+use casa_core::RecordValue;
 use casa_fft::{Fft2, FftScalar};
 use casa_lattices::{ScratchSpace, TraversalCursorIter, TraversalSpec};
-use casa_types::RecordValue;
 use ndarray::{Axis, Zip};
 use num_complex::Complex;
 
@@ -354,7 +354,7 @@ impl<'a> ImageFourier<'a> {
 
 fn set_mask<T: ImagePixel>(
     image: &mut dyn MutableImageInterface<T>,
-    mask: &casa_types::ArrayD<bool>,
+    mask: &casa_core::ArrayD<bool>,
     start: &[usize],
 ) -> Result<(), ImageError> {
     if image.default_mask_name().is_none() {

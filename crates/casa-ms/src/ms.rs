@@ -11,14 +11,14 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use casa_tables::table_measures::{MeasureType, TableMeasDesc, default_frequency_ref_map};
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_measures::table_measures::{MeasureType, TableMeasDesc, default_frequency_ref_map};
 use casa_tables::{
     ColumnBinding, ColumnOverrides, DataManagerKind, Table, TableError, TableInfo, TableOptions,
     TableWriteLock,
 };
 #[cfg(unix)]
 use casa_tables::{LockMode, LockOptions};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 use crate::builder::{MeasurementSetBuilder, MsSchemas};
 use crate::column_def::ColumnDef;
@@ -149,21 +149,24 @@ impl MeasurementSet {
             .path()
             .expect("captured MeasurementSet root")
             .to_path_buf();
+        let dispatch = tracing::dispatcher::get_default(Clone::clone);
         let tables = links
             .into_par_iter()
             .map(|(id, path)| {
-                let table = if donor && id != SubtableId::History {
-                    crate::tool_concatenate::locking::held_reader(&path)?
-                } else {
-                    Table::open(TableOptions::new(&path))?
-                };
-                if !matches!(
-                    id,
-                    SubtableId::History | SubtableId::SysCal | SubtableId::Weather
-                ) {
-                    table.rows()?;
-                }
-                Ok::<_, MsError>((id, path, table))
+                tracing::dispatcher::with_default(&dispatch, || {
+                    let table = if donor && id != SubtableId::History {
+                        crate::tool_concatenate::locking::held_reader(&path)?
+                    } else {
+                        Table::open(TableOptions::new(&path))?
+                    };
+                    if !matches!(
+                        id,
+                        SubtableId::History | SubtableId::SysCal | SubtableId::Weather
+                    ) {
+                        table.rows()?;
+                    }
+                    Ok::<_, MsError>((id, path, table))
+                })
             })
             .collect::<MsResult<Vec<_>>>()?;
         let mut subtables = HashMap::new();
@@ -1469,8 +1472,8 @@ mod tests {
     use crate::builder::MeasurementSetBuilder;
     use crate::schema::main_table::OptionalMainColumn;
     use crate::test_helpers::default_value;
+    use casa_core::PrimitiveType;
     use casa_tables::TableOptions;
-    use casa_types::PrimitiveType;
     use std::fs;
 
     #[test]

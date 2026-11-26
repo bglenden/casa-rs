@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![cfg(feature = "cpp-interop-tests")]
 
+use casa_core::{
+    ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
+};
 use casa_tables::{
     ColumnOptions, ColumnSchema, DataManagerKind, EndianFormat, Table, TableOptions, TableSchema,
 };
@@ -12,9 +15,6 @@ use casa_test_support::table_interop::{
     run_table_cross_matrix,
 };
 use casa_test_support::{CppTableFixture, TableOracle};
-use casa_types::{
-    ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
-};
 use ndarray::ShapeBuilder;
 use std::path::Path;
 

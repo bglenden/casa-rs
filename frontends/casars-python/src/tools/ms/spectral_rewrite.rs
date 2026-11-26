@@ -4,6 +4,9 @@
 use std::fmt::Write;
 use std::path::Path;
 
+use casa_core::measures::MeasFrame;
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::quanta::{Quantity, Unit, casacore};
 use casa_ms::SubtableId;
 use casa_ms::ms::subtable_path_from_main;
 use casa_ms::selection::MsSelectionIoBudget;
@@ -20,9 +23,6 @@ use casa_tables::publication::{
     lock_table_tree_for_replacement_with_held, preserve_replacement_tree_entries,
 };
 use casa_tables::{Table, TableOptions, TableWriteLock};
-use casa_types::measures::MeasFrame;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::quanta::{Quantity, Unit, casacore};
 use pyo3::prelude::*;
 
 use super::sort::SortedDestination;

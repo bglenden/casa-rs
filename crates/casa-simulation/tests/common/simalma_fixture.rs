@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Shared actual CASA inputs for science and live-allocation comparisons.
+use casa_core::measures::epoch::{EpochRef, MEpoch};
 use casa_simulation::{SessionResources, SimulatorOptions, simalma::SimalmaRequest};
-use casa_types::measures::epoch::{EpochRef, MEpoch};
 use flate2::read::GzDecoder;
 use serde_json::{Value, json};
 

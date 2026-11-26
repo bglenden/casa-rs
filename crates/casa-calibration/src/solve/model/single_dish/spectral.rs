@@ -2,12 +2,12 @@
 //! Frequency interpolation of a sampled SDGrid image spectrum.
 
 use casa_coordinates::SpectralCoordinate;
+use casa_core::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
 use casa_imaging_operator::{
     Basis, NativeRow, PredictionScratch, RowContext, SpectralAxis, SpectralResampler,
 };
 use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_ms::MeasurementSet;
-use casa_types::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
 
 use super::super::fourier::{FourierRow, scratch_channel_masked, spectral_layout};
@@ -186,9 +186,9 @@ impl ImageSpectrum {
 mod tests {
     use super::*;
     use crate::imaging_memory_test::{isolated_test, live_since, peak_since, reset_peak};
+    use casa_core::measures::frequency::FrequencyRef;
     use casa_imaging_runtime::ReservationWindow;
     use casa_ms::MeasurementSetBuilder;
-    use casa_types::measures::frequency::FrequencyRef;
 
     #[test]
     fn sampled_spline_stays_within_its_charge() {

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Prior calibration and packed visibility inputs shared by calibration solvers.
 
+use casa_core::ArrayValue;
 use casa_ms::{MeasurementSet, MsSelection};
-use casa_types::ArrayValue;
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::{GainSolveError, main_cell, ms_read_error};
@@ -230,7 +230,7 @@ pub(super) fn read_input_batch(
 fn read_column_inputs(
     column: &casa_tables::TableColumn<'_>,
     name: &str,
-    kind: Option<casa_types::PrimitiveType>,
+    kind: Option<casa_core::PrimitiveType>,
     rows: &[usize],
 ) -> Result<Vec<Option<ArrayValue>>, casa_tables::TableError> {
     if !matches!(name, "SIGMA" | "UVW")
@@ -240,8 +240,8 @@ fn read_column_inputs(
         && shape.iter().all(|n| *n > 0)
         && shapes.iter().all(|other| other.as_ref() == Some(shape))
     {
+        use casa_core::PrimitiveType;
         use casa_tables::SelectedArray2DCellsMut;
-        use casa_types::PrimitiveType;
         let values = match kind {
             Some(PrimitiveType::Complex32) => read_row_packed(
                 column,

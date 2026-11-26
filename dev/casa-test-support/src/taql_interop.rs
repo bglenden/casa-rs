@@ -17,11 +17,11 @@ use crate::oracle_ffi::{
 use crate::oracle_runtime::CasacoreOracleRuntime;
 use crate::oracle_runtime::{OracleError, oracle_operation};
 
+use casa_core::*;
 #[cfg(has_casacore_cpp)]
 use casa_tables::TableOptions;
 use casa_tables::taql::format as taql_fmt;
 use casa_tables::{ColumnSchema, Table, TableSchema};
-use casa_types::*;
 
 /// String-grid result from a TaQL query.
 #[derive(Debug, Clone)]
@@ -106,7 +106,7 @@ pub fn build_simple_fixture() -> Table {
                 ),
                 RecordField::new(
                     "vis",
-                    Value::Scalar(ScalarValue::Complex64(casa_types::Complex64::new(
+                    Value::Scalar(ScalarValue::Complex64(casa_core::Complex64::new(
                         i as f64 * 0.1,
                         i as f64 * -0.2,
                     ))),
@@ -756,7 +756,7 @@ pub fn build_simple_fixture_n(n: usize) -> Table {
                 ),
                 RecordField::new(
                     "vis",
-                    Value::Scalar(ScalarValue::Complex64(casa_types::Complex64::new(
+                    Value::Scalar(ScalarValue::Complex64(casa_core::Complex64::new(
                         i as f64 * 0.1,
                         i as f64 * -0.2,
                     ))),
