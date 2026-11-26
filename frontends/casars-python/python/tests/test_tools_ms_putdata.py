@@ -103,6 +103,20 @@ def test_ms_visibility_and_writes_in_a_saved_multi_ms_view(
         np.testing.assert_array_equal(data, persisted, strict=True)
         assert reader.done()
 
+    # A new publication from CASA must invalidate the open native view's
+    # physical tile cache, including every occurrence of a repeated row.
+    reader = tools.ms()
+    assert reader.open(view)
+    np.testing.assert_array_equal(reader.getdata("data")["data"], persisted, strict=True)
+    member = str(members[1])
+    changed = expected[1][..., 13] + (11 + 4j)
+    assert table.open(member, nomodify=False)
+    assert table.putcell("DATA", 13, changed)
+    assert table.done()
+    persisted[..., rows == rows_per_member + 13] = changed[..., None]
+    np.testing.assert_array_equal(reader.getdata("data")["data"], persisted, strict=True)
+    assert reader.done()
+
 
 def test_ms_visibility_scalar_taql_preserves_physical_order(
     baseline_fixture, native_dataset, writer_api,

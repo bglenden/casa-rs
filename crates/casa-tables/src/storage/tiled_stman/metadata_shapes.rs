@@ -75,6 +75,7 @@ impl TiledReadMetadata {
                     channels,
                     SelectedArray2DCellsMut::$dest(&mut values),
                     widen_complex,
+                    true,
                 )?;
                 if filled.is_none() {
                     return Ok(None);

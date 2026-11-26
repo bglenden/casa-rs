@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Reuse the open physical tables for a monotone view of a concatenation.
+//! Reuse the open physical tables for a saved view of a concatenation.
 
 use casa_tables::{Table, TableOptions, TablePartNames};
 use pyo3::prelude::*;
@@ -29,7 +29,7 @@ impl ConcatenatedReference {
         else {
             return Ok(None);
         };
-        if !projection.rows.is_sorted() || projection.columns != columns {
+        if projection.columns != columns {
             return Ok(None);
         }
         let path = &projection.path;
@@ -54,10 +54,10 @@ impl ConcatenatedReference {
     }
 
     pub(super) fn project(&self, selected: &[usize]) -> Option<(&Table, &[Table], Vec<usize>)> {
-        if !selected.is_sorted() || selected.last().is_some_and(|&row| row >= self.rows.len()) {
-            return None;
-        }
-        let rows = selected.iter().map(|&row| self.rows[row]).collect();
+        let rows = selected
+            .iter()
+            .map(|&row| self.rows.get(row).copied())
+            .collect::<Option<Vec<_>>>()?;
         Some((&self.root, &self.members, rows))
     }
 }

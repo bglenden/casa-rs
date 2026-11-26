@@ -69,6 +69,22 @@ pub(super) struct SelectedTiles<'a> {
 }
 
 impl<'a> SelectedTiles<'a> {
+    pub(super) fn fits_sparse_read_cache(
+        &self,
+        tile_count: usize,
+        row_tiles: usize,
+        selected_rows: usize,
+        element_size: usize,
+        budget: usize,
+    ) -> bool {
+        let tile_rows = row_tiles.saturating_mul(self.row_tile_size);
+        let decoded = tile_count
+            .saturating_mul(self.row_tile_size)
+            .saturating_mul(self.row_tile_nelem)
+            .saturating_mul(element_size);
+        selected_rows.saturating_mul(4) <= tile_rows && decoded <= budget
+    }
+
     /// The tiles of cube `cube_idx` (`cube`) for column `target_col_idx`
     /// of type `dt`: a cube of cells and rows, whose tile shape has the
     /// cube's rank and no empty axis.
