@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """Native regressions from CASA 6.7.6.14's test_task_simobserve.py."""
-import os
 from pathlib import Path
 import tarfile
 
@@ -9,17 +8,10 @@ import pytest
 
 from casars import tasks
 from _table_readback import open_table, read_column
-from casars.tasks import _runner
 
 
 @pytest.fixture(scope="module")
 def sky_inputs(tmp_path_factory):
-    try:
-        _runner._task_executable("simobserve")
-    except tasks.TaskBinaryNotFoundError as error:
-        if os.environ.get("CASARS_REQUIRE_TASK_BINARIES"):
-            raise
-        pytest.skip(str(error))
     root = tmp_path_factory.mktemp("upstream-simobserve")
     fixtures = Path(__file__).resolve().parents[4] / "crates" / "casa-simulation/tests/data"
     with tarfile.open(fixtures / "skymodel_inputs.tar.gz") as archive:

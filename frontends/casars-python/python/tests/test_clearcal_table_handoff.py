@@ -1,7 +1,9 @@
 """Exercise clearcal while its caller keeps a MeasurementSet table open."""
 
 from concurrent.futures import ThreadPoolExecutor
+import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -13,6 +15,55 @@ from casars.tasks import _runner
 
 from test_tools_ms import pinned_casa
 from test_tools_msmetadata import measures, native_dataset
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires a POSIX table lock and SIGINT")
+def test_clearcal_interrupts_a_wait_for_an_external_write_lock(native_dataset, monkeypatch):
+    before = (native_dataset / "table.dat").read_bytes()
+    locked_table = """
+import select
+import sys
+from casars.tools import table
+
+tool = table()
+assert tool.open(sys.argv[1], nomodify=False, lockoptions={'option': 'user'})
+assert tool.lock(write=True)
+print('held', flush=True)
+if select.select([sys.stdin], [], [], 15)[0]:
+    sys.stdin.readline()
+assert tool.done()
+"""
+    stderr = sys.stderr
+    sent = False
+
+    class Terminal:
+        def write(self, message):
+            nonlocal sent
+            if not sent and "waiting for the write lock" in message:
+                sent = True
+                os.kill(os.getpid(), signal.SIGINT)
+            return stderr.write(message)
+
+        def flush(self):
+            stderr.flush()
+
+    with subprocess.Popen([sys.executable, "-c", locked_table, str(native_dataset)],
+                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) as peer:
+        assert peer.stdout.readline().strip() == "held"
+        try:
+            with monkeypatch.context() as patch:
+                patch.setenv("CASA_RS_LOG_STDERR_PRIORITY", "WARN")
+                patch.setattr(sys, "stderr", Terminal())
+                with pytest.raises(KeyboardInterrupt):
+                    tasks.clearcal(str(native_dataset), addmodel=True)
+            assert sent and peer.poll() is None
+        finally:
+            if peer.poll() is None:
+                peer.stdin.write("release\n")
+                peer.stdin.flush()
+            assert peer.wait(timeout=10) == 0
+    assert (native_dataset / "table.dat").read_bytes() == before
+    assert tasks.clearcal(str(native_dataset), addmodel=True) is None
 
 
 def test_clearcal_does_not_wait_for_an_unrelated_busy_table(native_dataset, tmp_path):
@@ -114,18 +165,17 @@ def test_clearcal_keeps_attached_reads_out_until_the_provider_returns(native_dat
     assert table.open(str(native_dataset))
     assert history.open(str(native_dataset / "HISTORY"))
     history_rows = history.nrows()
-    launch = _runner.subprocess.Popen
+    run = _runner._native().run_native_task
 
-    def launch_after_read_attempt(*args, **kwargs):
-        # This happens after the handoff and before the child can take its
-        # write lock. A successful getcol would leave that child waiting.
+    def run_after_read_attempt(*args, **kwargs):
+        # Both tables are reserved before the native worker takes its lock.
         with pytest.raises(RuntimeError, match="task provider is using this table"):
             table.getcol("DATA")
         with pytest.raises(RuntimeError, match="task provider is using this table"):
             history.nrows()
-        return launch(*args, **kwargs)
+        return run(*args, **kwargs)
 
-    monkeypatch.setattr(_runner.subprocess, "Popen", launch_after_read_attempt)
+    monkeypatch.setattr(_runner._native(), "run_native_task", run_after_read_attempt)
     try:
         tasks.clearcal(str(native_dataset), addmodel=True)
         np.testing.assert_array_equal(table.getcol("CORRECTED_DATA"), table.getcol("DATA"))

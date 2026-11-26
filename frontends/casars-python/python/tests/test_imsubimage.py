@@ -11,7 +11,6 @@ import numpy as np
 import pytest
 
 from casars import tasks, tools
-from casars.tasks import _runner
 
 ROOT = Path(__file__).resolve().parents[4]
 DATA = ROOT / "crates/casa-images/tests/data/imsubimage"
@@ -23,12 +22,6 @@ CASA_PYTHON = Path(
 
 @pytest.fixture
 def workspace(tmp_path, monkeypatch):
-    try:
-        _runner._task_executable("imsubimage")
-    except tasks.TaskBinaryNotFoundError:
-        if os.environ.get("CASARS_REQUIRE_TASK_BINARIES"):
-            raise
-        pytest.skip("imsubimage executable is unavailable")
     shutil.copytree(DATA, tmp_path, dirs_exist_ok=True, ignore=shutil.ignore_patterns("table.lock"))
     shutil.copytree(DATA.parent / "casa-6.7.6/axis_maps", tmp_path / "axis_maps")
     monkeypatch.chdir(tmp_path)

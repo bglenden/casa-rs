@@ -190,10 +190,12 @@ changes intervened, rerun only the affected gate.
 repository provider-conformance tests, `tests/provider_contract_conformance.rs`)
 and `scripts/test-python-package.sh`, which runs the Python tests against an
 editable checkout, then installs the built wheel and sdist into fresh
-environments and checks them away from the source tree. The script builds
-`flagmanager` and sets `CASARS_REQUIRE_TASK_BINARIES=1`, so the end-to-end
-task test fails rather than skips without a real executable, and runs the
-`casars.tools` tests against the bundled measures snapshot unless
+environments and checks them away from the source tree. The wheel smoke test
+runs `flagmanager` in-process with an empty command search path and an empty
+Cargo target directory. The install-suite smoke test first exercises the
+standalone commands, then hides the suite's binaries before invoking Python
+from the installed suite. The package script runs the `casars.tools` tests
+against the bundled measures snapshot unless
 `CASA_RS_MEASURESPATH` names a runtime. `test_binding_snapshots.py` pins what
 the binding returns to Python; regenerate its fixture only for an intended
 change.

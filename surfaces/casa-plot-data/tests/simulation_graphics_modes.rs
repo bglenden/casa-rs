@@ -47,6 +47,7 @@ fn composed_figures_follow_casas_file_screen_both_and_none_policies() {
     std::fs::rename(project.join("combo.alma.test.ms"), &noisy).unwrap();
     let (_, plots) = simanalyze_with_plots(
         &SimanalyzeRequest {
+            workspace: None,
             resources,
             parameters: json!({"project":project,"vis":noisy,"graphics":"file"})
                 .as_object()

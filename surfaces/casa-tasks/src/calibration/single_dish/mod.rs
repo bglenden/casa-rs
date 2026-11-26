@@ -28,7 +28,7 @@ pub(crate) fn sdcal(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailur
     let mode = task.required_text("calmode")?;
     let generates_table = matches!(mode.as_str(), "ps" | "tsys" | "otfraster" | "otf");
     let infile = task.input_path("infile")?;
-    let outfile = task.text("outfile")?.unwrap_or_default();
+    let outfile = task.file_text("outfile")?.unwrap_or_default();
     let overwrite = task.flag("overwrite")?;
     let selection = MsSelection {
         selectdata: true,

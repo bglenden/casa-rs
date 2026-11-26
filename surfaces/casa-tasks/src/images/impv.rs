@@ -18,7 +18,7 @@ pub fn impv_front_end()
     image_task_front_end("impv", &["impv"], run)
 }
 
-fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let request = ImpvRequest {
         imagename: task.input_path("imagename")?,
         outfile: task.path("outfile")?,

@@ -91,7 +91,7 @@ fn capture(
     entry: &Path,
     temporary_locks: bool,
 ) -> Result<(Vec<Frame>, Dependencies), ImageError> {
-    let directory = std::env::current_dir().map_err(io)?;
+    let directory = crate::analysis::expression_workspace::directory()?;
     let first = Frame::open(
         path.canonicalize().map_err(io)?,
         &directory,

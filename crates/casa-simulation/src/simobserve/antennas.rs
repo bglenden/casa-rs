@@ -52,18 +52,18 @@ fn upper_prefix(text: &str, count: usize) -> String {
 
 /// `ctsys.resolve("alma/simmos")`: the first data root holding it, or the
 /// unresolved name.
-pub(crate) fn repository(data_roots: &[PathBuf]) -> PathBuf {
+pub(crate) fn repository(data_roots: &[PathBuf], workspace: Option<&Path>) -> PathBuf {
     data_roots
         .iter()
-        .map(|root| root.join("alma").join("simmos"))
+        .map(|root| super::path_at(workspace, root).join("alma/simmos"))
         .find(|path| path.is_dir())
-        .unwrap_or_else(|| PathBuf::from("alma/simmos"))
+        .unwrap_or_else(|| super::path_at(workspace, Path::new("alma/simmos")))
 }
 
 /// Resolve the antenna list, read it, and form the primary beam and the
 /// resolution; for a single dish, keep `sdant`'s antenna.
 pub(super) fn resolve(run: &mut Run<'_>, input: &SkyInput) -> Result<Array, SimobserveError> {
-    let repository = repository(&run.request.data_roots);
+    let repository = repository(&run.request.data_roots, run.request.workspace.as_deref());
     let frequency_ghz = qa::value_in(&input.model.specrefval, "GHz")?;
     if upper_prefix(&run.antennalist, 4) == "ALMA" {
         run.antennalist = alma_configuration(&run.antennalist, frequency_ghz, &repository)?;
@@ -198,13 +198,14 @@ fn cycle_tail(upper: &str, cycle: char) -> Option<String> {
 /// directory, then as given, then in the repository.
 fn search(run: &Run<'_>, repository: &Path) -> Result<PathBuf, SimobserveError> {
     let name = &run.antennalist;
-    let in_project = PathBuf::from(format!("{}/{name}", run.parameters.project));
+    let in_project = run.directory.join(name);
+    let in_workspace = run.request.input_path(name);
     let path = if in_project.exists() {
         in_project
-    } else if !Path::new(name).exists() && repository.join(name).exists() {
+    } else if !in_workspace.exists() && repository.join(name).exists() {
         repository.join(name)
     } else {
-        PathBuf::from(name)
+        in_workspace
     };
     if !path.exists() {
         return Err(SimobserveError::raised(format!(

@@ -67,7 +67,9 @@ fn threshold_input(
         });
     }
     match value {
-        ParameterValue::String(path) if !path.is_empty() && !calculate => read_file(path, name),
+        ParameterValue::String(path) if !path.is_empty() && !calculate => {
+            read_file(task, path, name)
+        }
         ParameterValue::String(_) | ParameterValue::EmptyArray { .. } => {
             Ok(ThresholdInput::default())
         }
@@ -121,6 +123,7 @@ fn matrix(rows: &[ParameterValue]) -> ThresholdInput {
 }
 
 pub(super) fn list_threshold_value(
+    task: &TaskInvocation<'_>,
     value: &ParameterValue,
     name: &str,
 ) -> Result<ParameterValue, TaskFailure> {
@@ -135,13 +138,17 @@ pub(super) fn list_threshold_value(
     {
         return Ok(value);
     }
-    Ok(read_file(text, name)?
+    Ok(read_file(task, text, name)?
         .file_argument
         .unwrap_or_else(|| ParameterValue::Array(Vec::new())))
 }
 
-fn read_file(path: &str, name: &str) -> Result<ThresholdInput, TaskFailure> {
-    let contents = match fs::read_to_string(path) {
+fn read_file(
+    task: &TaskInvocation<'_>,
+    path: &str,
+    name: &str,
+) -> Result<ThresholdInput, TaskFailure> {
+    let contents = match fs::read_to_string(task.io_path(path)) {
         Ok(contents) => contents,
         Err(error) if error.kind() == ErrorKind::NotFound => {
             return Ok(ThresholdInput {
@@ -190,6 +197,7 @@ pub(super) fn write_files(
     report: &RFlagThresholdReport,
 ) -> Result<(), TaskFailure> {
     write_agent_files(
+        task,
         report,
         "Rflag",
         0,
@@ -198,6 +206,7 @@ pub(super) fn write_files(
 }
 
 pub(super) fn write_agent_files(
+    task: &TaskInvocation<'_>,
     report: &RFlagThresholdReport,
     agent_name: &str,
     index: usize,
@@ -211,22 +220,23 @@ pub(super) fn write_agent_files(
         .into_iter()
         .zip(inputs)
     {
-        let path = output_path(input, name, index);
+        let spelling = output_path(input, name, index);
+        let path = task.io_path(&spelling);
         let parent = path
             .parent()
             .filter(|path| !path.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
-        let failure = |error: std::io::Error| file_failure(error, &path, name);
+        let failure = |error: std::io::Error| file_failure(error, &spelling, name);
         let mut output = tempfile::NamedTempFile::new_in(parent).map_err(failure)?;
         let data = serde_json::to_string(rows)
             .map_err(|error| TaskFailure::execution(error.to_string()).at(name))?;
         writeln!(output, "{{'name':'{agent_name}','{name}':{data}}}\n").map_err(failure)?;
-        outputs.push((name, path, output));
+        outputs.push((name, spelling, path, output));
     }
-    for (name, path, output) in outputs {
+    for (name, spelling, path, output) in outputs {
         output
             .persist(&path)
-            .map_err(|error| file_failure(error.error, &path, name))?;
+            .map_err(|error| file_failure(error.error, &spelling, name))?;
     }
     Ok(())
 }

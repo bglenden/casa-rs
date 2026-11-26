@@ -37,7 +37,36 @@ pub fn project_provider_invocation_with_originals(
     session: &ParameterSession,
     originals: &BTreeMap<String, ParameterValue>,
 ) -> Result<ProviderInvocation, ProviderInvocationError> {
-    let values = session
+    let mut plain = serde_json::Map::new();
+    let mut typed_values = BTreeMap::new();
+    for (name, value) in task_override_values(session, originals) {
+        if value.requires_typed_transport() {
+            typed_values.insert(name, value);
+        } else {
+            plain.insert(name, value.to_plain_json());
+        }
+    }
+    let request = TaskRunRequest {
+        surface: session.bundle().surface.id().to_string(),
+        values: plain,
+        typed_values,
+        argument_text: BTreeMap::new(),
+    };
+    let stdin = serde_json::to_string(&request)
+        .map_err(|error| ProviderInvocationError::Request(error.to_string()))?;
+    let mut args = session.bundle().surface.execution().fixed_args.clone();
+    args.extend(["--json-run".to_string(), "-".to_string()]);
+    Ok(ProviderInvocation {
+        args,
+        stdin: Some(stdin),
+    })
+}
+
+pub(crate) fn task_override_values(
+    session: &ParameterSession,
+    originals: &BTreeMap<String, ParameterValue>,
+) -> BTreeMap<String, ParameterValue> {
+    session
         .states()
         .iter()
         .filter(|(_, state)| state.explicit && state.active)
@@ -76,30 +105,7 @@ pub fn project_provider_invocation_with_originals(
                 .or(path_original).or(inactive_map).or(flagdata_history).or(tool_flag).unwrap_or(value);
             Some((name.clone(), sent.clone()))
         })
-        .collect::<BTreeMap<_, _>>();
-    let mut plain = serde_json::Map::new();
-    let mut typed_values = BTreeMap::new();
-    for (name, value) in values {
-        if value.requires_typed_transport() {
-            typed_values.insert(name, value);
-        } else {
-            plain.insert(name, value.to_plain_json());
-        }
-    }
-    let request = TaskRunRequest {
-        surface: session.bundle().surface.id().to_string(),
-        values: plain,
-        typed_values,
-        argument_text: BTreeMap::new(),
-    };
-    let stdin = serde_json::to_string(&request)
-        .map_err(|error| ProviderInvocationError::Request(error.to_string()))?;
-    let mut args = session.bundle().surface.execution().fixed_args.clone();
-    args.extend(["--json-run".to_string(), "-".to_string()]);
-    Ok(ProviderInvocation {
-        args,
-        stdin: Some(stdin),
-    })
+        .collect()
 }
 
 // These model tasks distinguish NumPy and Python Booleans at a tool call

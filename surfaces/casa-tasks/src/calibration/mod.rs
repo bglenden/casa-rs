@@ -17,11 +17,13 @@ pub mod task_contract;
 pub use casa_return::{fluxscale_record, solve_record};
 pub use cli::{ImagerSetJyRequest, imager_setjy, task_front_end};
 pub use flagdata::flagdata_front_end;
+pub(crate) use flagdata::run as run_flagdata;
 pub use managed_output::{
     ApplyMultiMsReport, ApplyPartitionReport, CalibrationTaskResult, CrossHandGainSolveReport,
     CrossHandGainType,
 };
 pub use mstransform::mstransform_front_end;
+pub(crate) use mstransform::run as run_mstransform;
 pub use task_contract::{
     CALIBRATION_SURFACES, CALIBRATION_TASK_PROTOCOL_NAME, CALIBRATION_TASK_PROTOCOL_VERSION,
     CalibrationTaskRequest, ExecuteApplyTaskRequest, ExportCorrectedDataTaskRequest,

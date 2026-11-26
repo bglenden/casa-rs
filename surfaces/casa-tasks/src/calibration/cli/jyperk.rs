@@ -12,7 +12,7 @@ use casa_calibration::{CalibrationOutputMode, GencalRequest, GencalType};
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let standalone = task.surface() == "getjyperkalma";
-    let caltable = task.required_text("caltable")?;
+    let caltable = task.required_file_text("caltable")?;
     if caltable.is_empty() {
         return Err(TaskFailure::validation("A caltable name must be specified").at("caltable"));
     }

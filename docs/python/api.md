@@ -21,11 +21,9 @@ casars.tasks.<casa_task>(casa_parameters..., *, casa_rs_controls...)
 casars.tasks.<task>(**parameters)
 ```
 
-A task call starts the task's own executable. `tasks.run` returns a
-`TaskCompletion` (`task`, `command`, `workspace`, `returncode`, `stdout`, the
-reply; `stderr`, the log; `provider_invocation`, `status`, `message`,
-`parameter`, `value`, CASA's return value; and `result`, the declared
-products). A wrapper whose surface names its CASA task (every task but the
+A task call runs in process. `tasks.run` returns a `TaskCompletion` with the
+task, workspace, logs, status, message, parameter, CASA return value, and
+declared products. A wrapper whose surface names its CASA task (every task but the
 casa-rs tasks `calibrate`, `msexplore` and `msconvert`, and `plotms`) has
 CASA's signature, positional or by keyword with
 CASA's defaults, then casa-rs's own controls, keyword-only, and returns
@@ -52,11 +50,9 @@ selected source into `DATA`. Combined layouts retain the named columns.
 A value the contract refuses raises `ValueError` before anything starts, or
 `TypeError` for a value of the wrong type. A task that refuses its
 parameters raises `TaskParameterError`, a `ValueError`, and one that starts
-and does not succeed `TaskExecutionError`, a `RuntimeError`; the
-`.completion` of either says how it ended. `TaskBinaryNotFoundError` (a
-`FileNotFoundError`) names what the executable search lacked;
-`TaskInvocationError` means the process could not start; `TaskResultError`
-means a success's result was malformed.
+and does not succeed `TaskExecutionError`, a `RuntimeError`. The
+`.completion` of either says how it ended. `TaskResultError` means a task
+succeeded but its result could not be decoded or rendered.
 
 A Python task call saves no Last or Last Successful profile; those record
 command-line runs. The CASA-named wrappers take the surface's parameters. A

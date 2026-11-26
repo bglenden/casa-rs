@@ -12,6 +12,7 @@ use serde_json::Map;
 use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 
 mod task;
+pub(crate) use task::run;
 
 /// Return `predictcomp`'s task provider schema bundle.
 pub fn predictcomp_task_schema_bundle() -> TaskProviderContract {

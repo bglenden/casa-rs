@@ -11,7 +11,6 @@ import numpy as np
 import pytest
 
 from casars import tasks
-from casars.tasks import _runner
 
 ROOT = Path(__file__).resolve().parents[4]
 DATA = ROOT / "crates/casa-images/tests/data/feather"
@@ -22,12 +21,6 @@ CASES = json.loads((DATA / "expected.json").read_text())["cases"]
 
 @pytest.fixture
 def workspace(tmp_path, monkeypatch):
-    try:
-        _runner._task_executable("feather")
-    except tasks.TaskBinaryNotFoundError:
-        if os.environ.get("CASARS_REQUIRE_TASK_BINARIES"):
-            raise
-        pytest.skip("feather executable is unavailable")
     shutil.copytree(DATA, tmp_path, dirs_exist_ok=True, ignore=shutil.ignore_patterns("table.lock"))
     monkeypatch.chdir(tmp_path)
     return tmp_path

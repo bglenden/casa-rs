@@ -22,7 +22,7 @@ use super::selector;
 pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let input = task.input_path("infile")?;
     let output = task
-        .text("outfile")?
+        .file_text("outfile")?
         .filter(|text| !text.is_empty())
         .unwrap_or_else(|| format!("{}_bs", input.display().to_string().trim_end_matches('/')));
     let output = Path::new(&output);
@@ -38,7 +38,7 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let mode = task.required_text("blmode")?.to_ascii_lowercase();
     let family = task.required_text("blfunc")?.to_ascii_lowercase();
     if family == "variable" {
-        let pa = task.text("blparam")?.unwrap_or_default();
+        let pa = task.file_text("blparam")?.unwrap_or_default();
         if !Path::new(&pa).exists() {
             return Err(
                 TaskFailure::execution(format!("input file '{pa}' does not exists")).at("blparam"),
@@ -57,8 +57,8 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     };
     let maskmode = task.required_text("maskmode")?;
     let header = text_header(&input, output, &maskmode);
-    let table = task.text("bltable")?.unwrap_or_default();
-    let parameter_file = task.text("blparam")?.unwrap_or_default();
+    let table = task.file_text("bltable")?.unwrap_or_default();
+    let parameter_file = task.file_text("blparam")?.unwrap_or_default();
     let diagnostics = SingleDishBaselineDiagnostics {
         csv: products.csv.as_deref(),
         text: products.text.as_deref(),
