@@ -1,6 +1,7 @@
 """FITS-IDI tool behaviour with the upstream e-MERLIN and VLBA fixtures."""
 
 from contextlib import closing
+from math import prod
 import os
 from pathlib import Path
 import struct
@@ -17,6 +18,7 @@ FIXTURES = [
     ("emerlin_multiuv.IDI1", 504, (1, 512), 4),
     ("n09q2_1_1-shortened.IDI1", 8496, (1, 16), 8),
     ("VLBA_TL015A_tl015arecor_BIN0_SRC0_1_201020T164655.idifits", 15211, (4, 256), 1),
+    ("VLBA_VSN000397_file69.uvfits", 79000, (1, 16), 4),
 ]
 
 
@@ -54,8 +56,9 @@ def test_fromfitsidi_stock_exchange(name, rows, cell, windows, tmp_path):
             columns.extend(["WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"])
         assert ref.getcell("DATA", 0).shape == cell
         assert ref.getcell("FLAG_CATEGORY", 0).shape == (*cell, 3)
-        for start in range(0, rows, 512):
-            count = min(512, rows - start)
+        block_rows = min(4096, 524288 // prod(cell))
+        for start in range(0, rows, block_rows):
+            count = min(block_rows, rows - start)
             for column in columns:
                 expected = ref.getcol(column, start, count)
                 actual = cpp.getcol(column, start, count)
@@ -63,9 +66,13 @@ def test_fromfitsidi_stock_exchange(name, rows, cell, windows, tmp_path):
                                               strict=True, err_msg=column)
                 assert expected.shape == actual.shape and expected.dtype == actual.dtype
                 if column == "DATA":
-                    difference = actual - expected
+                    finite = np.isfinite(expected)
+                    np.testing.assert_array_equal(np.isfinite(actual), finite)
+                    np.testing.assert_array_equal(actual.real[~finite], expected.real[~finite])
+                    np.testing.assert_array_equal(actual.imag[~finite], expected.imag[~finite])
+                    difference = actual[finite] - expected[finite]
                     residual += np.vdot(difference, difference).real
-                    energy += np.vdot(expected, expected).real
+                    energy += np.vdot(expected[finite], expected[finite]).real
                 else:
                     np.testing.assert_array_equal(actual, expected, strict=True, err_msg=column)
     assert (residual / energy) ** 0.5 < 1e-6
@@ -166,13 +173,20 @@ def test_fromfitsidi_weather_columns_and_flag_channel_range(tmp_path):
         + flag.ljust(2880, b"\0")
     )
     output = tmp_path / "auxiliary.ms"
+    reference = tmp_path / "reference.ms"
     with closing(tools.ms()) as importer:
         assert importer.fromfitsidi(str(output), str(source))
+    with closing(casa.ms()) as importer:
+        assert importer.fromfitsidi(str(reference), str(source))
+    expected = read(casa, reference / "WEATHER", ("H2O", "IONOS_ELECTRON"))
     result = read(casa, output / "WEATHER", ("H2O", "IONOS_ELECTRON"))
-    np.testing.assert_array_equal(result["H2O"], np.array([1.25], dtype=np.float32), strict=True)
+    np.testing.assert_array_equal(result["H2O"], np.array([1.25], dtype=expected["H2O"].dtype),
+                                  strict=True)
+    np.testing.assert_array_equal(expected["H2O"], expected["IONOS_ELECTRON"], strict=True)
     np.testing.assert_array_equal(
-        result["IONOS_ELECTRON"], np.array([2.5], dtype=np.float32), strict=True
+        result["IONOS_ELECTRON"], expected["IONOS_ELECTRON"], strict=True
     )
+    assert read(casa, reference / "FLAG_CMD", ("COMMAND",))["COMMAND"][-1] == "spw='*:1~3''"
     assert read(casa, output / "FLAG_CMD", ("COMMAND",))["COMMAND"][-1] == "spw='0,1,2,3:1~3'"
 
 

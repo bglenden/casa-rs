@@ -90,9 +90,14 @@ pub fn import_fits_idi(
         Spectra::None
     };
     let mut columns = ImportColumns::start(&staging, row_count, dimensions, tile, true, spectra)?;
+    let correlator = if catalog.correlator.is_empty() && geometry.name == "VLBA" {
+        "VLBA"
+    } else {
+        &catalog.correlator
+    };
     let spectral = SpectralInput {
         resolutions: &resolutions,
-        correlator: &catalog.correlator,
+        correlator,
         correlator_version: catalog.correlator_version,
         van_vleck: catalog.van_vleck,
     };
@@ -316,7 +321,8 @@ impl Catalog {
             .trim()
             .to_owned();
         let correlator_version = optional_key::<String>(&primary, fits, "FXCORVER")?
-            .and_then(|value| value.trim().parse().ok())
+            .and_then(|value| value.trim().parse::<f32>().ok())
+            .map(f64::from)
             .unwrap_or_default();
         let van_vleck = optional_key::<f64>(&primary, fits, "VANVLECK")?.unwrap_or_default();
         let mut extensions = BTreeMap::<String, Vec<usize>>::new();

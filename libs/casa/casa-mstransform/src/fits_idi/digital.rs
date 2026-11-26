@@ -52,7 +52,7 @@ impl DigitalCorrection {
         let (rm, mut alpha, gamma, mut rho): (f64, f64, f64, Option<Rho>) = match levels {
             [4, 4] => (4.3048, 0.882518, 3.335875 * 64.0 / 63.0, Some(rho_four)),
             [2, 2] => (1.0, 2.0 / std::f64::consts::PI, 64.0 / 63.0, Some(rho_two)),
-            [4, 2] | [2, 4] => (5.8784, 0.939060, 3.335875 * 64.0 / 63.0, Some(rho_four)),
+            [4, 2] | [2, 4] => (5.8784, 0.882518, 3.335875 * 64.0 / 63.0, None),
             _ => (1.0 / (A * H), 1.0, 1.0, None),
         };
         if self.corrected_during_correlation {

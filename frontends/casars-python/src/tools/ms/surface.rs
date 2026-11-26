@@ -175,8 +175,8 @@ const METHODS: &[Method] = &[
             param("lock", K::Bool, Bool(false)),
             param("obstype", K::Int, Int(0)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "getdata",

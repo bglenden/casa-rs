@@ -161,10 +161,10 @@ pub(super) fn append_hdu(
         return Err(invalid("UV_DATA is not a FITS binary table"));
     };
     let scale = optional_key::<f64>(hdu, fits, "VIS_SCAL")?.unwrap_or(1.0);
-    let weight_type = optional_key::<String>(hdu, fits, "WEIGHTYP")?.map_or(
-        spectral.correlator == "VLBA" && spectral.correlator_version >= 4.17,
-        |value| value.trim().eq_ignore_ascii_case("CORRELAT"),
-    );
+    let weight_type = optional_key::<String>(hdu, fits, "WEIGHTYP")?
+        .map_or(matches!(spectral.correlator, "DIFX" | "VLBA"), |value| {
+            value.trim().eq_ignore_ascii_case("CORRELAT")
+        });
     let rows = InputColumns::resolve(hdu)?;
     let inferred = if rows.interval {
         None

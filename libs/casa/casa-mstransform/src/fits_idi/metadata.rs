@@ -417,14 +417,19 @@ impl<'a> IdiTable<'a> {
     }
 
     pub(super) fn has(&self, name: &str) -> bool {
+        self.column_width(name).is_some_and(|width| width > 0)
+    }
+
+    pub(super) fn column_width(&self, name: &str) -> Option<usize> {
         match &self.hdu.info {
             HduInfo::TableInfo {
                 column_descriptions,
                 ..
             } => column_descriptions
                 .iter()
-                .any(|column| column.name == name && column.data_type.repeat != 0),
-            _ => false,
+                .find(|column| column.name == name)
+                .map(|column| column.data_type.repeat),
+            _ => None,
         }
     }
 

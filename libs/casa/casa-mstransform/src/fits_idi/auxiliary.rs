@@ -191,7 +191,11 @@ pub(super) fn flag_commands(
     let antennas = table.column::<i32>("ANTS", 2)?;
     let frequencies = table.column::<i32>("FREQID", 1)?;
     let times = table.column::<f32>("TIMERANG", 2)?;
-    let band_flags = table.column_or_replicate::<i32>("BANDS", bands)?;
+    let band_width = table
+        .column_width("BANDS")
+        .filter(|&width| width > 0 && width <= bands)
+        .ok_or_else(|| invalid("Invalid FITS-IDI flag band mask"))?;
+    let band_flags = table.column::<i32>("BANDS", band_width)?;
     let channels = table.column::<i32>("CHANS", 2)?;
     let flags = table.column::<i32>("PFLAGS", 4)?;
     let reasons = table.strings("REASON")?;
@@ -225,12 +229,14 @@ pub(super) fn flag_commands(
         }
         let requested =
             (frequencies[row] > 0).then_some(frequencies[row].saturating_sub(1) as usize);
-        let selected_bands = &band_flags[row * bands..(row + 1) * bands];
+        let selected_bands = &band_flags[row * band_width..(row + 1) * band_width];
         if requested.is_some() || selected_bands.contains(&0) || lo > 0 {
             let windows = (0..spectral_windows)
                 .filter(|&window| {
                     requested.is_none_or(|freq| window / bands == freq)
-                        && selected_bands[window % bands] != 0
+                        && selected_bands
+                            .get(window % bands)
+                            .is_some_and(|&flag| flag != 0)
                 })
                 .map(|window| window.to_string())
                 .collect::<Vec<_>>()
