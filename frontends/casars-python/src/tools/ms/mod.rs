@@ -34,6 +34,7 @@ mod summary;
 pub(crate) mod surface;
 mod vi1;
 mod visibility;
+mod visibility_reference;
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -93,14 +94,36 @@ impl AttachedMs {
     fn open(name: PathBuf, writable: bool, lock: bool, check: bool) -> PyResult<Self> {
         let path = name.canonicalize().map_err(runtime_error)?;
         let directory = std::fs::metadata(&path).map_err(runtime_error)?;
-        let sources =
-            casa_calibration::visibility_model_source_paths(&path).map_err(runtime_error)?;
         let main_files = attachment_info::TableFiles::new(&path);
         let main_stamp = main_files.stamp();
         let main = Table::open(TableOptions::new(&path)).map_err(runtime_error)?;
         let original_rows = main.row_count();
         let is_multi_ms = main.info().sub_type == "CONCATENATED";
         let part_names = Table::immediate_part_names(&path, &name).map_err(runtime_error)?;
+        let reference_multi = is_multi_ms && matches!(part_names, TablePartNames::Reference(_));
+        let sources = if reference_multi {
+            // A saved view can inherit the multi-MS subtype. Its descriptor
+            // holds a row projection, and the view is the logical input.
+            let view = MeasurementSet::open(&path).map_err(runtime_error)?;
+            if view.ms_version() != Some(2.0) {
+                return Err(runtime_error(format!(
+                    "{} is not an MSv2 MeasurementSet",
+                    path.display()
+                )));
+            }
+            vec![path.clone()]
+        } else {
+            casa_calibration::visibility_model_source_paths(&path).map_err(runtime_error)?
+        };
+        let physical_parts = if reference_multi && (lock || writable) {
+            main.cache_plain_table_paths()
+                .map_err(runtime_error)?
+                .iter()
+                .map(|part| part.canonicalize().map_err(runtime_error))
+                .collect::<PyResult<Vec<_>>>()?
+        } else {
+            Vec::new()
+        };
         let plain_rows = matches!(part_names, TablePartNames::Plain(_))
             .then(|| attachment_info::PlainRows::new(&path));
         let mut attached = Self {
@@ -129,7 +152,7 @@ impl AttachedMs {
             read_locks: BTreeMap::new(),
         };
         if writable {
-            for source in &attached.sources {
+            for source in attached.sources.iter().chain(&physical_parts) {
                 // CASA opens MAIN for update before reporting a writable attachment.
                 std::fs::OpenOptions::new()
                     .write(true)
@@ -138,9 +161,16 @@ impl AttachedMs {
             }
         }
         if lock {
-            attached.retain_tables(attached.sources.iter().cloned().collect())?;
+            attached.retain_tables(
+                attached
+                    .sources
+                    .iter()
+                    .chain(&physical_parts)
+                    .cloned()
+                    .collect(),
+            )?;
             let mut subtables = BTreeSet::new();
-            for source in &attached.sources {
+            for source in attached.sources.iter().chain(&physical_parts) {
                 let ms = MeasurementSet::open(source).map_err(runtime_error)?;
                 for id in ms.subtable_ids() {
                     if let Some(path) = ms.subtable(id).and_then(Table::path) {

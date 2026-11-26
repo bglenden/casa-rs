@@ -18,12 +18,10 @@
 mod array_rows;
 pub(crate) use array_rows::{read_ism_array_column_rows, read_ism_array_column_shapes};
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 use casa_aipsio::internal::{AipsIoBufferWriter, AipsIoSliceReader, detect_aipsio_byte_order};
 use casa_aipsio::{AipsIo, ByteOrder};
@@ -46,6 +44,7 @@ mod append_records;
 mod cells;
 mod check_layout;
 mod replace_ints;
+mod selected_scalars_cache;
 mod write_columns;
 pub(super) use append_records::stage_scalar_append;
 pub(super) use replace_ints::stage_int32_replacement;
@@ -72,27 +71,6 @@ pub(super) const ISM_SCALAR_BUCKET_BYTES_PER_COLUMN: usize =
     4 * ISM_BUCKET_TARGET_ROWS * ISM_MAX_SCALAR_ROW_BYTES;
 
 type SparseScalarRowValues = Vec<(usize, Option<casa_types::ScalarValue>)>;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct IsmSelectedScalarRowsCacheKey {
-    file_path: PathBuf,
-    file_len: u64,
-    file_modified: Option<SystemTime>,
-    selected_rows: Vec<usize>,
-    column_names: Vec<String>,
-    preserve_defaults: bool,
-}
-
-#[derive(Debug, Clone)]
-struct IsmSelectedScalarRowsCache {
-    key: IsmSelectedScalarRowsCacheKey,
-    values_by_column: Vec<Vec<Option<ScalarValue>>>,
-}
-
-thread_local! {
-    static ISM_SELECTED_SCALAR_ROWS_CACHE: RefCell<Option<IsmSelectedScalarRowsCache>> =
-        const { RefCell::new(None) };
-}
 
 // ---------------------------------------------------------------------------
 // In-memory AipsIO helpers
@@ -788,9 +766,9 @@ pub(crate) fn read_ism_scalar_column_rows(
     }
 
     let cache_key =
-        ism_selected_scalar_rows_cache_key(file_path, col_descs, selected_rows, preserve_defaults)?;
+        selected_scalars_cache::key(file_path, col_descs, selected_rows, preserve_defaults)?;
     if let Some(values) =
-        cached_ism_selected_scalar_column(&cache_key, target_col_idx, selected_rows.len())
+        selected_scalars_cache::get(&cache_key, target_col_idx, selected_rows.len())
     {
         return Ok(Some(values));
     }
@@ -811,7 +789,7 @@ pub(crate) fn read_ism_scalar_column_rows(
                 target_col_desc.col_name
             ))
         })?;
-    store_ism_selected_scalar_rows_cache(cache_key, values_by_column);
+    selected_scalars_cache::insert(cache_key, values_by_column);
     Ok(Some(values))
 }
 
@@ -1235,54 +1213,6 @@ pub(crate) fn read_ism_scalar_column(
         values.resize(nrrow, None);
     }
     Ok(Some(values))
-}
-
-fn ism_selected_scalar_rows_cache_key(
-    file_path: &Path,
-    col_descs: &[&ColumnDescContents],
-    selected_rows: &[usize],
-    preserve_defaults: bool,
-) -> Result<IsmSelectedScalarRowsCacheKey, StorageError> {
-    let metadata = std::fs::metadata(file_path)?;
-    Ok(IsmSelectedScalarRowsCacheKey {
-        file_path: file_path.to_path_buf(),
-        file_len: metadata.len(),
-        file_modified: metadata.modified().ok(),
-        selected_rows: selected_rows.to_vec(),
-        preserve_defaults,
-        column_names: col_descs
-            .iter()
-            .map(|col_desc| col_desc.col_name.clone())
-            .collect(),
-    })
-}
-
-fn cached_ism_selected_scalar_column(
-    key: &IsmSelectedScalarRowsCacheKey,
-    target_col_idx: usize,
-    expected_len: usize,
-) -> Option<Vec<Option<ScalarValue>>> {
-    ISM_SELECTED_SCALAR_ROWS_CACHE.with(|cache| {
-        let cache = cache.borrow();
-        let entry = cache.as_ref()?;
-        if &entry.key != key {
-            return None;
-        }
-        let values = entry.values_by_column.get(target_col_idx)?;
-        (values.len() == expected_len).then(|| values.clone())
-    })
-}
-
-fn store_ism_selected_scalar_rows_cache(
-    key: IsmSelectedScalarRowsCacheKey,
-    values_by_column: Vec<Vec<Option<ScalarValue>>>,
-) {
-    ISM_SELECTED_SCALAR_ROWS_CACHE.with(|cache| {
-        *cache.borrow_mut() = Some(IsmSelectedScalarRowsCache {
-            key,
-            values_by_column,
-        });
-    });
 }
 
 fn read_ism_scalar_columns_rows_uncached(
