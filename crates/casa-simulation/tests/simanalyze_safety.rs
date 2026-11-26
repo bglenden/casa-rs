@@ -29,6 +29,7 @@ fn fixture(case: &str) -> (tempfile::TempDir, Map<String, Value>) {
 
 fn request(parameters: Map<String, Value>) -> SimanalyzeRequest {
     SimanalyzeRequest {
+        workspace: None,
         parameters,
         resources: SessionResources::from_controls(&ExecutionControls::default()).unwrap(),
     }

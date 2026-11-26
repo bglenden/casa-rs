@@ -121,8 +121,8 @@ fn start_model(
     parameters: &mut serde_json::Map<String, serde_json::Value>,
     resources: SessionResources,
 ) -> Result<Option<tempfile::TempDir>, SimobserveError> {
-    let supplied = super::plan::expand_project(&plan.directory, p.text("modelimage"));
-    let path = super::plan::locate(&plan.directory, &supplied);
+    let supplied = p.text("modelimage");
+    let path = p.locate(&plan.directory, supplied);
     if supplied.is_empty() || !path.exists() {
         parameters.insert("startmodel".into(), json!(""));
         return Ok(None);

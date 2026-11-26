@@ -97,6 +97,7 @@ fn synthesis<'a, 'b>(
         json!((plan.model.size[0] / plan.model.cell[0]) as usize)
     };
     let request = SimanalyzeRequest {
+        workspace: Some(plan.directory.clone()),
         resources,
         parameters: json!({"project":plan.directory,"vis":vis,"image":true,"modelimage":"","cell":cell,"imsize":imsize,"imdirection":if p.text("imdirection").is_empty(){plan.model.direction.as_str()}else{p.text("imdirection")},"niter":p.0["niter"],"threshold":p.text("threshold"),"weighting":"briggs","mask":[],"outertaper":[],"stokes":"I","analyze":true,"graphics":if plot_sink.is_some(){super::graphics_mode(p)}else{"none"},"verbose":p.flag("verbose"),"overwrite":true})
             .as_object()
@@ -170,6 +171,7 @@ fn total_power<'a, 'b>(
     drop(_memory);
     let skymodel = plan.directory.join(format!("{}.skymodel", plan.tp_stem));
     let request = SimanalyzeRequest {
+        workspace: Some(plan.directory.clone()),
         resources,
         parameters: json!({"project":plan.directory,"image":false,"imagename":output,"skymodel":skymodel,"analyze":true,"showuv":false,"showpsf":false,"showconvolved":true,"graphics":if plot_sink.is_some(){super::graphics_mode(p)}else{"none"},"overwrite":true})
             .as_object()

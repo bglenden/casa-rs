@@ -35,6 +35,7 @@ fn composed_simulation_analysis_stays_within_its_admissions() {
             _ => {}
         }
         SimanalyzeRequest {
+            workspace: None,
             parameters: parameters.as_object().unwrap().clone(),
             resources: policy,
         }

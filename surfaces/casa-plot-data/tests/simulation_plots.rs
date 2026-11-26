@@ -175,6 +175,7 @@ fn simanalyze_complete_plot_payload_validates() {
     let payload = root.join("arrays.bin");
     std::fs::File::create(&payload).unwrap();
     let request = SimanalyzeRequest {
+        workspace: None,
         resources,
         parameters: json!({
             "project": project, "imsize": [128,128], "niter": 20,

@@ -79,6 +79,7 @@ fn single_array_imaging_analysis_and_complete_plot_payload_match_casa() {
     })
     .unwrap();
     let request = SimanalyzeRequest {
+        workspace: None,
         resources,
         parameters: json!({
             "project": project, "imsize": [128,128], "niter": 20,
@@ -116,6 +117,7 @@ fn single_array_imaging_analysis_and_complete_plot_payload_match_casa() {
 
 fn repeat_fresh_against_casa(request: &SimanalyzeRequest, project: &Path, oracle: &Value) {
     let mut repeated = SimanalyzeRequest {
+        workspace: None,
         resources: request.resources,
         parameters: request.parameters.clone(),
     };
@@ -135,6 +137,7 @@ fn safety_cases(request: &SimanalyzeRequest, project: &Path, model: &Path) {
     };
     let previous = (read("image"), read("model"));
     let mut run = SimanalyzeRequest {
+        workspace: None,
         resources: request.resources,
         parameters: request.parameters.clone(),
     };

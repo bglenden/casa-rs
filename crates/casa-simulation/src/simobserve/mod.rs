@@ -124,7 +124,7 @@ impl SimobserveRequest {
     }
 }
 
-fn path_at(workspace: Option<&Path>, path: &Path) -> PathBuf {
+pub(crate) fn path_at(workspace: Option<&Path>, path: &Path) -> PathBuf {
     workspace.map_or_else(|| path.to_path_buf(), |workspace| workspace.join(path))
 }
 

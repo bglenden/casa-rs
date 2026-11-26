@@ -10,7 +10,6 @@ use casa_contracts::{
 };
 use casa_simulation::simanalyze::{SimanalyzeRequest, simanalyze_with_controls};
 use casa_simulation::{ExecutionControls, SessionResources};
-use std::path::Path;
 use std::time::Instant;
 
 /// simanalyze's native task protocol.
@@ -46,15 +45,9 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let parameters = task.plain_values();
     let resources = SessionResources::from_controls(&ExecutionControls::default())
         .map_err(|error| TaskFailure::execution(error.to_string()))?;
-    let mut execution_parameters = parameters.clone();
-    task.resolve_file_values(&mut execution_parameters, &["project", "logfile"]);
-    if task.native_options().is_some() {
-        let project =
-            Path::new(execution_parameters["project"].as_str().unwrap_or_default()).to_path_buf();
-        resolve_inputs(task, &project, &mut execution_parameters);
-    }
     let request = SimanalyzeRequest {
-        parameters: execution_parameters,
+        workspace: Some(task.workspace().to_path_buf()),
+        parameters: parameters.clone(),
         resources,
     };
     let payload = super::plot_payload(task);
@@ -88,29 +81,4 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         plots,
     };
     TaskSuccess::new(CasaValue::None, &report)
-}
-
-fn resolve_inputs(
-    task: &TaskInvocation<'_>,
-    project: &Path,
-    parameters: &mut serde_json::Map<String, serde_json::Value>,
-) {
-    use serde_json::Value;
-    let rebase = |value: &mut Value| {
-        if let Value::String(names) = value {
-            *names = names
-                .split(',')
-                .map(|name| super::project_fallback_path(task, project, name.trim()))
-                .collect::<Vec<_>>()
-                .join(",");
-        }
-    };
-    for name in ["vis", "skymodel", "modelimage", "featherimage"] {
-        if let Some(value) = parameters.get_mut(name) {
-            match value {
-                Value::Array(paths) => paths.iter_mut().for_each(rebase),
-                _ => rebase(value),
-            }
-        }
-    }
 }

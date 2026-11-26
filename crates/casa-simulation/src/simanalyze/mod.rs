@@ -20,6 +20,9 @@ use std::path::{Path, PathBuf};
 
 /// One task invocation, with CASA-named parameters and explicit resources.
 pub struct SimanalyzeRequest {
+    /// Base directory for a relative project and files outside the project.
+    /// Library callers can omit it to use their current working directory.
+    pub workspace: Option<PathBuf>,
     /// Sparse or resolved CASA parameters; the catalog supplies defaults.
     pub parameters: Map<String, Value>,
     /// Admission, worker and backend policy shared with simulation.
@@ -102,8 +105,23 @@ pub(super) fn failure(error: impl std::fmt::Display) -> SimobserveError {
     SimobserveError::raised(format!("simanalyze: {error}"))
 }
 
-pub(super) struct Parameters<'a>(pub &'a Map<String, Value>);
+pub(super) struct Parameters<'a>(pub &'a Map<String, Value>, Option<&'a Path>);
 impl Parameters<'_> {
+    fn workspace_path(&self, path: &str) -> PathBuf {
+        crate::simobserve::path_at(self.1, Path::new(path))
+    }
+
+    fn locate(&self, directory: &Path, value: &str) -> PathBuf {
+        let project = directory.file_name().unwrap_or_default().to_string_lossy();
+        let name = value.replace("$project", &project);
+        let in_project = directory.join(&name);
+        if in_project.exists() {
+            in_project
+        } else {
+            self.workspace_path(&name)
+        }
+    }
+
     fn text(&self, key: &str) -> &str {
         self.0[key].as_str().expect("resolved string")
     }
@@ -194,7 +212,7 @@ fn run<'a, 'b>(
     )
     .map_err(failure)?;
     let values = resolve_defaults(&request.parameters);
-    let parameters = Parameters(&values);
+    let parameters = Parameters(&values, request.workspace.as_deref());
     let mut report = if parameters.text("logfile").is_empty() {
         None
     } else {
@@ -202,7 +220,7 @@ fn run<'a, 'b>(
         let mut report = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(parameters.text("logfile"))
+            .open(parameters.workspace_path(parameters.text("logfile")))
             .map_err(failure)?;
         writeln!(report, "simanalyze project={}", parameters.text("project")).map_err(failure)?;
         Some(report)
