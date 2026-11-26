@@ -331,6 +331,15 @@ fn plot_payload(task: &TaskInvocation<'_>) -> Option<PathBuf> {
     )
 }
 
+fn project_fallback_path(task: &TaskInvocation<'_>, project: &Path, name: &str) -> String {
+    let path = task.io_path(name);
+    if !name.is_empty() && !project.join(name).exists() && path.exists() {
+        path.to_string_lossy().into_owned()
+    } else {
+        name.to_owned()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
