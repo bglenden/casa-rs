@@ -146,38 +146,41 @@ pub fn to_msv4_with(
     let ids = catalogue.partition_ids();
     let next = AtomicUsize::new(0);
     let results = Mutex::new(Vec::with_capacity(ids.len()));
+    let dispatch = tracing::dispatcher::get_default(Clone::clone);
     std::thread::scope(|scope| {
         for _ in 0..options.workers.clamp(1, ids.len().max(1)) {
             scope.spawn(|| {
-                loop {
-                    let index = next.fetch_add(1, Ordering::Relaxed);
-                    let Some(id) = ids.get(index) else {
-                        break;
-                    };
-                    let result = partition(
-                        &Destination {
-                            set: &set,
-                            named: &named,
-                            pointing: &pointing,
-                            chunk_shape: conversion.chunk_shape,
-                        },
-                        observation.as_ref(),
-                        *id,
-                        &groups,
-                        &datasets[id.0 as usize],
-                        options,
-                    );
-                    let failed = result.is_err();
-                    results
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .push(result);
-                    if failed {
-                        // Stop handing out partitions; the others finish
-                        // what they hold.
-                        next.store(ids.len(), Ordering::Relaxed);
+                tracing::dispatcher::with_default(&dispatch, || {
+                    loop {
+                        let index = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(id) = ids.get(index) else {
+                            break;
+                        };
+                        let result = partition(
+                            &Destination {
+                                set: &set,
+                                named: &named,
+                                pointing: &pointing,
+                                chunk_shape: conversion.chunk_shape,
+                            },
+                            observation.as_ref(),
+                            *id,
+                            &groups,
+                            &datasets[id.0 as usize],
+                            options,
+                        );
+                        let failed = result.is_err();
+                        results
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .push(result);
+                        if failed {
+                            // Stop handing out partitions; the others finish
+                            // what they hold.
+                            next.store(ids.len(), Ordering::Relaxed);
+                        }
                     }
-                }
+                });
             });
         }
     });

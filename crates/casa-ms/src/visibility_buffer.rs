@@ -651,68 +651,92 @@ impl MeasurementSet {
             || request.include_scan_numbers
             || request.include_state_ids;
 
+        let dispatch = tracing::dispatcher::get_default(Clone::clone);
         let parallel_reads = thread::scope(|scope| {
             let data_handle = request.include_data.then(|| {
+                let dispatch = &dispatch;
                 scope.spawn(move || {
-                    let started = Instant::now();
-                    read_complex_channel_column(
-                        self,
-                        request.data_column.name(),
-                        &request.row_indices,
-                        request.channel_start,
-                        request.channel_count,
-                        data_existing,
-                    )
-                    .map(|result| (result, started.elapsed()))
+                    tracing::dispatcher::with_default(dispatch, || {
+                        let started = Instant::now();
+                        read_complex_channel_column(
+                            self,
+                            request.data_column.name(),
+                            &request.row_indices,
+                            request.channel_start,
+                            request.channel_count,
+                            data_existing,
+                        )
+                        .map(|result| (result, started.elapsed()))
+                    })
                 })
             });
             let flags_handle = request.include_flags.then(|| {
+                let dispatch = &dispatch;
                 scope.spawn(move || {
-                    let started = Instant::now();
-                    read_bool_channel_column(
-                        self,
-                        "FLAG",
-                        &request.row_indices,
-                        request.channel_start,
-                        request.channel_count,
-                        flags_existing,
-                    )
-                    .map(|result| (result, started.elapsed()))
+                    tracing::dispatcher::with_default(dispatch, || {
+                        let started = Instant::now();
+                        read_bool_channel_column(
+                            self,
+                            "FLAG",
+                            &request.row_indices,
+                            request.channel_start,
+                            request.channel_count,
+                            flags_existing,
+                        )
+                        .map(|result| (result, started.elapsed()))
+                    })
                 })
             });
             let weights_handle = request.include_weights.then(|| {
+                let dispatch = &dispatch;
                 scope.spawn(move || {
-                    let started = Instant::now();
-                    read_float_row_column(self, "WEIGHT", &request.row_indices, weights_existing)
+                    tracing::dispatcher::with_default(dispatch, || {
+                        let started = Instant::now();
+                        read_float_row_column(
+                            self,
+                            "WEIGHT",
+                            &request.row_indices,
+                            weights_existing,
+                        )
                         .map(|result| (result, started.elapsed()))
+                    })
                 })
             });
             let weight_spectrum_handle = read_weight_spectrum.then(|| {
+                let dispatch = &dispatch;
                 scope.spawn(move || {
-                    let started = Instant::now();
-                    read_float_channel_column(
-                        self,
-                        "WEIGHT_SPECTRUM",
-                        &request.row_indices,
-                        request.channel_start,
-                        request.channel_count,
-                        weight_spectrum_existing,
-                    )
-                    .map(|result| (result, started.elapsed()))
+                    tracing::dispatcher::with_default(dispatch, || {
+                        let started = Instant::now();
+                        read_float_channel_column(
+                            self,
+                            "WEIGHT_SPECTRUM",
+                            &request.row_indices,
+                            request.channel_start,
+                            request.channel_count,
+                            weight_spectrum_existing,
+                        )
+                        .map(|result| (result, started.elapsed()))
+                    })
                 })
             });
             let uvw_handle = request.include_uvw.then(|| {
+                let dispatch = &dispatch;
                 scope.spawn(move || {
-                    let started = Instant::now();
-                    read_uvw_column(self, &request.row_indices, uvw_existing)
-                        .map(|result| (result, started.elapsed()))
+                    tracing::dispatcher::with_default(dispatch, || {
+                        let started = Instant::now();
+                        read_uvw_column(self, &request.row_indices, uvw_existing)
+                            .map(|result| (result, started.elapsed()))
+                    })
                 })
             });
             let scalar_handle = read_scalars.then(|| {
+                let dispatch = &dispatch;
                 scope.spawn(move || {
-                    let started = Instant::now();
-                    read_scalar_columns(self, request, scalar_existing)
-                        .map(|result| (result, started.elapsed()))
+                    tracing::dispatcher::with_default(dispatch, || {
+                        let started = Instant::now();
+                        read_scalar_columns(self, request, scalar_existing)
+                            .map(|result| (result, started.elapsed()))
+                    })
                 })
             });
             Ok::<_, MsError>(ParallelVisibilityReads {

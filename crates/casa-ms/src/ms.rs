@@ -149,21 +149,24 @@ impl MeasurementSet {
             .path()
             .expect("captured MeasurementSet root")
             .to_path_buf();
+        let dispatch = tracing::dispatcher::get_default(Clone::clone);
         let tables = links
             .into_par_iter()
             .map(|(id, path)| {
-                let table = if donor && id != SubtableId::History {
-                    crate::tool_concatenate::locking::held_reader(&path)?
-                } else {
-                    Table::open(TableOptions::new(&path))?
-                };
-                if !matches!(
-                    id,
-                    SubtableId::History | SubtableId::SysCal | SubtableId::Weather
-                ) {
-                    table.rows()?;
-                }
-                Ok::<_, MsError>((id, path, table))
+                tracing::dispatcher::with_default(&dispatch, || {
+                    let table = if donor && id != SubtableId::History {
+                        crate::tool_concatenate::locking::held_reader(&path)?
+                    } else {
+                        Table::open(TableOptions::new(&path))?
+                    };
+                    if !matches!(
+                        id,
+                        SubtableId::History | SubtableId::SysCal | SubtableId::Weather
+                    ) {
+                        table.rows()?;
+                    }
+                    Ok::<_, MsError>((id, path, table))
+                })
             })
             .collect::<MsResult<Vec<_>>>()?;
         let mut subtables = HashMap::new();

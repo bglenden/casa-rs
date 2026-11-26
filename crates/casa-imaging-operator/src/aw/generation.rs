@@ -211,8 +211,11 @@ pub(super) fn generate(
     if workers == 1 {
         return work();
     }
+    let dispatch = tracing::dispatcher::get_default(Clone::clone);
     std::thread::scope(|scope| {
-        let threads = (0..workers).map(|_| scope.spawn(work)).collect::<Vec<_>>();
+        let threads = (0..workers)
+            .map(|_| scope.spawn(|| tracing::dispatcher::with_default(&dispatch, work)))
+            .collect::<Vec<_>>();
         threads
             .into_iter()
             .map(|thread| {
