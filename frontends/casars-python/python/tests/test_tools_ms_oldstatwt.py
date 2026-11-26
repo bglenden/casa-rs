@@ -109,17 +109,39 @@ def test_oldstatwt_errors_preserve_attachment_and_main_table(baseline_fixture, n
 
 
 @pytest.mark.parametrize("permanent", [False, True], ids=["automatic", "permanent"])
-def test_oldstatwt_saves_only_the_reference_rows(baseline_fixture, native_dataset, tmp_path, permanent):
-    casa, view, _ = baseline_fixture
-    selected = [13, 1, 22, 22, 6]
-    reference = view("saved.ms", selected)
+@pytest.mark.parametrize("multiple", [False, True], ids=["single-ms", "multi-ms"])
+def test_oldstatwt_saves_only_the_reference_rows(
+    baseline_fixture, native_dataset, tmp_path, permanent, multiple,
+):
+    casa, _, raw = baseline_fixture
+    row_count = raw["data"].shape[-1]
+    members = [str(native_dataset)]
+    parent = str(native_dataset)
+    if multiple:
+        second = tmp_path / "second.ms"
+        copytree(native_dataset, second)
+        with closing(casa.table()) as table:
+            assert table.open(str(second), nomodify=False)
+            assert table.putcol("DATA", raw["data"] * (-2.5j))
+        parent = str(tmp_path / "parent.mms")
+        with closing(casa.ms()) as tool:
+            assert tool.createmultims(parent, [str(native_dataset), str(second)],
+                                      ["ANTENNA", "DATA_DESCRIPTION", "FEED"])
+        with closing(casa.ms()) as tool:
+            assert tool.open(parent)
+            members = tool.getreferencedtables()
+    selected = [13, 1, 22, 22, 6] if not multiple else [row_count + 13, 1, 22, row_count + 13, 6]
+    reference = str(tmp_path / "saved.ms")
     materialized = tmp_path / "materialized.ms"
     with closing(casa.table()) as table:
+        assert table.open(parent)
+        assert table.selectrows(np.array(selected, dtype=np.int64), reference).done()
+        assert table.done()
         assert table.open(reference)
         with closing(table.copy(str(materialized), deep=True, valuecopy=True, returnobject=True)) as copied:
             if "SORTED_TABLE" in copied.keywordnames():
                 assert copied.removekeyword("SORTED_TABLE")
-    original = read_columns(casa, native_dataset)
+    original = [read_columns(casa, member) for member in members]
     options = {"datacolumn": "data", "fitspw": "0:1~3", "minsamp": 2}
     with closing(casa.ms()) as tool:
         assert tool.open(str(materialized), nomodify=False)
@@ -129,15 +151,20 @@ def test_oldstatwt_saves_only_the_reference_rows(baseline_fixture, native_datase
         assert tool.open(reference, nomodify=False, lock=permanent)
         assert tool.oldstatwt(**options)
         assert tool.name() == reference
+        assert tool.ismultims() == multiple
         assert tool.nrow() == len(selected)
     for reader in (casa, tools):
-        persisted = read_columns(reader, native_dataset)
-        for name in ("WEIGHT", "SIGMA"):
-            wanted = original[name].copy()
-            wanted[..., selected] = expected[name]
-            np.testing.assert_allclose(persisted[name], wanted, strict=True, rtol=2e-6, atol=0)
-        for name in ("DATA", "FLAG", "FLAG_ROW"):
-            np.testing.assert_array_equal(persisted[name], original[name], strict=True)
+        for index, member in enumerate(members):
+            persisted = read_columns(reader, member)
+            for name in ("WEIGHT", "SIGMA"):
+                wanted = original[index][name].copy()
+                for position, row in enumerate(selected):
+                    part, local = divmod(row, row_count)
+                    if part == index:
+                        wanted[..., local] = expected[name][..., position]
+                np.testing.assert_allclose(persisted[name], wanted, strict=True, rtol=2e-6, atol=0)
+            for name in ("DATA", "FLAG", "FLAG_ROW"):
+                np.testing.assert_array_equal(persisted[name], original[index][name], strict=True)
 
 
 def test_oldstatwt_combines_simultaneous_rows_from_multi_ms_members(

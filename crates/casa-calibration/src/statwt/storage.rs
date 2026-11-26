@@ -93,7 +93,7 @@ impl StatWtMs {
         let rows = (0..ms.row_count()).collect::<Vec<_>>();
         let reference = ms
             .main_table()
-            .reference_write_projection(&rows, &LEGACY_COLUMNS)?
+            .reference_root_projection(&rows, &LEGACY_COLUMNS)?
             .ok_or_else(|| invalid("oldstatwt reference layout changed while opening"))?;
         Ok(Self {
             parts: vec![Part {
@@ -272,7 +272,7 @@ impl StatWtMs {
             let current = self
                 .metadata()
                 .main_table()
-                .reference_write_projection(&ids, &LEGACY_COLUMNS)?
+                .reference_root_projection(&ids, &LEGACY_COLUMNS)?
                 .ok_or_else(|| invalid("oldstatwt reference layout changed before publication"))?;
             if current.path != expected.path
                 || current.columns != expected.columns
