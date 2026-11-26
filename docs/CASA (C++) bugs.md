@@ -12218,6 +12218,19 @@ casa-rs honors the attachment's write mode and requires the complete attached MS
 for a spectral rewrite. It prepares and checks a private output before
 publication so a failed operation keeps the original MS usable (#1030).
 
+An LSRK input also reproduces the detached state with
+`ms.cvel(outframe="REST", width=2, hanning=False)`. CASA closes the tool
+before calling `SubMS::regridSpw`, and the unsupported conversion raises
+`No MeasFrame specified for conversion of Frequency`. The caller receives the
+same error from casa-rs and can continue using the original attachment (#1030).
+
+On a two-window LSRK input, `ms.cvel(width=2, interp="invalid",
+hanning=False)` combines the two windows before SubMS rejects the interpolation.
+CASA returns `True` with one combined window and fewer MAIN rows. Casa-rs
+keeps both windows and the original rows when it declines the unsupported
+interpolation. The same ordering issue occurs with an unknown `outframe`
+(#1030).
+
 ## A converted regridspw channel midpoint can address a channel past the input band
 
 In CASA 6.7.6.14, `ms.regridspw(outframe="BARY", chanwidth=2,
@@ -12233,6 +12246,15 @@ midpoint would select the same out-of-range endpoint, that field has
 31 valid two-channel bins. Explicitly setting `center=31` covers all
 63 input channels and yields 32 output channels, including the partial
 edge, with valid bounds (#1030).
+
+## Regridspw can flag a new data description that was valid in the input
+
+Run `ms.regridspw(outframe="BARY", center=31, chanwidth=2, hanning=False)`
+on pinned CASA 6.7.6.14's `ngc5921_ut.ms`. The one input DATA_DESCRIPTION
+record has `FLAG_ROW=False`. SubMS intends to copy that flag when it creates
+the three output records, but the persisted flag is `True` on the third
+record. Both readers observe the same flag in CASA's output. Casa-rs keeps
+all three output data descriptions valid, as in the input (#1030).
 
 ## In-place spectral resampling can reverse values on a descending grid
 

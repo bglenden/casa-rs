@@ -1373,7 +1373,7 @@ fn mstransform_staged(
     if combined_grid.is_some() {
         combine::remap_subtable_references(request)?;
     }
-    if grammar == RowGrammar::Transform {
+    if grammar == RowGrammar::Transform && (legacy_grid.is_none() || combined_grid.is_some()) {
         selection_metadata::remove_virtual_model_links(
             &input,
             &mut output_main,
@@ -1996,22 +1996,23 @@ fn mstransform_staged(
                     return Err(missing_column_error(&request.output_ms, row_index, source));
                 };
                 let value = select_correlations(value, source)?;
-                let mut transformed = if column.source == OptionalMainColumn::LagData {
-                    value
-                } else if let Some(averages) = &legacy_averages {
-                    averages.visibility(value).map_err(mutation_error)?
-                } else if let Some(averages) = &averages {
-                    averages
-                        .visibility(column.source, value)
-                        .map_err(mutation_error)?
-                } else {
-                    transform_data_channels(value, &flags, bins).map_err(|source| {
-                        MsTransformError::MutateMeasurementSet {
-                            path: request.output_ms.display().to_string(),
-                            source: Box::new(source),
-                        }
-                    })?
-                };
+                let mut transformed =
+                    if column.source == OptionalMainColumn::LagData || legacy_direct_band {
+                        value
+                    } else if let Some(averages) = &legacy_averages {
+                        averages.visibility(value).map_err(mutation_error)?
+                    } else if let Some(averages) = &averages {
+                        averages
+                            .visibility(column.source, value)
+                            .map_err(mutation_error)?
+                    } else {
+                        transform_data_channels(value, &flags, bins).map_err(|source| {
+                            MsTransformError::MutateMeasurementSet {
+                                path: request.output_ms.display().to_string(),
+                                source: Box::new(source),
+                            }
+                        })?
+                    };
                 if hanning && column.source != OptionalMainColumn::LagData {
                     if legacy_grid.is_some() {
                         hanning::smooth_regrid(&mut transformed, &flags).map_err(mutation_error)?;

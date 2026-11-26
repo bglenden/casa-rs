@@ -502,31 +502,10 @@ impl Window {
             .collect::<Vec<_>>();
         let maximum_channels = budget.maximum_output_channels(frequencies.len())?;
         let axis = match legacy {
-            Some(LegacySpectralGrid::CenteredChannels {
-                centre,
-                bandwidth,
-                channel_width,
-            }) => axis::centered_channel_bounds(
-                &converted,
-                &converted_widths,
-                centre,
-                bandwidth,
-                channel_width,
-            )?,
-            Some(LegacySpectralGrid::CenteredNumeric {
-                quantity,
-                centre,
-                bandwidth,
-                channel_width,
-                rest_hz,
-            }) => crate::spectral_selection::centered_numeric_frequencies(
-                quantity,
-                (centre, bandwidth, channel_width, rest_hz),
-                &converted,
-                &converted_widths,
-                maximum_channels,
-            )
-            .map_err(ms_error)?,
+            Some(
+                grid @ (LegacySpectralGrid::CenteredChannels { .. }
+                | LegacySpectralGrid::CenteredNumeric { .. }),
+            ) => grid.centered_frequencies(&converted, &converted_widths, maximum_channels)?,
             Some(LegacySpectralGrid::FrameOnly) => CasaChannelFrequencies {
                 centres_hz: converted.clone(),
                 steps_hz: converted_widths.clone(),

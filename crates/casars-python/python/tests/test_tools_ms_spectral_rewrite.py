@@ -1,12 +1,14 @@
 """In-place spectral writes read back through both MS table implementations."""
 
 from contextlib import closing
+import os
 from shutil import copytree
 
 import numpy as np
 import pytest
 
 from casars import tools
+from test_tools_ms_addephemeris import assert_external_write_refused
 from test_tools_ms_createmultims import pinned_casa
 from test_tools_msmetadata import measures, native_dataset
 
@@ -52,8 +54,16 @@ def test_spectral_rewrite_retains_physical_rows_and_reopens_in_casa(
             assert ms.name() == str(path)
             assert ms.nrow() == len(times)
         assert read_cells(casa, path, ("TIME",))["TIME"] == times
+        history = read_cells(casa, path / "HISTORY", ("MESSAGE", "ORIGIN", "APPLICATION", "CLI_COMMAND"))
+        assert history["MESSAGE"][-1] == f"Transformed/regridded with {method}"
+        assert history["ORIGIN"][-1] == f"ms::{method}()"
+        assert history["APPLICATION"][-1] == "ms"
+        command = history["CLI_COMMAND"][-1][0]
+        assert "Number of channels = 2" in command or "== 2 new channels" in command
 
     reference = read_cells(casa, datasets[0], columns)
+    for column, value in read_cells(tools, datasets[0], columns).items():
+        np.testing.assert_array_equal(value, reference[column], strict=True)
     expected = dict(reference)
     if descending:
         # A linear visibility ramp on a descending grid averages consecutive
@@ -62,12 +72,12 @@ def test_spectral_rewrite_retains_physical_rows_and_reopens_in_casa(
         expected["DATA"] = np.stack([
             np.arange(8).reshape(2, 2, 2).mean(axis=-1) + 10 * row
             for row in range(len(times))
-        ])
+        ]).astype(reference["DATA"][0].dtype)
         np.testing.assert_array_equal(np.asarray(reference["DATA"])[..., ::-1], expected["DATA"])
     for reader in (casa, tools):
         actual = read_cells(reader, datasets[1], columns)
         for column in columns:
-            np.testing.assert_allclose(actual[column], expected[column], rtol=1e-6, atol=0)
+            np.testing.assert_allclose(actual[column], expected[column], rtol=1e-6, atol=0, strict=True)
     axis_columns = ("CHAN_FREQ", "CHAN_WIDTH", "NUM_CHAN", "TOTAL_BANDWIDTH")
     native_axis = read_cells(casa, datasets[1] / "SPECTRAL_WINDOW", axis_columns)
     reference_axis = read_cells(tools, datasets[0] / "SPECTRAL_WINDOW", axis_columns)
@@ -143,6 +153,9 @@ def test_barycentric_regrid_builds_one_window_per_field(native_dataset, tmp_path
         main_records.append(actual)
         ddids = read_cells(casa, path, ("DATA_DESC_ID",))["DATA_DESC_ID"]
         assert ddids == [row % 2 for row in range(count)]
+        if api is tools:
+            dd = read_cells(casa, path / "DATA_DESCRIPTION", ("FLAG_ROW",))
+            assert dd["FLAG_ROW"] == [False, False]
         axis = read_cells(casa, path / "SPECTRAL_WINDOW",
                           ("CHAN_FREQ", "CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION",
                            "REF_FREQUENCY", "TOTAL_BANDWIDTH", "MEAS_FREQ_REF"))
@@ -190,6 +203,145 @@ def test_spectral_writers_preserve_read_only_and_selected_attachments(native_dat
         np.testing.assert_array_equal(value, grid[column], strict=True)
     assert read_cells(tools, history, ("MESSAGE",)) == history_before
 
+
+
+def test_cvel_reads_numeric_frequency_arguments_in_hertz(native_dataset, tmp_path):
+    casa = pinned_casa()
+    spectral_columns = ("CHAN_FREQ", "CHAN_WIDTH")
+    axis = read_cells(casa, native_dataset / "SPECTRAL_WINDOW", spectral_columns)
+    first = axis["CHAN_FREQ"][0][0]
+    width = axis["CHAN_WIDTH"][0][0]
+    outputs = []
+    for api, name in ((casa, "reference"), (tools, "native")):
+        path = tmp_path / f"{name}.ms"
+        copytree(native_dataset, path)
+        with closing(api.ms()) as ms:
+            assert ms.open(str(path), nomodify=False)
+            assert ms.cvel(mode="frequency", nchan=2, start=float(first + width / 2),
+                           width=float(2 * width), restfreq="1s", hanning=False) is True
+            assert ms.name() == str(path)
+        actual = read_cells(casa, path / "SPECTRAL_WINDOW", spectral_columns)
+        np.testing.assert_allclose(actual["CHAN_FREQ"][0], first + width * np.array([0.5, 2.5]),
+                                   atol=1e-6, rtol=0)
+        outputs.append(read_cells(casa, path, ("DATA", "FLAG", "WEIGHT", "SIGMA")))
+    for column in outputs[0]:
+        np.testing.assert_allclose(outputs[0][column], outputs[1][column], atol=1e-6, rtol=1e-6)
+
+
+def test_regridspw_unknown_frame_and_identical_grid_leave_history_unchanged(native_dataset, tmp_path):
+    casa = pinned_casa()
+    cols = ("NUM_CHAN", "CHAN_FREQ", "REF_FREQUENCY", "TOTAL_BANDWIDTH", "MEAS_FREQ_REF")
+    spw = read_cells(casa, native_dataset / "SPECTRAL_WINDOW", cols)
+    history = read_cells(casa, native_dataset / "HISTORY", ("MESSAGE",))
+    for api, name in ((casa, "reference"), (tools, "native")):
+        path = tmp_path / f"{name}.ms"
+        copytree(native_dataset, path)
+        with closing(api.ms()) as ms:
+            assert ms.open(str(path), nomodify=False)
+            assert ms.regridspw(outframe="unknown", chanwidth=2, hanning=False) is True
+            assert ms.regridspw(outframe="", center=2, bandwidth=4, chanwidth=1) is True
+            assert ms.name() == str(path)
+        for column, value in read_cells(casa, path / "SPECTRAL_WINDOW", cols).items():
+            np.testing.assert_array_equal(value, spw[column], strict=True)
+        assert read_cells(casa, path / "HISTORY", ("MESSAGE",)) == history
+
+
+def test_failed_rest_conversion_leaves_native_tool_attached(native_dataset, tmp_path):
+    casa = pinned_casa()
+    before = read_cells(casa, native_dataset, ("DATA", "FLAG", "DATA_DESC_ID"))
+    for api, name in ((casa, "reference"), (tools, "native")):
+        path = tmp_path / f"{name}.ms"
+        copytree(native_dataset, path)
+        with closing(api.ms()) as ms:
+            assert ms.open(str(path), nomodify=False)
+            with pytest.raises(RuntimeError, match="No MeasFrame specified for conversion of Frequency"):
+                ms.cvel(outframe="REST", width=2, hanning=False)
+            if api is tools:
+                assert ms.name() == str(path)
+                assert ms.nrow() == len(before["DATA"])
+        for column, value in read_cells(casa, path, before).items():
+            np.testing.assert_array_equal(value, before[column], strict=True)
+
+
+def test_cvel_reports_detached_and_inconsistent_spectral_windows(native_dataset):
+    casa = pinned_casa()
+    with closing(casa.table()) as table:
+        assert table.open(str(native_dataset / "SPECTRAL_WINDOW"), nomodify=False)
+        frequencies = table.getcell("CHAN_FREQ", 0)
+        frequencies[1] += 1000
+        assert table.putcell("CHAN_FREQ", 0, frequencies)
+    for api in (casa, tools):
+        with closing(api.ms()) as ms:
+            with pytest.raises(RuntimeError):
+                ms.cvel(width=2, hanning=False)
+            assert ms.open(str(native_dataset), nomodify=False)
+            with pytest.raises(RuntimeError, match="Inconsistent SPECTRAL_WINDOW table in input MS"):
+                ms.cvel(width=2, hanning=False)
+            assert ms.name() == str(native_dataset)
+        actual = read_cells(casa, native_dataset / "SPECTRAL_WINDOW", ("CHAN_FREQ",))
+        np.testing.assert_array_equal(actual["CHAN_FREQ"][0], frequencies, strict=True)
+
+
+@pytest.mark.parametrize("method,arguments", [("cvel", {"width": 2}), ("regridspw", {"chanwidth": 2})])
+def test_spectral_writers_leave_all_flagged_antenna_inputs_unchanged(native_dataset, method, arguments):
+    casa = pinned_casa()
+    with closing(casa.table()) as table:
+        assert table.open(str(native_dataset / "ANTENNA"), nomodify=False)
+        assert table.putcol("FLAG_ROW", np.ones(table.nrows(), dtype=bool))
+    axis = ("CHAN_FREQ", "CHAN_WIDTH", "NUM_CHAN")
+    path = native_dataset / "SPECTRAL_WINDOW"
+    original = read_cells(casa, path, axis)
+    for api in (casa, tools):
+        with closing(api.ms()) as ms:
+            assert ms.open(str(native_dataset), nomodify=False)
+            assert getattr(ms, method)(hanning=False, **arguments) is True
+            assert ms.name() == str(native_dataset)
+        for column, value in read_cells(casa, path, axis).items():
+            np.testing.assert_array_equal(value, original[column], strict=True)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="casacore POSIX table locks")
+def test_regridspw_retains_the_attachment_lock(native_dataset):
+    with closing(tools.ms()) as ms:
+        assert ms.open(str(native_dataset), nomodify=False, lock=True)
+        assert_external_write_refused(native_dataset / "FIELD")
+        assert ms.regridspw(outframe="", chanwidth=2, hanning=False)
+        assert_external_write_refused(native_dataset / "FIELD")
+
+
+def test_spectral_writers_accept_an_empty_main(native_dataset, tmp_path):
+    casa = pinned_casa()
+    path = tmp_path / "empty.ms"
+    with closing(casa.table()) as table:
+        assert table.open(str(native_dataset))
+        with closing(table.selectrows(np.empty(0, dtype=np.int64))) as view:
+            with closing(view.copy(str(path), deep=True, valuecopy=True)) as output:
+                assert output.nrows() == 0
+    for api in (casa, tools):
+        with closing(api.ms()) as ms:
+            assert ms.open(str(path), nomodify=False)
+            assert ms.cvel(width=2, hanning=False) is True
+            assert ms.regridspw(chanwidth=2, hanning=False) is True
+            assert ms.nrow() == 0
+            assert ms.name() == str(path)
+
+
+def test_regridspw_retains_existing_virtual_model_keywords(native_dataset, tmp_path):
+    casa = pinned_casa()
+    model = {"definedmodel_field_0": "model_field_0", "model_field_0": {"marker": 1030}}
+    with closing(casa.table()) as table:
+        assert table.open(str(native_dataset), nomodify=False)
+        for key, value in model.items():
+            assert table.putkeyword(key, value)
+    for api, name in ((casa, "reference"), (tools, "native")):
+        path = tmp_path / f"{name}.ms"
+        copytree(native_dataset, path)
+        with closing(api.ms()) as ms:
+            assert ms.open(str(path), nomodify=False)
+            assert ms.regridspw(outframe="", chanwidth=2, hanning=False)
+        with closing(casa.table()) as table:
+            assert table.open(str(path))
+            assert {key: table.getkeyword(key) for key in model} == model
 
 
 def test_cvel_converts_at_the_earliest_integration_without_reordering_rows(native_dataset, tmp_path):

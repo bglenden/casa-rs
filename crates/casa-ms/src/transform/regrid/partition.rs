@@ -49,7 +49,7 @@ impl Partitions {
         row: usize,
     ) -> Result<(), MsTransformError> {
         for range in &self.ranges {
-            if value.shape()[1] == 1 {
+            if value.shape()[1] == 1 || (range.start == 0 && range.end == value.shape()[1]) {
                 write_spectrum(session, column, value, path, row)?;
             } else {
                 write_spectrum(session, column, &channel_slice(value, range), path, row)?;

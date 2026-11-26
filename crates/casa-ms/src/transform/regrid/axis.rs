@@ -41,6 +41,50 @@ pub enum LegacySpectralGrid {
     },
 }
 
+impl LegacySpectralGrid {
+    /// Whether this `regridspw` grid leaves the input channel centres unchanged.
+    /// Callers compare the frequency references separately.
+    pub fn leaves_band_unchanged(self, centres: &[f64], widths: &[f64]) -> bool {
+        match self {
+            Self::FrameOnly => true,
+            Self::Cvel => false,
+            _ => self
+                .centered_frequencies(centres, widths, centres.len())
+                .is_ok_and(|axis| axis.centres_hz == centres),
+        }
+    }
+
+    pub(super) fn centered_frequencies(
+        self,
+        centres: &[f64],
+        widths: &[f64],
+        maximum_channels: usize,
+    ) -> Result<CasaChannelFrequencies, MsTransformError> {
+        match self {
+            Self::CenteredChannels {
+                centre,
+                bandwidth,
+                channel_width,
+            } => centered_channel_bounds(centres, widths, centre, bandwidth, channel_width),
+            Self::CenteredNumeric {
+                quantity,
+                centre,
+                bandwidth,
+                channel_width,
+                rest_hz,
+            } => crate::spectral_selection::centered_numeric_frequencies(
+                quantity,
+                (centre, bandwidth, channel_width, rest_hz),
+                centres,
+                widths,
+                maximum_channels,
+            )
+            .map_err(super::ms_error),
+            _ => unreachable!("only centered grids use these bounds"),
+        }
+    }
+}
+
 pub(super) fn output_axis(
     options: &MsRegridOptions,
     centres: &[f64],
