@@ -309,3 +309,20 @@ pub use table::{
     TableOptions, TablePartNames, TableRow, TableRowMut, TableWritePlan, table_cache_name,
 };
 pub use table_path::{add_directory, lexical_absolute, strip_directory};
+
+/// Read the outer object type tag from a table directory's `table.dat`.
+///
+/// A casacore table has the tag `"Table"` regardless of its storage manager
+/// or whether it is a plain, reference, or concatenated table. This probe
+/// reads only the tag and does not open the table or validate its contents.
+///
+/// # Errors
+///
+/// Returns a storage error if the control file is unavailable or its tag
+/// cannot be read.
+pub fn table_type_tag(path: &std::path::Path) -> Result<String, StorageError> {
+    use casa_aipsio::{AipsIo, AipsOpenOption};
+
+    let mut control = AipsIo::open(path.join(storage::TABLE_CONTROL_FILE), AipsOpenOption::Old)?;
+    Ok(control.get_next_type()?)
+}

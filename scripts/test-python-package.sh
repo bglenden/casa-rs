@@ -23,8 +23,8 @@ python_bin="$("$repo_root/scripts/resolve-python.sh" 3.10)"
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/casars-python.XXXXXXXX")"
 cleanup() {
   rm -rf "$tmp_root"
-  rm -rf crates/casars-python/.pytest_cache crates/casars-python/python/casars/__pycache__
-  find crates/casars-python/python/casars -maxdepth 1 \( -name '_core*.so' -o -name '_core*.pyd' \) -delete
+  rm -rf frontends/casars-python/.pytest_cache frontends/casars-python/python/casars/__pycache__
+  find frontends/casars-python/python/casars -maxdepth 1 \( -name '_core*.so' -o -name '_core*.pyd' \) -delete
 }
 trap cleanup EXIT
 
@@ -50,8 +50,8 @@ editable_venv="$tmp_root/editable-venv"
 echo "==> Installing editable casars package and running Python tests"
 "$python_bin" -m venv "$editable_venv"
 source "$editable_venv/bin/activate"
-python -m pip install -e "crates/casars-python[$extras]"
-pytest crates/casars-python/python/tests -q
+python -m pip install -e "frontends/casars-python[$extras]"
+pytest frontends/casars-python/python/tests -q
 deactivate
 if [[ "$editable_only" == true ]]; then
   exit 0
@@ -60,7 +60,7 @@ fi
 # The built wheel and sdist are tested too: an editable checkout can import
 # files a packaged install lacks. Their tests run from outside the source tree
 # and first prove that `casars` and `casars._core` come from the install.
-tests_dir="$repo_root/crates/casars-python/python/tests"
+tests_dir="$repo_root/frontends/casars-python/python/tests"
 test_installed() {
   local venv="$1"
   shift

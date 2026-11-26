@@ -116,7 +116,7 @@ def quanta_review() -> tuple[dict, dict]:
     signatures = INVENTORY.load_tool_signatures()["quanta"]
     evidence = {"signature": {
         "kind": "Signature inventory", "state": "recorded", "scope": "CASA 6.7.6.14's names and defaults.",
-        "links": ["crates/casars-python/python/tests/data/casa_quanta_signatures.json"],
+        "links": ["frontends/casars-python/python/tests/data/casa_quanta_signatures.json"],
     }}
     methods = {name: {"status": "Not implemented", "scope": "Refused.", "evidence": ["signature"], "issue": 1053}
                for name in signatures["methods"]}

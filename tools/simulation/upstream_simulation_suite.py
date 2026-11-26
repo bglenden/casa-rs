@@ -99,7 +99,7 @@ def main() -> int:
         (scratch / 'simobserve_suite_plugin.py').write_text(PLUGIN)
         env = dict(os.environ)
         env['PYTHONPATH'] = os.pathsep.join([
-            str(scratch), str(root / 'crates/casars-python/python'),
+            str(scratch), str(root / 'frontends/casars-python/python'),
             env.get('PYTHONPATH', ''),
         ])
         env['SIMOBSERVE_SUITE_DATA'] = str(args.casatestdata.resolve())

@@ -33,7 +33,7 @@ if args.backend == "casars":
     from casars.tools import measures as factory
 
 root = Path(__file__).resolve().parents[2]
-fixture = root / "crates/casars-python/python/tests/data/casa_measures_geometry.json"
+fixture = root / "frontends/casars-python/python/tests/data/casa_measures_geometry.json"
 cases = {case["name"]: case for case in json.loads(fixture.read_text())["cases"]}
 names = [
     "baseline_values_0", "baseline_vector_1", "baseline_vector_3", "baseline_offset_0",

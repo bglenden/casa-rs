@@ -4,8 +4,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use casa_aipsio::{AipsIo, AipsOpenOption};
 use casa_measures_data::{CometTable, MeasuresDataError};
+use casa_tables::table_type_tag;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::{EpochRef, MeasFrame, MeasureError};
 use pyo3::prelude::*;
@@ -100,8 +100,7 @@ fn resolve(path: &Path) -> Option<PathBuf> {
 }
 
 fn is_readable_table(path: &Path) -> bool {
-    AipsIo::open(path.join("table.dat"), AipsOpenOption::Old)
-        .is_ok_and(|mut io| io.get_next_type().is_ok_and(|kind| kind == "Table"))
+    table_type_tag(path).is_ok_and(|kind| kind == "Table")
 }
 
 fn read_distance_or_diameter(

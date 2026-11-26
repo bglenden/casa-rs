@@ -20,7 +20,7 @@ def main():
     from casatools import measures, simulator, table
     assert version_string() == '6.7.6.14'
     root = Path(__file__).resolve().parents[2]
-    antenna = json.loads((root / 'crates/casars-python/python/tests/data/upstream_simulator_antennas.json').read_text())
+    antenna = json.loads((root / 'frontends/casars-python/python/tests/data/upstream_simulator_antennas.json').read_text())
     with tempfile.TemporaryDirectory() as scratch:
         path = Path(scratch) / 'screen.ms'
         sm = simulator()

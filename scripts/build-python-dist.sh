@@ -10,8 +10,8 @@ out_dir="${1:-dist/python}"
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/casars-python.XXXXXXXX")"
 cleanup() {
   rm -rf "$tmp_root"
-  rm -rf crates/casars-python/.pytest_cache crates/casars-python/python/casars/__pycache__
-  find crates/casars-python/python/casars -maxdepth 1 \( -name '_core*.so' -o -name '_core*.pyd' \) -delete
+  rm -rf frontends/casars-python/.pytest_cache frontends/casars-python/python/casars/__pycache__
+  find frontends/casars-python/python/casars -maxdepth 1 \( -name '_core*.so' -o -name '_core*.pyd' \) -delete
 }
 trap cleanup EXIT
 
@@ -28,13 +28,13 @@ mkdir -p "$out_dir"
 echo "==> Building casa-rs-python wheel"
 maturin build \
   --release \
-  --manifest-path crates/casars-python/Cargo.toml \
+  --manifest-path frontends/casars-python/Cargo.toml \
   --interpreter "$python_bin" \
   --out "$out_dir"
 
 echo "==> Building casa-rs-python sdist"
 maturin sdist \
-  --manifest-path crates/casars-python/Cargo.toml \
+  --manifest-path frontends/casars-python/Cargo.toml \
   --out "$out_dir"
 
 echo "==> Built Python artifacts:"

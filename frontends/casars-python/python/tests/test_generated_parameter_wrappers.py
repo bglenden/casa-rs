@@ -193,7 +193,7 @@ def _annotations(function: ast.FunctionDef) -> dict[str, str]:
 
 def test_generated_stubs_use_catalog_domains_and_surface_refinements() -> None:
     task_functions = _stub_functions(
-        REPO_ROOT / "crates/casars-python/python/casars/tasks/_catalog.pyi"
+        REPO_ROOT / "frontends/casars-python/python/casars/tasks/_catalog.pyi"
     )
 
     # These CASA cVariant parameters acquired intentionally unrestricted

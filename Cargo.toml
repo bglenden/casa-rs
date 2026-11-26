@@ -5,7 +5,7 @@ members = [
     "surfaces/casa-plot-data",
     "surfaces/casa-tasks",
     "frontends/casars-cli",
-    "crates/casars-python",
+    "frontends/casars-python",
     "crates/casa-types",
     "crates/casa-vla",
     "crates/casa-values",

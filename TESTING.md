@@ -285,7 +285,7 @@ lifetimes and antenna initialization for array sizes two through ten.
 asymmetric closed-form amplitudes. Its mode record becomes a typed order
 pair in Rust. These tests need no C++ SDK at runtime.
 
-`python/tests/test_simulator_upstream.py` in `crates/casars-python` runs native
+`python/tests/test_simulator_upstream.py` in `frontends/casars-python` runs native
 equivalents of CASA 6.7.6.14's simulator-tool cases. PLP prediction retains
 the upstream analytic flux assertion. The upstream-disabled tropospheric
 case checks 0.1 s frozen-screen sampling and existing `CORRECTED_DATA`

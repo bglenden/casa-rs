@@ -1451,7 +1451,7 @@ process with signal 11 for `cl.select(float("nan"))`,
 `cl.select([float("nan")])` selects index 0, and a 100-level acyclic nested
 list containing 1 selects index 1. The isolated probe and its receipt are
 `tools/simulation/componentlist_selection_crashes_oracle.py` and
-`crates/casars-python/python/tests/data/casa_componentlist_selection_crashes.json`.
+`frontends/casars-python/python/tests/data/casa_componentlist_selection_crashes.json`.
 
 casa-rs raises `ValueError` for scalar non-finite or cyclic selections and
 leaves the selection unchanged. It continues to accept nested acyclic lists
@@ -4420,7 +4420,7 @@ value as a Python `int` and `getcol` of an `Int` (32-bit) column returns an
 `int64` array. `fromValueHolder`, which turns the column's `ValueHolder` into
 the Python value, has a `TpInt64` case for a scalar but none for `TpArrayInt64`
 (the converter for records in the same file has both). The recording is
-`crates/casars-python/python/tests/data/casa_table_tool.json` (`cells`,
+`frontends/casars-python/python/tests/data/casa_table_tool.json` (`cells`,
 `getcol('id')`; the fixture's `id` column is `Int64`). casa-rs returns the
 `int64` array, as it does for every other integer column. This also
 affects the `_COUNT_` column of a result from TaQL `COUNT`:
@@ -4436,7 +4436,7 @@ returns the count. See `taql_count_int64` in that recording (#1028).
 `tb.putkeyword('name', 2**40)` returns `True` and `tb.getkeyword('name')` then
 gives `0`, both for a new keyword and for an existing 32-bit `Int` one
 (CASA 6.7.6.14; the `casa_bugs` scenario of
-`crates/casars-python/python/tests/data/casa_table_tool.json`). The Python
+`frontends/casars-python/python/tests/data/casa_table_tool.json`). The Python
 `int` is narrowed to casacore's 32-bit `Int` without a range check. casa-rs
 stores a new keyword whose value does not fit 32 bits as a 64-bit integer, and
 refuses such a value for an existing 32-bit keyword with
@@ -4480,7 +4480,7 @@ the last element of that axis. casa-rs follows both conventions.
 `tb.putcell('ANTENNA1', 0, 2147483648)` returns `True` and the cell then holds
 `-2147483648`; `-2147483649` becomes `2147483647` and `4294967297` becomes `1`
 (CASA 6.7.6.14; the `int_overflow` scenario of
-`crates/casars-python/python/tests/data/casa_table_tool.json`, which the
+`frontends/casars-python/python/tests/data/casa_table_tool.json`, which the
 replay leaves out). `putcol` wraps the same way. A Python `int` is narrowed
 to the 32-bit column type without a range check, as for `putkeyword` above.
 casa-rs raises `RuntimeError: a value is out of range for a column of Int` and
@@ -4663,7 +4663,7 @@ data type`; an `int` output column for a `float` array input,
 `TableRecordRep::get_pointer - incorrect data type used for field ...`), the
 call raises with the rows already added and their cells never set: reading
 them gives whatever the heap held (`copyrows_types` scenario of
-`crates/casars-python/python/tests/data/casa_table_tool.json`, which does not
+`frontends/casars-python/python/tests/data/casa_table_tool.json`, which does not
 compare the table after a refusal). casa-rs checks the types before it changes
 anything and raises with the output table as it was.
 
@@ -5628,7 +5628,7 @@ isolated crash. casa-rs returns the placeholder's empty float array instead.
 - Date noted: 2026-11-06
 - Status: CASA crashes; casa-rs handles the inputs safely (#1053).
 - Owner decision: Correct CASA crashes as a class; see `docs/simulation/owner-decisions-20261105.md`.
-- Evidence: `tools/simulation/componentlist_replace_crashes_oracle.py` and `crates/casars-python/python/tests/data/casa_componentlist_replace_crashes.json`, CASA 6.7.6-14 on the Mac mini, with isolated processes and core dumps disabled.
+- Evidence: `tools/simulation/componentlist_replace_crashes_oracle.py` and `frontends/casars-python/python/tests/data/casa_componentlist_replace_crashes.json`, CASA 6.7.6-14 on the Mac mini, with isolated processes and core dumps disabled.
 
 `cl.replace(0, record)` with a record containing itself, a cyclic list of
 `whichones`, and scalar NaN or infinity as `whichones` each terminate CASA's
@@ -5649,7 +5649,7 @@ zero and warning without reading a file or changing the list.
 - Date noted: 2026-11-06
 - Status: CASA uses an uninitialized frame after a parse failure; casa-rs rejects it before mutation (#1053).
 - Owner decision: Correct CASA crashes and corruption as a class; see `docs/simulation/owner-decisions-20261105.md`.
-- Evidence: `tools/simulation/componentlist_setrefdirframe_invalid_oracle.py` and `crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe_invalid.json`, CASA 6.7.6-14 on the Mac mini.
+- Evidence: `tools/simulation/componentlist_setrefdirframe_invalid_oracle.py` and `frontends/casars-python/python/tests/data/casa_componentlist_setrefdirframe_invalid.json`, CASA 6.7.6-14 on the Mac mini.
 
 `componentlist.setrefdirframe(0, "bad")` logs that the direction frame was
 not changed, but the C++ code continues with `newFrame` uninitialized after
@@ -5963,7 +5963,7 @@ changing any components, and reports the crashes as catchable errors.
 - Date noted: 2026-11-06
 - Status: CASA copies unintended rows; casa-rs copies the requested rows (#1053).
 - Owner decision: Correct CASA data loss and contradictions of evident intent as classes; see `docs/simulation/owner-decisions-20261105.md`.
-- Evidence: `tools/simulation/componentlist_concatenate_oracle.py` and `crates/casars-python/python/tests/data/casa_componentlist_concatenate.json`, CASA 6.7.6-14 on the Mac mini.
+- Evidence: `tools/simulation/componentlist_concatenate_oracle.py` and `frontends/casars-python/python/tests/data/casa_componentlist_concatenate.json`, CASA 6.7.6-14 on the Mac mini.
 
 For a source list labeled `source0`, `source1`, `source2`, CASA's
 `concatenate(source, [2, 0])` appends `source0`, `source1`; the source loop
@@ -6071,7 +6071,7 @@ offset. The correction follows the standing rule to correct scientific
 data loss and behavior that contradicts CASA's evident intent (#1252).
 
 Evidence: `tools/simulation/measures_spectral_oracle.py`,
-`crates/casars-python/python/tests/data/casa_measures_spectral.json`, and
+`frontends/casars-python/python/tests/data/casa_measures_spectral.json`, and
 `test_measures_spectral.py` (the `scalar_controls` cases).
 
 ### Cyclic spectral arguments terminate the process
@@ -6121,7 +6121,7 @@ original type. casa-rs refuses the incompatible input.
 
 The inputs, raw outputs and independent controls are in
 `tools/simulation/measures_geometry_oracle.py` and
-`crates/casars-python/python/tests/data/casa_measures_geometry.json`.
+`frontends/casars-python/python/tests/data/casa_measures_geometry.json`.
 These corrections follow the standing rule on data loss, unit corruption,
 and behavior contradicting evident intent (#1252).
 
@@ -7777,7 +7777,7 @@ lists, CASA silently discards trailing elements in longer rows (`[[1.0, 2.0],
 [3.0]]` becomes `array([[1.], [3.]])`) or zero-pads shorter rows (`[[1.0], [2.0,
 3.0]]` becomes `array([[1., 0.], [2., 3.]])`).
 
-casa-rs checks nesting depth and row shapes in `crates/casars-python/src/convert.rs`
+casa-rs checks nesting depth and row shapes in `frontends/casars-python/src/convert.rs`
 and rejects empty or ragged nested Python sequences with CASA's catchable
 `Illegal Quantum record in QuantumHolder::fromRecord` `RuntimeError` instead of
 crashing or corrupting values (#1252, #1170).
@@ -7816,7 +7816,7 @@ appending it. Valid components retain CASA's geometry and position-angle
 normalization. This follows the standing rule to correct CASA crashes; callers
 retain their existing list and Python session. The isolated CASA subprocess
 receipts are in
-`crates/casars-python/python/tests/data/casa_componentlist_record_validation.json`,
+`frontends/casars-python/python/tests/data/casa_componentlist_record_validation.json`,
 regenerated by `tools/simulation/componentlist_record_validation_oracle.py`.
 ## Duplicated `imstat` axes crash CASA
 

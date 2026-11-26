@@ -10,8 +10,8 @@ python_bin="$("$repo_root/scripts/resolve-python.sh" 3.10)"
 tmp_root="$(mktemp -d)"
 cleanup() {
   rm -rf "$tmp_root"
-  rm -rf crates/casars-python/.pytest_cache crates/casars-python/python/casars/__pycache__
-  find crates/casars-python/python/casars -maxdepth 1 \( -name '_core*.so' -o -name '_core*.pyd' \) -delete
+  rm -rf frontends/casars-python/.pytest_cache frontends/casars-python/python/casars/__pycache__
+  find frontends/casars-python/python/casars -maxdepth 1 \( -name '_core*.so' -o -name '_core*.pyd' \) -delete
 }
 trap cleanup EXIT
 
@@ -23,7 +23,7 @@ cargo build -q -p casars-cli --bin calibrate
 
 echo "==> Building distributable casars wheel"
 mkdir -p "$wheelhouse"
-"$python_bin" -m pip wheel --no-deps --wheel-dir "$wheelhouse" crates/casars-python
+"$python_bin" -m pip wheel --no-deps --wheel-dir "$wheelhouse" frontends/casars-python
 wheel_path="$(find "$wheelhouse" -maxdepth 1 -name 'casa_rs_python-*.whl' | head -n 1)"
 [[ -n "$wheel_path" ]] || {
   echo "failed to locate built casa-rs-python wheel" >&2

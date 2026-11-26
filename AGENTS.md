@@ -63,7 +63,7 @@ When sources disagree: code/tests/CI > ADRs > ARCHITECTURE/TESTING > issues.
   `just quick` reproduces the broad local gate. Use `just verify` for
   milestones and releases. `just --list` shows the other commands.
 - Python package tests: `scripts/test-python-package.sh`. Python binds Rust
-  through PyO3 only, in `casars._core` (`crates/casars-python/src`).
+  through PyO3 only, in `casars._core` (`frontends/casars-python/src`).
 - `scripts/check-imaging-dependencies.py` (in `just arch-check`) enforces the
   imaging crate layering and source rules of ADR-0016; its grandfathered-file
   lists only shrink.

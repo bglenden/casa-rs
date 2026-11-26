@@ -22,7 +22,7 @@ fn json_reply(request: &str) -> Value {
 #[test]
 fn json_run_reports_casas_integer_refusals() {
     let cases: Vec<Value> = serde_json::from_str(include_str!(
-        "../../../crates/casars-python/python/tests/data/casa_simobserve_refusals.json"
+        "../../../frontends/casars-python/python/tests/data/casa_simobserve_refusals.json"
     ))
     .expect("CASA's recorded refusals");
     for case in cases.iter().filter(|case| case["type"] == "AssertionError") {

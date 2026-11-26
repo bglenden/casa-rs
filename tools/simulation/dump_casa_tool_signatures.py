@@ -8,9 +8,9 @@ For the constructor and every public method of a `casatools` class (or of
 a tool), the script records the `inspect.signature` parameters (name, kind and
 the `repr` of the default) and the CASA version. The installed binding's
 defaults are the contract the `casars` classes reproduce (ADR-0017); the CASA
-XML text is not. The Python tests under `crates/casars-python/python/tests/`
+XML text is not. The Python tests under `frontends/casars-python/python/tests/`
 compare each casa-rs class with the checked-in output in
-`crates/casars-python/python/tests/data/casa_<tool>_signatures.json`.
+`frontends/casars-python/python/tests/data/casa_<tool>_signatures.json`.
 
 `--methods` records only the methods named. Task signatures are in the CASA
 task inventory (`tools/casa-compat/dump_casa_task_inventory.py`).
