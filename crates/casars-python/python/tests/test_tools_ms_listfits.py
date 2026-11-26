@@ -7,7 +7,7 @@ import pytest
 
 from casars import tools
 from test_tools_ms import pinned_casa
-from test_tools_msmetadata import native_dataset
+from test_tools_msmetadata import measures, native_dataset
 
 
 LOGGER = "casars.tools.ms"
