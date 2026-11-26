@@ -46,8 +46,9 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let resources = SessionResources::from_controls(&ExecutionControls::default())
         .map_err(|error| TaskFailure::execution(error.to_string()))?;
     let mut execution_parameters = parameters.clone();
-    task.resolve_file_values(&mut execution_parameters, &["project", "skymodel"]);
+    task.resolve_file_values(&mut execution_parameters, &["skymodel", "complist"]);
     let request = SimalmaRequest {
+        workspace: task.workspace().to_path_buf(),
         parameters: execution_parameters,
         options: SimulatorOptions::from_system(resources)
             .map_err(|error| TaskFailure::execution(error.to_string()))?,

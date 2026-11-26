@@ -85,6 +85,7 @@ fn simobserve_request(
     )
     .expect("resources");
     SimobserveRequest {
+        workspace: None,
         parameters,
         data_roots: Vec::new(),
         options: SimulatorOptions {
@@ -150,6 +151,7 @@ fn simanalyze_complete_plot_payload_validates() {
     let project = root.join("analyze");
     let resources = SessionResources::from_controls(&ExecutionControls::default()).unwrap();
     simobserve(&SimobserveRequest {
+        workspace: None,
         parameters: SimobserveParameters {
             project: project.display().to_string(),
             skymodel: model.display().to_string(),

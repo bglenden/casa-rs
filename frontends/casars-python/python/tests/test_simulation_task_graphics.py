@@ -47,7 +47,7 @@ def rendered_cases(tmp_path_factory):
         for case,expected in [('simalma',reference['simalma']),*reference['simanalyze'].items()]:
             p=dict(expected['parameters'])
             if case=='simalma':
-                p.update(skymodel=str(root/'inputs/model.image'),antennalist=[str(root/'inputs/alma.test.cfg'),str(root/'inputs/aca.test.cfg')],hourangle='35s')
+                p.update(skymodel='inputs/model.image',antennalist=['inputs/alma.test.cfg','inputs/aca.test.cfg'],hourangle='35s')
             completion=tasks.run('simalma' if case=='simalma' else 'simanalyze',workspace=root,**p)
             assert completion.successful and completion.value is None
             pngs=[p for p in completion.products if p.path.endswith('.png')]

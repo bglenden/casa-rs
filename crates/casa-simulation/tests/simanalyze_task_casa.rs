@@ -57,6 +57,7 @@ fn single_array_imaging_analysis_and_complete_plot_payload_match_casa() {
     let project = root.join("analyze");
     let resources = SessionResources::from_controls(&ExecutionControls::default()).unwrap();
     simobserve(&SimobserveRequest {
+        workspace: None,
         parameters: SimobserveParameters {
             project: project.display().to_string(),
             skymodel: model.display().to_string(),

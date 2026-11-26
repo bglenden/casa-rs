@@ -95,6 +95,7 @@ fn request(
     )
     .expect("resources");
     SimobserveRequest {
+        workspace: None,
         parameters,
         data_roots: Vec::new(),
         options: SimulatorOptions {

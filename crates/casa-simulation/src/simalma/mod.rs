@@ -19,6 +19,8 @@ use std::path::PathBuf;
 
 /// CASA-named task parameters and the simulator's explicit environment.
 pub struct SimalmaRequest {
+    /// Base directory for relative task inputs and output paths.
+    pub workspace: PathBuf,
     /// Sparse CASA simalma parameters; defaults come from the shared catalog.
     pub parameters: Map<String, Value>,
     /// Antenna configuration repositories, as for simobserve.
@@ -215,6 +217,7 @@ pub fn simalma_with_controls<'a, 'b>(
         let result = simobserve_with_controls(
             &crate::simobserve::SimobserveRequest {
                 parameters: observation,
+                workspace: Some(request.workspace.clone()),
                 data_roots: request.data_roots.clone(),
                 options: request.options.clone(),
             },
@@ -243,6 +246,7 @@ pub fn simalma_with_controls<'a, 'b>(
             let result = simobserve_with_controls(
                 &crate::simobserve::SimobserveRequest {
                     parameters: observation.clone(),
+                    workspace: Some(request.workspace.clone()),
                     data_roots: request.data_roots.clone(),
                     options: request.options.clone(),
                 },

@@ -104,6 +104,9 @@ use crate::{SimulatorError, simutil};
 /// its environment.
 #[derive(Clone)]
 pub struct SimobserveRequest {
+    /// The task workspace for antenna and pointing files. Library callers
+    /// using relative paths in the process working directory can omit it.
+    pub workspace: Option<PathBuf>,
     /// The task's parameters.
     pub parameters: SimobserveParameters,
     /// CASA's data directories, which `ctsys.resolve("alma/simmos")`
@@ -113,6 +116,16 @@ pub struct SimobserveRequest {
     pub data_roots: Vec<PathBuf>,
     /// The sessions' measures data, resources and clock.
     pub options: SimulatorOptions,
+}
+
+impl SimobserveRequest {
+    fn input_path(&self, path: impl AsRef<Path>) -> PathBuf {
+        path_at(self.workspace.as_deref(), path.as_ref())
+    }
+}
+
+fn path_at(workspace: Option<&Path>, path: &Path) -> PathBuf {
+    workspace.map_or_else(|| path.to_path_buf(), |workspace| workspace.join(path))
 }
 
 /// What a run wrote.

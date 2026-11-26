@@ -7,6 +7,7 @@ fn request(parameters: SimobserveParameters) -> SimobserveRequest {
     let resources = crate::SessionResources::from_controls(&crate::ExecutionControls::default())
         .expect("session resources");
     SimobserveRequest {
+        workspace: None,
         parameters,
         data_roots: Vec::new(),
         options: SimulatorOptions {
