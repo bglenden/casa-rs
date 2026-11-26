@@ -12336,3 +12336,10 @@ channels 2, 4, 6, 8, 10 and 12 instead of 2, 4 and 6. With
 `fitspw='0:0~32^2'` on `ngc5921_ut.ms`, the slice overruns the 63-channel
 window and raises `Unknown exception caught`. casa-rs selects channels
 from the requested start through the inclusive stop, spaced by the step.
+
+CASA can reweight rows outside a saved reference. A four-row RefTable over
+`ngc5921_ut.ms` with `fitspw='0:0~32'` and `datacolumn='data'` changed the
+first correlation's weight on 12,855 backing rows. `Reweighter::makeSelection`
+constructs a visibility iterator to create `SORTED_TABLE` and then chooses
+between that table and the attached view. casa-rs fits the attached
+projection and writes only its selected physical rows.

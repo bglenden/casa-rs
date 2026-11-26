@@ -106,3 +106,35 @@ def test_oldstatwt_errors_preserve_attachment_and_main_table(baseline_fixture, n
         assert tool.name() == str(native_dataset)
     for name, values in read_columns(casa, native_dataset).items():
         np.testing.assert_array_equal(before[name], values, strict=True)
+
+
+@pytest.mark.parametrize("permanent", [False, True], ids=["automatic", "permanent"])
+def test_oldstatwt_saves_only_the_reference_rows(baseline_fixture, native_dataset, tmp_path, permanent):
+    casa, view, _ = baseline_fixture
+    selected = [13, 1, 22, 22, 6]
+    reference = view("saved.ms", selected)
+    materialized = tmp_path / "materialized.ms"
+    with closing(casa.table()) as table:
+        assert table.open(reference)
+        with closing(table.copy(str(materialized), deep=True, valuecopy=True, returnobject=True)) as copied:
+            if "SORTED_TABLE" in copied.keywordnames():
+                assert copied.removekeyword("SORTED_TABLE")
+    original = read_columns(casa, native_dataset)
+    options = {"datacolumn": "data", "fitspw": "0:1~3", "minsamp": 2}
+    with closing(casa.ms()) as tool:
+        assert tool.open(str(materialized), nomodify=False)
+        assert tool.oldstatwt(**options)
+    expected = read_columns(casa, materialized)
+    with closing(tools.ms()) as tool:
+        assert tool.open(reference, nomodify=False, lock=permanent)
+        assert tool.oldstatwt(**options)
+        assert tool.name() == reference
+        assert tool.nrow() == len(selected)
+    for reader in (casa, tools):
+        persisted = read_columns(reader, native_dataset)
+        for name in ("WEIGHT", "SIGMA"):
+            wanted = original[name].copy()
+            wanted[..., selected] = expected[name]
+            np.testing.assert_allclose(persisted[name], wanted, strict=True, rtol=2e-6, atol=0)
+        for name in ("DATA", "FLAG", "FLAG_ROW"):
+            np.testing.assert_array_equal(persisted[name], original[name], strict=True)

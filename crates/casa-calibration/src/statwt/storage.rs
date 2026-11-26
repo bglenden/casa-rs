@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use casa_ms::{
     MeasurementSet, MsError, MsResult, MsSelection, MsSelectionError, ResolvedMsSelectionRow,
 };
-use casa_tables::{RequiredScalarColumnValues, Table, TableWriteLock};
+use casa_tables::{RequiredScalarColumnValues, Table, TablePartNames, TableWriteLock};
 use casa_types::ArrayValue;
 
 use crate::solve::grouping::VisibilityModels;
@@ -17,9 +17,18 @@ use crate::weight_spectra::has_column;
 use super::output::Output;
 use super::{RowUpdate, StatWtChannelBin, StatWtOptions, persist_updates};
 
+const LEGACY_COLUMNS: [&str; 2] = ["WEIGHT", "SIGMA"];
+
 /// One on-disk MeasurementSet or the physical MAIN tables of a Multi-MS.
 pub struct StatWtMs {
     parts: Vec<Part>,
+    legacy_reference: Option<LegacyReference>,
+}
+
+struct LegacyReference {
+    path: PathBuf,
+    rows: Vec<usize>,
+    columns: Vec<String>,
 }
 
 struct Part {
@@ -62,7 +71,52 @@ impl StatWtMs {
                 "statwt requires a physical MAIN table".into(),
             ));
         }
-        Ok(Self { parts })
+        Ok(Self {
+            parts,
+            legacy_reference: None,
+        })
+    }
+
+    /// Open the logical saved view for fitting while retaining its map to the
+    /// physical table. Ordinary MSs and Multi-MS constituents share the
+    /// existing calibration input path.
+    #[doc(hidden)]
+    pub fn open_legacy(path: &Path) -> MsResult<Self> {
+        if !matches!(
+            Table::immediate_part_names(path, path)?,
+            TablePartNames::Reference(_)
+        ) {
+            return Self::open(path, false);
+        }
+        let path = path.canonicalize().map_err(invalid)?;
+        let ms = MeasurementSet::open(&path)?;
+        let rows = (0..ms.row_count()).collect::<Vec<_>>();
+        let reference = ms
+            .main_table()
+            .reference_write_projection(&rows, &LEGACY_COLUMNS)?
+            .ok_or_else(|| invalid("oldstatwt reference layout changed while opening"))?;
+        Ok(Self {
+            parts: vec![Part {
+                offset: 0,
+                path,
+                ms,
+            }],
+            legacy_reference: Some(LegacyReference {
+                path: reference.path,
+                rows: reference.rows,
+                columns: reference.columns,
+            }),
+        })
+    }
+
+    /// Return the tables whose write locks protect a legacy weight update.
+    #[doc(hidden)]
+    pub fn legacy_sources(&self) -> MsResult<Vec<PathBuf>> {
+        if let Some(reference) = &self.legacy_reference {
+            visibility_model_source_paths(&reference.path)
+        } else {
+            Ok(self.parts.iter().map(|part| part.path.clone()).collect())
+        }
     }
 
     /// Acquire the write capability for every physical MAIN table in path order.
@@ -213,8 +267,47 @@ impl StatWtMs {
         updates: Vec<super::legacy::LegacyOutputRow>,
         locks: &mut BTreeMap<PathBuf, TableWriteLock>,
     ) -> MsResult<()> {
-        let mut remaining = updates.into_iter().peekable();
-        let columns = ["WEIGHT", "SIGMA"];
+        if let Some(expected) = &self.legacy_reference {
+            let ids = updates.iter().map(|(row, _)| *row).collect::<Vec<_>>();
+            let current = self
+                .metadata()
+                .main_table()
+                .reference_write_projection(&ids, &LEGACY_COLUMNS)?
+                .ok_or_else(|| invalid("oldstatwt reference layout changed before publication"))?;
+            if current.path != expected.path
+                || current.columns != expected.columns
+                || !current
+                    .rows
+                    .iter()
+                    .copied()
+                    .eq(ids.iter().map(|&row| expected.rows[row]))
+            {
+                return Err(invalid(
+                    "oldstatwt reference layout changed before publication",
+                ));
+            }
+            let updates = current
+                .rows
+                .into_iter()
+                .zip(updates.into_iter().map(|(_, cells)| cells))
+                .collect::<BTreeMap<_, _>>();
+            let columns = [&current.columns[0][..], &current.columns[1][..]];
+            return Self::open(&current.path, false)?.write_legacy(
+                updates.into_iter(),
+                &columns,
+                locks,
+            );
+        }
+        self.write_legacy(updates.into_iter(), &LEGACY_COLUMNS, locks)
+    }
+
+    fn write_legacy(
+        &mut self,
+        updates: impl Iterator<Item = super::legacy::LegacyOutputRow>,
+        columns: &[&str; 2],
+        locks: &mut BTreeMap<PathBuf, TableWriteLock>,
+    ) -> MsResult<()> {
+        let mut remaining = updates.peekable();
         for part in &mut self.parts {
             let table = part.ms.main_table_mut();
             let limit = part.offset + table.row_count();
@@ -224,7 +317,7 @@ impl StatWtMs {
             let lock = locks
                 .get_mut(&part.path)
                 .ok_or_else(|| invalid("missing oldstatwt write lock"))?;
-            let mut writer = table.row_accessor_mut().prepare(&columns)?;
+            let mut writer = table.row_accessor_mut().prepare(columns)?;
             let mut rows = Vec::new();
             while remaining.peek().is_some_and(|(row, _)| *row < limit) {
                 let (row, values) = remaining.next().expect("update inside partition");
@@ -238,8 +331,13 @@ impl StatWtMs {
             writer.flush()?;
             drop(writer);
             lock.record_write();
-            table.prepare_write().save_selected_rows(&columns, &rows)?;
-            table.discard_persisted_cell_updates(&columns, &rows);
+            table.prepare_write().save_selected_rows(columns, &rows)?;
+            table.discard_persisted_cell_updates(columns, &rows);
+        }
+        if remaining.next().is_some() {
+            return Err(invalid(
+                "oldstatwt physical row count changed before publication",
+            ));
         }
         Ok(())
     }

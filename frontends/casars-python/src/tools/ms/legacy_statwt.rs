@@ -84,13 +84,17 @@ impl PyMsTool {
         if let Some(bin) = timebin {
             quantity(bin)?;
         }
+        let path = &ms.path;
+        let mut physical = StatWtMs::open_legacy(path).map_err(runtime_error)?;
+        let sources = physical.legacy_sources().map_err(runtime_error)?;
         let mut transient = None;
-        let locks = if ms.write_locks.is_empty() {
-            transient.insert(StatWtMs::write_locks(&ms.sources).map_err(runtime_error)?)
-        } else {
+        let locks = if sources.iter().all(|path| ms.write_locks.contains_key(path)) {
             &mut ms.write_locks
+        } else {
+            let locks = StatWtMs::write_locks(&sources).map_err(runtime_error)?;
+            physical = StatWtMs::open_legacy(path).map_err(runtime_error)?;
+            transient.insert(locks)
         };
-        let mut physical = StatWtMs::open(&ms.path, false).map_err(runtime_error)?;
         let result = reweight_legacy(&mut physical, options, locks);
         drop(physical);
         if let Some(locks) = transient {
