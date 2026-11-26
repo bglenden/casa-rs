@@ -33,6 +33,7 @@ num-complex = { workspace = true, features = ["bytemuck"] }
 # CASA selector regexes and the bounded byte engine for FIELD lookahead.
 regex = "1"
 fancy-regex = { version = "0.20.2", default-features = false, features = ["std"] }
+fitsio = { version = "0.21", features = ["fitsio-src", "src-cmake"] }
 rayon = "1"
 schemars = { version = "0.8", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
