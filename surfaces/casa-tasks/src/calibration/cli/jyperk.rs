@@ -3,8 +3,8 @@
 
 use std::path::PathBuf;
 
+use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::CasaValue;
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 use crate::calibration::CalibrationTaskResult;
 use casa_calibration::gencal::jyperk::{self, Endpoint, JyperkError, ServiceOptions};

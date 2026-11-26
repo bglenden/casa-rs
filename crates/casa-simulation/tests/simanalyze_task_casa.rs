@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Native simobserve → simanalyze against 13 actual CASA 6.7.6.14 images.
 use casa_images::PagedImage;
-use casa_simulation::simanalyze::{SimanalyzeRequest, simanalyze_with_plots};
+use casa_simulation::simanalyze::{SimanalyzeRequest, simanalyze};
 use casa_simulation::simobserve::{SimobserveParameters, SimobserveRequest, simobserve};
 use casa_simulation::{ExecutionControls, SessionResources, SimulatorOptions};
 use casa_types::measures::{EpochRef, MEpoch};
@@ -77,29 +77,21 @@ fn single_array_imaging_analysis_and_complete_plot_payload_match_casa() {
         },
     })
     .unwrap();
-    let payload = root.join("arrays.bin");
-    std::fs::File::create(&payload).unwrap();
     let request = SimanalyzeRequest {
         resources,
         parameters: json!({
             "project": project, "imsize": [128,128], "niter": 20,
-            "threshold": "1e-7Jy", "analyze": true, "graphics": "file",
+            "threshold": "1e-7Jy", "analyze": true, "graphics": "none",
         })
         .as_object()
         .unwrap()
         .clone(),
     };
-    let result = simanalyze_with_plots(&request, &payload).unwrap();
+    let result = simanalyze(&request).unwrap();
     for (suffix, expected) in oracle["images"].as_object().unwrap() {
         compare(&project.join(format!("analyze.small.{suffix}")), expected);
     }
     assert!(result.fidelity.unwrap().medabsdevmed > 0.);
-    assert_eq!(result.plots.len(), 2);
-    let bytes = std::fs::metadata(payload).unwrap().len();
-    assert!(bytes > 128 * 128 * 4);
-    for plot in result.plots {
-        plot.document.validate_payload(bytes).unwrap();
-    }
     assert!(
         result
             .products

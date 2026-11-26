@@ -50,8 +50,8 @@ mod wvrgcal;
 
 use std::path::Path;
 
+use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::CasaValue;
-use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 
 use crate::calibration::{
     CalibrationTaskRequest, CalibrationTaskResult, calibration_task_schema_bundle,

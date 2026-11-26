@@ -4,9 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::{TaskFailure, TaskInvocation};
 use casa_ms::observation_io::convert::{PaddingRows, selected_data_groups};
 use casa_ms::observation_io::{Msv4Codec, OpenOptions, PartitionScheme, open};
-use casa_task_runtime::{TaskFailure, TaskInvocation};
 
 use super::THREAD_BYTES;
 

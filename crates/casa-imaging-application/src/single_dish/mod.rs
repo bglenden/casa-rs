@@ -6,7 +6,7 @@ mod plan;
 mod pointing;
 mod products;
 mod stream;
-pub use parameters::TotalPowerParameters;
+pub use parameters::{TotalPowerParameters, default_parameters};
 pub use products::{
     PublishedTotalPower, TotalPowerProducts, image_observation, publish_total_power,
 };
@@ -106,6 +106,33 @@ pub fn image_from_parameters(
     .map_err(failure)?;
     let (request, products) = parameters.request(observation.catalogue())?;
     image_observation(observation, &request, &products, context)
+}
+
+/// Merge sparse `tsdimaging` overrides over [`default_parameters`] and execute
+/// total-power imaging.
+///
+/// # Errors
+///
+/// Invalid parameters, observation opening, admission, gridding or publication.
+pub fn image_from_sparse_parameters(
+    overrides: &serde_json::Map<String, serde_json::Value>,
+    context: &RunContext,
+) -> Result<PublishedTotalPower, TotalPowerError> {
+    charge_process_caches(&context.host, &context.policy).map_err(failure)?;
+    let _sparse = admit(
+        &context.host,
+        &context.policy,
+        &Demand {
+            phase: "total-power sparse parameter defaults",
+            memory: 16 << 10,
+        },
+    )
+    .map_err(failure)?;
+    let mut merged = default_parameters();
+    for (key, value) in overrides {
+        merged.insert(key.clone(), value.clone());
+    }
+    image_from_parameters(&merged, context)
 }
 
 /// Grid an observation's selected autocorrelations in the image plane.

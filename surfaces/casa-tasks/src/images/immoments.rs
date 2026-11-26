@@ -2,9 +2,9 @@
 //! `immoments` - CASA-style spectral moment maps, on the shared task front
 //! end.
 
+use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::ParameterValue;
 use casa_images::{ImmomentsRequest, MomentAxis, immoments};
-use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 
 use super::front_end::{image_task_front_end, image_task_success};
 use super::task_contract::ImageAnalysisTaskResult;

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's unmasked statistics task over a named table column.
 
+use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::CasaValue;
 use casa_tables::statistics::column_statistics;
 use casa_tables::{Table, TableOptions};
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let path = task.input_path("caltable")?;

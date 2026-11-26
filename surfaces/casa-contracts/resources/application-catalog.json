@@ -54,7 +54,7 @@
       "id": "simobserve",
       "launch": {
         "executable": "simobserve",
-        "cargo_package": "casars-simulation",
+        "cargo_package": "casars-cli",
         "override_env": "CASARS_SIMOBSERVE_BIN"
       },
       "dataset_kinds": [
@@ -466,7 +466,7 @@
       "id": "simanalyze",
       "launch": {
         "executable": "simanalyze",
-        "cargo_package": "casars-simulation",
+        "cargo_package": "casars-cli",
         "override_env": "CASARS_SIMANALYZE_BIN"
       },
       "dataset_kinds": [
@@ -503,7 +503,7 @@
       "id": "simalma",
       "launch": {
         "executable": "simalma",
-        "cargo_package": "casars-simulation",
+        "cargo_package": "casars-cli",
         "override_env": "CASARS_SIMALMA_BIN"
       },
       "dataset_kinds": [
@@ -656,7 +656,7 @@
       "id": "predictcomp",
       "launch": {
         "executable": "predictcomp",
-        "cargo_package": "casars-simulation",
+        "cargo_package": "casars-cli",
         "override_env": "CASARS_PREDICTCOMP_BIN"
       },
       "dataset_kinds": [],

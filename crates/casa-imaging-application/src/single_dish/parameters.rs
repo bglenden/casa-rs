@@ -11,6 +11,50 @@ use casa_types::{
 use serde_json::{Map, Value};
 use std::path::PathBuf;
 
+/// Return the canonical CASA 6.7.6 `tsdimaging` parameter defaults as plain JSON.
+#[must_use]
+pub fn default_parameters() -> Map<String, Value> {
+    let value = serde_json::json!({
+        "infiles": [],
+        "outfile": "",
+        "overwrite": false,
+        "field": ["none"],
+        "spw": ["none"],
+        "antenna": [""],
+        "scan": [""],
+        "intent": ["OBSERVE_TARGET#ON_SOURCE"],
+        "timerange": [""],
+        "outframe": "",
+        "mode": "channel",
+        "nchan": -1,
+        "start": 0,
+        "width": 1,
+        "veltype": "radio",
+        "specmode": "cube",
+        "interpolation": "linear",
+        "pointingcolumn": "direction",
+        "convertfirst": "never",
+        "projection": "SIN",
+        "imsize": [],
+        "cell": [""],
+        "phasecenter": "",
+        "stokes": "I",
+        "gridfunction": "BOX",
+        "convsupport": -1,
+        "truncate": -1,
+        "gwidth": -1,
+        "jwidth": -1,
+        "clipminmax": false,
+        "minweight": 0.1,
+        "brightnessunit": "",
+        "restfreq": [""]
+    });
+    match value {
+        Value::Object(map) => map,
+        _ => unreachable!("default map is an object"),
+    }
+}
+
 /// CASA-named parameters resolved over the task's catalog defaults.
 pub struct TotalPowerParameters<'a>(pub &'a Map<String, Value>);
 

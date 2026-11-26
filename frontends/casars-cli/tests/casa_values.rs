@@ -121,7 +121,7 @@ fn immoments_takes_casas_moments_and_includepix() {
         String::from_utf8_lossy(&output.stderr)
     );
     let bundle = casa_contracts::builtin_surface_bundle("immoments").unwrap();
-    let products = casa_task_runtime::decode_task_completion(&bundle, &summary, root, &[])
+    let products = casa_tasks::decode_task_completion(&bundle, &summary, root, &[])
         .unwrap()
         .products;
     assert_eq!(products.len(), 2);

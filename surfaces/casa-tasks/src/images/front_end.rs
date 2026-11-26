@@ -7,9 +7,9 @@
 
 use std::collections::BTreeMap;
 
+use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::{CasaValue, ParameterValue, parameter_value_to_casacore};
 use casa_images::{ImageError, PbcorRegion};
-use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_types::{RecordValue, Value};
 
 use super::task_contract::{ImageAnalysisTaskResult, image_analysis_task_schema_bundle};
@@ -90,8 +90,8 @@ pub(super) fn parse_region_parameter(
 mod tests {
     use std::ffi::OsString;
 
+    use crate::{TaskFrontEnd, TaskSuccess};
     use casa_contracts::CasaValue;
-    use casa_task_runtime::{TaskFrontEnd, TaskSuccess};
 
     use super::image_task_front_end;
     use crate::images::image_analysis_task_schema_bundle;

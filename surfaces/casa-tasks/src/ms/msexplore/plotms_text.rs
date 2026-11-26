@@ -6,7 +6,7 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use casa_task_runtime::{TaskFailure, TaskInvocation};
+use crate::{TaskFailure, TaskInvocation};
 
 use super::calibration::{
     averaging,

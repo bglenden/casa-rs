@@ -4,9 +4,11 @@
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    casa_tasks::calibration::mstransform_front_end().main(
+    let front_end = casa_tasks::calibration::mstransform_front_end();
+    casars_cli::logging::run_front_end(
+        &front_end,
         std::env::args_os().skip(1),
-        casa_task_runtime::CasaLoggingConfig::from_env(),
+        casars_cli::logging::CasaLoggingConfig::from_env(),
         std::env::set_current_dir,
         &mut std::io::stdout(),
         std::io::stderr(),

@@ -2,7 +2,7 @@
 
 use std::ffi::OsString;
 
-use casa_task_runtime::{ParameterRuntime, TaskCommandLine};
+use crate::{ParameterRuntime, TaskCommandLine};
 use tempfile::tempdir;
 
 use super::*;

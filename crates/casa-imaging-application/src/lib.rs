@@ -53,7 +53,7 @@ pub use request::{
     InvalidRequest, MeasurementSetSelection, NativeAwCachePolicy, SaveModel, SpecMode,
     SpectralMaskRange, UseMask, UserMaskBox, Weighting,
 };
-pub use tclean::TcleanRefusal;
+pub use tclean::{TcleanRefusal, default_tclean_parameters};
 
 use std::{error::Error, fmt, path::PathBuf};
 

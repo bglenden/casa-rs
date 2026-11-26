@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! `exportfits` - CASA image to FITS export, on the shared task front end.
 
+use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_images::{ExportFitsRequest, exportfits};
-use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 
 use super::front_end::{image_task_front_end, image_task_success};
 use super::task_contract::ImageAnalysisTaskResult;

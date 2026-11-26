@@ -6,6 +6,7 @@
 use std::{io::ErrorKind, num::NonZeroUsize, path::Path};
 
 use crate::ms::{ms_task_success, mstransform_task_schema_bundle, task_selection_text};
+use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_calibration::{CallibError, transform_callibrary, transform_model_input};
 use casa_contracts::{CasaValue, DefaultSpec, NumpyScalarType, ParameterValue, python_repr};
 use casa_ms::selection::MsSelection;
@@ -14,7 +15,6 @@ use casa_ms::{
     MsTransformMultiMsOptions, MsTransformRequest, MsTransformTaskOptions, MsTransformTiling,
     TimeAverageOptions, TransformDataColumn, TransformTaskHistory, mstransform_task,
 };
-use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_types::quanta::{Quantity, Unit};
 
 /// Front end of the `mstransform` binary, hosting `mstransform` and `split`.
@@ -675,7 +675,7 @@ fn absolute_time_range(value: &str) -> Option<(f64, f64)> {
 mod tests {
     use std::ffi::OsString;
 
-    use casa_task_runtime::{ParameterRuntime, TaskCommandLine};
+    use crate::{ParameterRuntime, TaskCommandLine};
 
     use super::*;
 

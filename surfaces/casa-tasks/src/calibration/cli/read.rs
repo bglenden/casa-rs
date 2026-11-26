@@ -12,8 +12,8 @@
 
 use std::path::PathBuf;
 
+use crate::{TaskFailure, TaskInvocation};
 use casa_ms::MsSelection;
-use casa_task_runtime::{TaskFailure, TaskInvocation};
 
 use crate::calibration::{
     CalibrationTaskRequest, ExecuteApplyTaskRequest, ExportCorrectedDataTaskRequest,

@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_components::{ComponentList, SkyComponent};
 use casa_contracts::{CasaEntry, CasaFloat, CasaKey, CasaValue, FloatDtype, ParameterValue};
 use casa_ms::derived::engine::MsCalEngine;
@@ -16,7 +17,6 @@ use casa_ms::{
     VirtualModelKind,
 };
 use casa_tables::TableWriteLock;
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::ScalarValue;
 use casa_types::measures::direction::MDirection;
 use casa_types::measures::epoch::MEpoch;

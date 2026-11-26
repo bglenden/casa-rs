@@ -46,8 +46,8 @@ mod convert;
 mod request;
 mod task_contract;
 
+use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::CasaValue;
-use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 
 pub use convert::msconvert;
 pub use request::{

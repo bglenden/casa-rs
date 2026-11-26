@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-use casa_task_runtime::{ParameterRuntime, TaskCommandLine};
+use crate::{ParameterRuntime, TaskCommandLine};
 use tempfile::{NamedTempFile, tempdir};
 
 use super::task_contract::{ImportVlaScanTaskRequest, ImportVlaTaskRequest};
@@ -116,7 +116,7 @@ fn options_follow_the_command_line() {
             .expect("explicit reference tolerance");
         assert_eq!(explicit.frequencytol_hz, 150_000.0);
     }
-    let mut numeric = casa_task_runtime::ParameterSession::defaults(
+    let mut numeric = crate::ParameterSession::defaults(
         casa_contracts::builtin_surface_bundle("importvla").expect("importvla surface"),
     )
     .expect("session");
@@ -211,7 +211,7 @@ fn repeated_archive_flags_name_every_archive() {
     let session = ParameterRuntime::default()
         .open_session(command_line.open_session_request(bundle))
         .unwrap();
-    let invocation = casa_task_runtime::project_provider_invocation(&session).unwrap();
+    let invocation = crate::project_provider_invocation(&session).unwrap();
     let request: serde_json::Value =
         serde_json::from_str(invocation.stdin.as_deref().unwrap()).unwrap();
     assert_eq!(request["values"]["archivefiles"], serde_json::json!(every));
@@ -235,8 +235,7 @@ fn a_comma_separated_archive_string_names_the_same_archives_on_every_route() {
             casa_contracts::ParameterValue::String("sub/../b.exp".into()),
         ]),
     ] {
-        let mut session =
-            casa_task_runtime::ParameterSession::defaults(bundle.clone()).expect("session");
+        let mut session = crate::ParameterSession::defaults(bundle.clone()).expect("session");
         session
             .set("archivefiles", value.clone())
             .expect("set archivefiles");
@@ -276,12 +275,11 @@ fn refused_options_name_the_parameter() {
 fn shared_request_reader_reads_files_and_reports_missing_paths() {
     let file = NamedTempFile::new().expect("temp json");
     fs::write(file.path(), "{\"kind\":\"scan\",\"request\":{}}").expect("write temp json");
-    let payload = casa_task_runtime::read_task_request(file.path().to_str().expect("utf8 path"))
-        .expect("read file");
+    let payload =
+        crate::read_task_request(file.path().to_str().expect("utf8 path")).expect("read file");
     assert!(payload.contains("\"kind\":\"scan\""));
 
-    let missing =
-        casa_task_runtime::read_task_request("/definitely/missing/importvla.json").unwrap_err();
+    let missing = crate::read_task_request("/definitely/missing/importvla.json").unwrap_err();
     assert!(
         missing
             .to_string()

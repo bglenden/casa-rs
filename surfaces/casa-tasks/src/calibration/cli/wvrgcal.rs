@@ -3,8 +3,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::CasaValue;
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::quanta::{Quantity, Unit};
 
 use casa_calibration::smooth::{Smoother, smooth_calibration_table};

@@ -3,10 +3,10 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::{CasaValue, ParameterValue};
 use casa_ms::{MeasurementSet, MsSelection, ResolvedMsSelection};
 use casa_tables::{Table, TableOptions};
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::{ScalarValue, Value};
 
 use super::{generate_edges, generate_position_switch, resolve_selection, selector, tsys};

@@ -15,6 +15,8 @@ pub mod plot_data;
 pub mod plot_document;
 #[cfg(feature = "ms")]
 pub(crate) mod plot_visibility;
+#[cfg(feature = "simulation")]
+pub mod simulation;
 
 pub use document::*;
 

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Task adapter for `appendantab`.
 
+use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_calibration::appendantab::{AppendantabError, AppendantabRequest, run_appendantab};
 use casa_contracts::CasaValue;
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let request = AppendantabRequest {

@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use casa_task_runtime::{TaskFailure, TaskInvocation};
+use crate::{TaskFailure, TaskInvocation};
 use casa_types::quanta::format::{TIME, format_time};
 
 use super::PlotSeries;

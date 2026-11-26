@@ -17,9 +17,9 @@ use std::ffi::OsStr;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
+use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::{CasaValue, ParameterValue};
 use casa_tables::{Table, TableInfo, TableOptions};
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use serde::Serialize;
 
 use self::axis::Axis;

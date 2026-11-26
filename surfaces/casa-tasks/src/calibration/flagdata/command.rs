@@ -4,7 +4,7 @@
 use std::io::{ErrorKind, Write};
 use std::path::Path;
 
-use casa_task_runtime::TaskFailure;
+use crate::TaskFailure;
 
 pub(super) fn write_file(
     outfile: &str,

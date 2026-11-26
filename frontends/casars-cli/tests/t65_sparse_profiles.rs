@@ -10,11 +10,11 @@ use casa_imaging_application::{
     RestoringBeamPolicy, SpecMode, Weighting,
 };
 use casa_ms::CubeInterpolation;
-use casa_task_runtime::{
+use casa_tasks::imaging::{ImagingParameters, resolve_request};
+use casa_tasks::{
     BaseSource, DiagnosticCode, ParameterSession, ProfileError, parse_profile,
     project_provider_invocation, render_sparse_profile, resolve_profile,
 };
-use casa_tasks::imaging::{ImagingParameters, resolve_request};
 use casa_types::measures::{doppler::DopplerRef, frequency::FrequencyRef};
 
 const VLASS_SINGLE: &str = include_str!(concat!(

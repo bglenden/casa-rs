@@ -15,7 +15,6 @@ PYTHON_INTERFACE = {
     "casa-contracts",
     "casa-tasks",
     "casars-cli",
-    "casa-task-runtime",
     "casars-python",
 }
 ROOT_DOCS = {

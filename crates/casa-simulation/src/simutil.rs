@@ -52,7 +52,6 @@ pub mod baselines;
 pub mod beam;
 pub mod config;
 pub mod direction;
-pub mod graphics;
 pub mod pointings;
 pub(crate) mod qa;
 pub mod receivers;

@@ -6,9 +6,9 @@ use std::fs;
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
+use crate::{TaskFailure, TaskInvocation};
 use casa_contracts::ParameterValue;
 use casa_ms::flagging::RFlagThresholdReport;
-use casa_task_runtime::{TaskFailure, TaskInvocation};
 
 pub(super) const SAVED_FIELDS: &[&str] = &[
     "ntime",

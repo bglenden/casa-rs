@@ -2,9 +2,9 @@
 //! `impbcor` - CASA-style primary-beam correction, on the shared task front
 //! end.
 
+use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::{ParameterValue, parameter_array_to_casa};
 use casa_images::{ImpbcorRequest, PbcorBeam, impbcor};
-use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_types::ArrayValue;
 
 use super::front_end::{image_task_front_end, image_task_success, parse_region_parameter};

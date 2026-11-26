@@ -2,8 +2,8 @@
 //! `feather` - CASA-style feathering of single-dish and interferometer
 //! images, on the shared task front end.
 
+use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_images::{FeatherRequest, feather};
-use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 
 use super::front_end::{image_task_front_end, image_task_success};
 use super::task_contract::ImageAnalysisTaskResult;

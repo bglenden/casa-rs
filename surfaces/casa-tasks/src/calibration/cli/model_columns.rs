@@ -3,10 +3,10 @@
 
 use std::path::Path;
 
+use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::{CasaValue, NumpyScalarType, ParameterValue};
 use casa_ms::{MeasurementSet, MsSelection};
 use casa_tables::TableWriteLock;
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 use casa_calibration::delete_calibration_model;
 use casa_calibration::model_columns::reset_scratch_columns;

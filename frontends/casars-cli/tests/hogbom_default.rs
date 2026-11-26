@@ -4,7 +4,7 @@
 
 use casa_contracts::{ParameterValue, builtin_surface_bundle};
 use casa_imaging_application::{HogbomIterationAccounting, ImagingRequest};
-use casa_task_runtime::{parse_profile, resolve_profile};
+use casa_tasks::{parse_profile, resolve_profile};
 
 #[test]
 fn current_hogbom_defaults_and_explicit_policies_reach_imaging() {

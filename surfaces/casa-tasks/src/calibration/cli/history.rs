@@ -3,9 +3,9 @@
 
 use std::path::Path;
 
+use crate::TaskInvocation;
 use casa_contracts::{ParameterValue, python_repr};
 use casa_tables::{Table, TableOptions};
-use casa_task_runtime::TaskInvocation;
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 pub(super) fn record_applycal(task: &TaskInvocation<'_>, vis: &Path) {

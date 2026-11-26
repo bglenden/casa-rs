@@ -10,11 +10,12 @@ publish = false
 autotests = false
 
 [features]
-default = ["calibration", "imaging", "images", "ms", "vla"]
+default = ["calibration", "imaging", "images", "ms", "simulation", "vla"]
 calibration = ["ms", "casa-tasks/calibration"]
 imaging = ["casa-tasks/imaging", "dep:casa-imaging-application", "dep:libc"]
 images = ["casa-tasks/images"]
 ms = ["casa-tasks/ms"]
+simulation = ["ms", "casa-tasks/simulation"]
 vla = ["casa-tasks/vla"]
 slow-tests = []
 
@@ -22,20 +23,22 @@ slow-tests = []
 workspace = true
 
 [dependencies]
+casa-contracts = { path = "../../surfaces/casa-contracts" }
 casa-imaging-application = { path = "../../crates/casa-imaging-application", optional = true }
-casa-task-runtime = { path = "../../crates/casa-task-runtime" }
+casa-logging = { path = "../../crates/casa-logging" }
 casa-tasks = { path = "../../surfaces/casa-tasks" }
 libc = { version = "0.2", optional = true }
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [dev-dependencies]
 base64 = "0.22"
 casa-calibration = { path = "../../crates/casa-calibration" }
-casa-contracts = { path = "../../surfaces/casa-contracts" }
 casa-coordinates = { path = "../../crates/casa-coordinates" }
 casa-images = { path = "../../crates/casa-images" }
 casa-imaging-deconvolution = { path = "../../crates/casa-imaging-deconvolution" }
 casa-lattices = { path = "../../crates/casa-lattices" }
-casa-logging = { path = "../../crates/casa-logging" }
 casa-ms = { path = "../../crates/casa-ms", features = ["msv4"] }
 casa-numerics = { path = "../../crates/casa-numerics" }
 casa-plot-data = { path = "../../surfaces/casa-plot-data", features = ["ms"] }
@@ -46,12 +49,11 @@ casa-types = { path = "../../crates/casa-types" }
 fitsio = { version = "0.21", features = ["fitsio-src", "src-cmake"] }
 flate2 = "1"
 ndarray.workspace = true
+schemars = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 tar = "0.4"
 tempfile = "3"
-tracing.workspace = true
-tracing-subscriber.workspace = true
 
 [[bin]]
 name = "casars-imager"
@@ -152,6 +154,26 @@ required-features = ["calibration"]
 name = "mstransform"
 path = "src/bin/mstransform.rs"
 required-features = ["calibration"]
+
+[[bin]]
+name = "simobserve"
+path = "src/bin/simobserve.rs"
+required-features = ["simulation"]
+
+[[bin]]
+name = "simanalyze"
+path = "src/bin/simanalyze.rs"
+required-features = ["simulation"]
+
+[[bin]]
+name = "simalma"
+path = "src/bin/simalma.rs"
+required-features = ["simulation"]
+
+[[bin]]
+name = "predictcomp"
+path = "src/bin/predictcomp.rs"
+required-features = ["simulation"]
 
 [[test]]
 name = "hogbom_default"
@@ -327,3 +349,8 @@ required-features = ["calibration"]
 name = "mstransform_logging"
 path = "tests/mstransform_logging.rs"
 required-features = ["calibration"]
+
+[[test]]
+name = "simulation_casa_refusals"
+path = "tests/simulation_casa_refusals.rs"
+required-features = ["simulation"]

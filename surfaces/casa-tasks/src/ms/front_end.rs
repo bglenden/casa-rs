@@ -6,10 +6,10 @@
 //! are the reads and the reply the binaries share. The front end owns the
 //! command line, `--json-run`, Last and logging.
 //!
-//! [`TaskFrontEnd`]: casa_task_runtime::TaskFrontEnd
+//! [`TaskFrontEnd`]: crate::TaskFrontEnd
 
+use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::CasaValue;
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use serde::Serialize;
 
 use casa_ms::FlagMerge;

@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use casa_task_runtime::{TaskFailure, TaskInvocation};
+use crate::{TaskFailure, TaskInvocation};
 use casa_types::measures::frequency::FrequencyRef;
 
 use super::calibration::figure::plot_limits;

@@ -22,9 +22,11 @@ fn main() -> ExitCode {
     options.cancel = casars_cli::interrupt::token().clone();
     options.write_run_summary =
         std::env::var_os(RUN_SUMMARY_VARIABLE).is_some_and(|value| value == "1");
-    task_front_end_with_options(options).main(
+    let front_end = task_front_end_with_options(options);
+    casars_cli::logging::run_front_end(
+        &front_end,
         std::env::args_os().skip(1),
-        casa_task_runtime::CasaLoggingConfig::from_env(),
+        casars_cli::logging::CasaLoggingConfig::from_env(),
         std::env::set_current_dir,
         &mut std::io::stdout(),
         std::io::stderr(),
