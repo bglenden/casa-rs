@@ -188,7 +188,7 @@ const METHODS: &[Method] = &[
             param("average", K::Bool, Bool(false)),
         ],
         R::Any,
-        Status::Partial,
+        Yes,
     ),
     method(
         "getdataold",
@@ -417,7 +417,7 @@ const METHODS: &[Method] = &[
         "putdata",
         &[param("items", K::Record, EmptyRecord)],
         R::Bool,
-        Status::Partial,
+        Yes,
     ),
     method(
         "putdataold",
@@ -477,7 +477,7 @@ const METHODS: &[Method] = &[
             param("inc", K::Int, Int(1)),
         ],
         R::Bool,
-        Status::Partial,
+        Yes,
     ),
     method(
         "selectchannelold",
@@ -518,7 +518,7 @@ const METHODS: &[Method] = &[
         "selectpolarization",
         &[param("wantedpol", K::Any, Empty)],
         R::Bool,
-        Status::Partial,
+        Yes,
     ),
     method(
         "selectpolarizationold",

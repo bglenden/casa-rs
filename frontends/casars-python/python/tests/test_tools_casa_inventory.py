@@ -70,14 +70,14 @@ IMPLEMENTED["singledishms"] = {
     "subtract_baseline_variable", "apply_baseline_table",
 }
 IMPLEMENTED["ms"] = {
-    "addephemeris", "close", "concatenate", "createmultims", "cvel", "cvelfreqs", "done", "getdataold", "getfielddirmeas", "getreferencedtables", "getspectralwindowinfo",
+    "addephemeris", "close", "concatenate", "createmultims", "cvel", "cvelfreqs", "done", "getdata", "getdataold", "getfielddirmeas", "getreferencedtables", "getspectralwindowinfo",
     "getscansummary", "hanningsmooth", "ismultims", "iswritable",
     "iterend", "iterendold", "iterinit", "iterinitold", "iternext", "iternextold",
     "iterorigin", "iteroriginold", "listhistory", "lister",
     "metadata", "msselect", "msselectedindices", "msseltoindex", "name",
     "ngetdata", "niterend", "niterinit", "niternext", "niterorigin", "nrow", "nrowold",
-    "open", "partition", "putdataold", "range", "rangeold", "regridspw", "reset", "select", "selectinit", "selectinitold", "selectold",
-    "selectchannelold", "selectpolarizationold", "selecttaql", "sort", "split",
+    "open", "partition", "putdata", "putdataold", "range", "rangeold", "regridspw", "reset", "select", "selectinit", "selectinitold", "selectold",
+    "selectchannel", "selectchannelold", "selectpolarization", "selectpolarizationold", "selecttaql", "sort", "split",
     "statistics", "statisticsold", "statwt", "summary", "testconcatenate", "timesort", "uvsub", "virtconcatenate",
     "writehistory", "writehistory_batch",
 }
@@ -95,7 +95,7 @@ IMPLEMENTED["calibrater"] = {
     "linpolcor", "parsecallibfile", "validatecallib", "setcorrdepflags", "fluxscale", "specifycal", "state",
 }
 PARTIAL = {
-    "ms": {"getdata", "putdata", "selectchannel", "selectpolarization", "selecttaqlold"},
+    "ms": {"selecttaqlold"},
     "calibrater": {"setmodel", "setsolve", "posangcal", "setapply", "setcallib", "returndict",
                    "correct", "corrupt", "activityrec", "solve"},
 }
