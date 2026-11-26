@@ -9,7 +9,7 @@
 
 use casa_contracts::{CasaEntry, CasaFloat, CasaKey, CasaValue, FloatDtype};
 
-use casa_images::analysis::{
+use casa_imageanalysis::analysis::{
     ImageHeaderSummary, ImageStatisticsSummary, ImstatPlanesSummary, RestoringBeamSummary,
 };
 
@@ -340,7 +340,7 @@ fn beam_record(beam: &RestoringBeamSummary) -> CasaValue {
     ])
 }
 
-fn summary_beam_grid(grid: &casa_images::analysis::PerPlaneBeamSummary) -> CasaValue {
+fn summary_beam_grid(grid: &casa_imageanalysis::analysis::PerPlaneBeamSummary) -> CasaValue {
     let channels = (0..grid.channels)
         .map(|channel| {
             let stokes = (0..grid.stokes)
@@ -371,7 +371,7 @@ fn summary_beam_grid(grid: &casa_images::analysis::PerPlaneBeamSummary) -> CasaV
     ])
 }
 
-fn listed_beam_grid(grid: &casa_images::analysis::PerPlaneBeamSummary) -> CasaValue {
+fn listed_beam_grid(grid: &casa_imageanalysis::analysis::PerPlaneBeamSummary) -> CasaValue {
     let mut entries: Vec<(String, CasaValue)> = grid
         .beams
         .iter()
@@ -418,7 +418,7 @@ fn sorted<K: Into<String>>(entries: Vec<(K, CasaValue)>) -> CasaValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use casa_images::analysis::{BeamQuantity, ImageAxisSummary};
+    use casa_imageanalysis::analysis::{BeamQuantity, ImageAxisSummary};
 
     fn keys(value: &CasaValue) -> Vec<String> {
         let CasaValue::Dict { entries } = value else {

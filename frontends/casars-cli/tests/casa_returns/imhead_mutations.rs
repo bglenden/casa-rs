@@ -151,7 +151,7 @@ fn imhead_beam_position_angle_exports_in_casas_wrapped_range() {
             json!({"imagename": image, "mode": "put", "hdkey": "bpa", "hdvalue": value}),
         );
         assert_eq!(value, CasaValue::None);
-        casa_images::analysis::export_fits(&image, &fits, false, false).unwrap();
+        casa_imageanalysis::analysis::export_fits(&image, &fits, false, false).unwrap();
         let bytes = std::fs::read(fits).unwrap();
         let card = bytes
             .as_chunks::<80>()
@@ -354,7 +354,7 @@ fn imhead_undefined_spectral_frame_is_not_mislabeled_by_fits_export() {
         }),
     );
     assert_eq!(value, CasaValue::None);
-    casa_images::analysis::export_fits(&image, &fits, false, false).unwrap();
+    casa_imageanalysis::analysis::export_fits(&image, &fits, false, false).unwrap();
     let bytes = std::fs::read(fits).unwrap();
     let cards = bytes.as_chunks::<80>().0;
     assert!(cards.iter().any(|card| card.starts_with(b"RESTFRQ ")));
@@ -486,7 +486,7 @@ fn imhead_spectral_unit_conversion_to_hz_remains_correct_for_fits_export() {
         }),
     );
     assert_eq!(value, CasaValue::None);
-    casa_images::analysis::export_fits(&image, &fits, false, false).unwrap();
+    casa_imageanalysis::analysis::export_fits(&image, &fits, false, false).unwrap();
     let bytes = std::fs::read(fits).unwrap();
     let card = bytes
         .as_chunks::<80>()
@@ -1135,7 +1135,7 @@ fn imhead_history_replays_casa_log_messages_with_original_times_and_origins() {
     let workspace = tempfile::tempdir().unwrap();
     let path = workspace.path().join("history.im");
     copy_tree(&fixture, &path);
-    let mut expected = casa_images::image::image_history_entries(&path).unwrap();
+    let mut expected = casa_images::image_history_entries(&path).unwrap();
     assert!(!expected.is_empty());
     assert!(expected[0].location.is_empty());
     for entry in &mut expected {
@@ -1172,7 +1172,7 @@ fn imhead_history_replays_casa_log_messages_with_original_times_and_origins() {
             ..
         }
     ));
-    let replayed = casa_images::image::image_history_entries(&output_root).unwrap();
+    let replayed = casa_images::image_history_entries(&output_root).unwrap();
     assert!(
         replayed
             .windows(expected.len())
@@ -1286,7 +1286,7 @@ fn imhead_history_refuses_an_advertised_missing_logtable() {
     let path = workspace.path().join("history.im");
     copy_tree(&fixture, &path);
     std::fs::remove_dir_all(path.join("logtable")).unwrap();
-    assert!(casa_images::image::image_history_entries(&path).is_err());
+    assert!(casa_images::image_history_entries(&path).is_err());
 }
 
 #[test]

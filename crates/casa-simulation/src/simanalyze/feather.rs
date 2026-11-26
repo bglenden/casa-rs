@@ -9,10 +9,8 @@ use crate::{
     simobserve::SimobserveError,
     simutil::{self, analysis},
 };
-use casa_images::{
-    ImageInterface, PagedImage,
-    analysis::{FeatherRequest, feather},
-};
+use casa_imageanalysis::analysis::{FeatherRequest, feather};
+use casa_images::{ImageInterface, PagedImage};
 use casa_imaging_runtime::{Demand, admit};
 
 pub(super) fn combine(

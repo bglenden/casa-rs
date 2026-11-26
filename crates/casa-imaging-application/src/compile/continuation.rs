@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::CoordinateSystem;
-use casa_images::RegridTemplate;
+use casa_imageanalysis::RegridTemplate;
 use casa_imaging_products::CasaImageWriter;
 use casa_imaging_runtime::{Demand, Reservation, admit};
 

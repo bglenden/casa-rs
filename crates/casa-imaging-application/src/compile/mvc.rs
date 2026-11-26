@@ -383,7 +383,7 @@ fn prepare_start(
         return Ok(None);
     }
     let [nx, ny] = domain.image_size;
-    let template = casa_images::RegridTemplate {
+    let template = casa_imageanalysis::RegridTemplate {
         coordinates: domain.coordinates.clone(),
         shape: vec![nx, ny, 1, 1],
     };
@@ -419,7 +419,7 @@ fn prepare_start(
         let tt1 = required("model.tt1", reason)?;
         let model = super::StartModel::restart(
             Box::new([Some(tt0), Some(tt1)]),
-            casa_images::RegridTemplate {
+            casa_imageanalysis::RegridTemplate {
                 shape: vec![nx, ny, 1, 2],
                 ..template
             },

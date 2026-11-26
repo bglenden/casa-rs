@@ -6086,7 +6086,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 - [resources/casa-compat/evidence/tclean-start-model-20261103.json](https://github.com/bglenden/casa-rs/blob/8596172326491c4e395e43588956477b14af211b/resources/casa-compat/evidence/tclean-start-model-20261103.json)
 - [resources/casa-compat/tclean-start-model-cases.json](https://github.com/bglenden/casa-rs/blob/8596172326491c4e395e43588956477b14af211b/resources/casa-compat/tclean-start-model-cases.json)
-- [crates/casa-images/src/regrid/spectral.rs](https://github.com/bglenden/casa-rs/blob/8596172326491c4e395e43588956477b14af211b/crates/casa-images/src/regrid/spectral.rs)
+- [libs/casa/casa-imageanalysis/src/regrid/spectral.rs](https://github.com/bglenden/casa-rs/blob/8596172326491c4e395e43588956477b14af211b/libs/casa/casa-imageanalysis/src/regrid/spectral.rs)
 - [crates/casa-imaging-application/src/compile/start_model.rs](https://github.com/bglenden/casa-rs/blob/8596172326491c4e395e43588956477b14af211b/crates/casa-imaging-application/src/compile/start_model.rs)
 - [crates/casars-imager/tests/t1/start_model.rs](https://github.com/bglenden/casa-rs/blob/8596172326491c4e395e43588956477b14af211b/crates/casars-imager/tests/t1/start_model.rs)
 - Revision: `65b3a18bf0d135fe1f63bc5a6667c0c67ff3b77f`; CASA: `casatasks 6.7.6.14; casatools 6.7.6-14`.
@@ -6182,7 +6182,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [resources/casa-compat/evidence/tclean-blank-mask-beam-1140-20261105.json](https://github.com/bglenden/casa-rs/blob/6d7093f861c0371230d6b9727fd75604ad3ec372/resources/casa-compat/evidence/tclean-blank-mask-beam-1140-20261105.json)
 - [crates/casa-imaging-deconvolution/src/mask/auto_planes.rs](https://github.com/bglenden/casa-rs/blob/6d7093f861c0371230d6b9727fd75604ad3ec372/crates/casa-imaging-deconvolution/src/mask/auto_planes.rs)
 - [crates/casa-numerics/src/elliptical_gaussian.rs](https://github.com/bglenden/casa-rs/blob/6d7093f861c0371230d6b9727fd75604ad3ec372/crates/casa-numerics/src/elliptical_gaussian.rs)
-- [crates/casa-images/src/beam.rs](https://github.com/bglenden/casa-rs/blob/6d7093f861c0371230d6b9727fd75604ad3ec372/crates/casa-images/src/beam.rs)
+- [libs/casacore/casa-images/src/beam.rs](https://github.com/bglenden/casa-rs/blob/6d7093f861c0371230d6b9727fd75604ad3ec372/libs/casacore/casa-images/src/beam.rs)
 - [crates/casa-imaging-deconvolution/tests/auto_mask_memory.rs](https://github.com/bglenden/casa-rs/blob/6d7093f861c0371230d6b9727fd75604ad3ec372/crates/casa-imaging-deconvolution/tests/auto_mask_memory.rs)
 - Revision: `cd462a3b4e61e809b59a9049b7dba43dbef79b66`; CASA: `casatasks 6.7.6.14; casatools 6.7.6-14`.
 - Command: `Synthetic 900x900x11 automask restart and representative T1.5 and T2 comparisons, recorded on issue 1140 and in the receipt`.
@@ -6873,8 +6873,8 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **CASA fixture comparison — passed.** casa-components casa_fixture: 3 tests pass at the revision, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in. The component-list tables open reads and close and rename write.
 
-- [crates/casa-components/tests/casa_fixture.rs](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/crates/casa-components/tests/casa_fixture.rs)
-- [crates/casa-components/tests/data/casa-6.7.6](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/crates/casa-components/tests/data/casa-6.7.6)
+- [libs/casa/casa-components/tests/cases/casa_fixture.rs](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/libs/casa/casa-components/tests/cases/casa_fixture.rs)
+- [libs/casa/casa-components/tests/data/casa-6.7.6](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/libs/casa/casa-components/tests/data/casa-6.7.6)
 - [tools/simulation/componentlist_oracle.py](https://github.com/bglenden/casa-rs/blob/69aa2b7091d025b82edc539b51a17535e075ae0e/tools/simulation/componentlist_oracle.py)
 - Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures`.
 - Command: `python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)`.
@@ -7305,7 +7305,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [crates/casars-python/python/tests/data/casa_componentlist_direction_models.json](https://github.com/bglenden/casa-rs/blob/0c6a2fb4dabe90d0c17c1bb954288b259bf83963/crates/casars-python/python/tests/data/casa_componentlist_direction_models.json)
 - [crates/casars-python/python/tests/data/casa_componentlist_direction_models.cl.tgz](https://github.com/bglenden/casa-rs/blob/0c6a2fb4dabe90d0c17c1bb954288b259bf83963/crates/casars-python/python/tests/data/casa_componentlist_direction_models.cl.tgz)
 - [crates/casars-python/python/tests/test_componentlist_direction_models.py](https://github.com/bglenden/casa-rs/blob/0c6a2fb4dabe90d0c17c1bb954288b259bf83963/crates/casars-python/python/tests/test_componentlist_direction_models.py)
-- [crates/casa-components/tests/casacore_cpp_interop.rs](https://github.com/bglenden/casa-rs/blob/0c6a2fb4dabe90d0c17c1bb954288b259bf83963/crates/casa-components/tests/casacore_cpp_interop.rs)
+- [suites/casacore-interop/tests/component_list.rs](https://github.com/bglenden/casa-rs/blob/0c6a2fb4dabe90d0c17c1bb954288b259bf83963/suites/casacore-interop/tests/component_list.rs)
 
 <a id="componentlist-evidence-upstream-tests-casa"></a>
 ##### upstream-tests-casa

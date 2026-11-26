@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use casa_images::RegridTemplate;
+use casa_imageanalysis::RegridTemplate;
 
 use crate::compile::StartModel;
 

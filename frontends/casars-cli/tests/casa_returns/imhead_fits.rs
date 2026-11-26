@@ -41,7 +41,7 @@ fn imhead_reads_fits_without_modifying_it() {
             "{name} modified FITS"
         );
     }
-    let history = casa_images::image::image_history_entries(&path).unwrap();
+    let history = casa_images::image_history_entries(&path).unwrap();
     let messages = history
         .iter()
         .map(|entry| entry.message.as_str())
@@ -103,7 +103,7 @@ fn imhead_reads_fits_per_plane_beams() {
         assert_header_value_near(&value.to_plain_json(), &case["value"], index);
     }
     let imported = workspace.path().join("beams.im");
-    casa_images::import_fits(&path, &imported, false).unwrap();
+    casa_imageanalysis::import_fits(&path, &imported, false).unwrap();
     let summary = returned(
         workspace.path(),
         "imhead",
@@ -166,7 +166,7 @@ fn imhead_normalizes_fits_spectral_axis_and_keeps_rest_frequency_in_hz() {
         assert_header_value_near(&value.to_plain_json(), &case["value"], index);
     }
     let imported = workspace.path().join("scaled.im");
-    casa_images::import_fits(&path, &imported, false).unwrap();
+    casa_imageanalysis::import_fits(&path, &imported, false).unwrap();
     let rest = returned(
         workspace.path(),
         "imhead",
@@ -175,7 +175,7 @@ fn imhead_normalizes_fits_spectral_axis_and_keeps_rest_frequency_in_hz() {
     .to_plain_json();
     assert_header_value_near(&rest, &oracle["scaled_cases"]["get:restfreq"]["value"], 0);
     let exported = workspace.path().join("exported.fits");
-    casa_images::export_fits(&imported, &exported, false, false).unwrap();
+    casa_imageanalysis::export_fits(&imported, &exported, false, false).unwrap();
     let bytes = std::fs::read(&exported).unwrap();
     let cards = bytes
         .as_chunks::<80>()

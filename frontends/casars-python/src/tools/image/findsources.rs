@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_images::ImageInterface;
-use casa_images::analysis::{
+use casa_imageanalysis::analysis::{
     FindSourcesOptions, MaxFitOptions, find_image_sources, fit_image_maximum,
 };
+use casa_images::ImageInterface;
 use pyo3::prelude::*;
 
 use crate::tools::{LogLine, emit};

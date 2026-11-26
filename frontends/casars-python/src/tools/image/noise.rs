@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_images::analysis::ImageNoise;
+use casa_imageanalysis::analysis::ImageNoise;
 use num_complex::{Complex32, Complex64};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};

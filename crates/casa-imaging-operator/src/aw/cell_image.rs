@@ -12,7 +12,7 @@ use casa_coordinates::{
 };
 use casa_core::measures::frequency::FrequencyRef;
 use casa_core::{RecordField, RecordValue, ScalarValue, Value};
-use casa_images::{PagedImage, regrid::regrid_complex_plane};
+use casa_images::{PagedImage, resample::regrid_complex_plane};
 use num_complex::Complex32;
 
 use super::rotation::pixel_rotation;

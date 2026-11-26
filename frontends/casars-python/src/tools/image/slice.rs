@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_images::RegridMethod;
-use casa_images::pixel_slice::{PixelSlice, get_slice};
+use casa_images::{PixelSlice, get_slice};
 use num_complex::{Complex32, Complex64};
 use numpy::PyUntypedArray;
 use pyo3::exceptions::{PySystemError, PyTypeError};

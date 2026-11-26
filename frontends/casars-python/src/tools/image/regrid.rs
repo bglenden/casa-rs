@@ -3,15 +3,11 @@
 use std::path::Path;
 
 use casa_core::RecordValue;
-use casa_images::{
-    ImageInterface,
-    analysis::{
-        ImageRegridOptions, ImageRegridProduct, ImageRegridTarget, SubimageRegion,
-        ensure_artifacts_do_not_overlap, ensure_outfile_does_not_alias_input, regrid_image,
-    },
-    image::image_history_rows,
-    regrid::RegridPixel,
+use casa_imageanalysis::analysis::{
+    ImageRegridOptions, ImageRegridProduct, ImageRegridTarget, SubimageRegion,
+    ensure_artifacts_do_not_overlap, ensure_outfile_does_not_alias_input, regrid_image,
 };
+use casa_images::{ImageInterface, image_history_rows, resample::RegridPixel};
 use pyo3::exceptions::{PyOverflowError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;

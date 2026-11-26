@@ -4,7 +4,7 @@
 
 use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::ParameterValue;
-use casa_images::{ImmomentsRequest, MomentAxis, immoments};
+use casa_imageanalysis::{ImmomentsRequest, MomentAxis, immoments};
 
 use super::front_end::{image_task_front_end, image_task_success};
 use super::task_contract::ImageAnalysisTaskResult;

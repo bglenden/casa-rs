@@ -2,7 +2,7 @@
 
 use casa_core::quanta::{Quantity, Unit, casacore};
 use casa_core::{RecordValue, Value};
-use casa_images::{BeamComponent, ImageBeamSet, StoredGaussianBeam, beam::wrap_position_angle};
+use casa_images::{BeamComponent, ImageBeamSet, StoredGaussianBeam, wrap_position_angle};
 use casa_tables::LockType;
 use pyo3::prelude::*;
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_imageanalysis::analysis::{DecompositionOptions, decompose_image};
 use casa_images::ImageInterface;
-use casa_images::analysis::{DecompositionOptions, decompose_image};
 use numpy::PyArrayDyn;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;

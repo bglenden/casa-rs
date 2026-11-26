@@ -15,7 +15,7 @@ import pytest
 from casars import tasks
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-EXPORTFITS_DATA_DIR = REPO_ROOT / "crates" / "casa-images" / "tests" / "data" / "exportfits"
+EXPORTFITS_DATA_DIR = REPO_ROOT / "libs" / "casacore" / "casa-images" / "tests" / "data" / "exportfits"
 CASA_PYTHON = Path("/Applications/CASA.app/Contents/MacOS/python3")
 
 

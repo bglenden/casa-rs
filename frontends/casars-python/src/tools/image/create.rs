@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use casa_components::ComponentList;
 use casa_coordinates::CoordinateSystem;
 use casa_core::{RecordValue, Value};
-use casa_images::{ComponentListImage, ImagePixelType};
+use casa_imageanalysis::ComponentListImage;
+use casa_images::ImagePixelType;
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{TableWriteLock, lexical_absolute};
 use pyo3::prelude::*;
@@ -373,8 +374,8 @@ impl StagedImage {
                     .read_dir()
                     .is_ok_and(|mut entries| entries.next().is_none());
                 if !empty
-                    && !(casa_images::concat_file::is_image_concat(&self.product)
-                        && casa_images::concat_file::ConcatManifest::open(path).is_ok())
+                    && !(casa_images::is_image_concat(&self.product)
+                        && casa_images::ConcatManifest::open(path).is_ok())
                     && casa_tables::Table::open_metadata_only(casa_tables::TableOptions::new(path))
                         .is_err()
                 {
@@ -398,7 +399,7 @@ impl StagedImage {
 
     fn publish(&self, existed: bool) -> PyResult<ImagePublication> {
         self.check_alias()?;
-        let virtual_concat = casa_images::concat_file::is_image_concat(&self.product);
+        let virtual_concat = casa_images::is_image_concat(&self.product);
         #[cfg(unix)]
         let directory = std::fs::File::open(&self.product).map_err(raised)?;
         if existed {
@@ -689,12 +690,13 @@ fn publish_staged_pair(
         .chain(companion.iter())
         .filter(|_| overwrite)
         .flat_map(StagedImage::output_paths);
-    let (image, secondary) = casa_images::analysis::with_mask_output_paths(output_paths, || {
-        build(
-            primary.as_ref().map(|stage| stage.product.as_path()),
-            companion.as_ref().map(|stage| stage.product.as_path()),
-        )
-    })?;
+    let (image, secondary) =
+        casa_imageanalysis::analysis::with_mask_output_paths(output_paths, || {
+            build(
+                primary.as_ref().map(|stage| stage.product.as_path()),
+                companion.as_ref().map(|stage| stage.product.as_path()),
+            )
+        })?;
     drop(secondary);
     let temporary = if primary.is_none() {
         Some(AttachedImage::temporary(image))
@@ -755,7 +757,7 @@ pub(super) fn publish_image_set<T, const N: usize>(
         .filter_map(Option::as_ref)
         .filter(|(_, overwrite)| *overwrite)
         .flat_map(|(stage, _)| stage.output_paths());
-    let product = casa_images::analysis::with_mask_output_paths(outputs, || {
+    let product = casa_imageanalysis::analysis::with_mask_output_paths(outputs, || {
         build(std::array::from_fn(|index| paths[index]))
     })?;
     stages.publish(false)?;

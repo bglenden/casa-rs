@@ -236,10 +236,10 @@ fn mixed_beams_use_the_plane_area_ratios_and_allow_explicit_overwrite_refusal() 
 
 #[test]
 fn dish_filters_match_casa() {
-    let fixtures =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/casa-images/tests/data/feather");
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../libs/casacore/casa-images/tests/data/feather");
     let record: Value = serde_json::from_str(include_str!(
-        "../../../crates/casa-images/tests/data/feather/expected.json"
+        "../../../libs/casacore/casa-images/tests/data/feather/expected.json"
     ))
     .unwrap();
     assert_eq!(record["casa_version"], "6.7.6.14");
@@ -302,10 +302,10 @@ fn dish_filters_match_casa() {
 
 #[test]
 fn direction_units_do_not_change_the_fourier_combination() {
-    let fixtures =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/casa-images/tests/data/feather");
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../libs/casacore/casa-images/tests/data/feather");
     let record: Value = serde_json::from_str(include_str!(
-        "../../../crates/casa-images/tests/data/feather/expected.json"
+        "../../../libs/casacore/casa-images/tests/data/feather/expected.json"
     ))
     .unwrap();
     assert_eq!(record["casa_version"], "6.7.6.14");

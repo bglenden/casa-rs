@@ -12,11 +12,12 @@ members = [
     "libs/casacore/casa-numerics",
     "libs/casacore/casa-fft",
     "crates/casa-calibration",
-    "crates/casa-components",
+    "libs/casa/casa-components",
+    "libs/casa/casa-imageanalysis",
     "libs/casacore/casa-tables",
     "libs/casacore/casa-lattices",
     "libs/casacore/casa-coordinates",
-    "crates/casa-images",
+    "libs/casacore/casa-images",
     "crates/casa-imaging-model",
     "crates/casa-imaging-operator",
     "crates/casa-imaging-deconvolution",
@@ -46,6 +47,9 @@ description = "Rust implementation of casacore-compatible persistent data I/O"
 repository = "https://github.com/bglenden/casa-rs"
 
 [workspace.dependencies]
+casa-components = { path = "libs/casa/casa-components", version = "0.27.0" }
+casa-imageanalysis = { path = "libs/casa/casa-imageanalysis", version = "0.27.0" }
+casa-images = { path = "libs/casacore/casa-images", version = "0.27.0" }
 casa-aipsio = { path = "libs/casacore/casa-aipsio", version = "0.27.0" }
 casa-coordinates = { path = "libs/casacore/casa-coordinates", version = "0.27.0" }
 casa-core = { path = "libs/casacore/casa-core", version = "0.27.0" }

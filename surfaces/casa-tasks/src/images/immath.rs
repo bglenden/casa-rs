@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use crate::{CasaValue, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
-use casa_images::{ImmathRequest, immath};
+use casa_imageanalysis::{ImmathRequest, immath};
 
 use super::front_end::{image_task_front_end, image_task_returning};
 use super::task_contract::ImageAnalysisTaskResult;
@@ -99,7 +99,7 @@ fn validate_input_paths(
 ) -> Result<(), TaskFailure> {
     let varnames = effective_varnames(request);
     let quoted = if request.mode == "evalexpr" {
-        casa_images::analysis::quoted_expression_names(&request.expr)
+        casa_imageanalysis::analysis::quoted_expression_names(&request.expr)
     } else {
         Vec::new()
     };

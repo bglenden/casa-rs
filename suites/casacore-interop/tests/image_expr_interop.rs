@@ -8,9 +8,9 @@ use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
 use casa_core::ArrayD;
+use casa_images::ImageExprValue;
+use casa_images::ImageInterface;
 use casa_images::expr_parser::{HashMapResolver, parse_image_expr, parse_mask_expr};
-use casa_images::image::ImageInterface;
-use casa_images::image_expr::ImageExprValue;
 use casa_images::{
     ImageExprBinaryOp, ImageExprBuilder, ImageExprUnaryOp, MaskExprBuilder, PagedImage,
 };

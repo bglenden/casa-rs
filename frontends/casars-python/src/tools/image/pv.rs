@@ -3,14 +3,14 @@
 use std::path::Path;
 
 use casa_contracts::ParameterValue;
-use casa_images::{
+use casa_imageanalysis::{
     ImpvRequest, PvAmount, PvPosition,
     analysis::{
         SubimageRegion, ensure_artifacts_do_not_overlap, ensure_outfile_does_not_alias_input,
         generate_image_pv,
     },
-    image::image_history_rows,
 };
+use casa_images::image_history_rows;
 use pyo3::prelude::*;
 
 use crate::convert::{IntList, Variant};

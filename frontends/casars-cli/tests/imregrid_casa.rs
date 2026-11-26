@@ -227,10 +227,10 @@ fn an_open_logtable_blocks_image_replacement() {
 
 #[test]
 fn regrid_products_match_casa() {
-    let directory =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/casa-images/tests/data/imregrid");
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../libs/casacore/casa-images/tests/data/imregrid");
     let evidence: Value = serde_json::from_str(include_str!(
-        "../../../crates/casa-images/tests/data/imregrid/expected.json"
+        "../../../libs/casacore/casa-images/tests/data/imregrid/expected.json"
     ))
     .unwrap();
     assert_eq!(evidence["casa_version"], "6.7.6.14");

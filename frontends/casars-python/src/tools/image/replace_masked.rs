@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_images::analysis::{
+use casa_imageanalysis::analysis::{
     MaskReplacementOptions, MaskReplacementOutcome, SubimageRegion, replace_masked_complex_pixels,
     replace_masked_real_pixels, validate_mask_replacement_region,
 };

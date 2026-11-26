@@ -23,7 +23,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 MS_FIXTURE = ROOT / "crates/casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz"
-IMAGE_FIXTURE = ROOT / "crates/casa-images/tests/data/casa-6.7.6/axis_maps/transposed.image"
+IMAGE_FIXTURE = ROOT / "libs/casacore/casa-images/tests/data/casa-6.7.6/axis_maps/transposed.image"
 
 
 def measure(command, *, cwd, request, warmup, iterations, cleanup=None):

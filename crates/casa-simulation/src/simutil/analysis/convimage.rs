@@ -3,9 +3,8 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_images::{
-    GaussianBeam, ImageBeamSet, PagedImage, RegridMethod, RegridTemplate, convolve2d, regrid,
-};
+use casa_imageanalysis::{RegridTemplate, convolve2d, regrid};
+use casa_images::{GaussianBeam, ImageBeamSet, PagedImage, RegridMethod};
 
 use super::{AnalysisError, cell_size, single_beam, suffixed, write_product};
 

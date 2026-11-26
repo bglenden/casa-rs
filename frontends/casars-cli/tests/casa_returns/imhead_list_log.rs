@@ -21,10 +21,12 @@ fn list_messages_match_casa_and_follow_logging_configuration() {
             .iter()
             .map(|v| v.as_str().unwrap())
             .collect();
-        let mut summary = casa_images::imhead(&image).unwrap();
-        summary.extrema = casa_images::imhead_extrema(&image).unwrap().map(Box::new);
+        let mut summary = casa_imageanalysis::imhead(&image).unwrap();
+        summary.extrema = casa_imageanalysis::imhead_extrema(&image)
+            .unwrap()
+            .map(Box::new);
         assert_eq!(
-            casa_images::analysis::imhead_list_log(&summary),
+            casa_imageanalysis::analysis::imhead_list_log(&summary),
             expected,
             "{name}"
         );
@@ -94,7 +96,7 @@ fn list_messages_match_casa_and_follow_logging_configuration() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let entries = casa_images::image::image_history_entries(&log_root).unwrap();
+    let entries = casa_images::image_history_entries(&log_root).unwrap();
     let messages: Vec<&str> = entries
         .iter()
         .filter(|entry| entry.location == "ImageMetaDataBase::_toLog")
@@ -119,8 +121,8 @@ fn summary_reports_tabular_velocity_from_the_local_coordinate_mapping() {
     let oracle: Value =
         serde_json::from_slice(&std::fs::read(data.join("verbose_expected.json")).unwrap())
             .unwrap();
-    let summary = casa_images::imhead(&image).unwrap();
-    let log = casa_images::analysis::imhead_summary_log(&image, &summary, true).unwrap();
+    let summary = casa_imageanalysis::imhead(&image).unwrap();
+    let log = casa_imageanalysis::analysis::imhead_summary_log(&image, &summary, true).unwrap();
     assert!(log.iter().any(|line| line.contains("Frequency (tabular)")));
     let velocity = log
         .iter()

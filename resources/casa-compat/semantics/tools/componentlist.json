@@ -786,8 +786,8 @@
    "result": "casa-components casa_fixture: 3 tests pass at the revision, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in.",
    "scope": "The component-list tables open reads and close and rename write.",
    "links": [
-    "crates/casa-components/tests/casa_fixture.rs",
-    "crates/casa-components/tests/data/casa-6.7.6",
+    "libs/casa/casa-components/tests/cases/casa_fixture.rs",
+    "libs/casa/casa-components/tests/data/casa-6.7.6",
     "tools/simulation/componentlist_oracle.py"
    ],
    "casa_version": "6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures",
@@ -1336,7 +1336,7 @@
     "crates/casars-python/python/tests/data/casa_componentlist_direction_models.json",
     "crates/casars-python/python/tests/data/casa_componentlist_direction_models.cl.tgz",
     "crates/casars-python/python/tests/test_componentlist_direction_models.py",
-    "crates/casa-components/tests/casacore_cpp_interop.rs"
+    "suites/casacore-interop/tests/component_list.rs"
    ],
    "source_revision": "0c6a2fb4dabe90d0c17c1bb954288b259bf83963"
   },

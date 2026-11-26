@@ -17,7 +17,7 @@ from casars import tasks
 from casars._native_image import NativeImageView
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-IMMATH_DATA_DIR = REPO_ROOT / "crates" / "casa-images" / "tests" / "data" / "immath"
+IMMATH_DATA_DIR = REPO_ROOT / "libs" / "casacore" / "casa-images" / "tests" / "data" / "immath"
 CASA_PYTHON = Path("/Applications/CASA.app/Contents/MacOS/python3")
 
 

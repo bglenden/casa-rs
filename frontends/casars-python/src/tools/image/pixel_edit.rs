@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_imageanalysis::analysis::{ImagePixelSelection, evaluate_pixel_expression};
 use casa_images::MutableImageInterface;
-use casa_images::analysis::{ImagePixelSelection, evaluate_pixel_expression};
 use ndarray::{ArrayD, IxDyn};
 use pyo3::prelude::*;
 

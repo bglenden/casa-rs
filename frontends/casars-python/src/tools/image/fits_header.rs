@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_core::{ArrayValue, RecordValue, Value};
-use casa_images::analysis::image_fits_header_with_beams;
-use casa_images::image::image_history_entries;
+use casa_imageanalysis::analysis::image_fits_header_with_beams;
+use casa_images::image_history_entries;
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyString};

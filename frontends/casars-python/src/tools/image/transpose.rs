@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_core::quanta::casacore::casacore_unit;
 use casa_core::{ArrayValue, RecordValue, Value};
-use casa_images::analysis::{
+use casa_imageanalysis::analysis::{
     copy_transposed_image, ensure_outfile_does_not_alias_input, replace_stokes_axis_in_record,
     write_quality_labels,
 };
-use casa_images::image::image_history_rows;
+use casa_images::image_history_rows;
 use casa_images::{ImageBeamSet, ImageInterface, MutableImageInterface};
 use numpy::PyUntypedArray;
 use pyo3::prelude::*;

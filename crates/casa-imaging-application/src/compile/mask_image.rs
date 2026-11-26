@@ -28,7 +28,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, SpectralCoordinate};
-use casa_images::regrid::{DirectionAffine, direction_affine, linear_sample};
+use casa_imageanalysis::regrid::{DirectionAffine, direction_affine};
+use casa_images::resample::linear_sample;
 use casa_images::{AnyPagedImage, ImagePixel, PagedImage};
 use casa_imaging_deconvolution::{MaskError, MaskPlanes, ReconstructionMaskPlan};
 use casa_imaging_model::DirectionCoordinateSpec;

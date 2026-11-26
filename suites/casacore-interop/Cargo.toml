@@ -17,9 +17,10 @@ cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
 workspace = true
 
 [dependencies]
+casa-components.workspace = true
 casa-aipsio.workspace = true
 casa-coordinates.workspace = true
-casa-images = { path = "../../crates/casa-images" }
+casa-images.workspace = true
 casa-lattices.workspace = true
 casa-measures.workspace = true
 casa-ms = { path = "../../crates/casa-ms" }
@@ -245,3 +246,12 @@ required-features = ["cpp-interop-tests"]
 name = "temp_image_interop"
 path = "tests/temp_image_interop.rs"
 required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "component_list"
+path = "tests/component_list.rs"
+required-features = ["cpp-interop-tests"]
+
+[dev-dependencies]
+num-complex.workspace = true
+serde_json = { version = "1", features = ["float_roundtrip"] }

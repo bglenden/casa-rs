@@ -5,11 +5,11 @@ use std::path::Path;
 
 use casa_coordinates::CoordinateType;
 use casa_core::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
-use casa_images::ImageInterface;
-use casa_images::analysis::{
+use casa_imageanalysis::analysis::{
     CollapseFunction, CollapsePixel, ImageReadProfile, ProfileFrequencyFrame, ReadProfileOptions,
     SubimageRegion, ensure_artifacts_do_not_overlap, read_image_profile,
 };
+use casa_images::ImageInterface;
 use ndarray::IxDyn;
 use num_complex::{Complex32, Complex64};
 use pyo3::prelude::*;

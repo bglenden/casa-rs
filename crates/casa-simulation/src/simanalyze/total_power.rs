@@ -12,7 +12,8 @@ use crate::{
 };
 use casa_coordinates::{Coordinate, CoordinateModel};
 use casa_core::quanta::Quantity;
-use casa_images::{ImageInterface, PagedImage, RegridMethod, RegridTemplate, regrid};
+use casa_imageanalysis::{RegridTemplate, regrid};
+use casa_images::{ImageInterface, PagedImage, RegridMethod};
 use casa_imaging_runtime::{Demand, admit};
 use casa_ms::MeasurementSet;
 use serde_json::json;
