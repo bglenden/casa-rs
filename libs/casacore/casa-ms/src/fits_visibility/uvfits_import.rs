@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use casa_core::{ScalarValue, Value};
+use casa_tables::publication::rename_without_replacing;
 use casa_tables::streamed_tiled::{
     StreamedTiledPrimitiveType, StreamedTiledShapeValueType, install_undefined_tiled_shape_column,
 };
@@ -19,8 +20,8 @@ use crate::schema::main_table::OptionalMainColumn;
 use crate::subtable_rows::string_array;
 use crate::write_session::{
     MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
-    MeasurementSetCreateTarget, MeasurementSetWritePlan, MeasurementSetWriteResources,
-    MeasurementSetWriteSession, standard_main_scalar_column_plans,
+    MeasurementSetWritePlan, MeasurementSetWriteResources, MeasurementSetWriteSession,
+    standard_main_scalar_column_plans,
 };
 use crate::{MeasurementSet, MeasurementSetBuilder, MsResult, SubtableId};
 
@@ -41,7 +42,12 @@ pub struct UvFitsImportOptions {
 /// The input cannot be read or has incompatible visibility metadata, the
 /// output already exists, or the converted MeasurementSet cannot be saved.
 pub fn import_uvfits(input: &Path, output: &Path, options: UvFitsImportOptions) -> MsResult<()> {
-    let destination = MeasurementSetCreateTarget::prepare(output, false).map_err(invalid)?;
+    if output.try_exists().map_err(invalid)? {
+        return Err(invalid(format!(
+            "UVFITS output already exists: {}",
+            output.display()
+        )));
+    }
     let mut fits = open_file(input)?;
     let mut groups = VisibilityGroups::open(&mut fits)?;
     let header = Header::read(&mut fits, groups.binary_hdu())?;
@@ -78,7 +84,7 @@ pub fn import_uvfits(input: &Path, output: &Path, options: UvFitsImportOptions) 
     );
     table.set_column_keywords("FLAG_CATEGORY", flag_keywords);
     let mut columns = ImportColumns::start(&staging, &header, &groups, options)?;
-    let usage = write_groups(&mut columns.writer, &mut fits, &mut groups, &extensions)?;
+    let usage = write_groups(&mut columns, &mut fits, &mut groups, &extensions)?;
     write_metadata(
         &mut ms,
         &header,
@@ -98,14 +104,14 @@ pub fn import_uvfits(input: &Path, output: &Path, options: UvFitsImportOptions) 
     if let Some(table) = &extensions.system_power {
         table.save(TableOptions::new(&system_power))?;
     }
-    std::fs::rename(staging, destination.staging_path()).map_err(invalid)?;
-    destination.commit().map_err(invalid)
+    rename_without_replacing(&staging, output).map_err(invalid)
 }
 
 struct ImportColumns {
     writer: MeasurementSetWriteSession,
     rows: usize,
     category_tile: [usize; 4],
+    flag_category: Option<Vec<bool>>,
 }
 
 impl ImportColumns {
@@ -140,7 +146,7 @@ impl ImportColumns {
             }
         };
         let weight_tile = crate::ms::casa_weight_tile_shape(&tile);
-        let arrays = vec![
+        let mut arrays = vec![
             shape("DATA", Complex32, &visibility, tile.clone(), TiledShape),
             shape("FLAG", Bool, &visibility, tile.clone(), TiledShape),
             shape(
@@ -160,6 +166,17 @@ impl ImportColumns {
                 TiledColumn,
             ),
         ];
+        let flag_category =
+            defines_flag_category(rows, visibility, groups.binary_hdu().is_some()).then(Vec::new);
+        if flag_category.is_some() {
+            arrays.push(shape(
+                "FLAG_CATEGORY",
+                Bool,
+                &[visibility[0], visibility[1], 3],
+                category_tile.to_vec(),
+                TiledShape,
+            ));
+        }
         let mut scalars = standard_main_scalar_column_plans();
         scalars.retain(|column| {
             !CONSTANT_COLUMNS
@@ -175,6 +192,7 @@ impl ImportColumns {
             writer,
             rows,
             category_tile,
+            flag_category,
         })
     }
 
@@ -193,6 +211,9 @@ impl ImportColumns {
         self.writer
             .save_and_finish(ms, &overrides)
             .map_err(invalid)?;
+        if self.flag_category.is_some() {
+            return Ok(());
+        }
         let seq =
             crate::ms::measurement_set_main_data_manager_sequence(ms.main_table(), "FLAG_CATEGORY")
                 .ok_or_else(|| invalid("Missing FLAG_CATEGORY storage manager"))?;
@@ -207,6 +228,18 @@ impl ImportColumns {
         )
         .map_err(invalid)
     }
+}
+
+fn defines_flag_category(rows: usize, visibility: [usize; 2], binary: bool) -> bool {
+    // Casacore populates FLAG_CATEGORY in the binary and row-wise readers.
+    // The random-groups reader switches to row-wise on large MAIN payloads.
+    let estimate_kib = (rows / 1024)
+        .saturating_mul(visibility[0])
+        .saturating_mul(visibility[1])
+        .saturating_mul(16);
+    let host_kib =
+        crate::selection::system_physical_memory_bytes().map_or(usize::MAX, |n| n / 1024);
+    binary || estimate_kib >= host_kib.min(1_000_000)
 }
 
 const CONSTANT_COLUMNS: [(&str, i32); 5] = [
@@ -259,7 +292,7 @@ impl Scan {
 }
 
 fn write_groups(
-    writer: &mut MeasurementSetWriteSession,
+    columns: &mut ImportColumns,
     fits: &mut FitsFile,
     groups: &mut VisibilityGroups,
     extensions: &Extensions,
@@ -270,6 +303,7 @@ fn write_groups(
     let mut previous_time = 0.0;
     let mut inferred = f64::MAX;
     let mut inferred_rows = 0;
+    let writer = &mut columns.writer;
     for index in 0..groups.count() {
         let (group, layout, samples) = groups.read(fits, index)?;
         if group
@@ -324,6 +358,7 @@ fn write_groups(
                 band,
                 scan.number,
                 layout.visibility(samples, window),
+                columns.flag_category.as_mut(),
             )?;
             match group.interval {
                 Some(interval) => {
@@ -357,6 +392,7 @@ fn write_main_row(
     window: i32,
     scan: i32,
     visibility: GroupVisibility,
+    category: Option<&mut Vec<bool>>,
 ) -> MsResult<()> {
     let row_flag = visibility.flag.iter().all(|&value| value);
     use ScalarValue::{Bool, Float64, Int32};
@@ -383,13 +419,22 @@ fn write_main_row(
         )
         .map_err(invalid)?;
     let flag = &visibility.flag;
+    let flags = flag.as_slice_memory_order().expect("contiguous FITS flags");
     writer
-        .push_bool_row(
-            "FLAG",
-            flag.shape(),
-            flag.as_slice_memory_order().expect("contiguous FITS flags"),
-        )
+        .push_bool_row("FLAG", flag.shape(), flags)
         .map_err(invalid)?;
+    if let Some(category) = category {
+        category.clear();
+        category.extend_from_slice(flags);
+        category.resize(3 * flags.len(), false);
+        writer
+            .push_bool_row(
+                "FLAG_CATEGORY",
+                &[flag.shape()[0], flag.shape()[1], 3],
+                category,
+            )
+            .map_err(invalid)?;
+    }
     let weight = &visibility.weight_spectrum;
     writer
         .push_f32_row(

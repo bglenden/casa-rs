@@ -3,8 +3,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use casa_core::{ArrayValue, ScalarValue};
-use casa_tables::{RequiredScalarColumnValues, Table};
+use casa_core::{ArrayValue, ScalarValue, Value};
+use casa_tables::{RequiredScalarColumnValues, Table, TableOptions};
 
 use super::invalid;
 use super::uvfits_export::UvFitsExportOptions;
@@ -74,8 +74,12 @@ impl OutputLayout {
         if selected.is_empty() {
             return Err(invalid("The selected MeasurementSet has zero rows"));
         }
+        let observation = subtable(ms, SubtableId::Observation)?;
+        let wsrt = matches!(observation.cell_accessor(0, "TELESCOPE_NAME")?.scalar()?,
+            ScalarValue::String(name) if name == "WSRT");
+        let time_column = if wsrt { "TIME" } else { "TIME_CENTROID" };
         let descriptions = subtable(ms, SubtableId::DataDescription)?;
-        let (rows, used) = load_rows(ms.main_table(), descriptions, &selected)?;
+        let (rows, used) = load_rows(ms.main_table(), descriptions, &selected, time_column)?;
         let fields = rows
             .iter()
             .map(|row| row.field)
@@ -84,10 +88,11 @@ impl OutputLayout {
             .zip(1..)
             .collect::<BTreeMap<_, _>>();
         let multi = options.multisource || fields.len() > 1;
-        let observation = subtable(ms, SubtableId::Observation)?;
-        let wsrt = matches!(observation.cell_accessor(0, "TELESCOPE_NAME")?.scalar()?,
-            ScalarValue::String(name) if name == "WSRT");
-        let spectral = SpectralLayout::resolve(ms, &used, indices.channel.first().copied(), wsrt)?;
+        let mut spectral =
+            SpectralLayout::resolve(ms, &used, indices.channel.first().copied(), wsrt)?;
+        if wsrt {
+            spectral.apply_wsrt_line_reference(ms)?;
+        }
         let windows_by_id = spectral
             .windows
             .iter()
@@ -138,6 +143,7 @@ fn load_rows(
     table: &Table,
     descriptions: &Table,
     selected: &[usize],
+    time_column: &str,
 ) -> MsResult<(Vec<VisibilityRow>, BTreeSet<i32>)> {
     let names = [
         "DATA_DESC_ID",
@@ -145,7 +151,7 @@ fn load_rows(
         "ANTENNA2",
         "FIELD_ID",
         "ARRAY_ID",
-        "TIME_CENTROID",
+        time_column,
         "INTERVAL",
         "EXPOSURE",
         "FLAG_ROW",
@@ -164,7 +170,7 @@ fn load_rows(
         Some(RequiredScalarColumnValues::Float64(values)) => Ok(values),
         _ => Err(invalid(format!("Invalid floating-point column {name}"))),
     };
-    let time = doubles("TIME_CENTROID")?;
+    let time = doubles(time_column)?;
     let interval = doubles("INTERVAL")?;
     let exposure = doubles("EXPOSURE")?;
     let Some(RequiredScalarColumnValues::Bool(flagged)) = projection.remove("FLAG_ROW") else {
@@ -259,6 +265,45 @@ struct SpectralLayout {
 }
 
 impl SpectralLayout {
+    fn apply_wsrt_line_reference(&mut self, ms: &MeasurementSet) -> MsResult<()> {
+        use casa_core::measures::frequency::FrequencyRef;
+        if self.frame == FrequencyRef::TOPO.casacore_code() {
+            return Ok(());
+        }
+        let Some(reference) = ms.main_table().keywords().get("NFRA_TMS_PARAMETERS") else {
+            return Ok(());
+        };
+        let (Value::TableRef(reference) | Value::Scalar(ScalarValue::String(reference))) =
+            reference
+        else {
+            return Err(invalid("NFRA_TMS_PARAMETERS is not a table reference"));
+        };
+        let path = std::path::Path::new(reference);
+        let resolved = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            let root = ms
+                .path()
+                .ok_or_else(|| invalid("Cannot resolve NFRA_TMS_PARAMETERS on a detached MS"))?;
+            casa_tables::add_directory(reference, root)
+        };
+        let nfra = Table::open(TableOptions::new(resolved))?;
+        let center = wsrt_line_center(&nfra)?;
+        let spw = subtable(ms, SubtableId::SpectralWindow)?;
+        let window = self.windows[0].id as usize;
+        let ArrayValue::Float64(frequencies) = spw.cell_accessor(window, "CHAN_FREQ")?.array()?
+        else {
+            return Err(invalid("Invalid WSRT channel frequencies"));
+        };
+        let delta = center - frequencies[self.input_channels / 2];
+        for window in &mut self.windows {
+            window.frequency += delta;
+        }
+        self.reference += delta;
+        self.frame = FrequencyRef::GEO.casacore_code();
+        Ok(())
+    }
+
     fn resolve(
         ms: &MeasurementSet,
         used: &BTreeSet<i32>,
@@ -359,6 +404,28 @@ impl SpectralLayout {
             frame: shape.frame,
         })
     }
+}
+
+fn wsrt_line_center(table: &Table) -> MsResult<f64> {
+    for row in 0..table.row_count() {
+        let entry = table.cell_accessor(row, "NAME")?;
+        if matches!(entry.scalar()?, ScalarValue::String(name) if name == "FW1.GeoSkyFreq") {
+            let cell = table.cell_accessor(row, "VALUE")?;
+            let ScalarValue::String(value) = cell.scalar()? else {
+                return Err(invalid("Invalid FW1.GeoSkyFreq value"));
+            };
+            let numeric = value
+                .split([',', ' '])
+                .find(|part| !part.is_empty())
+                .unwrap_or_default();
+            let frequency = numeric.parse::<f64>().map_err(invalid)? * 1e6;
+            if frequency.is_finite() && frequency > 0.0 {
+                return Ok(frequency);
+            }
+            return Err(invalid("Invalid FW1.GeoSkyFreq frequency"));
+        }
+    }
+    Err(invalid("NFRA_TMS_PARAMETERS is missing FW1.GeoSkyFreq"))
 }
 
 struct AxisShape {

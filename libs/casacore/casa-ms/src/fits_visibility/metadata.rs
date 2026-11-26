@@ -15,7 +15,7 @@ use fitsio::{
     tables::ReadsCol,
 };
 
-use super::groups::{GroupLayout, optional_key};
+use super::groups::{GroupLayout, binary_extension, binary_extension_name, optional_key};
 use super::invalid;
 use crate::MsResult;
 
@@ -137,11 +137,20 @@ impl Extensions {
         let mut velocity_type = None;
         let hdu_count = fits.num_hdus().map_err(invalid)?;
         for index in 1..hdu_count {
-            let hdu = fits.hdu(index).map_err(invalid)?;
+            let Some(name) = binary_extension_name(fits, index)? else {
+                continue;
+            };
+            let recognized = (array.is_none() && name.contains("AN"))
+                || (spectral.is_none() && name.contains("FQ"))
+                || (sources.is_none() && name.contains("SU"))
+                || (system_power.is_none() && name.contains("SY"));
+            if !recognized {
+                continue;
+            }
+            let hdu = binary_extension(fits, index)?;
             let HduInfo::TableInfo { num_rows, .. } = &hdu.info else {
                 continue;
             };
-            let name = hdu.name(fits).map_err(invalid)?;
             let table = BinaryTable {
                 fits,
                 hdu: &hdu,
@@ -185,17 +194,14 @@ impl BinaryTable<'_> {
         else {
             return Err(invalid("Expected a UVFITS binary table"));
         };
-        let (index, column) = column_descriptions
+        let (index, _) = column_descriptions
             .iter()
             .enumerate()
             .find(|(_, column)| column.name == name)
             .ok_or_else(|| invalid(format!("Cannot find UVFITS column {name}")))?;
-        let width = column
-            .data_type
-            .repeat
-            .max(column.data_type.width)
-            .checked_add(1)
-            .ok_or_else(|| invalid("FITS text width overflow"))?;
+        let column = i32::try_from(index + 1).map_err(invalid)?;
+        self.fits.hdu(self.hdu.number).map_err(invalid)?;
+        let width = fixed_text_width(self.fits, column, name)?;
         let len = width
             .checked_mul(self.rows)
             .ok_or_else(|| invalid("FITS text column size overflow"))?;
@@ -206,14 +212,13 @@ impl BinaryTable<'_> {
             .chunks_exact_mut(width)
             .map(<[_]>::as_mut_ptr)
             .collect::<Vec<_>>();
-        self.fits.hdu(self.hdu.number).map_err(invalid)?;
         let mut status = 0;
         // SAFETY: the current HDU is a table and every output string has room
         // for its entire fixed field plus the terminating NUL byte.
         unsafe {
             sys::ffgcvs(
                 self.fits.as_raw(),
-                (index + 1) as i32,
+                column,
                 1,
                 1,
                 self.rows as i64,
@@ -238,8 +243,28 @@ impl BinaryTable<'_> {
     }
 
     fn column<T: ReadsCol>(&mut self, name: &str, width: usize) -> MsResult<Vec<T>> {
+        let HduInfo::TableInfo {
+            column_descriptions,
+            ..
+        } = &self.hdu.info
+        else {
+            return Err(invalid("Expected a UVFITS binary table"));
+        };
+        let column = column_descriptions
+            .iter()
+            .find(|column| column.name == name)
+            .ok_or_else(|| invalid(format!("Cannot find UVFITS column {name}")))?;
+        let expected = self
+            .rows
+            .checked_mul(width)
+            .ok_or_else(|| invalid("FITS column size overflow"))?;
+        if column.data_type.repeat != width {
+            return Err(invalid(format!(
+                "UVFITS column {name} needs {width} values per row"
+            )));
+        }
         let values = self.hdu.read_col(self.fits, name).map_err(invalid)?;
-        if self.rows.checked_mul(width) != Some(values.len()) {
+        if values.len() != expected {
             return Err(invalid(format!(
                 "UVFITS column {name} needs {width} values per row"
             )));
@@ -268,6 +293,35 @@ impl BinaryTable<'_> {
             Err(invalid(format!("Inconsistent UVFITS source column {name}")))
         }
     }
+}
+
+fn fixed_text_width(fits: &mut FitsFile, column: i32, name: &str) -> MsResult<usize> {
+    let mut typ = 0;
+    let mut repeat = 0;
+    let mut width = 0;
+    let mut status = 0;
+    // SAFETY: the live handle has the caller's table HDU selected, and all
+    // output pointers refer to initialized writable values of the right types.
+    unsafe {
+        sys::ffgtclll(
+            fits.as_raw(),
+            column,
+            &mut typ,
+            &mut repeat,
+            &mut width,
+            &mut status,
+        )
+    };
+    errors::check_status(status).map_err(invalid)?;
+    if typ != sys::TSTRING as i32 || repeat <= 0 || width <= 0 {
+        return Err(invalid(format!(
+            "UVFITS column {name} must contain fixed-width text"
+        )));
+    }
+    usize::try_from(repeat.max(width))
+        .ok()
+        .and_then(|size| size.checked_add(1))
+        .ok_or_else(|| invalid("FITS text width overflow"))
 }
 
 fn read_array(mut table: BinaryTable<'_>, telescope: &str) -> MsResult<Array> {

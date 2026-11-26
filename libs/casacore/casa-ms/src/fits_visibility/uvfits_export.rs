@@ -284,12 +284,23 @@ fn write_groups(
     let mut samples = vec![0.0; samples_per_if * ifs];
     let mut parameters = Vec::with_capacity(11);
     let target_shape = [layout.correlations.len(), layout.input_channels];
+    // CASA decides globally from the first selected input row before sorting.
+    let first = layout
+        .rows
+        .iter()
+        .map(|row| row.index)
+        .min()
+        .ok_or_else(|| invalid("No UVFITS rows"))?;
     let spectrum = has_column(table, "WEIGHT_SPECTRUM")
         && table
-            .array_shape(layout.rows[0].index, "WEIGHT_SPECTRUM")?
-            .is_none_or(|shape| shape == target_shape);
-    let cells_per_group = samples.len().max(1);
-    let batch_groups = (262_144 / cells_per_group).clamp(1, 1024);
+            .array_shape(first, "WEIGHT_SPECTRUM")?
+            .is_some_and(|shape| shape == target_shape);
+    let batch_groups = visibility_batch_groups(
+        layout.input_channels,
+        layout.correlations.len(),
+        ifs,
+        spectrum,
+    );
     let mut number = 0;
     for groups in layout.groups.chunks(batch_groups) {
         let mut visibility = read_visibility_block(table, column, layout, groups, spectrum)?;
@@ -331,6 +342,36 @@ fn write_groups(
         }
     }
     Ok(())
+}
+
+fn visibility_batch_groups(
+    channels: usize,
+    correlations: usize,
+    ifs: usize,
+    spectrum: bool,
+) -> usize {
+    const BUDGET: usize = 16 * 1024 * 1024;
+    let sample = size_of::<casa_core::Complex32>()
+        + size_of::<bool>()
+        + usize::from(spectrum) * size_of::<f32>();
+    let row_sample_bytes = channels
+        .saturating_mul(sample)
+        .saturating_add(size_of::<f32>());
+    let visibility = correlations
+        .saturating_mul(row_sample_bytes)
+        .saturating_add(4 * size_of::<ArrayValue>());
+    let group = ifs
+        .saturating_mul(visibility)
+        .saturating_add(3 * size_of::<f64>());
+    (BUDGET / group.max(1)).clamp(1, 1024)
+}
+
+#[cfg(test)]
+#[test]
+fn uvfits_export_batches_follow_input_visibility_size() {
+    assert_eq!(visibility_batch_groups(63, 2, 1, true), 1024);
+    assert!(visibility_batch_groups(131_072, 4, 2, true) <= 2);
+    assert_eq!(visibility_batch_groups(1_048_576, 4, 2, true), 1);
 }
 
 fn write_group(

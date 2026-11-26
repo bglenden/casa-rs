@@ -2,8 +2,9 @@
 //! Populate standard MeasurementSet subtables from UVFITS metadata.
 
 use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::epoch::EpochRef;
 use casa_core::measures::frequency::FrequencyRef;
-use casa_core::measures::{MPosition, PositionRef};
+use casa_core::measures::{MEpoch, MPosition, MeasFrame, MjdHighPrec, PositionRef};
 use casa_core::quanta::{Quantity, Unit};
 use casa_core::{Complex32, Correlation, PrimitiveType, Value};
 use casa_measures::table_measures::{MeasureType, TableMeasDesc};
@@ -44,7 +45,8 @@ pub(super) fn write_metadata(
     write_polarization(ms, &layout.corr)?;
     write_feeds(ms, layout, &extensions.array, time)?;
     write_spectral_windows(ms, header, layout, extensions, usage.windows)?;
-    write_sources(ms, header, layout, extensions, usage, time)?;
+    let directions = SourceDirections::new(header, extensions, frame, epoch, time)?;
+    write_sources(ms, header, layout, extensions, usage, &directions)?;
     Ok(())
 }
 
@@ -396,7 +398,11 @@ fn write_spectral_windows(
     windows: usize,
 ) -> MsResult<()> {
     let reference = spectral_reference(header);
-    let stored_reference = source_velocity_frame(extensions).unwrap_or(reference);
+    let stored_reference = if header.frame.is_some() {
+        reference
+    } else {
+        source_velocity_frame(extensions).unwrap_or(reference)
+    };
     let axis = &layout.frequency;
     for id in 0..windows {
         let mut window = extensions.spectral.as_ref().map_or(
@@ -468,7 +474,7 @@ fn write_sources(
     layout: &GroupLayout,
     extensions: &Extensions,
     usage: &Usage,
-    time: f64,
+    directions: &SourceDirections<'_>,
 ) -> MsResult<()> {
     let defaults = Source {
         name: header.object.clone(),
@@ -491,7 +497,8 @@ fn write_sources(
     };
     for id in 0..fields {
         let (name, code, direction, count, flag) = if let Some(source) = source(id) {
-            let (direction, order) = source_direction(source)?;
+            let coordinates = directions.convert(source)?;
+            let (direction, order) = coordinates.phase_direction();
             (
                 source.name.as_str(),
                 source.code.as_str(),
@@ -509,7 +516,7 @@ fn write_sources(
             &[
                 ("NAME", s(name)),
                 ("CODE", s(code)),
-                ("TIME", f(time)),
+                ("TIME", f(directions.time)),
                 ("NUM_POLY", i(count)),
                 ("SOURCE_ID", i(if present { id } else { -1 })),
                 ("FLAG_ROW", b(flag)),
@@ -534,19 +541,12 @@ fn write_sources(
         ColumnSchema::array_variable("POSITION", PrimitiveType::Float64, Some(1)),
         None,
     )?;
-    TableMeasDesc::new_fixed("POSITION", MeasureType::Position, "ITRF").write(table)?;
+    crate::ms::apply_column_metadata(table, schema::source::OPTIONAL_COLUMNS);
+    TableMeasDesc::new_fixed("REST_FREQUENCY", MeasureType::Frequency, "LSRK").write(table)?;
     table.add_column(ColumnSchema::record("SOURCE_MODEL"), None)?;
     for &(id, window, start) in &usage.occurrences {
         let source = source(id).ok_or_else(|| invalid("missing observed UVFITS source"))?;
-        let has_motion = source.motion_per_day.iter().any(|rate| rate.abs() > 0.0);
-        let angle = canonical_direction(if has_motion {
-            source.apparent_deg
-        } else {
-            source.direction_deg
-        });
-        let motion = source
-            .motion_per_day
-            .map(|value| value.to_radians() / 86_400.0);
+        let coordinates = directions.convert(source)?;
         let mut row = row_from_defs(
             schema::source::REQUIRED_COLUMNS,
             &[
@@ -557,8 +557,8 @@ fn write_sources(
                 ("NAME", s(&source.name)),
                 ("CALIBRATION_GROUP", i(-1)),
                 ("NUM_LINES", i(1)),
-                ("DIRECTION", f64_array(&angle, vec![2])),
-                ("PROPER_MOTION", f64_array(&motion, vec![2])),
+                ("DIRECTION", f64_array(&coordinates.angle, vec![2])),
+                ("PROPER_MOTION", f64_array(&coordinates.motion, vec![2])),
             ],
         );
         row.upsert(
@@ -572,38 +572,117 @@ fn write_sources(
     Ok(())
 }
 
-fn source_direction(source: &Source) -> MsResult<(Value, i32)> {
-    let motion = source
-        .motion_per_day
-        .map(|value| value.to_radians() / 86_400.0);
-    if motion.iter().all(|&value| value == 0.0) {
-        if (source.epoch - 2000.0).abs() > 20.0
-            && (source.epoch - 1950.0).abs() > 0.01
-            && source.epoch != -1.0
-        {
+struct SourceDirections<'a> {
+    telescope: &'a str,
+    target: DirectionRef,
+    apparent_frame: MeasFrame,
+    time: f64,
+}
+
+impl<'a> SourceDirections<'a> {
+    fn new(
+        header: &'a Header,
+        extensions: &Extensions,
+        target: DirectionRef,
+        epoch: &str,
+        time: f64,
+    ) -> MsResult<Self> {
+        let has_motion = extensions.sources.as_ref().is_some_and(|sources| {
+            sources
+                .values()
+                .any(|source| source.motion_per_day != [0.0; 2])
+        });
+        let mut apparent_frame = MeasFrame::new();
+        if has_motion {
+            let mjd = time / 86_400.0;
+            let reference = epoch.parse::<EpochRef>().map_err(invalid)?;
+            apparent_frame =
+                apparent_frame.with_epoch(MEpoch::new(MjdHighPrec::from_mjd(mjd), reference));
+            if let Some(provider) = super::export_metadata::fits_measures() {
+                apparent_frame = apparent_frame.with_measures(provider);
+            }
+            if apparent_frame.dut1_for_mjd(mjd)?.is_none() {
+                apparent_frame = apparent_frame.with_dut1(0.0);
+            }
+            let [x, y, z] = extensions.array.origin;
+            if [x, y, z] != [0.0; 3] {
+                apparent_frame = apparent_frame.with_position(MPosition::new_itrf(x, y, z));
+            }
+        }
+        Ok(Self {
+            telescope: &header.telescope,
+            target,
+            apparent_frame,
+            time,
+        })
+    }
+
+    fn convert(&self, source: &Source) -> MsResult<SourceCoordinates> {
+        let moving = source.motion_per_day != [0.0; 2];
+        let (input, direction) = if moving {
+            (DirectionRef::APP, source.apparent_deg)
+        } else if source.epoch == -1.0 {
+            (self.target, source.direction_deg)
+        } else if (source.epoch - 1950.0).abs() <= 0.01 || (source.epoch - 2000.0).abs() <= 20.0 {
+            (
+                direction_frame(source.epoch, self.telescope),
+                source.direction_deg,
+            )
+        } else {
             return Err(invalid(format!(
                 "Cannot handle epoch in UVFITS source table: {}",
                 source.epoch
             )));
-        }
-        Ok((
-            f64_array(&canonical_direction(source.direction_deg), vec![2, 1]),
-            0,
-        ))
-    } else {
-        let position = canonical_direction(source.apparent_deg);
-        Ok((
-            f64_array(
-                &[position[0], motion[0], position[1], motion[1]],
-                vec![2, 2],
-            ),
-            1,
-        ))
+        };
+        let input_angles = direction.map(f64::to_radians);
+        let convert = |[ra, dec]: [f64; 2]| -> MsResult<[f64; 2]> {
+            let position = MDirection::from_angles(ra, dec, input)
+                .convert_to(self.target, &self.apparent_frame)
+                .map_err(invalid)?;
+            let (ra, dec) = position.as_angles();
+            Ok([ra.sin().atan2(ra.cos()), dec])
+        };
+        let angle = convert(input_angles)?;
+        let motion = if !moving {
+            [0.0; 2]
+        } else {
+            // Differentiate the direction transform at the source position.
+            // The epoch stays fixed while the input direction changes.
+            let delta = source.motion_per_day.map(|rate| rate.to_radians() / 16.0);
+            let ahead = convert(std::array::from_fn(|axis| input_angles[axis] + delta[axis]))?;
+            let behind = convert(std::array::from_fn(|axis| input_angles[axis] - delta[axis]))?;
+            let ra = ahead[0] - behind[0];
+            [
+                ra.sin().atan2(ra.cos()) / 10_800.0,
+                (ahead[1] - behind[1]) / 10_800.0,
+            ]
+        };
+        Ok(SourceCoordinates {
+            angle,
+            motion,
+            moving,
+        })
     }
 }
 
-fn canonical_direction(angles_deg: [f64; 2]) -> [f64; 2] {
-    let [lon, lat] = angles_deg.map(f64::to_radians);
-    let (longitude, latitude) = MDirection::from_angles(lon, lat, DirectionRef::J2000).as_angles();
-    [longitude.sin().atan2(longitude.cos()), latitude]
+struct SourceCoordinates {
+    angle: [f64; 2],
+    motion: [f64; 2],
+    moving: bool,
+}
+
+impl SourceCoordinates {
+    fn phase_direction(&self) -> (Value, i32) {
+        if self.moving {
+            (
+                f64_array(
+                    &[self.angle[0], self.motion[0], self.angle[1], self.motion[1]],
+                    vec![2, 2],
+                ),
+                1,
+            )
+        } else {
+            (f64_array(&self.angle, vec![2, 1]), 0)
+        }
+    }
 }

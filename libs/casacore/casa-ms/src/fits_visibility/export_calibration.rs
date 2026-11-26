@@ -153,7 +153,40 @@ pub(super) fn write_system_calibration(
         return Err(invalid("Irregular number of polarizations in SYSCAL"));
     }
     write_temperature(fits, layout, meta, &rows, first.system_temperature.len())?;
-    write_gain(fits, ms, layout, meta, &rows)
+    if regular_gain_times(&rows) {
+        write_gain(fits, ms, layout, meta, &rows)?;
+    }
+    Ok(())
+}
+
+fn regular_gain_times(rows: &[SysCal]) -> bool {
+    let mut counts = rows.chunk_by(|a, b| a.antenna == b.antenna).map(|group| {
+        1 + group
+            .windows(2)
+            .filter(|pair| pair[0].time != pair[1].time)
+            .count()
+    });
+    counts
+        .next()
+        .is_some_and(|first| counts.all(|count| count == first))
+}
+
+#[cfg(test)]
+#[test]
+fn gain_curve_checks_distinct_calibration_times_per_antenna() {
+    let sample = |antenna, time, window| SysCal {
+        antenna,
+        time,
+        window,
+        interval: 1.0,
+        system_temperature: vec![100.0],
+    };
+    let mut rows = vec![sample(0, 0.0, 1), sample(0, 1.0, 1), sample(1, 0.0, 1)];
+    assert!(!regular_gain_times(&rows));
+    rows.push(sample(1, 0.0, 2));
+    assert!(!regular_gain_times(&rows));
+    rows.push(sample(1, 1.0, 1));
+    assert!(regular_gain_times(&rows));
 }
 
 fn read_syscal(table: &Table, layout: &OutputLayout) -> MsResult<Vec<SysCal>> {
@@ -256,6 +289,16 @@ fn write_temperature(
             .any(|row| row.time != first.time || row.antenna != first.antenna)
         {
             return Err(invalid("Irregular times or antennas in SYSCAL"));
+        }
+        if layout.combine
+            && group
+                .iter()
+                .enumerate()
+                .any(|(index, row)| row.window != index as i32 + 1)
+        {
+            return Err(invalid(
+                "Missing or repeated SYSCAL spectral window in a combined IF",
+            ));
         }
         times.push(((first.time - origin) / DAY) as f32);
         intervals.push((first.interval / DAY) as f32);

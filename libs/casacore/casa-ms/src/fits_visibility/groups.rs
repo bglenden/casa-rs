@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Random-groups UVFITS primary visibility arrays.
 
-use std::ffi::{CString, c_long};
+use std::ffi::{CStr, CString, c_char, c_long};
 use std::ops::Range;
 use std::path::Path;
 use std::ptr;
@@ -185,7 +185,7 @@ impl GroupLayout {
                 .checked_mul(length)
                 .ok_or_else(|| invalid("UVFITS axis product overflow"))?;
         }
-        Self::from_axes(axes, stride)
+        Self::from_axes(axes, stride, false)
     }
 
     fn from_table(fits: &mut FitsFile, hdu: &FitsHdu, column: usize) -> MsResult<Self> {
@@ -218,10 +218,10 @@ impl GroupLayout {
                 .checked_mul(length)
                 .ok_or_else(|| invalid("UVFITS axis product overflow"))?;
         }
-        Self::from_axes(axes, stride)
+        Self::from_axes(axes, stride, true)
     }
 
-    fn from_axes(mut axes: Vec<Axis>, stride: usize) -> MsResult<Self> {
+    fn from_axes(mut axes: Vec<Axis>, stride: usize, binary: bool) -> MsResult<Self> {
         let direction_deg = ["RA", "DEC"].map(|name| {
             axes.iter()
                 .find(|axis| {
@@ -243,7 +243,7 @@ impl GroupLayout {
             .iter()
             .find(|axis| axis.name == "STOKES")
             .ok_or_else(|| invalid("UVFITS has no STOKES axis"))?;
-        let (corr, input_corr_order) = correlation_order(stokes)?;
+        let (corr, input_corr_order) = correlation_order(stokes, binary)?;
         let corr_stride = stokes.stride;
         let frequency = axes
             .iter()
@@ -253,7 +253,11 @@ impl GroupLayout {
         if !axes
             .iter()
             .any(|axis| axis.name == "COMPLEX" && axis.length == 3 && axis.stride == 1)
-            || stride != 3 * corr.len() * frequency.length * windows
+            || 3_usize
+                .checked_mul(corr.len())
+                .and_then(|n| n.checked_mul(frequency.length))
+                .and_then(|n| n.checked_mul(windows))
+                != Some(stride)
         {
             return Err(invalid(
                 "UVFITS visibility samples require real, imaginary and weight components",
@@ -346,6 +350,13 @@ impl RandomGroups {
         let count = positive_count(&primary, fits, "GCOUNT")?;
         let layout = GroupLayout::from_header(fits, &primary)?;
         let parameter_count = positive_count(&primary, fits, "PCOUNT")?;
+        let sample_bytes = (bitpix.unsigned_abs() / 8) as usize;
+        let payload = parameter_count
+            .checked_add(layout.sample_count)
+            .and_then(|samples| samples.checked_mul(count))
+            .and_then(|samples| samples.checked_mul(sample_bytes))
+            .ok_or_else(|| invalid("UVFITS random-groups payload size overflow"))?;
+        verify_payload(fits, payload)?;
         let parameters = (1..=parameter_count)
             .map(|index| {
                 let key = |prefix| format!("{prefix}{index}");
@@ -486,7 +497,10 @@ impl BinaryGroups {
     fn open(fits: &mut FitsFile) -> MsResult<Self> {
         let count = fits.num_hdus().map_err(invalid)?;
         for index in 1..count {
-            let hdu = fits.hdu(index).map_err(invalid)?;
+            if !binary_extension_name(fits, index)?.is_some_and(|name| name.contains("UV")) {
+                continue;
+            }
+            let hdu = binary_extension(fits, index)?;
             let HduInfo::TableInfo {
                 column_descriptions,
                 num_rows,
@@ -500,23 +514,33 @@ impl BinaryGroups {
             else {
                 continue;
             };
-            if !hdu.name(fits).map_err(invalid)?.contains("UV") {
-                continue;
-            }
             let layout = GroupLayout::from_table(fits, &hdu, column + 1)?;
+            if column_descriptions[column].data_type.repeat != layout.sample_count {
+                return Err(invalid(
+                    "UVFITS binary visibility row does not match its TDIM",
+                ));
+            }
             let rows = *num_rows;
             let keys = [
                 "BASELINE", "ANTENNA1", "ANTENNA2", "SUBARRAY", "DATE", "SOURCE", "FREQSEL",
             ];
             let columns = column_descriptions
                 .iter()
-                .filter_map(|col| {
+                .filter(|col| {
                     let name = col.name.as_str();
-                    (keys.contains(&name)
-                        || ["UU", "VV", "WW"].iter().any(|key| name.contains(key)))
-                    .then(|| col.name.clone())
+                    keys.contains(&name) || ["UU", "VV", "WW"].iter().any(|key| name.contains(key))
                 })
-                .collect::<Vec<_>>();
+                .map(|col| {
+                    if col.data_type.repeat == 1 {
+                        Ok(col.name.clone())
+                    } else {
+                        Err(invalid(format!(
+                            "UVFITS column {} must be scalar",
+                            col.name
+                        )))
+                    }
+                })
+                .collect::<MsResult<Vec<_>>>()?;
             let definitions = columns
                 .iter()
                 .map(|name| Parameter {
@@ -586,8 +610,11 @@ impl BinaryGroups {
     }
 }
 
-fn correlation_order(stokes: &Axis) -> MsResult<(Vec<Correlation>, Vec<usize>)> {
-    use Correlation::{LL, LR, RL, RR, XX, XY, YX, YY};
+fn correlation_order(stokes: &Axis, binary: bool) -> MsResult<(Vec<Correlation>, Vec<usize>)> {
+    use Correlation::{I, LL, LR, Q, RL, RR, U, V, XX, XY, YX, YY};
+    if stokes.length > 12 {
+        return Err(invalid("Too many UVFITS Stokes values"));
+    }
     let inputs = (0..stokes.length)
         .map(|index| {
             let code = (stokes.coordinate(index) + 0.5).floor() as i32;
@@ -600,6 +627,10 @@ fn correlation_order(stokes: &Axis) -> MsResult<(Vec<Correlation>, Vec<usize>)> 
                 -6 => YY,
                 -7 => XY,
                 -8 => YX,
+                1 if binary => I,
+                2 if binary => Q,
+                3 if binary => U,
+                4 if binary => V,
                 1..=4 => {
                     return Err(invalid(
                         "UVFITS Stokes parameters cannot be decomposed into correlations",
@@ -612,7 +643,104 @@ fn correlation_order(stokes: &Axis) -> MsResult<(Vec<Correlation>, Vec<usize>)> 
         .collect::<MsResult<Vec<_>>>()?;
     let mut inputs = inputs;
     inputs.sort_unstable_by_key(|&(correlation, _)| correlation.casacore_code());
+    if inputs.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+        return Err(invalid("Repeated UVFITS Stokes values"));
+    }
     Ok(inputs.into_iter().unzip())
+}
+
+pub(super) fn binary_extension_name(fits: &mut FitsFile, index: usize) -> MsResult<Option<String>> {
+    let number = i32::try_from(index + 1).map_err(invalid)?;
+    let mut typ = 0;
+    let mut status = 0;
+    // SAFETY: the live handle belongs to fits and CFITSIO writes one int to each output.
+    unsafe { sys::ffmahd(fits.as_raw(), number, &mut typ, &mut status) };
+    errors::check_status(status).map_err(invalid)?;
+    if typ != sys::BINARY_TBL as i32 {
+        return Ok(None);
+    }
+    raw_text_key(fits, c"EXTNAME")
+}
+
+/// Read a recognized binary table after checking the descriptor types supported by fitsio.
+pub(super) fn binary_extension(fits: &mut FitsFile, index: usize) -> MsResult<FitsHdu> {
+    let mut fields = 0;
+    let mut status = 0;
+    // SAFETY: the live FITS handle is positioned on the binary extension by the caller.
+    unsafe { sys::ffgncl(fits.as_raw(), &mut fields, &mut status) };
+    errors::check_status(status).map_err(invalid)?;
+    for column in 1..=fields {
+        let key = CString::new(format!("TFORM{column}")).map_err(invalid)?;
+        let form = raw_text_key(fits, &key)?.unwrap_or_default();
+        let typ = form
+            .trim_start_matches(|c: char| c.is_ascii_digit())
+            .bytes()
+            .next();
+        if !typ.is_some_and(|code| b"LXBSEJDIKAUVW".contains(&code)) {
+            return Err(invalid(format!(
+                "Unsupported UVFITS binary column format {form:?}"
+            )));
+        }
+    }
+    let hdu = fits.hdu(index).map_err(invalid)?;
+    let width = hdu.read_key::<i64>(fits, "NAXIS1").map_err(invalid)?;
+    let rows = hdu.read_key::<i64>(fits, "NAXIS2").map_err(invalid)?;
+    let width = usize::try_from(width).map_err(invalid)?;
+    let rows = usize::try_from(rows).map_err(invalid)?;
+    let bytes = rows
+        .checked_mul(width)
+        .ok_or_else(|| invalid("UVFITS table byte size overflow"))?;
+    verify_payload(fits, bytes)?;
+    Ok(hdu)
+}
+
+fn verify_payload(fits: &mut FitsFile, bytes: usize) -> MsResult<()> {
+    let Some(last_byte) = bytes.checked_sub(1) else {
+        return Ok(());
+    };
+    let offset = i64::try_from(last_byte).map_err(invalid)?;
+    let mut value = 0_u8;
+    let mut status = 0;
+    // SAFETY: the FITS handle has the desired HDU selected. The function reads
+    // exactly one byte at the checked data-relative offset into value.
+    unsafe {
+        sys::ffgextn(
+            fits.as_raw(),
+            offset,
+            1,
+            (&mut value as *mut u8).cast(),
+            &mut status,
+        )
+    };
+    errors::check_status(status)
+        .map_err(|error| invalid(format!("Incomplete UVFITS payload: {error}")))
+}
+
+fn raw_text_key(fits: &mut FitsFile, key: &CStr) -> MsResult<Option<String>> {
+    let mut value = [0 as c_char; sys::FLEN_VALUE as usize];
+    let mut status = 0;
+    // SAFETY: CFITSIO expects a NUL-terminated key and a FLEN_VALUE text
+    // buffer. It terminates the returned value and permits omitting comments.
+    unsafe {
+        sys::ffgkys(
+            fits.as_raw(),
+            key.as_ptr(),
+            value.as_mut_ptr(),
+            ptr::null_mut(),
+            &mut status,
+        );
+    }
+    if status == sys::KEY_NO_EXIST as i32 {
+        return Ok(None);
+    }
+    errors::check_status(status).map_err(invalid)?;
+    // SAFETY: the buffer contains a terminated CFITSIO string.
+    Ok(Some(
+        unsafe { CStr::from_ptr(value.as_ptr()) }
+            .to_string_lossy()
+            .trim()
+            .to_owned(),
+    ))
 }
 
 fn positive_count(hdu: &FitsHdu, fits: &mut FitsFile, key: &str) -> MsResult<usize> {

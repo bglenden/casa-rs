@@ -9,6 +9,7 @@ use casa_core::measures::epoch::EpochRef;
 use casa_core::measures::{
     MEpoch, MPosition, MeasFrame, MeasuresProvider, MjdHighPrec, PositionRef,
 };
+use casa_core::quanta::{Quantity, Unit};
 use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_tables::Table;
 use fitsio::FitsFile;
@@ -107,7 +108,7 @@ impl ExportHeader {
             antenna_numbers,
             time: f64_cell(ms.main_table(), first_row, "TIME")?,
             rest_frequency,
-            measures: export_measures(),
+            measures: fits_measures(),
         })
     }
 
@@ -130,7 +131,7 @@ impl ExportHeader {
 }
 
 #[cfg(not(test))]
-fn export_measures() -> Option<Arc<dyn MeasuresProvider>> {
+pub(super) fn fits_measures() -> Option<Arc<dyn MeasuresProvider>> {
     use casa_measures::MeasuresRuntime;
     use std::sync::Mutex;
 
@@ -156,7 +157,7 @@ fn export_measures() -> Option<Arc<dyn MeasuresProvider>> {
 }
 
 #[cfg(test)]
-fn export_measures() -> Option<Arc<dyn MeasuresProvider>> {
+pub(super) fn fits_measures() -> Option<Arc<dyn MeasuresProvider>> {
     crate::open_measures_runtime().ok()
 }
 
@@ -169,7 +170,7 @@ pub(super) fn write_extensions(
 ) -> MsResult<()> {
     write_frequency(fits, layout, &metadata.telescope)?;
     write_antenna(fits, ms, layout, metadata, options.writestation)?;
-    if layout.multi {
+    if layout.multi || layout.astron_bin_width.is_some() {
         write_source(fits, ms, layout, metadata)?;
     }
     if options.writesyscal {
@@ -513,6 +514,22 @@ fn write_source(
     hdu.write_key(fits, "NO_IF", width as i32)
         .map_err(invalid)?;
     hdu.write_key(fits, "FREQID", 1).map_err(invalid)?;
+    if layout.astron_bin_width.is_some() {
+        let spectral = subtable(ms, SubtableId::SpectralWindow)?;
+        for (keyword, column) in [
+            ("VELTYP", "NFRA_VELOCDEFINITION"),
+            ("VELDEF", "NFRA_CONVERSIONTYPE"),
+        ] {
+            if has_column(spectral, column) && spectral.is_cell_defined(0, column)? {
+                hdu.write_key(
+                    fits,
+                    keyword,
+                    string_cell(spectral, 0, column)?.to_ascii_uppercase(),
+                )
+                .map_err(invalid)?;
+            }
+        }
+    }
     let sources = ms.subtable(SubtableId::Source);
     let mut cells = SourceCells::default();
     for (&id, &number) in &layout.fields {
@@ -557,11 +574,7 @@ impl SourceCells {
     fn record_source(&mut self, source: Option<(&Table, usize)>, width: usize) -> MsResult<()> {
         if let Some((table, row)) = source {
             self.codes.push(string_cell(table, row, "CODE")?.to_owned());
-            let motion = numeric_array(table, row, "PROPER_MOTION")?;
-            self.motion.push([
-                motion.first().copied().unwrap_or_default().to_degrees() * 86_400.0,
-                motion.get(1).copied().unwrap_or_default().to_degrees() * 86_400.0,
-            ]);
+            self.motion.push(proper_motion(table, row)?);
             self.frequencies.extend(std::iter::repeat_n(
                 optional_array_first(table, row, "REST_FREQUENCY"),
                 width,
@@ -617,6 +630,33 @@ impl SourceCells {
         }
         Ok(())
     }
+}
+
+fn proper_motion(table: &Table, row: usize) -> MsResult<[f64; 2]> {
+    let column = "PROPER_MOTION";
+    if !table.is_cell_defined(row, column)? {
+        return Ok([0.0; 2]);
+    }
+    let motion = numeric_array(table, row, column)?;
+    let mut values = [0.0; 2];
+    let units = match table
+        .column_keywords(column)
+        .and_then(|record| record.get("QuantumUnits"))
+    {
+        Some(Value::Array(ArrayValue::String(units))) => units.as_slice(),
+        _ => None,
+    };
+    let degrees_per_day = Unit::new("deg/d").map_err(invalid)?;
+    for (axis, (output, input)) in values.iter_mut().zip(motion).enumerate() {
+        let unit = units
+            .and_then(|names| names.get(axis).or_else(|| names.first()))
+            .map_or("rad/s", String::as_str);
+        // CASA treats a value with unrecognized or incompatible units as deg/d.
+        *output = Quantity::new(input, unit)
+            .and_then(|value| value.get_value_in(&degrees_per_day))
+            .unwrap_or(input);
+    }
+    Ok(values)
 }
 
 fn direction_degrees(table: &Table, row: usize) -> MsResult<[f64; 2]> {

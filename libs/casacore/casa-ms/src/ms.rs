@@ -1446,16 +1446,17 @@ fn merge_measinfo_keywords(existing: Option<&RecordValue>, defaults: &RecordValu
 }
 
 fn ensure_main_column_keywords(main: &mut Table) {
-    main.set_column_keywords("FLAG_CATEGORY", flag_category_keywords());
-}
-
-fn flag_category_keywords() -> RecordValue {
-    RecordValue::new(vec![RecordField::new(
-        "CATEGORY",
-        Value::Array(ArrayValue::String(
-            ndarray::ArrayD::from_shape_vec(vec![0], Vec::<String>::new()).unwrap(),
-        )),
-    )])
+    let mut keywords = main
+        .column_keywords("FLAG_CATEGORY")
+        .cloned()
+        .unwrap_or_default();
+    if keywords.get("CATEGORY").is_none() {
+        keywords.upsert(
+            "CATEGORY",
+            Value::Array(ArrayValue::from_string_vec(Vec::new())),
+        );
+        main.set_column_keywords("FLAG_CATEGORY", keywords);
+    }
 }
 
 /// Resolve the filesystem path of a subtable from the MAIN table keywords.

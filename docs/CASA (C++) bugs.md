@@ -12454,6 +12454,12 @@ two averaged channel centres, about 230.508 GHz, in the original
 topocentric frame. Antenna positions round-trip in ITRF. The native
 writer emits the actual selected windows and uses standard UVFITS antenna
 coordinates.
+
+The Astron averaging loop also indexes the selected channels' weights
+without the correlation stride. On the two-correlation fixture with a
+flagged channel and unequal weights, the native file has independently
+weighted means of 1 and 24, with weights 2 and 10. These values are the
+means and summed weights of the unflagged samples for each correlation.
 ## Legacy AIPS visibility tables can fail after preceding metadata
 
 CASA 6.7.6.14 accepts the legacy primary-array marker `NAXIS1=777777701`
@@ -12463,3 +12469,20 @@ HDU and raise `NAXIS keyword missing`. casa-rs locates the visibility
 extension independently of the metadata order. It interprets the table's
 scaled parameters and signed weights and produces a normal MSv2 that the
 pinned reader can open.
+
+## UVFITS import can fail for apparent directions and shift separate subarrays
+
+For a nonzero proper motion in an AIPS SU row, CASA 6.7.6.14 attempts to
+convert the apparent direction without an observation frame. It raises
+`Missing information in Frame specified for conversion` and removes the
+incomplete output. casa-rs supplies the FITS observation epoch and
+converts the direction and its rate into the primary direction frame.
+The regression compares both coefficients with pinned CASA's measures
+tool using an explicit epoch.
+
+The pinned exporter writes a one-based `SUBARRAY` random-group parameter
+when antenna station numbers require separate `ANTENNA1` and `ANTENNA2`
+parameters. Its importer then uses that parameter as a zero-based MS ID.
+On the eight-antenna stock fixture with a station renamed to 300, the
+pinned reader imports `ARRAY_ID` 1 for the original array 0. Native
+import converts the one-based FITS parameter back to the original MS ID.
