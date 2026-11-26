@@ -20,8 +20,8 @@ Last state from CLI runs.
 
 `ProviderContractEnvelope`, `build.rs` JSON-fingerprinting probes (such as
 `IMAGE_PROVIDER_PROBES`), and the mandatory 24-binary `ApplicationCatalog`
-subprocess launcher are retired (the executable resolver is deleted once
-`casars.tasks` cuts over to in-process execution per ADR-0017).
+subprocess launcher and executable resolver are retired. Python executes the
+task adapters in-process (ADR-0017).
 
 A profile must name the current task and use the current file format and task
 profile version. Refuse stale files and tell the user to recreate them. Bump

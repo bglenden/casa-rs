@@ -8,7 +8,7 @@ Run with CASA's Python, on a data root as `tclean_case_matrix.py` describes:
     /Applications/CASA.app/Contents/MacOS/python3 -I \
         tools/casa-compat/tclean_history_compare.py \
         --data-root <root> --casars-python <venv with the wheel> \
-        --imager-binary <binary> --output <new dir>
+        --output <new dir>
 
 For each product of each case it compares the object name, image type, the
 `miscinfo` keys `INSTRUME`, `distance`, `mpiprocs` and `chnchnks`, each history
@@ -144,7 +144,7 @@ def casa_then_native(args, casatasks, reader, vis):
         os.chdir(previous)
     before = {path.name: rows(path) for path in (folder / "run").iterdir()
               if path.name.startswith("im.") and path.is_dir()}
-    reply = run_native(args.casars_python, args.imager_binary,
+    reply = run_native(args.casars_python,
                        dict(values, niter=10, backend="cpu", gridprecision="f64"), folder)
     if "result" not in reply:
         return [f"casa-rs refused the restart: {json.dumps(reply)[:400]}"]
@@ -167,7 +167,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-root", type=Path, required=True)
     parser.add_argument("--casars-python", type=Path, required=True)
-    parser.add_argument("--imager-binary", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     global tb
@@ -191,7 +190,7 @@ def main():
                 casatasks.tclean(**values)
             finally:
                 os.chdir(previous)
-            reply = run_native(args.casars_python, args.imager_binary,
+            reply = run_native(args.casars_python,
                                dict(values, backend="cpu", gridprecision="f64"), folders["native"])
             if "result" not in reply:
                 raise RuntimeError(f"{case}: {json.dumps(reply)[:1500]}")

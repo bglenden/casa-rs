@@ -11,7 +11,6 @@ mod builtin;
 mod casa_value;
 mod catalog_parse;
 mod components;
-mod executable;
 mod parameters;
 mod projection;
 mod provider;
@@ -54,4 +53,3 @@ pub use application::{
     ApplicationLaunchDescriptor, builtin_application_catalog,
 };
 pub use builtin::{builtin_surface_bundle, builtin_surface_catalog};
-pub use executable::{SUITE_ROOT_ENV, installed_suite_root, resolve_task_executable};

@@ -13,7 +13,6 @@ import hashlib
 import importlib.util
 import json
 import math
-import os
 import subprocess
 import time
 from pathlib import Path
@@ -142,24 +141,28 @@ def compare_product(native, casa, name, reader, casatools, numpy):
     return entry
 
 
-def run_native(casars_python, imager_binary, values, folder, log_name="stderr.log", timeout=600):
+def native_extension_sha256(casars_python):
+    """Identify the extension loaded by the interpreter used for comparisons."""
+    path = subprocess.check_output(
+        [str(casars_python), "-I", "-c", "from casars import _core; print(_core.__file__)"],
+        text=True,
+    ).strip()
+    return sha256(Path(path))
+
+
+def run_native(casars_python, values, folder, log_name="stderr.log", timeout=600):
     """Call `casars.tasks.tclean(**values)` from `folder` in the casars interpreter.
 
     The reply holds `result` (tclean's record) or `refused` (the exception);
     `failed` instead when the interpreter timed out or did not reply.
     """
     folder = Path(folder)
-    environment = {
-        name: value for name, value in os.environ.items() if name != "CASA_RS_IMAGER_RUN_SUMMARY"
-    }
-    environment["CASARS_IMAGER_BIN"] = str(imager_binary)
     started = time.monotonic()
     try:
         run = subprocess.run(
             [str(casars_python), "-I", "-c", CHILD],
             input=json.dumps(values),
             cwd=folder,
-            env=environment,
             capture_output=True,
             text=True,
             timeout=timeout,

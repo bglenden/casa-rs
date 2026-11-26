@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::collections::HashMap;
 use std::fs;
 
 use super::*;
@@ -11,14 +10,12 @@ fn an_orphan_pending_figure_cannot_report_an_old_png_as_new_output() {
     let png = root.path().join("previous.png");
     fs::write(&png, b"previous-run-png").expect("previous figure");
     let reply = serde_json::json!({
-        "status":"succeeded", "surface":"simobserve", "value":{"kind":"none"},
-        "result":{"plots":[],"run":{"stem":"p"},"artifacts":[{
+        "plots":[],"run":{"stem":"p"},"artifacts":[{
             "kind":"observe.png","label":"Observation","path":png,
             "exists":false,"render_pending":true,"resource_kind":"file"
-        }]}
-    })
-    .to_string();
-    let error = plot_documents("simobserve", 0, &reply, 0).expect_err("orphan figure");
+        }]
+    });
+    let error = decode_plot_documents("simobserve", reply, 0).expect_err("orphan figure");
     assert!(
         error.contains("pending") && error.contains("figure"),
         "{error}"
@@ -84,161 +81,25 @@ fn simulation_figures_validate_payload_bounds_and_declared_destinations() {
         },
     };
     let mut reply = serde_json::json!({
-        "status":"succeeded","surface":"simobserve","value":{"kind":"none"},
-        "result":{"plots":[plot],"artifacts":[{"kind":"skymodel.png","label":"Model","path":"plot.png","exists":false,"render_pending":true,"resource_kind":"file"}]}
+        "plots":[plot],"artifacts":[{"kind":"skymodel.png","label":"Model","path":"plot.png","exists":false,"render_pending":true,"resource_kind":"file"}]
     });
     assert_eq!(
-        plot_documents("simobserve", 0, &reply.to_string(), 16)
+        decode_plot_documents("simobserve", reply.clone(), 16)
             .expect("valid transport")
             .len(),
         1
     );
     assert!(
-        plot_documents("simobserve", 0, &reply.to_string(), 15)
+        decode_plot_documents("simobserve", reply.clone(), 15)
             .unwrap_err()
             .contains("beyond")
     );
-    reply["result"]["artifacts"] = serde_json::json!([]);
+    reply["artifacts"] = serde_json::json!([]);
     assert!(
-        plot_documents("simobserve", 0, &reply.to_string(), 16)
+        decode_plot_documents("simobserve", reply.clone(), 16)
             .unwrap_err()
             .contains("declared")
     );
-    assert!(
-        plot_documents("simobserve", 1, "not a success", 0)
-            .expect("failure has no figures")
-            .is_empty()
-    );
-}
-
-#[test]
-fn the_application_catalog_lists_every_launch_entry() {
-    let applications = applications().expect("application catalog");
-    let catalog = builtin_application_catalog().expect("native application catalog");
-    assert_eq!(
-        applications
-            .iter()
-            .map(|entry| &entry.id)
-            .collect::<Vec<_>>(),
-        catalog
-            .applications
-            .iter()
-            .map(|entry| &entry.id)
-            .collect::<Vec<_>>(),
-    );
-    assert!(
-        applications
-            .iter()
-            .any(|application| application.id == "simalma")
-    );
-    assert!(
-        applications
-            .iter()
-            .any(|application| application.id == "simanalyze")
-    );
-    assert!(
-        applications
-            .iter()
-            .all(|application| application.id != "casars")
-    );
-    // Every entry is a task (#972 dropped the field that said so), and an
-    // entry holds only what a launch reads.
-    let entry = serde_json::to_value(&applications[0]).unwrap();
-    assert!(entry.get("kind").is_none() && entry.get("show_in_tui").is_none());
-    assert!(applications.iter().any(|application| {
-        application.id == "tclean"
-            && application.display_name == "Tclean"
-            && application.executable == "casars-imager"
-            && application.override_env == "CASARS_IMAGER_BIN"
-    }));
-}
-
-#[test]
-fn a_task_runs_its_override_or_names_what_is_missing() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let imager = dir.path().join("imager");
-    fs::write(&imager, "").expect("fake imager");
-    let environment = HashMap::from([(
-        "CASARS_IMAGER_BIN".to_string(),
-        imager.display().to_string(),
-    )]);
-    assert_eq!(
-        executable("tclean", &environment, dir.path()).unwrap(),
-        imager
-    );
-    let error = executable("tablebrowser", &environment, dir.path()).unwrap_err();
-    assert!(error.contains("no task \"tablebrowser\""), "{error}");
-
-    // An empty suite root is searched alone, and the error says so.
-    let environment = HashMap::from([(
-        "CASARS_SUITE_ROOT".to_string(),
-        dir.path().display().to_string(),
-    )]);
-    let error = executable("tclean", &environment, dir.path()).unwrap_err();
-    assert!(error.contains("CASARS_SUITE_ROOT"), "{error}");
-}
-
-/// The outcome of an `imstat` process that exited with `returncode` after
-/// replying `stdout`.
-fn imstat_outcome(returncode: i32, stdout: &str) -> OutcomeView {
-    let dir = tempfile::tempdir().expect("tempdir");
-    outcome("imstat", returncode, stdout, dir.path(), Vec::new()).expect("outcome")
-}
-
-#[test]
-fn an_outcome_keeps_each_way_a_task_can_end() {
-    let succeeded = imstat_outcome(
-        0,
-        r#"{"status":"succeeded","surface":"imstat","value":{"kind":"dict","entries":[{"key":"npts","value":{"kind":"float_array","dtype":"float64","shape":[1],"data":[12.0]}}]},"result":{}}"#,
-    );
-    let OutcomeView::Succeeded { value, completion } = succeeded else {
-        panic!("{succeeded:?}");
-    };
-    assert_eq!(
-        value,
-        CasaValue::dict([("npts", CasaValue::float64_vector([12.0]))])
-    );
-    assert_eq!(completion.surface_id, "imstat");
-
-    assert_eq!(
-        imstat_outcome(
-            2,
-            r#"{"status":"failed","surface":"imstat","kind":"validation","message":"no image","parameter":"imagename"}"#,
-        ),
-        OutcomeView::Refused {
-            message: "no image".to_string(),
-            parameter: Some("imagename".to_string()),
-        }
-    );
-    assert_eq!(
-        imstat_outcome(
-            1,
-            r#"{"status":"failed","surface":"imstat","kind":"execution","message":"cannot read"}"#,
-        ),
-        OutcomeView::Failed {
-            message: "cannot read".to_string(),
-            parameter: None,
-        }
-    );
-    // Python's return code for a signal is the negated signal number.
-    assert_eq!(imstat_outcome(-9, ""), OutcomeView::Signalled { signal: 9 });
-    let OutcomeView::MalformedReply { exit_code, reason } = imstat_outcome(0, "npts: 12") else {
-        panic!("a text reply is malformed");
-    };
-    assert_eq!(exit_code, Some(0));
-    assert!(reason.contains("not valid"), "{reason}");
-}
-
-#[test]
-fn a_reply_for_another_surface_is_malformed() {
-    let reply = imstat_outcome(
-        0,
-        r#"{"status":"succeeded","surface":"imhead","value":{"kind":"none"},"result":{}}"#,
-    );
-    let OutcomeView::MalformedReply { reason, .. } = reply else {
-        panic!("{reply:?}");
-    };
-    assert!(reason.contains("\"imhead\", not \"imstat\""), "{reason}");
 }
 
 #[test]

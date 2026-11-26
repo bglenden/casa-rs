@@ -23,7 +23,7 @@ the test; the case is skipped unless `--include-skipped`), `casa_environment`
 `resources/casa-compat/tclean-casa-test-cases.json` documents the format.
 
 Both CASA's `casatasks.tclean` and casa-rs's public Python `casars.tasks.tclean`
-(in the `--casars-python` interpreter, `CASARS_IMAGER_BIN` naming the binary)
+(through the native extension in the `--casars-python` interpreter)
 run every step with the same keyword arguments in their own working directory.
 Each case's CASA steps run, in order, in a fresh CASA Python process of their
 own (`--casa-steps`, its log beside the case): CASA keeps state between calls
@@ -56,7 +56,7 @@ import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from tclean_compare import compare_product, load_reader, members, run_native, sha256  # noqa: E402
+from tclean_compare import compare_product, load_reader, members, native_extension_sha256, run_native, sha256  # noqa: E402
 
 SCALARS = ("maxpsfsidelobe", "cyclethreshold")
 # The owner's 1e-4 (2026-11-02): each scalar is one pixel of a PSF or
@@ -72,7 +72,6 @@ def parse_args():
     parser.add_argument("--cases", type=Path, required=True, help="case-matrix JSON")
     parser.add_argument("--data-root", type=Path, required=True)
     parser.add_argument("--casars-python", type=Path, required=True)
-    parser.add_argument("--imager-binary", type=Path, required=True)
     parser.add_argument("--revision", required=True, help="40-character source revision")
     parser.add_argument("--backend", default="cpu", choices=("cpu", "gpu"))
     parser.add_argument("--precision", default="f64", choices=("f32", "f64"))
@@ -276,7 +275,7 @@ def run_case(args, name, case, common, staged, tools):
         values = call_values(common, step, casa_paths)
         native_values = call_values(common, step, native_paths)
         native_values.update(backend=args.backend, gridprecision=args.precision)
-        native = run_native(args.casars_python, args.imager_binary, native_values, native_folder,
+        native = run_native(args.casars_python, native_values, native_folder,
                             log_name=f"stderr-{index + 1}.log", timeout=args.timeout)
         entry = {"call": step.get("call"), "parameters": values, "casa": casa, "native": native}
         entry |= compare_step(casa, native, case)
@@ -351,7 +350,7 @@ def main():
         "casa_tasks": casatasks.version_string(),
         "casa_tools": casatools.version_string(),
         "native_revision": args.revision,
-        "imager_binary_sha256": sha256(args.imager_binary),
+        "native_extension_sha256": native_extension_sha256(args.casars_python),
         "backend": args.backend,
         "precision": args.precision,
         "host": platform.platform(),
