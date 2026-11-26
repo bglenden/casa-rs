@@ -5,7 +5,7 @@ use std::fmt::Write;
 
 use fitsio::sys;
 
-use super::{Debug, FitsListingMessage, Info, integer, real};
+use super::{Debug, Error, FitsListingMessage, Info, integer, real};
 use crate::fits_table::{
     FitsTableError, Reader, Result, cards::Header, column::Column, fits_status,
 };
@@ -15,6 +15,33 @@ pub(super) fn image(
     axes: &[i64],
     messages: &mut Vec<FitsListingMessage>,
 ) -> Result<()> {
+    let pixels = axes
+        .iter()
+        .copied()
+        .reduce(i64::saturating_mul)
+        .unwrap_or(0);
+    if pixels > 0 {
+        let mut pixel = 0.0;
+        let (mut any_null, mut status) = (0, 0);
+        // SAFETY: Read one pixel into pixel to validate the declared image
+        // extent without loading the full image.
+        unsafe {
+            sys::ffgpvd(
+                reader.ptr,
+                1,
+                pixels,
+                1,
+                0.0,
+                &mut pixel,
+                &mut any_null,
+                &mut status,
+            )
+        };
+        if status != 0 {
+            messages.push(Error("Error occured during construction process".into()));
+            return Ok(());
+        }
+    }
     let &[width, height] = axes else {
         return Ok(());
     };

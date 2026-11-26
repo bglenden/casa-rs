@@ -45,22 +45,22 @@ def image_and_tables():
         "GCOUNT  =                    1",
         "EXTNAME = 'IMG     '",
     ], pack(">2d", 1.2345678e-5, 1234567.8))
-    formats = ("3A", "2J", "E", "L", "C", "9X", "1PJ(3)", "3A")
+    formats = ("3A", "2J", "E", "3L", "C", "9X", "1PJ(3)", "1PA(4)", "3A", "1PX(1)")
     binary = fits_hdu([
         "XTENSION= 'BINTABLE'",
         "BITPIX  =                    8",
         "NAXIS   =                    2",
-        "NAXIS1  =                   37",
+        "NAXIS1  =                   55",
         "NAXIS2  =                    1",
-        "PCOUNT  =                   12",
+        "PCOUNT  =                   17",
         "GCOUNT  =                    1",
-        "TFIELDS =                    8",
-        *(f"TFORM{i}  = '{fmt}'" for i, fmt in enumerate(formats, 1)),
+        "TFIELDS =                   10",
+        *(f"{f'TFORM{i}':<8}= '{fmt}'" for i, fmt in enumerate(formats, 1)),
         "TNULL2  =                   -4",
         "TSCAL2  =                  3.0",
         "TZERO2  =                 11.0",
-    ], pack(">3s2ifc2f2B2i3s3i", b"a  ", 123, -4, 2.5, b"T", 1.25, -0.125,
-            0xAA, 0x80, 3, 0, b"z\0\0", 40, -50, 60))
+    ], pack(">3s2if3s2f2B4i3s2i3i4sB", b"a  ", 123, -4, 2.5, b"TF\0", 1.25, -0.125,
+            0xAA, 0x80, 3, 0, 4, 12, b"z\0\0", 1, 16, 40, -50, 60, b"test", 0x80))
     ascii_table = fits_hdu([
         "XTENSION= 'TABLE   '",
         "BITPIX  =                    8",
@@ -80,7 +80,12 @@ def image_and_tables():
     return primary + extension + binary + ascii_table
 
 
-def random_groups(channels):
+def random_groups(channels, cancel_first_parameter=False):
+    scale = "1.234565" if cancel_first_parameter else "3.0"
+    zero = "-1.234565D0" if cancel_first_parameter else "5.0"
+    values = list(range(-1, 2 * channels + 3))
+    if cancel_first_parameter:
+        values[0] = 1
     return fits_hdu([
         "SIMPLE  =                    T",
         "BITPIX  =                  -32",
@@ -90,11 +95,11 @@ def random_groups(channels):
         "GROUPS  =                    T",
         "PCOUNT  =                    2",
         "GCOUNT  =                    2",
-        "PSCAL1  =                  3.0",
-        "PZERO1  =                  5.0",
+        f"PSCAL1  = {scale:>20}",
+        f"PZERO1  = {zero:>20}",
         "BSCALE  =                  2.0",
         "BZERO   =                 10.0",
-    ], pack(f">{2 * (channels + 2)}f", *range(-1, 2 * channels + 3)))
+    ], pack(f">{2 * (channels + 2)}f", *values))
 
 
 def tiled_image():
@@ -133,7 +138,7 @@ def listing(tool, name, caplog):
 
 
 @pytest.mark.parametrize("content, suffix", [
-    (image_and_tables(), ".fits"), (random_groups(20), ".fits"),
+    (image_and_tables(), ".fits"), (random_groups(20), "[3].fits"),
     (tiled_image(), ".fits"), (gzip.compress(random_groups(20)), ".fits.gz"),
 ], ids=["image-and-tables", "random-groups", "tiled-image", "gzip"])
 def test_ms_listfits_reports_casa_headers_and_preview(tmp_path, capfd, caplog, content, suffix):
@@ -201,3 +206,34 @@ def test_ms_listfits_reports_each_stored_hdu_once(tmp_path, caplog):
     assert messages.count("Primary Table HDU ------>>>") == 1
     assert messages.count("END") == 1
     assert messages[-1] == "finish processing of Header-Data Units."
+
+
+def test_ms_listfits_reports_physical_group_axes_and_parameter_precision(tmp_path, capfd, caplog):
+    path = tmp_path / "scaled-group.fits"
+    path.write_bytes(random_groups(20, cancel_first_parameter=True))
+    assert pinned_casa().ms().listfits(str(path)) is True
+    captured = capfd.readouterr()
+    assert "Group 0 parms:  0 0" in captured.out + captured.err
+
+    with caplog.at_level(logging.DEBUG, logger=LOGGER):
+        assert tools.ms().listfits(str(path)) is True
+    messages = [r.getMessage() for r in caplog.records if r.name == LOGGER]
+    assert "Axis 1 size 20" in messages
+    assert [message for message in messages if message.startswith("Axis ")] == ["Axis 1 size 20"]
+    assert any("Group 0 parms:  0 0\n" in message for message in messages)
+
+
+def test_ms_listfits_reports_truncated_image_data(tmp_path, capfd, caplog):
+    path = tmp_path / "truncated-image.fits"
+    path.write_bytes(fits_hdu([
+        "SIMPLE  =                    T", "BITPIX  =                   16",
+        "NAXIS   =                    3", "NAXIS1  =                  100",
+        "NAXIS2  =                  100", "NAXIS3  =                    5",
+    ]))
+    diagnostic = "Error occured during construction process"
+    assert pinned_casa().ms().listfits(str(path)) is True
+    captured = capfd.readouterr()
+    assert diagnostic in captured.out + captured.err
+
+    assert tools.ms().listfits(str(path)) is True
+    assert any(r.levelno == logging.ERROR and r.getMessage() == diagnostic for r in caplog.records)

@@ -99,7 +99,7 @@ impl Column {
             .text(&format!("TTYPE{number}"))
             .unwrap_or("")
             .to_owned();
-        let repeat = usize::try_from(if code == sys::TSTRING {
+        let repeat = usize::try_from(if code == sys::TSTRING && !(listing && heap) {
             width.max(repeat)
         } else {
             repeat

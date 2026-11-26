@@ -70,7 +70,8 @@ impl ListingFile {
         }
         let (mut ptr, mut status) = (ptr::null_mut(), 0);
         // SAFETY: The filename is NUL-terminated. The output pointers are live.
-        unsafe { sys::ffopen(&mut ptr, path.as_ptr(), sys::READONLY as i32, &mut status) };
+        // A FITS filename is a literal path, including any brackets in its name.
+        unsafe { sys::ffdkopn(&mut ptr, path.as_ptr(), sys::READONLY as i32, &mut status) };
         fits_status(status)?;
         NonNull::new(ptr)
             .map(Self)
@@ -155,7 +156,7 @@ fn list_hdu(
     messages: &mut Vec<FitsListingMessage>,
 ) -> Result<()> {
     let mut display = String::new();
-    let header = Header::visit(reader, |raw, card| display_card(&mut display, raw, card))?;
+    let header = Header::visit_listing(reader, |raw, card| display_card(&mut display, raw, card))?;
     let kind = HduKind::from_header(&header, primary);
     let bitpix = header.number("BITPIX").unwrap_or(0.0) as i32;
     let data_type = match bitpix {
@@ -178,11 +179,16 @@ fn list_hdu(
             .map(|axis| integer(&header, &format!("NAXIS{axis}")))
             .collect::<Vec<_>>();
         let bytes = data_size(&header, &axes, kind, bitpix);
+        let described_axes = match kind {
+            HduKind::PrimaryGroup => &axes[axes.len().min(1)..],
+            HduKind::PrimaryTable => &[],
+            _ => &axes[..],
+        };
         messages.push(Debug(format!(
             "Data type   {data_type}\nData size   {bytes}\nDimensions  {}",
-            axes.len()
+            described_axes.len()
         )));
-        for (axis, size) in axes.iter().enumerate() {
+        for (axis, size) in described_axes.iter().enumerate() {
             messages.push(Debug(format!("Axis {} size {size}", axis + 1)));
         }
         display.push_str("END\n");

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::ffi::c_char;
 use std::fmt::{Display, Write};
 use std::ops::Range;
 
@@ -108,16 +109,7 @@ impl Column {
                 out.push_str(&String::from_utf8_lossy(visible));
             }
             sys::TBIT => self.listing_bits(fits, row, len, out)?,
-            sys::TLOGICAL => join(
-                out,
-                self.logical_bytes(fits, row, len)?
-                    .into_iter()
-                    .map(|value| match value {
-                        1 => "True",
-                        0 => "False",
-                        _ => "Undefined",
-                    }),
-            ),
+            sys::TLOGICAL => self.listing_logicals(fits, row, len, out)?,
             sys::TBYTE => join(out, self.numbers::<u8>(fits, row, len, sys::TBYTE)?),
             sys::TSHORT => join(out, self.numbers::<i16>(fits, row, len, sys::TSHORT)?),
             sys::TLONG | sys::TINT => join(out, self.numbers::<i32>(fits, row, len, sys::TINT)?),
@@ -194,11 +186,47 @@ impl Column {
                 out,
                 bits.into_iter()
                     .enumerate()
-                    .map(|(index, bit)| bit << (7 - index % 8)),
+                    .map(|(index, bit)| u8::from(bit != 0) << (7 - index % 8)),
             );
         } else {
             out.extend(bits.into_iter().map(|bit| if bit == 1 { '1' } else { '0' }));
         }
+        Ok(())
+    }
+    fn listing_logicals(
+        &self,
+        fits: &mut Reader,
+        row: i64,
+        len: usize,
+        out: &mut String,
+    ) -> Result<()> {
+        let mut values: Vec<c_char> = vec![0; len];
+        let mut undefined: Vec<c_char> = vec![0; len];
+        let (mut any_null, mut status) = (0, 0);
+        // SAFETY: Each output buffer can hold len values. CFITSIO records
+        // undefined values separately so they retain their displayed type.
+        unsafe {
+            sys::ffgcfl(
+                fits.ptr,
+                self.number,
+                row,
+                1,
+                len as i64,
+                values.as_mut_ptr(),
+                undefined.as_mut_ptr(),
+                &mut any_null,
+                &mut status,
+            );
+        }
+        fits_status(status)?;
+        join(
+            out,
+            values.into_iter().zip(undefined).map(|pair| match pair {
+                (1, 0) => "True",
+                (0, 0) => "False",
+                _ => "Undefined",
+            }),
+        );
         Ok(())
     }
 }
