@@ -11,7 +11,7 @@ use casa_contracts::{
     CasaValue, RunProductKind, RunProductRole, builtin_application_catalog, builtin_surface_bundle,
     installed_suite_root, resolve_task_executable,
 };
-use casa_task_runtime::{
+use casa_tasks::{
     TaskExit, TaskOutcome, TaskOutputValue, classify_task_exit, decode_task_completion,
 };
 use pyo3::exceptions::PyFileNotFoundError;
@@ -402,7 +402,7 @@ fn plot_documents(
         #[serde(default)]
         plots: Vec<casa_plot_data::plot_document::PlotFigure>,
         #[serde(default)]
-        artifacts: Vec<casars_simulation::SimobserveArtifact>,
+        artifacts: Vec<casa_tasks::simulation::SimobserveArtifact>,
     }
     let reply: PlotReply =
         serde_json::from_value(result).map_err(|e| format!("{surface_id} plot reply: {e}"))?;

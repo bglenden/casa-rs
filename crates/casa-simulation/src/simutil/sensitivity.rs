@@ -241,10 +241,8 @@ fn image_noise(
     frequency_hz: f64,
     resources: SessionResources,
 ) -> Result<f64, SimutilError> {
-    use casa_contracts::builtin_surface_bundle;
     use casa_images::PagedImage;
     use casa_imaging_application::{BackendRequest, Cancel, ImagingRequest, RunContext, execute};
-    use casa_task_runtime::resolve_plain_values;
 
     let cell = 6e3 / 250.0 / (frequency_hz / 1e9);
     let values = serde_json::json!({
@@ -252,13 +250,9 @@ fn image_noise(
         "datacolumn": "data", "gridder": "standard", "deconvolver": "clark",
         "weighting": "natural", "stokes": "I", "niter": 100, "threshold": "0.01mJy", "pbcor": true,
     });
-    let resolved = resolve_plain_values(
-        builtin_surface_bundle("tclean").map_err(failed)?,
-        std::env::current_dir().map_err(failed)?,
-        values.as_object().expect("imaging parameters"),
-    )
-    .map_err(failed)?;
-    let mut request = ImagingRequest::from_tclean(&resolved).map_err(failed)?;
+    let mut request =
+        ImagingRequest::from_tclean_with_defaults(values.as_object().expect("imaging parameters"))
+            .map_err(failed)?;
     request.backend = BackendRequest::Cpu;
     request.gridprecision = Some(casa_imaging_application::GridPrecision::F64);
     execute(

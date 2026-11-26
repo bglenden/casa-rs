@@ -1,0 +1,176 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Antenna layout and every positive/negative UV point in the observation.
+
+use casa_ms::{MeasurementSet, columns::uvw_column::UvwColumn};
+use casa_simulation::{
+    SimobservePlotInput, simobserve::SimobserveError, simutil::baselines::itrf_to_local,
+};
+
+use super::document::{annotation, layer, panel};
+use super::failure;
+use crate::plot_document::{
+    PlotArrayDtype, PlotDocumentPanel, PlotLayerData, PlotLayerKind, PlotPayloadWriter,
+    plot_array_view as view,
+};
+
+pub(super) fn antennas(
+    input: &SimobservePlotInput<'_>,
+    payload: &mut PlotPayloadWriter,
+) -> Result<PlotDocumentPanel, SimobserveError> {
+    antenna_panel(
+        &input.antenna_positions,
+        input.antenna_diameters,
+        input.antenna_names,
+        payload,
+    )
+}
+
+pub(crate) fn antenna_panel(
+    positions: &[[f64; 3]],
+    diameters: &[f64],
+    names: &[String],
+    payload: &mut PlotPayloadWriter,
+) -> Result<PlotDocumentPanel, SimobserveError> {
+    let n = positions.len();
+    let centre = [0, 1, 2].map(|axis| positions.iter().map(|p| p[axis]).sum::<f64>() / n as f64);
+    let local = itrf_to_local(positions, centre)?;
+    let bounds = |axis: usize| {
+        [
+            local.iter().map(|p| p[axis]).fold(f64::INFINITY, f64::min),
+            local
+                .iter()
+                .map(|p| p[axis])
+                .fold(f64::NEG_INFINITY, f64::max),
+        ]
+    };
+    let [xb, yb] = [bounds(0), bounds(1)];
+    let range = (xb[1] - xb[0]).max(yb[1] - yb[0]);
+    let circles = diameters.iter().any(|&d| d > 0.01 * range);
+    let limits = [0, 1].map(|axis| {
+        let lo = local
+            .iter()
+            .zip(diameters)
+            .map(|(p, d)| p[axis] - if circles { d / 2.0 } else { 0.0 })
+            .fold(f64::INFINITY, f64::min);
+        let hi = local
+            .iter()
+            .zip(diameters)
+            .map(|(p, d)| p[axis] + if circles { d / 2.0 } else { 0.0 })
+            .fold(f64::NEG_INFINITY, f64::max);
+        let margin = if hi > lo { (hi - lo) * 0.05 } else { 0.055 };
+        [lo - margin, hi + margin]
+    });
+    let mut output = panel("antennas", "", ["", ""], limits, true);
+    let x = payload
+        .values(local.iter().map(|p| p[0]))
+        .map_err(failure)?;
+    let y = payload
+        .values(local.iter().map(|p| p[1]))
+        .map_err(failure)?;
+    output.layers.push(layer(
+        "pads",
+        PlotLayerKind::Scatter,
+        PlotLayerData::Points {
+            x: x.clone(),
+            y: y.clone(),
+        },
+        if circles { None } else { Some("#dddd66") },
+        Some(if circles { "," } else { "o" }),
+    ));
+    if circles {
+        let radii = payload
+            .values(diameters.iter().map(|d| d / 2.0))
+            .map_err(failure)?;
+        output.layers.push(layer(
+            "dishes",
+            PlotLayerKind::Circles,
+            PlotLayerData::Circles {
+                x,
+                y,
+                radii,
+                filled: true,
+                anchored: false,
+            },
+            Some("#dddd66"),
+            None,
+        ));
+    }
+    if n < 10 {
+        for (i, p) in local.iter().enumerate() {
+            let mut label = annotation(&format!("pad-{i}"), [p[0], p[1]], names[i].clone(), false);
+            if !circles {
+                let style = label.style.as_mut().expect("annotation style");
+                style.font_size = Some("8".into());
+                style.vertical_alignment = Some("baseline".into());
+            }
+            output.annotations.push(label);
+        }
+    }
+    Ok(output)
+}
+
+pub(super) fn uv(
+    input: &SimobservePlotInput<'_>,
+    payload: &mut PlotPayloadWriter,
+) -> Result<PlotDocumentPanel, SimobserveError> {
+    uv_panel(&input.measurement_set, input.sky_specrefval_ghz, payload)
+}
+
+pub(crate) fn uv_panel(
+    path: &std::path::Path,
+    frequency_ghz: f64,
+    payload: &mut PlotPayloadWriter,
+) -> Result<PlotDocumentPanel, SimobserveError> {
+    let ms = MeasurementSet::open(path).map_err(failure)?;
+    let uvw = UvwColumn::new(ms.main_table());
+    let rows = ms.main_table().row_count() as u64;
+    let scale = 300.0 / frequency_ghz;
+    let start = payload.position();
+    let (mut xmax, mut ymax) = (0.0_f64, 0.0_f64);
+    for row in 0..ms.main_table().row_count() {
+        let [u, v, _] = uvw.get(row).map_err(failure)?;
+        let (u, v) = (u / scale, v / scale);
+        if !u.is_finite() || !v.is_finite() {
+            return Err(failure("nonfinite UV plot coordinate"));
+        }
+        for value in [u, v, -u, -v] {
+            payload.f64(value).map_err(failure)?;
+        }
+        xmax = xmax.max(u.abs());
+        ymax = ymax.max(v.abs());
+    }
+    // Matplotlib expands an all-zero coordinate to +/-0.05, then adds
+    // its 5% autoscale margin. TP's zero-spacing panel follows that range.
+    if xmax == 0. {
+        xmax = 0.05;
+    }
+    if ymax == 0. {
+        ymax = 0.05;
+    }
+    let mut output = panel(
+        "uv",
+        "",
+        ["u[klambda]", "v[klambda]"],
+        [[-1.1 * xmax, 1.1 * xmax], [-1.1 * ymax, 1.1 * ymax]],
+        true,
+    );
+    // CASA's pyplot.box() toggles the initially visible UV frame off.
+    output.frame_visible = Some(false);
+    for (id, offset) in [("positive", 0), ("negative", 16)] {
+        let x = view(start + offset, vec![rows], vec![32], PlotArrayDtype::F64Le);
+        let y = view(
+            start + offset + 8,
+            vec![rows],
+            vec![32],
+            PlotArrayDtype::F64Le,
+        );
+        output.layers.push(layer(
+            id,
+            PlotLayerKind::Scatter,
+            PlotLayerData::Points { x, y },
+            Some("b"),
+            Some(","),
+        ));
+    }
+    Ok(output)
+}

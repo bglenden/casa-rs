@@ -498,7 +498,7 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let payload = casa_task_runtime::read_task_request(request_path.to_str().unwrap()).unwrap();
+        let payload = crate::read_task_request(request_path.to_str().unwrap()).unwrap();
         assert!(matches!(
             serde_json::from_str::<ImageAnalysisTaskRequest>(&payload).unwrap(),
             ImageAnalysisTaskRequest::Imhead(_)

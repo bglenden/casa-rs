@@ -2,6 +2,7 @@
 //! `flagmanager` - native CASA-style flag-version management, on the shared
 //! task front end.
 
+use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::CasaValue;
 use casa_ms::flagging::save_disk_flag_version;
 use casa_ms::{
@@ -9,7 +10,6 @@ use casa_ms::{
     initialize_flag_versions, list_flag_versions, rename_flag_version,
     rename_flag_version_for_task, restore_flag_version,
 };
-use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 
 use super::casa_return::flagmanager_list_record;
 use super::front_end::{ms_task_success, task_flag_merge};

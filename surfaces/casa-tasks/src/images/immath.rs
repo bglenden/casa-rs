@@ -3,8 +3,8 @@
 
 use std::path::PathBuf;
 
+use crate::{CasaValue, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_images::{ImmathRequest, immath};
-use casa_task_runtime::{CasaValue, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 
 use super::front_end::{image_task_front_end, image_task_returning};
 use super::task_contract::ImageAnalysisTaskResult;

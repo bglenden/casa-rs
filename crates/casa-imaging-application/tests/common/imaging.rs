@@ -36,13 +36,7 @@ pub fn request(values: serde_json::Value) -> ImagingRequest {
         }
         _ => {}
     }
-    let resolved = casa_task_runtime::resolve_plain_values(
-        casa_contracts::builtin_surface_bundle("tclean").expect("tclean surface"),
-        std::path::PathBuf::from("."),
-        &values,
-    )
-    .unwrap_or_else(|error| panic!("catalog values: {error}"));
-    ImagingRequest::from_tclean(&resolved)
+    ImagingRequest::from_tclean_with_defaults(&values)
         .unwrap_or_else(|error| panic!("imaging request: {error}"))
 }
 

@@ -19,10 +19,10 @@
 use std::path::PathBuf;
 
 use casa_images::PagedImage;
+use casa_plot_data::simulation::{ImagePlotOptions, image_plot};
 use casa_simulation::simutil::analysis::{
     AnalysisError, cell_size, convimage, is_total_power, statim,
 };
-use casa_simulation::simutil::graphics::{ImagePlotOptions, image_plot};
 use casa_simulation::{ExecutionControls, SessionResources};
 use numpy::IntoPyArray;
 use pyo3::exceptions::{PyNotImplementedError, PyOSError, PyRuntimeError};

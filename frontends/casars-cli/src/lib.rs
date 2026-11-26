@@ -5,3 +5,4 @@
 
 #[cfg(feature = "imaging")]
 pub mod interrupt;
+pub mod logging;

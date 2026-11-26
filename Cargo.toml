@@ -5,8 +5,6 @@ members = [
     "surfaces/casa-plot-data",
     "surfaces/casa-tasks",
     "frontends/casars-cli",
-    "crates/casa-task-runtime",
-    "crates/casars-simulation",
     "crates/casars-python",
     "crates/casa-types",
     "crates/casa-vla",

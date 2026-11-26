@@ -4,8 +4,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use crate::{TaskFailure, TaskInvocation};
 use casa_contracts::ParameterValue;
-use casa_task_runtime::{TaskFailure, TaskInvocation};
 
 use super::axis::Axis;
 use super::iteration::{Panel, PlotPanels};

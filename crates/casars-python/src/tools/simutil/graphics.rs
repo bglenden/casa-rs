@@ -52,7 +52,7 @@ impl PySimutil {
         ms: Option<std::path::PathBuf>,
         cofa: Option<Variant>,
     ) -> PyResult<()> {
-        use casa_simulation::simutil::graphics::{EphemerisPlotRequest, ephemeris_plot};
+        use casa_plot_data::simulation::{EphemerisPlotRequest, ephemeris_plot};
         use casa_types::measures::{
             MPosition,
             direction::{DirectionRef, MDirection},
@@ -138,12 +138,7 @@ impl PySimutil {
                 .collect();
         let document = py
             .detach(|| {
-                casa_simulation::simutil::graphics::antenna_plot(
-                    &positions,
-                    &d.0,
-                    &name.0,
-                    file.path(),
-                )
+                casa_plot_data::simulation::antenna_plot(&positions, &d.0, &name.0, file.path())
             })
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         draw(py, &document, file.path(), true)

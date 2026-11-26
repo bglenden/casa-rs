@@ -5,8 +5,8 @@ use std::fs;
 use std::mem::discriminant;
 use std::path::Path;
 
+use crate::{TaskFailure, TaskInvocation};
 use casa_contracts::{DefaultSpec, ParameterValue, python_repr};
-use casa_task_runtime::{TaskFailure, TaskInvocation};
 use casa_types::quanta::format::{TIME, YMD, format_time};
 use casa_types::quanta::{Quantity, Unit};
 

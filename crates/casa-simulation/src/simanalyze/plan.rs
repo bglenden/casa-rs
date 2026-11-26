@@ -269,12 +269,10 @@ fn imaging(
             .expect("two cells")
     };
     let cell = positive_cells(cell)?;
-    let mut size: Vec<_> = p.0["imsize"]
-        .as_array()
-        .expect("resolved imsize")
-        .iter()
-        .map(|v| v.as_i64().expect("integer"))
-        .collect();
+    let mut size: Vec<_> = match &p.0["imsize"] {
+        Value::Array(items) => items.iter().map(|v| v.as_i64().expect("integer")).collect(),
+        single => vec![single.as_i64().expect("integer")],
+    };
     if size.is_empty() {
         size.push(0);
     }

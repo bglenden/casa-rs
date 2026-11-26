@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::ms::{flagdata_empty_record, flagdata_named_summary_record, ms_task_success};
+use crate::{ParameterSession, ResolutionPatch, TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::{CasaValue, ParameterValue};
 use casa_ms::flagging::{
     FlagDataColumn, FlagDataMode, FlaggingError, flagdata_calibration_program, flagdata_ms_program,
@@ -12,9 +13,6 @@ use casa_ms::flagging::{
 };
 use casa_ms::{
     FlagDataReport, FlagDataRequest, MeasurementSet, append_flag_commands, append_task_history,
-};
-use casa_task_runtime::{
-    ParameterSession, ResolutionPatch, TaskFailure, TaskInvocation, TaskSuccess,
 };
 
 use super::{
@@ -470,7 +468,7 @@ fn save_commands(
 mod tests {
     use std::ffi::OsString;
 
-    use casa_task_runtime::{ParameterRuntime, TaskCommandLine};
+    use crate::{ParameterRuntime, TaskCommandLine};
 
     use super::super::command_values::parse_assignments;
     use super::*;

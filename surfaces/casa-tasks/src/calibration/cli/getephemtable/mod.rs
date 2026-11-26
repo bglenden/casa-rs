@@ -7,9 +7,9 @@ use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
 
+use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::CasaValue;
 use casa_tables::{TableOptions, publication::lock_table_tree_for_replacement};
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::quanta::Quantity;
 use casa_types::quanta::format::{YMD, format_time};
 

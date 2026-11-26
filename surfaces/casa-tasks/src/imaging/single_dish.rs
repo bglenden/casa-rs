@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The tsdimaging host; scientific composition lives in the application crate.
 use super::{ImagerArtifact, ImagerArtifactKind, ImagingParameters, imager_task_schema_bundle};
+use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::{
     ProviderProtocolDescriptor, ProviderSurfaceKind, TaskProviderContract, builtin_surface_bundle,
     merged_components,
@@ -8,7 +9,6 @@ use casa_contracts::{
 use casa_imaging_application::{
     Cancel, HostResources, ResourcePolicy, RunContext, single_dish::image_from_parameters,
 };
-use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use schemars::{JsonSchema, schema_for};
 use serde::Serialize;
 use std::time::Instant;
@@ -115,5 +115,5 @@ fn run(task: &TaskInvocation<'_>, cancel: Cancel) -> Result<TaskSuccess, TaskFai
         request: ImagingParameters(parameters),
         artifacts,
     };
-    TaskSuccess::new(casa_task_runtime::CasaValue::None, &result)
+    TaskSuccess::new(crate::CasaValue::None, &result)
 }

@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use casa_task_runtime::{TaskFailure, TaskInvocation};
+use crate::{TaskFailure, TaskInvocation};
 use casa_types::ArrayValue;
 use casa_types::quanta::{MvAngle, MvTime};
 

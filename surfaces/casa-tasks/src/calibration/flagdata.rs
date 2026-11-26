@@ -10,6 +10,7 @@ use crate::ms::{
     flagdata_empty_record, flagdata_named_summary_record, flagdata_task_schema_bundle,
     ms_task_success, task_selection_text,
 };
+use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::{
     CasaFloat, CasaValue, DefaultSpec, FloatDtype, NumpyScalarType, ParameterValue,
     TaskFailureKind, python_repr,
@@ -23,7 +24,6 @@ use casa_ms::{
     FlagSummaryOptions, FlaggingError, MeasurementSet, QuackMode, TransformTaskHistory,
     append_flag_command, append_task_history, save_next_casa_flag_backup,
 };
-use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_types::quanta::Quantity;
 
 #[path = "flagdata/automatic.rs"]
@@ -1261,7 +1261,7 @@ fn unknown(name: &str, text: &str, expected: &str) -> TaskFailure {
 mod tests {
     use std::ffi::OsString;
 
-    use casa_task_runtime::{ParameterRuntime, TaskCommandLine};
+    use crate::{ParameterRuntime, TaskCommandLine};
 
     use super::*;
 

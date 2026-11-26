@@ -18,12 +18,10 @@ mod task_contract;
 
 use std::{path::PathBuf, time::Instant};
 
+use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess, resolve_plain_values};
 use casa_contracts::{ParameterValue, SurfaceContractBundle};
 use casa_imaging_application::{
     Cancel, HostResources, ImagingRequest, RunContext, SummaryTarget, execute,
-};
-use casa_task_runtime::{
-    TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess, resolve_plain_values,
 };
 use serde_json::{Map, Value};
 
@@ -255,4 +253,61 @@ pub fn run_task_with_options(
     let value = tclean_record(&request, &result.run, &values, &held);
     history::write_tclean_history(&request.imagename, task);
     Ok(TaskSuccess::new(value, &result)?.with_text(text))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use casa_imaging_application::{default_tclean_parameters, single_dish};
+    use serde_json::json;
+
+    #[test]
+    fn tclean_domain_defaults_match_catalog_resolution() {
+        let overrides = json!({
+            "vis": ["unused.ms"],
+            "imagename": "unused",
+            "cell": ["1arcsec"],
+        });
+        let overrides = overrides.as_object().expect("object");
+        let catalog_defaults = resolve_plain_values(
+            casa_contracts::builtin_surface_bundle("tclean").expect("tclean surface"),
+            PathBuf::from("."),
+            overrides,
+        )
+        .expect("tclean defaults resolve");
+        let mut expected = default_tclean_parameters();
+        for (key, value) in overrides {
+            expected.insert(key.clone(), value.clone());
+        }
+        assert_eq!(expected, catalog_defaults);
+    }
+
+    #[test]
+    fn tsdimaging_domain_defaults_match_catalog_resolution() {
+        let catalog_defaults = resolve_plain_values(
+            casa_contracts::builtin_surface_bundle("tsdimaging").expect("tsdimaging surface"),
+            PathBuf::from("."),
+            &Map::new(),
+        )
+        .expect("tsdimaging defaults resolve");
+        assert_eq!(single_dish::default_parameters(), catalog_defaults);
+    }
+
+    #[test]
+    fn tclean_catalog_refuses_overlong_imsize() {
+        let overrides = json!({
+            "vis": "unused.ms",
+            "imagename": "unused",
+            "cell": "1arcsec",
+            "imsize": [64, 32, 16],
+        });
+        assert!(
+            resolve_plain_values(
+                casa_contracts::builtin_surface_bundle("tclean").expect("tclean surface"),
+                PathBuf::from("."),
+                overrides.as_object().expect("object"),
+            )
+            .is_err()
+        );
+    }
 }

@@ -4,10 +4,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::{CasaValue, ParameterValue};
 use casa_ms::{MeasurementSet, MsSelection, MsSelectionIoBudget, ResolvedMsSelectionRow};
 use casa_tables::{Table, TableOptions};
-use casa_task_runtime::{CasaLoggingConfig, TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::{
     ArrayValue, RecordValue, ScalarValue, Value,
     quanta::{Quantity, Unit, format},
@@ -74,8 +74,7 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     session
         .set_selection(selection.clone(), false)
         .map_err(execution)?;
-    let default_logs =
-        !CasaLoggingConfig::output_was_configured(&std::env::args_os().skip(1).collect::<Vec<_>>());
+    let default_logs = task.default_stderr_logs();
     diagnostics.start(default_logs);
     let result = session.atmcor_prepared(
         &ms,

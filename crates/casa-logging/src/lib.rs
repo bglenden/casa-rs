@@ -2,15 +2,15 @@
 //! CASA-compatible logging sinks and `tracing` integration.
 //!
 //! The instrumentation facade for workspace code is [`tracing`]. This crate
-//! owns only the CASA-specific priority model, log-table serialization, sink
-//! fan-out, and application initialization helpers.
+//! owns the CASA-specific priority model, log-table serialization, and sink
+//! / layer building blocks. CLI flag/environment configuration and global
+//! subscriber initialization belong to `casars-cli`.
 //!
 //! An event's fields follow its message as `name=value`, separated by
 //! spaces: a string value containing whitespace, or an empty one, is
 //! written as a quoted Rust string literal, a `?` value as its `Debug` form
 //! (quoted for strings) and a `%` value as its `Display` form.
 
-use std::ffi::OsString;
 use std::fmt::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -24,25 +24,18 @@ use tracing::field::{Field, Visit};
 use tracing::level_filters::LevelFilter;
 use tracing::subscriber::Interest;
 use tracing::{Event, Level, Metadata, Subscriber};
-use tracing_subscriber::layer::{Context, Filter, SubscriberExt};
+use tracing_subscriber::Layer;
+use tracing_subscriber::layer::{Context, Filter};
 use tracing_subscriber::registry::LookupSpan;
-use tracing_subscriber::{Layer, Registry};
 
 mod replay;
 
-use replay::output_was_configured;
 pub use replay::replay_info_record;
 
 const UNIX_EPOCH_MJD_DAYS: f64 = 40587.0;
 const SECONDS_PER_DAY: f64 = 86400.0;
 const LOG_TABLE_README: &str = "Repository for software-generated logging messages";
 const TIME_COLUMN_COMMENT: &str = "MJD in seconds";
-/// CLI flag that enables CASA log-table output.
-pub const LOG_TABLE_FLAG: &str = "--log-table";
-/// CLI flag that controls the CASA log-table minimum priority.
-pub const LOG_TABLE_PRIORITY_FLAG: &str = "--log-table-priority";
-/// CLI flag that controls stderr logging, or disables it with `off`.
-pub const LOG_STDERR_PRIORITY_FLAG: &str = "--log-stderr-priority";
 
 /// CASA/casacore log-message priority, in ascending severity order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -191,12 +184,6 @@ fn trim_message(mut message: String) -> String {
 pub enum CasaLoggingError {
     #[error("invalid CASA log priority {0:?}")]
     InvalidPriority(String),
-    #[error("missing value for {0}")]
-    MissingOptionValue(&'static str),
-    #[error("invalid non-UTF-8 value for {0}")]
-    NonUtf8OptionValue(&'static str),
-    #[error("invalid {name} priority {value:?}")]
-    InvalidEnvPriority { name: &'static str, value: String },
     #[error("log table schema is missing required column {0}")]
     MissingColumn(&'static str),
     #[error("log table has incompatible TableInfo type {0:?}")]
@@ -209,8 +196,6 @@ pub enum CasaLoggingError {
     Write(#[source] std::io::Error),
     #[error("table error: {0}")]
     Table(#[from] casa_tables::TableError),
-    #[error("tracing subscriber setup failed: {0}")]
-    Subscriber(String),
 }
 
 /// Runtime sink for CASA log records.
@@ -611,223 +596,6 @@ fn log_record_to_row(record: &CasaLogRecord) -> RecordValue {
     ])
 }
 
-/// Application-level logging configuration.
-#[derive(Debug, Clone)]
-pub struct CasaLoggingConfig {
-    pub table_path: Option<PathBuf>,
-    pub table_priority: CasaPriority,
-    pub stderr_priority: Option<CasaPriority>,
-}
-
-impl Default for CasaLoggingConfig {
-    fn default() -> Self {
-        Self::from_env().unwrap_or_else(|_| Self::fallback())
-    }
-}
-
-impl CasaLoggingConfig {
-    /// Whether the environment or command line explicitly selects an output sink.
-    ///
-    /// A priority for a log table alone does not select a table. An explicit
-    /// stderr priority (including `off`) or a table path does select output.
-    #[must_use]
-    pub fn output_was_configured(args: &[OsString]) -> bool {
-        output_was_configured(
-            args,
-            std::env::var_os("CASA_RS_LOG_TABLE").is_some(),
-            std::env::var_os("CASA_RS_LOG_STDERR_PRIORITY").is_some(),
-        )
-    }
-
-    /// Build logging configuration from `CASA_RS_LOG_*` environment variables.
-    pub fn from_env() -> Result<Self, CasaLoggingError> {
-        Ok(Self {
-            table_path: std::env::var_os("CASA_RS_LOG_TABLE").map(PathBuf::from),
-            table_priority: env_priority("CASA_RS_LOG_TABLE_PRIORITY")?
-                .unwrap_or(CasaPriority::Info),
-            stderr_priority: env_stderr_priority("CASA_RS_LOG_STDERR_PRIORITY")?,
-        })
-    }
-
-    /// Apply the shared logging flags in `args` to this configuration and
-    /// return the other arguments. Reads no environment: the caller chose the
-    /// configuration the flags refine.
-    pub fn with_cli_args(
-        self,
-        args: impl IntoIterator<Item = OsString>,
-    ) -> Result<(Vec<OsString>, Self), CasaLoggingError> {
-        apply_cli_logging_args(args, self)
-    }
-
-    fn fallback() -> Self {
-        Self {
-            table_path: None,
-            table_priority: CasaPriority::Info,
-            stderr_priority: Some(CasaPriority::Warn),
-        }
-    }
-}
-
-fn env_priority(name: &'static str) -> Result<Option<CasaPriority>, CasaLoggingError> {
-    std::env::var(name)
-        .ok()
-        .map(|value| {
-            CasaPriority::from_str(&value)
-                .map_err(|_| CasaLoggingError::InvalidEnvPriority { name, value })
-        })
-        .transpose()
-}
-
-fn env_stderr_priority(name: &'static str) -> Result<Option<CasaPriority>, CasaLoggingError> {
-    match std::env::var(name) {
-        Ok(value) if priority_is_off(&value) => Ok(None),
-        Ok(value) => CasaPriority::from_str(&value)
-            .map(Some)
-            .map_err(|_| CasaLoggingError::InvalidEnvPriority { name, value }),
-        Err(_) => Ok(Some(CasaPriority::Warn)),
-    }
-}
-
-fn priority_is_off(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "off" | "none" | "quiet" | "false" | "0"
-    )
-}
-
-/// Parse and remove shared CASA logging flags from an argv vector.
-pub fn configure_from_env_and_args(
-    args: impl IntoIterator<Item = OsString>,
-) -> Result<(Vec<OsString>, CasaLoggingConfig), CasaLoggingError> {
-    apply_cli_logging_args(args, CasaLoggingConfig::from_env()?)
-}
-
-/// Remove shared CASA logging flags without reading environment or initializing logging.
-///
-/// Schema-driven callers use this before passing task arguments into a parser
-/// that only understands task-specific controls.
-pub fn strip_cli_logging_args(
-    args: impl IntoIterator<Item = OsString>,
-) -> Result<Vec<OsString>, CasaLoggingError> {
-    let (filtered, _) = apply_cli_logging_args(args, CasaLoggingConfig::fallback())?;
-    Ok(filtered)
-}
-
-fn apply_cli_logging_args(
-    args: impl IntoIterator<Item = OsString>,
-    mut config: CasaLoggingConfig,
-) -> Result<(Vec<OsString>, CasaLoggingConfig), CasaLoggingError> {
-    let mut filtered = Vec::new();
-    let mut args = args.into_iter().peekable();
-    while let Some(arg) = args.next() {
-        if let Some(value) = split_option_value(&arg, LOG_TABLE_FLAG)? {
-            config.table_path = Some(PathBuf::from(value));
-            continue;
-        }
-        if arg == LOG_TABLE_FLAG {
-            let value = next_option_value(&mut args, LOG_TABLE_FLAG)?;
-            config.table_path = Some(PathBuf::from(value));
-            continue;
-        }
-        if let Some(value) = split_option_value(&arg, LOG_TABLE_PRIORITY_FLAG)? {
-            config.table_priority = CasaPriority::from_str(&value)?;
-            continue;
-        }
-        if arg == LOG_TABLE_PRIORITY_FLAG {
-            let value = next_option_value(&mut args, LOG_TABLE_PRIORITY_FLAG)?;
-            config.table_priority = parse_priority_option(&value, LOG_TABLE_PRIORITY_FLAG)?;
-            continue;
-        }
-        if let Some(value) = split_option_value(&arg, LOG_STDERR_PRIORITY_FLAG)? {
-            config.stderr_priority = parse_optional_priority_str(&value)?;
-            continue;
-        }
-        if arg == LOG_STDERR_PRIORITY_FLAG {
-            let value = next_option_value(&mut args, LOG_STDERR_PRIORITY_FLAG)?;
-            config.stderr_priority = parse_optional_priority(&value)?;
-            continue;
-        }
-        filtered.push(arg);
-    }
-    Ok((filtered, config))
-}
-
-fn split_option_value(
-    arg: &OsString,
-    flag: &'static str,
-) -> Result<Option<String>, CasaLoggingError> {
-    let Some(arg) = arg.to_str() else {
-        return Ok(None);
-    };
-    let Some(rest) = arg.strip_prefix(flag) else {
-        return Ok(None);
-    };
-    if let Some(value) = rest.strip_prefix('=') {
-        return Ok(Some(value.to_string()));
-    }
-    Ok(None)
-}
-
-fn next_option_value(
-    args: &mut impl Iterator<Item = OsString>,
-    flag: &'static str,
-) -> Result<OsString, CasaLoggingError> {
-    args.next()
-        .ok_or(CasaLoggingError::MissingOptionValue(flag))
-}
-
-fn parse_optional_priority(value: &OsString) -> Result<Option<CasaPriority>, CasaLoggingError> {
-    let value = value.to_str().ok_or(CasaLoggingError::NonUtf8OptionValue(
-        LOG_STDERR_PRIORITY_FLAG,
-    ))?;
-    parse_optional_priority_str(value)
-}
-
-fn parse_optional_priority_str(value: &str) -> Result<Option<CasaPriority>, CasaLoggingError> {
-    if priority_is_off(value) {
-        Ok(None)
-    } else {
-        CasaPriority::from_str(value).map(Some)
-    }
-}
-
-fn parse_priority_option(
-    value: &OsString,
-    flag: &'static str,
-) -> Result<CasaPriority, CasaLoggingError> {
-    let value = value
-        .to_str()
-        .ok_or(CasaLoggingError::NonUtf8OptionValue(flag))?;
-    CasaPriority::from_str(value)
-}
-
-/// Configure global application logging and return the filtered argv.
-pub fn init_global_from_env_and_args(
-    args: impl IntoIterator<Item = OsString>,
-) -> Result<(CasaLoggingGuard, Vec<OsString>), CasaLoggingError> {
-    let (filtered_args, config) = configure_from_env_and_args(args)?;
-    let guard = init_global(config)?;
-    Ok((guard, filtered_args))
-}
-
-/// Guard holding sink state for explicit flush at task exit.
-#[derive(Clone)]
-pub struct CasaLoggingGuard {
-    sink: Arc<dyn CasaLogSink>,
-}
-
-impl CasaLoggingGuard {
-    pub fn flush(&self) -> Result<(), CasaLoggingError> {
-        self.sink.flush()
-    }
-}
-
-impl Drop for CasaLoggingGuard {
-    fn drop(&mut self) {
-        let _ = self.flush();
-    }
-}
-
 /// `tracing_subscriber` layer that converts events into CASA log records.
 pub struct CasaLogLayer {
     sink: Arc<dyn CasaLogSink>,
@@ -1012,96 +780,17 @@ impl Visit for EventVisitor {
     }
 }
 
-/// Initialize global logging once for an application process.
-pub fn init_global(config: CasaLoggingConfig) -> Result<CasaLoggingGuard, CasaLoggingError> {
-    install_global(config, |priority| Arc::new(StderrSink::new(priority)))
-}
-
-/// [`init_global`], with the stderr records written to `stderr` instead of
-/// the process's standard error: the task front end passes the stream its
-/// binary's `main` handed it.
-pub fn init_global_with_stderr<W: std::io::Write + Send + 'static>(
-    config: CasaLoggingConfig,
-    stderr: Arc<Mutex<W>>,
-) -> Result<CasaLoggingGuard, CasaLoggingError> {
-    install_global(config, |priority| {
-        Arc::new(WriterSink::new(stderr, priority))
-    })
-}
-
-fn install_global(
-    config: CasaLoggingConfig,
-    stderr: impl FnOnce(CasaPriority) -> Arc<dyn CasaLogSink>,
-) -> Result<CasaLoggingGuard, CasaLoggingError> {
-    let mut sinks: Vec<Arc<dyn CasaLogSink>> = Vec::new();
-    if let Some(path) = config.table_path {
-        sinks.push(Arc::new(CasaTableLogSink::new(
-            path,
-            config.table_priority,
-            TableLogOpenMode::CreateOrAppend,
-        )));
-    }
-    if let Some(priority) = config.stderr_priority {
-        sinks.push(stderr(priority));
-    }
-    let sink: Arc<dyn CasaLogSink> = if sinks.is_empty() {
-        Arc::new(NullSink)
-    } else {
-        Arc::new(CompositeSink::new(sinks))
-    };
-    tracing::subscriber::set_global_default(
-        Registry::default().with(CasaLogLayer::filtered(sink.clone())),
-    )
-    .map_err(|error| CasaLoggingError::Subscriber(error.to_string()))?;
-    Ok(CasaLoggingGuard { sink })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
 
-    // Tracing callsite interest and environment variables are process-global.
+    // Tracing callsite interest is process-global.
     fn global_state_lock() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    fn clear_log_env() {
-        unsafe {
-            std::env::remove_var("CASA_RS_LOG_TABLE");
-            std::env::remove_var("CASA_RS_LOG_TABLE_PRIORITY");
-            std::env::remove_var("CASA_RS_LOG_STDERR_PRIORITY");
-        }
-    }
-
-    #[test]
-    fn cli_flags_refine_a_chosen_configuration_without_the_environment() {
-        let _lock = global_state_lock();
-        clear_log_env();
-        unsafe {
-            std::env::set_var("CASA_RS_LOG_TABLE_PRIORITY", "INVALID");
-            std::env::set_var("CASA_RS_LOG_TABLE", "/from/the/environment");
-        }
-        let chosen = CasaLoggingConfig {
-            table_path: None,
-            table_priority: CasaPriority::Info,
-            stderr_priority: Some(CasaPriority::Warn),
-        };
-        let (rest, config) = chosen
-            .with_cli_args(
-                ["--log-stderr-priority", "off", "x.image"]
-                    .into_iter()
-                    .map(OsString::from),
-            )
-            .unwrap();
-        clear_log_env();
-        assert_eq!(rest, [OsString::from("x.image")]);
-        assert_eq!(config.table_path, None);
-        assert_eq!(config.table_priority, CasaPriority::Info);
-        assert_eq!(config.stderr_priority, None);
     }
 
     #[test]
@@ -1173,87 +862,6 @@ mod tests {
     fn message_trims_trailing_newlines() {
         let record = CasaLogRecord::new(CasaPriority::Info, "hello\n\n", "test");
         assert_eq!(record.message, "hello");
-    }
-
-    #[test]
-    fn cli_logging_args_are_stripped_and_applied() {
-        let _guard = global_state_lock();
-        clear_log_env();
-        let (filtered, config) = configure_from_env_and_args([
-            OsString::from("--vis"),
-            OsString::from("input.ms"),
-            OsString::from("--log-table"),
-            OsString::from("run.log"),
-            OsString::from("--log-table-priority=DEBUG1"),
-            OsString::from("--log-stderr-priority"),
-            OsString::from("off"),
-        ])
-        .expect("parse logging args");
-        assert_eq!(
-            filtered,
-            vec![OsString::from("--vis"), OsString::from("input.ms")]
-        );
-        assert_eq!(config.table_path, Some(PathBuf::from("run.log")));
-        assert_eq!(config.table_priority, CasaPriority::Debug1);
-        assert_eq!(config.stderr_priority, None);
-        clear_log_env();
-    }
-
-    #[test]
-    fn cli_logging_args_can_be_stripped_without_env_config() {
-        let _guard = global_state_lock();
-        clear_log_env();
-        unsafe {
-            std::env::set_var("CASA_RS_LOG_TABLE_PRIORITY", "invalid");
-        }
-        let filtered = strip_cli_logging_args([
-            OsString::from("--log-table"),
-            OsString::from("run.log"),
-            OsString::from("--log-table-priority"),
-            OsString::from("DEBUG1"),
-            OsString::from("--log-stderr-priority=off"),
-            OsString::from("--vis"),
-            OsString::from("input.ms"),
-        ])
-        .expect("strip logging args without reading env");
-        assert_eq!(
-            filtered,
-            vec![OsString::from("--vis"), OsString::from("input.ms")]
-        );
-        clear_log_env();
-    }
-
-    #[test]
-    fn env_logging_config_supports_stderr_off() {
-        let _guard = global_state_lock();
-        clear_log_env();
-        unsafe {
-            std::env::set_var("CASA_RS_LOG_TABLE", "env.log");
-            std::env::set_var("CASA_RS_LOG_TABLE_PRIORITY", "WARN");
-            std::env::set_var("CASA_RS_LOG_STDERR_PRIORITY", "off");
-        }
-        let config = CasaLoggingConfig::from_env().expect("env logging config");
-        assert_eq!(config.table_path, Some(PathBuf::from("env.log")));
-        assert_eq!(config.table_priority, CasaPriority::Warn);
-        assert_eq!(config.stderr_priority, None);
-        clear_log_env();
-    }
-
-    #[test]
-    fn invalid_env_priority_is_reported() {
-        let _guard = global_state_lock();
-        clear_log_env();
-        unsafe {
-            std::env::set_var("CASA_RS_LOG_TABLE_PRIORITY", "loud");
-        }
-        assert!(matches!(
-            CasaLoggingConfig::from_env(),
-            Err(CasaLoggingError::InvalidEnvPriority {
-                name: "CASA_RS_LOG_TABLE_PRIORITY",
-                ..
-            })
-        ));
-        clear_log_env();
     }
 
     #[test]
@@ -1337,27 +945,6 @@ mod tests {
         let records = sink.records().unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].priority, CasaPriority::Severe);
-    }
-
-    #[test]
-    fn selecting_a_sink_is_distinct_from_setting_only_a_table_priority() {
-        assert!(!output_was_configured(
-            &["--log-table-priority".into(), "WARN".into()],
-            false,
-            false
-        ));
-        assert!(output_was_configured(
-            &["--log-stderr-priority=off".into()],
-            false,
-            false
-        ));
-        assert!(output_was_configured(
-            &["--log-table".into(), "history.log".into()],
-            false,
-            false
-        ));
-        assert!(output_was_configured(&[], true, false));
-        assert!(output_was_configured(&[], false, true));
     }
 
     #[test]

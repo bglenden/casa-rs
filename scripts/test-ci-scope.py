@@ -12,13 +12,16 @@ from ci_scope import affected_scope, changed_paths, workspace_packages
 
 class ScopeTests(unittest.TestCase):
     def setUp(self):
-        owners = {f"crates/{name}": name for name in (
-            "casa-calibration", "casa-task-runtime", "casars-python", "test-util", "other",
-        )}
+        owners = {
+            **{f"crates/{name}": name for name in (
+                "casa-calibration", "casars-python", "test-util", "other",
+            )},
+            "surfaces/casa-tasks": "casa-tasks",
+        }
         dependencies = {
             "casa-calibration": set(),
-            "casa-task-runtime": {"casa-calibration"},
-            "casars-python": {"casa-task-runtime"},
+            "casa-tasks": {"casa-calibration"},
+            "casars-python": {"casa-tasks"},
             "test-util": {"casa-calibration"},
             "other": {"test-util"},
         }
@@ -57,7 +60,7 @@ class ScopeTests(unittest.TestCase):
         scope = affected_scope(["crates/casa-calibration/src/lib.rs"])
         self.assertEqual(scope.rust, "affected")
         self.assertEqual(scope.packages.split(), [
-            "casa-calibration", "casa-task-runtime", "test-util",
+            "casa-calibration", "casa-tasks", "test-util",
         ])
         self.assertEqual(scope.python, "none")
 
@@ -80,8 +83,8 @@ class ScopeTests(unittest.TestCase):
                 self.assertEqual(scope.python, "full")
 
     def test_task_contract_changes_select_editable_python_checks(self):
-        scope = affected_scope(["crates/casa-task-runtime/src/lib.rs"])
-        self.assertEqual(scope.packages, "casa-task-runtime casars-python")
+        scope = affected_scope(["surfaces/casa-tasks/src/lib.rs"])
+        self.assertEqual(scope.packages, "casa-tasks casars-python")
         self.assertEqual(scope.python, "editable")
 
     def test_evidence_updates_preserve_scoped_checks(self):

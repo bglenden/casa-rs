@@ -5,11 +5,11 @@ use std::fmt::Write as _;
 use std::path::Path;
 use std::time::Duration;
 
+use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_components::ComponentList;
 use casa_contracts::{CasaValue, ParameterValue, casa_numpy_scalar_root};
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{Table, TableOptions};
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::measures::direction::casa_direction_frame_name;
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
