@@ -73,7 +73,7 @@ IMPLEMENTED["ms"] = {
     "addephemeris", "close", "concatenate", "createmultims", "cvel", "cvelfreqs", "done", "getdata", "getdataold", "getfielddirmeas", "getreferencedtables", "getspectralwindowinfo",
     "getscansummary", "hanningsmooth", "ismultims", "iswritable",
     "iterend", "iterendold", "iterinit", "iterinitold", "iternext", "iternextold",
-    "iterorigin", "iteroriginold", "listhistory", "lister",
+    "iterorigin", "iteroriginold", "listfits", "listhistory", "lister",
     "metadata", "msselect", "msselectedindices", "msseltoindex", "name",
     "ngetdata", "niterend", "niterinit", "niternext", "niterorigin", "nrow", "nrowold",
     "open", "partition", "putdata", "putdataold", "range", "rangeold", "regridspw", "reset", "select", "selectinit", "selectinitold", "selectold",
