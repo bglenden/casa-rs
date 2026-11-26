@@ -374,9 +374,6 @@ fn subimage_matches_casa_6_7_6_14() {
             }
         });
         let mask = text("mask").map(|mask| {
-            if name == "bare_lel" {
-                return mask.replace("cube.im", "tests/data/imsubimage/cube.im");
-            }
             if name == "mask_image" {
                 return input_path(&mask).to_str().unwrap().to_string();
             }
@@ -418,7 +415,10 @@ fn subimage_matches_casa_6_7_6_14() {
             stretch: flag("stretch"),
             ..ImsubimageRequest::default()
         };
-        let result = imsubimage(&request);
+        let result =
+            casa_imageanalysis::analysis::with_image_expression_workspace(&fixtures(), || {
+                imsubimage(&request)
+            });
         if case["error"].is_string() {
             let message = result.expect_err(name).to_string();
             let expected = match name.as_str() {
