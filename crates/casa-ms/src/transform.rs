@@ -341,6 +341,10 @@ pub enum MsTransformError {
         /// Reason for rejection.
         reason: String,
     },
+    /// The legacy spectral writer declines a non-equidistant channel grid
+    /// for FFT interpolation and leaves the input unchanged.
+    #[error("FFT interpolation requires equidistant output channels")]
+    LegacyRegridUnchanged,
     /// A Multi-MS argument was rejected.
     #[error("{reason}")]
     MultiMsParameter {
@@ -1988,6 +1992,8 @@ fn mstransform_staged(
             for (column, values) in &mut data_values {
                 let source = column.source.name();
                 let target = column.output.name();
+                let independent_lag =
+                    column.source == OptionalMainColumn::LagData && legacy_grid.is_none();
                 let Some(value) = values.next().flatten() else {
                     if legacy_direct_band || column.source == OptionalMainColumn::LagData {
                         undefined(&mut write_session, target)?;
@@ -1996,24 +2002,28 @@ fn mstransform_staged(
                     return Err(missing_column_error(&request.output_ms, row_index, source));
                 };
                 let value = select_correlations(value, source)?;
-                let mut transformed =
-                    if column.source == OptionalMainColumn::LagData || legacy_direct_band {
-                        value
-                    } else if let Some(averages) = &legacy_averages {
-                        averages.visibility(value).map_err(mutation_error)?
-                    } else if let Some(averages) = &averages {
-                        averages
-                            .visibility(column.source, value)
-                            .map_err(mutation_error)?
-                    } else {
-                        transform_data_channels(value, &flags, bins).map_err(|source| {
-                            MsTransformError::MutateMeasurementSet {
-                                path: request.output_ms.display().to_string(),
-                                source: Box::new(source),
-                            }
-                        })?
-                    };
-                if hanning && column.source != OptionalMainColumn::LagData {
+                let mut transformed = if independent_lag || legacy_direct_band {
+                    value
+                } else if let Some(averages) = &legacy_averages {
+                    averages.visibility(value).map_err(mutation_error)?
+                } else if let Some(averages) = &averages {
+                    averages
+                        .visibility(column.source, value)
+                        .map_err(mutation_error)?
+                } else {
+                    transform_data_channels(value, &flags, bins).map_err(|source| {
+                        MsTransformError::MutateMeasurementSet {
+                            path: request.output_ms.display().to_string(),
+                            source: Box::new(source),
+                        }
+                    })?
+                };
+                let smooth_visibility = if legacy_grid.is_some() {
+                    column.source != OptionalMainColumn::ModelData
+                } else {
+                    !independent_lag
+                };
+                if hanning && smooth_visibility {
                     if legacy_grid.is_some() {
                         hanning::smooth_regrid(&mut transformed, &flags).map_err(mutation_error)?;
                     } else {
@@ -2024,7 +2034,7 @@ fn mstransform_staged(
                         .map_err(mutation_error)?;
                     }
                 }
-                if column.source != OptionalMainColumn::LagData {
+                if !independent_lag {
                     if let Some(regrid) = &regrid {
                         transformed = regrid
                             .apply(transformed, fft_flags.as_ref())
@@ -2084,7 +2094,7 @@ fn mstransform_staged(
                 if !writes_rows {
                     continue;
                 }
-                if column.source == OptionalMainColumn::LagData {
+                if independent_lag {
                     for _ in 0..copies_per_row {
                         regrid::write_spectrum(
                             &mut write_session,
@@ -2912,8 +2922,9 @@ fn transform_array_write_plan(
             storage_manager: MeasurementSetColumnStorage::TiledShape,
         });
     }
+    let independent_lag = !regrid.is_some_and(regrid::Plan::is_legacy);
     for column in visibility.copies() {
-        let shapes = if column.source == OptionalMainColumn::LagData {
+        let shapes = if independent_lag && column.source == OptionalMainColumn::LagData {
             lag_shapes.clone()
         } else {
             shapes.clone()

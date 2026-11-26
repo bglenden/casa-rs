@@ -54,6 +54,111 @@ pub fn copy_locked_external_tree(
     copy_tree(source, target, Some(&follow_file_link), None)
 }
 
+/// Keep auxiliary files and access modes from a locked source tree when
+/// publishing a newly written replacement. Generated casacore files retain
+/// their contents. An obsolete source storage file is never reinstated.
+/// # Errors
+/// Returns an error if either tree cannot be inspected or the private
+/// replacement cannot preserve its source's files and modes.
+pub fn preserve_replacement_tree_entries(source: &Path, target: &Path) -> io::Result<()> {
+    let permissions = source.symlink_metadata()?.permissions();
+    let source_is_table = source.join(crate::storage::TABLE_CONTROL_FILE).is_file();
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let original = entry.path();
+        let name = entry.file_name();
+        let staged = target.join(&name);
+        let original_type = entry.file_type()?;
+        match staged.symlink_metadata() {
+            Ok(metadata) if original_type.is_dir() && metadata.is_dir() => {
+                preserve_replacement_tree_entries(&original, &staged)?;
+            }
+            Ok(metadata) if original_type.is_file() && metadata.is_file() => {
+                fs::set_permissions(staged, original.symlink_metadata()?.permissions())?;
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                if !source_is_table || !managed_table_file(&name) {
+                    copy_entry(&original, &staged)?;
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    fs::set_permissions(target, permissions)
+}
+
+fn managed_table_file(name: &OsStr) -> bool {
+    name.to_str().is_some_and(|name| {
+        matches!(
+            name,
+            "table.dat" | "table.info" | "table.lock" | "table.dat_tmp"
+        )
+    }) || table_manager_file_sequence(name).is_some()
+}
+
+/// The manager sequence number in a casacore data or index filename.
+pub fn table_manager_file_sequence(name: &OsStr) -> Option<u32> {
+    let suffix = name.to_str()?.strip_prefix("table.f")?;
+    let extension = suffix.trim_start_matches(|character: char| character.is_ascii_digit());
+    if matches!(extension, "" | "i" | "asdmindex")
+        || extension
+            .strip_prefix("_TSM")
+            .is_some_and(|cube| cube.parse::<u32>().is_ok())
+    {
+        suffix[..suffix.len() - extension.len()].parse().ok()
+    } else {
+        None
+    }
+}
+
+/// Inspect a regular storage file before mutating it in a private stage.
+/// # Errors
+/// The file cannot be read, is a symbolic link or is shared through hard links.
+pub fn private_table_file_metadata(path: &Path) -> io::Result<Metadata> {
+    let metadata = path.symlink_metadata()?;
+    let shared = !metadata.is_file();
+    #[cfg(unix)]
+    let shared = shared || std::os::unix::fs::MetadataExt::nlink(&metadata) != 1;
+    if shared {
+        return Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            format!("invalid private table storage entry {}", path.display()),
+        ));
+    }
+    Ok(metadata)
+}
+
+/// Preserve existing managed-file modes around a write to one table in an
+/// unpublished tree. Reject symbolic links before the write so a staged
+/// copy cannot write through a link to a file outside the replacement.
+/// # Errors
+/// Returns an error for unsupported entries or if inspection, writing or
+/// restoring a file mode fails. Discard the private stage on failure.
+pub fn write_private_table_preserving_modes(
+    table: &Path,
+    write: impl FnOnce() -> io::Result<()>,
+) -> io::Result<()> {
+    let mut permissions = Vec::new();
+    for entry in fs::read_dir(table)? {
+        let entry = entry?;
+        if !managed_table_file(&entry.file_name()) {
+            continue;
+        }
+        let metadata = private_table_file_metadata(&entry.path())?;
+        permissions.push((entry.path(), metadata.permissions()));
+    }
+    write()?;
+    for (path, permission) in permissions {
+        if let Err(error) = fs::set_permissions(path, permission)
+            && error.kind() != ErrorKind::NotFound
+        {
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
 type FileLinkSelection<'a> = Option<&'a dyn Fn(&OsStr) -> bool>;
 
 fn copy_tree(
@@ -383,6 +488,49 @@ mod tests {
                 LockOutcome::HeldByAnotherProcess,
             );
         }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn replacement_locks_cover_published_inodes_before_rebinding() {
+        use crate::publication::{exchange_directories, lock_table_tree_for_replacement};
+
+        let scratch = tempfile::tempdir().unwrap();
+        let live = scratch.path().join("live");
+        let stage = scratch.path().join("stage");
+        for root in [&live, &stage] {
+            fs::create_dir_all(root.join("logtable")).unwrap();
+            for subdir in ["", "logtable"] {
+                let path = root.join(subdir);
+                fs::write(path.join("table.dat"), [0u8]).unwrap();
+                drop(open_lock(&path));
+            }
+        }
+        let original = lock_table_tree_for_replacement(&live).unwrap();
+        let mut replacement = lock_table_tree_for_replacement(&stage).unwrap();
+        exchange_directories(&stage, &live).unwrap();
+
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "publication::copy_tree::tests::source_lock_probe",
+            ])
+            .env(SOURCE_PROBE, &live)
+            .output()
+            .unwrap();
+        let output = String::from_utf8_lossy(&child.stdout);
+        assert!(
+            child.status.success() && output.contains("1 passed"),
+            "{output}"
+        );
+
+        for lock in &mut replacement {
+            let destination = live.join(lock.path().strip_prefix(&stage).unwrap());
+            lock.follow_directory_rename(&destination).unwrap();
+        }
+        assert!(original.iter().all(|lock| {
+            lock.matches_table_path(&stage.join(lock.path().strip_prefix(&live).unwrap()))
+        }));
     }
 
     fn open_lock(table: &Path) -> LockFile {

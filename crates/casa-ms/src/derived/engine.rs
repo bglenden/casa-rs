@@ -231,6 +231,14 @@ impl MsCalEngine {
         Ok(engine)
     }
 
+    /// Keep the FIELD ephemeris conventions used by SubMS spectral writers.
+    pub(crate) fn for_spectral_rewrite(ms: &MeasurementSet) -> MsResult<Self> {
+        let mut engine = Self::new(ms)?;
+        engine.field_motions = crate::ephemeris::spectral_field_motions(ms)?;
+        engine.calibration_field_directions = true;
+        Ok(engine)
+    }
+
     /// Prepare FIELD scalar sampling, for which the ephemeris remains
     /// available on rows whose directions are supplied by polynomials.
     pub fn for_ephemeris_scalars(ms: &MeasurementSet) -> MsResult<Self> {

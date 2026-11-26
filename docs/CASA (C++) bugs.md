@@ -12270,3 +12270,11 @@ interpolation, while the input visibility array retains its original order.
 
 casa-rs retains the association between frequencies and input samples.
 On this input it writes 0.5 at 1402.5 MHz and 2.5 at 1400.5 MHz (#1030).
+
+## Spectral width regridding can widen a table descriptor's permissions
+
+On CASA 6.7.6.14, set a writable MeasurementSet's directory mode to 0700
+and its `table.dat` mode to 0600. With umask 022,
+`ms.regridspw(outframe="", chanwidth=2, hanning=False)` can recreate
+`table.dat` with mode 0644. Casa-rs retains the original directory and table
+file modes when publishing the rewritten MeasurementSet (#1030).

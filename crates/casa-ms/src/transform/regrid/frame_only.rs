@@ -2,13 +2,15 @@
 //! Frame-only updates for legacy regridspw leave visibility cells in place.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, btree_map::Entry};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
+use std::{fs, io};
 
 use casa_tables::publication::{
-    copy_locked_table_tree_with_shared_files, replace_private_int32_column,
+    copy_locked_table_tree_with_shared_files, private_table_file_metadata,
+    replace_private_int32_column, table_manager_file_sequence,
+    write_private_table_preserving_modes,
 };
 use casa_tables::{RequiredScalarColumnValues, Table, TableOptions, TablePartNames};
 use casa_types::measures::frequency::FrequencyRef;
@@ -40,22 +42,11 @@ pub fn stage_frame_only_ms(source: &Path, stage: &Path) -> Result<(), MsTransfor
         .map(|manager| manager.seq_nr)
         .collect::<BTreeSet<_>>();
     copy_locked_table_tree_with_shared_files(source, stage, |name| {
-        let Some(file) = name.to_str().and_then(|name| name.strip_prefix("table.f")) else {
-            return false;
-        };
-        let manager = if let Some((manager, cube)) = file.split_once("_TSM") {
-            if cube.parse::<u32>().is_err() {
-                return false;
-            }
-            manager
-        } else {
-            file.strip_suffix('i').unwrap_or(file)
-        };
-        manager
-            .parse::<u32>()
-            .is_ok_and(|manager| reusable.contains(&manager))
+        table_manager_file_sequence(name).is_some_and(|manager| reusable.contains(&manager))
     })
-    .map_err(ms_error)
+    .map_err(ms_error)?;
+    private_table_file_metadata(&stage.join("table.dat")).map_err(ms_error)?;
+    Ok(())
 }
 
 /// Transform the spectral metadata of a private writable MeasurementSet.
@@ -155,6 +146,20 @@ fn write_main_descriptions(
     let path = main.path().expect("a staged MAIN has a table path");
     if replace_private_int32_column(path, DDID, ddids).map_err(ms_error)? {
         return Ok(());
+    }
+    let managers = main
+        .data_manager_info()
+        .iter()
+        .filter(|manager| manager.columns.iter().any(|column| column == DDID))
+        .map(|manager| manager.seq_nr)
+        .collect::<BTreeSet<_>>();
+    for entry in fs::read_dir(path).map_err(ms_error)? {
+        let entry = entry.map_err(ms_error)?;
+        if table_manager_file_sequence(&entry.file_name())
+            .is_some_and(|sequence| managers.contains(&sequence))
+        {
+            private_table_file_metadata(&entry.path()).map_err(ms_error)?;
+        }
     }
     let mut changed = Vec::new();
     {
@@ -559,13 +564,14 @@ fn replace_staged_rows(
     for record in records {
         table.add_row(record).map_err(ms_error)?;
     }
-    // LocalTables checked that this physical subtable is inside the private
-    // stage. The outer transaction owns cleanup if saving it fails.
-    fs::remove_dir_all(path).map_err(ms_error)?;
-    table
-        .prepare_write()
-        .save(TableOptions::new(path))
-        .map_err(ms_error)
+    // The private stage is discarded if the table write fails.
+    write_private_table_preserving_modes(path, || {
+        table
+            .prepare_write()
+            .save(TableOptions::new(path))
+            .map_err(io::Error::other)
+    })
+    .map_err(ms_error)
 }
 
 fn rewrite_sources(path: &Path, links: &[(i32, i32, i32)]) -> Result<(), MsTransformError> {

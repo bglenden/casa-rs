@@ -11,6 +11,8 @@ use crate::{TableError, TableWriteLock};
 mod copy_tree;
 pub use copy_tree::{
     copy_locked_external_tree, copy_locked_table_tree, copy_locked_table_tree_with_shared_files,
+    preserve_replacement_tree_entries, private_table_file_metadata, table_manager_file_sequence,
+    write_private_table_preserving_modes,
 };
 
 /// Replace a physical Int32 column in an exclusively owned private stage.

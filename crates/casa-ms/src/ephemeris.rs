@@ -307,7 +307,7 @@ pub(crate) fn reference_direction(
 pub enum AttachedFieldEphemeris {
     /// Inertial table ephemeris sampled at UTC epochs.
     Inertial(Arc<FieldEphemeris>),
-    /// Apparent JPL/comet ephemeris table.
+    /// A JPL/comet table sampled using casacore's coordinate conventions.
     Apparent(Arc<CometTable>),
 }
 
@@ -440,20 +440,33 @@ pub(crate) fn field_motions(
     allow_apparent: bool,
 ) -> Result<Box<[FieldMotion]>, MsError> {
     let ids = field_ephemeris_ids(measurement_set)?;
-    Ok(load_field_motions(measurement_set, ids, allow_apparent))
+    Ok(load_field_motions(measurement_set, ids, |path| {
+        read_field_motion(path, allow_apparent, false)
+    }))
+}
+
+/// Read FIELD motion using the topocentric as well as geocentric tables
+/// accepted by casacore's legacy spectral writer.
+pub(crate) fn spectral_field_motions(ms: &MeasurementSet) -> MsResult<Box<[FieldMotion]>> {
+    let ids = field_ephemeris_ids(ms)?;
+    Ok(load_field_motions(ms, ids, |path| {
+        read_field_motion(path, true, true)
+    }))
 }
 
 /// FIELD radial velocity and distance consult the attached table by ID
 /// even when a polynomial supplies the field's direction.
 pub(crate) fn scalar_field_motions(ms: &MeasurementSet) -> Result<Box<[FieldMotion]>, MsError> {
     let ids = read_field_ephemeris_ids(ms, true)?;
-    Ok(load_field_motions(ms, ids, true))
+    Ok(load_field_motions(ms, ids, |path| {
+        read_field_motion(path, true, false)
+    }))
 }
 
 fn load_field_motions(
     measurement_set: &MeasurementSet,
     ids: Vec<Option<i32>>,
-    allow_apparent: bool,
+    load: impl Fn(&Path) -> FieldMotion,
 ) -> Box<[FieldMotion]> {
     let mut read: BTreeMap<i32, FieldMotion> = BTreeMap::new();
     ids.iter()
@@ -468,7 +481,7 @@ fn load_field_motions(
                         .ok_or(PhaseCentreEphemerisError::UnbackedMeasurementSet)
                         .and_then(|root| find_field_ephemeris(root, id));
                     match path {
-                        Ok(path) => read_field_motion(&path, allow_apparent),
+                        Ok(path) => load(&path),
                         Err(error) => FieldMotion::Unreadable(Arc::from(error.to_string())),
                     }
                 })
@@ -477,7 +490,7 @@ fn load_field_motions(
         .collect()
 }
 
-fn read_field_motion(path: &Path, allow_apparent: bool) -> FieldMotion {
+fn read_field_motion(path: &Path, allow_apparent: bool, allow_topocentric: bool) -> FieldMotion {
     match EphemerisSeriesPreflight::open(path).and_then(EphemerisSeriesPreflight::load) {
         Ok(series) => FieldMotion::Ephemeris(AttachedFieldEphemeris::Inertial(Arc::new(series))),
         Err(error) => {
@@ -489,13 +502,14 @@ fn read_field_motion(path: &Path, allow_apparent: bool) -> FieldMotion {
                 PhaseCentreEphemerisError::UnsupportedPositionReference { reference } => {
                     reference.eq_ignore_ascii_case("APP")
                 }
+                PhaseCentreEphemerisError::UnsupportedObserverLocation { .. } => allow_topocentric,
                 _ => false,
             };
             if !allow_apparent || !apparent {
                 return FieldMotion::Unreadable(Arc::from(error.to_string()));
             }
             match CometTable::open(path) {
-                Ok(series) if series.topocentre_m().is_none() => {
+                Ok(series) if allow_topocentric || series.topocentre_m().is_none() => {
                     FieldMotion::Ephemeris(AttachedFieldEphemeris::Apparent(Arc::new(series)))
                 }
                 Ok(_) => FieldMotion::Unreadable(Arc::from(

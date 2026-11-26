@@ -246,6 +246,10 @@ impl Plan {
         self.field_layout.as_ref()?.description(row)
     }
 
+    pub(super) fn is_legacy(&self) -> bool {
+        self.legacy
+    }
+
     pub(super) fn field_channel_count(&self, row: usize) -> Option<usize> {
         let id = self.field_layout.as_ref()?.window(row)?;
         self.windows
@@ -509,6 +513,14 @@ impl Window {
                 }
             })
             .collect::<Vec<_>>();
+        let channel_bounds = matches!(legacy, Some(LegacySpectralGrid::CenteredChannels { .. }))
+            || (matches!(legacy, Some(LegacySpectralGrid::Cvel)) && options.mode == "channel_b");
+        if channel_bounds
+            && method == Method::FftShift
+            && !legacy_fft_channel_spacing(&converted, &converted_widths)
+        {
+            return Err(MsTransformError::LegacyRegridUnchanged);
+        }
         let maximum_channels = budget.maximum_output_channels(frequencies.len())?;
         let axis = match legacy {
             Some(
@@ -630,6 +642,20 @@ impl Window {
     }
 }
 
+fn legacy_fft_channel_spacing(centres: &[f64], widths: &[f64]) -> bool {
+    let mut previous_spacing = widths.first().map_or(0., |width| width.abs());
+    centres
+        .windows(2)
+        .zip(widths.windows(2))
+        .all(|(centres, widths)| {
+            let spacing = (centres[1] - centres[0]).abs();
+            let equal = (widths[1].abs() - widths[0].abs()).abs() <= 0.1
+                && (spacing - previous_spacing).abs() <= 0.1;
+            previous_spacing = spacing;
+            equal
+        })
+}
+
 fn averaged_axis(frequencies: &[f64], widths: &[f64], bins: &[Vec<usize>]) -> (Vec<f64>, Vec<f64>) {
     bins.iter()
         .map(|bin| {
@@ -701,7 +727,9 @@ impl FrameGeometry {
     ) -> Result<Arc<Self>, MsTransformError> {
         // SubMS evaluates FIELD.phaseDirMeas at the integration epoch for
         // every frequency frame, including the direction of an ephemeris.
-        let engine = if legacy || options.outframe.eq_ignore_ascii_case("SOURCE") {
+        let engine = if legacy {
+            MsCalEngine::for_spectral_rewrite(input)
+        } else if options.outframe.eq_ignore_ascii_case("SOURCE") {
             MsCalEngine::for_calibration(input)
         } else {
             MsCalEngine::new(input)

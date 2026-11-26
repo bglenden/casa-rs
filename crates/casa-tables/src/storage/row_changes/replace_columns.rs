@@ -47,15 +47,7 @@ pub(crate) fn replace_private_int32_column(
         return Ok(false);
     };
     let file = table.join(format!("table.f{}", manager.seq_nr));
-    let metadata = file.symlink_metadata()?;
-    let shared = !metadata.is_file();
-    #[cfg(unix)]
-    let shared = shared || std::os::unix::fs::MetadataExt::nlink(&metadata) != 1;
-    if shared {
-        return Err(StorageError::FormatMismatch(
-            "cannot overwrite a shared private-table manager".into(),
-        ));
-    }
+    crate::publication::private_table_file_metadata(&file)?;
     standard_stman::replace_int32_columns(
         &file,
         &file,

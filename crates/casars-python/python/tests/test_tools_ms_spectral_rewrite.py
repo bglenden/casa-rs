@@ -3,6 +3,7 @@
 from contextlib import closing
 import os
 from shutil import copytree
+from stat import S_IMODE
 
 import numpy as np
 import pytest
@@ -84,6 +85,39 @@ def test_spectral_rewrite_retains_physical_rows_and_reopens_in_casa(
     for column in axis_columns:
         np.testing.assert_allclose(native_axis[column], reference_axis[column], rtol=0, atol=1e-6)
     assert np.all(np.asarray(native_axis["CHAN_WIDTH"]) > 0)
+
+
+@pytest.mark.parametrize("hanning", [False, True])
+@pytest.mark.parametrize("method, arguments", [
+    ("cvel", {"width": 2}),
+    ("regridspw", {"outframe": "", "chanwidth": 2}),
+])
+def test_rewrite_resamples_optional_lag_and_model_columns(native_dataset, tmp_path, method,
+                                                          arguments, hanning):
+    casa = pinned_casa()
+    columns = ("LAG_DATA", "MODEL_DATA")
+    samples = np.array([[3, 0, 7, 0], [50, 0, 81, 0]], dtype=np.complex64)
+    with closing(casa.table()) as table:
+        assert table.open(str(native_dataset), nomodify=False)
+        for column in columns:
+            if column not in table.colnames():
+                assert table.addcols({column: {"valueType": "complex", "ndim": 2}})
+            for row in range(table.nrows()):
+                assert table.putcell(column, row, samples)
+
+    result = []
+    for api, name in ((casa, "reference"), (tools, "native")):
+        path = tmp_path / f"{name}.ms"
+        copytree(native_dataset, path)
+        with closing(api.ms()) as ms:
+            assert ms.open(str(path), nomodify=False)
+            assert getattr(ms, method)(hanning=hanning, **arguments) is True
+        result.append(read_cells(casa, path, columns))
+
+    for column in columns:
+        assert all(cell.shape == (2, 2) for cell in result[1][column])
+        np.testing.assert_allclose(result[1][column], result[0][column], rtol=1e-6, atol=1e-6,
+                                   strict=True)
 
 
 def test_spectral_noops_and_failed_arguments_preserve_attachment(native_dataset):
@@ -201,6 +235,79 @@ def test_frame_only_regrid_follows_the_spectral_window_link(native_dataset, tmp_
         np.testing.assert_allclose(axes[1][column], axes[0][column], atol=1e-6, rtol=0, strict=True)
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX table storage links")
+def test_frame_only_regrid_refuses_an_external_description_manager(native_dataset, tmp_path):
+    casa = pinned_casa()
+    with closing(casa.table()) as table:
+        assert table.open(str(native_dataset / "FIELD"), nomodify=False)
+        second = {column: table.getcell(column, 0) for column in table.colnames()
+                  if table.iscelldefined(column, 0)}
+        second["NAME"] = "Second field"
+        assert table.addrows(1)
+        for column, value in second.items():
+            assert table.putcell(column, 1, value)
+        assert table.done()
+        assert table.open(str(native_dataset), nomodify=False)
+        count = table.nrows()
+        original = table.getcol("DATA_DESC_ID")
+        assert table.putcol("FIELD_ID", np.arange(count, dtype=np.int32) % 2)
+        assert table.renamecol("DATA_DESC_ID", "PREVIOUS_DESCRIPTION")
+        assert table.addcols(
+            {"DATA_DESC_ID": {"valueType": "int"}},
+            {"TYPE": "IncrementalStMan", "NAME": "External descriptions", "SPEC": {}},
+        )
+        assert table.putcol("DATA_DESC_ID", original)
+        manager = next(info for info in table.getdminfo().values()
+                       if "DATA_DESC_ID" in info["COLUMNS"])
+        assert manager["TYPE"] == "IncrementalStMan"
+
+    storage = native_dataset / f'table.f{manager["SEQNR"]}'
+    external = tmp_path / "external-descriptions"
+    storage.rename(external)
+    storage.symlink_to(external)
+    contents = external.read_bytes()
+    history = read_cells(casa, native_dataset / "HISTORY", ("MESSAGE",))
+    with closing(tools.ms()) as ms:
+        assert ms.open(str(native_dataset), nomodify=False)
+        with pytest.raises(RuntimeError, match="invalid private table storage entry"):
+            ms.regridspw(outframe="BARY", mode="")
+        assert ms.name() == str(native_dataset)
+    assert storage.is_symlink()
+    assert external.read_bytes() == contents
+    assert read_cells(casa, native_dataset / "HISTORY", ("MESSAGE",)) == history
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
+@pytest.mark.parametrize("arguments", [
+    pytest.param({"outframe": "BARY", "mode": ""}, id="frame-only"),
+    pytest.param({"outframe": "", "chanwidth": 2, "hanning": False}, id="width"),
+])
+def test_spectral_rewrite_preserves_permissions_and_auxiliary_files(native_dataset, tmp_path,
+                                                                   arguments):
+    casa = pinned_casa()
+    for api, name in ((casa, "reference"), (tools, "native")):
+        path = tmp_path / f"{name}.ms"
+        copytree(native_dataset, path)
+        directories = (path, path / "SPECTRAL_WINDOW")
+        for directory in directories:
+            directory.chmod(0o700)
+            (directory / "table.dat").chmod(0o600)
+            (directory / "run-calibration.json").write_bytes(b'{"checked": true}\n')
+        previous_umask = os.umask(0o022)
+        try:
+            with closing(api.ms()) as ms:
+                assert ms.open(str(path), nomodify=False)
+                assert ms.regridspw(**arguments) is True
+        finally:
+            os.umask(previous_umask)
+        for directory in directories:
+            assert S_IMODE(directory.stat().st_mode) == 0o700
+            # CASA can recreate table.dat using the process umask on width changes.
+            if api is tools or arguments.get("mode") == "":
+                assert S_IMODE((directory / "table.dat").stat().st_mode) == 0o600
+            assert (directory / "run-calibration.json").read_bytes() == b'{"checked": true}\n'
+
+
 def test_spectral_writers_preserve_read_only_and_selected_attachments(native_dataset):
     columns = ("DATA", "FLAG", "DATA_DESC_ID", "TIME")
     before = read_cells(tools, native_dataset, columns)
@@ -275,6 +382,58 @@ def test_regridspw_unknown_frame_and_identical_grid_leave_history_unchanged(nati
         assert read_cells(casa, path / "HISTORY", ("MESSAGE",)) == history
 
 
+@pytest.mark.parametrize("method", ["cvel", "regridspw"])
+def test_a_geo_noop_keeps_the_persisted_frame(native_dataset, tmp_path, method):
+    casa = pinned_casa()
+    axes = ("NUM_CHAN", "CHAN_FREQ", "MEAS_FREQ_REF")
+    with closing(casa.table()) as table:
+        assert table.open(str(native_dataset / "SPECTRAL_WINDOW"), nomodify=False)
+        assert table.putcell("MEAS_FREQ_REF", 0, 4)  # GEO
+    before = read_cells(casa, native_dataset / "SPECTRAL_WINDOW", axes)
+    old_history = read_cells(casa, native_dataset / "HISTORY", ("MESSAGE",))
+    for api, name in ((casa, "reference"), (tools, "native")):
+        path = tmp_path / f"{name}.ms"
+        copytree(native_dataset, path)
+        with closing(api.ms()) as ms:
+            assert ms.open(str(path), nomodify=False)
+            assert getattr(ms, method)(outframe="GEO", hanning=False) is True
+            assert ms.name() == str(path)
+        for column, value in read_cells(casa, path / "SPECTRAL_WINDOW", axes).items():
+            np.testing.assert_array_equal(value, before[column], strict=True)
+        assert read_cells(casa, path / "HISTORY", ("MESSAGE",)) == old_history
+
+
+@pytest.mark.parametrize("method, arguments", [
+    ("cvel", {"mode": "channel_b", "width": 2, "interp": "fftshift"}),
+    ("regridspw", {"chanwidth": 2, "interpolation": "fftshift"}),
+])
+def test_fft_declines_nonequidistant_channel_bins(native_dataset, tmp_path, method, arguments):
+    casa = pinned_casa()
+    columns = ("NUM_CHAN", "CHAN_FREQ", "CHAN_WIDTH", "MEAS_FREQ_REF")
+    with closing(casa.table()) as table:
+        assert table.open(str(native_dataset / "SPECTRAL_WINDOW"), nomodify=False)
+        input_axis = table.getcell("CHAN_FREQ", 0)
+        widths = np.array([1.2, 0.8, 1.2, 0.8]) * abs(input_axis[1] - input_axis[0])
+        centres = input_axis[0] + np.cumsum(widths) - widths / 2.
+        assert table.putcell("CHAN_FREQ", 0, centres)
+        assert table.putcell("CHAN_WIDTH", 0, widths)
+    spectra = read_cells(casa, native_dataset / "SPECTRAL_WINDOW", columns)
+    main = read_cells(casa, native_dataset, ("DATA", "FLAG", "WEIGHT", "SIGMA"))
+    old_history = read_cells(casa, native_dataset / "HISTORY", ("MESSAGE",))
+    for api, name in ((casa, "reference"), (tools, "native")):
+        path = tmp_path / f"{name}.ms"
+        copytree(native_dataset, path)
+        with closing(api.ms()) as ms:
+            assert ms.open(str(path), nomodify=False)
+            assert getattr(ms, method)(outframe="", hanning=False, **arguments) is True
+            assert ms.name() == str(path)
+        for column, value in read_cells(casa, path / "SPECTRAL_WINDOW", columns).items():
+            np.testing.assert_array_equal(value, spectra[column], strict=True)
+        for column, value in read_cells(casa, path, main).items():
+            np.testing.assert_array_equal(value, main[column], strict=True)
+        assert read_cells(casa, path / "HISTORY", ("MESSAGE",)) == old_history
+
+
 def test_failed_rest_conversion_leaves_native_tool_attached(native_dataset, tmp_path):
     casa = pinned_casa()
     before = read_cells(casa, native_dataset, ("DATA", "FLAG", "DATA_DESC_ID"))
@@ -330,11 +489,15 @@ def test_spectral_writers_leave_all_flagged_antenna_inputs_unchanged(native_data
 
 
 @pytest.mark.skipif(os.name != "posix", reason="casacore POSIX table locks")
-def test_regridspw_retains_the_attachment_lock(native_dataset):
+@pytest.mark.parametrize("arguments", [
+    {"outframe": "", "chanwidth": 2, "hanning": False},
+    {"outframe": "BARY", "mode": ""},
+])
+def test_regridspw_retains_the_attachment_lock(native_dataset, arguments):
     with closing(tools.ms()) as ms:
         assert ms.open(str(native_dataset), nomodify=False, lock=True)
         assert_external_write_refused(native_dataset / "FIELD")
-        assert ms.regridspw(outframe="", chanwidth=2, hanning=False)
+        assert ms.regridspw(**arguments)
         assert_external_write_refused(native_dataset / "FIELD")
 
 
@@ -397,17 +560,27 @@ def test_cvel_converts_at_the_earliest_integration_without_reordering_rows(nativ
         np.testing.assert_allclose(actual[column], expected[column], atol=1e-5, rtol=0)
 
 
-@pytest.mark.parametrize("motion", ["ephemeris", "polynomial"])
+@pytest.mark.parametrize("motion, outframe", [
+    ("ephemeris", "BARY"),
+    ("topocentric", "BARY"),
+    ("topocentric", "SOURCE"),
+    ("polynomial", "BARY"),
+])
 @pytest.mark.parametrize("method, arguments", [
     pytest.param("regridspw", {"mode": ""}, id="frame-only"),
     pytest.param("regridspw", {"chanwidth": 2, "hanning": False}, id="regridspw-width"),
     pytest.param("cvel", {"width": 2, "hanning": False}, id="cvel-width"),
 ])
-def test_barycentric_rewrite_tracks_the_field_direction(native_dataset, tmp_path, request,
-                                                       motion, method, arguments):
+def test_spectral_rewrite_tracks_the_field_direction(native_dataset, tmp_path, request, motion,
+                                                     outframe, method, arguments):
     casa = pinned_casa()
-    if motion == "ephemeris":
+    if motion != "polynomial":
         dataset, _ = request.getfixturevalue("ephemeris_dataset")
+        if motion == "topocentric":
+            with closing(casa.table()) as table:
+                assert table.open(str(dataset / "FIELD" / "EPHEM0_TEST.tab"), nomodify=False)
+                assert table.putkeyword("GeoDist", 6370.)
+                assert table.putkeyword("obsloc", "VLA")
     else:
         dataset = native_dataset
         first_integration = read_cells(casa, dataset, ("TIME",))["TIME"][0]
@@ -426,7 +599,7 @@ def test_barycentric_rewrite_tracks_the_field_direction(native_dataset, tmp_path
         copytree(dataset, path)
         with closing(api.ms()) as ms:
             assert ms.open(str(path), nomodify=False)
-            assert getattr(ms, method)(outframe="BARY", **arguments) is True
+            assert getattr(ms, method)(outframe=outframe, **arguments) is True
             assert ms.name() == str(path)
         axes.append(read_cells(casa, path / "SPECTRAL_WINDOW", ("CHAN_FREQ", "CHAN_WIDTH", "MEAS_FREQ_REF")))
         main.append(read_cells(casa, path, ("TIME", "DATA", "FLAG", "WEIGHT", "SIGMA")))

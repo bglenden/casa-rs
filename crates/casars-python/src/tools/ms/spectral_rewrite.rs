@@ -16,9 +16,10 @@ use casa_ms::transform::{
     mstransform_task, reframe_staged_ms, stage_frame_only_ms, tool_channel_frequencies,
 };
 use casa_tables::publication::{
-    check_write_access, exchange_directories, lock_table_tree_for_replacement_with_held,
+    check_write_access, exchange_directories, lock_table_tree_for_replacement,
+    lock_table_tree_for_replacement_with_held, preserve_replacement_tree_entries,
 };
-use casa_tables::{Table, TableOptions};
+use casa_tables::{Table, TableOptions, TableWriteLock};
 use casa_types::measures::MeasFrame;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::quanta::{Quantity, Unit, casacore};
@@ -36,6 +37,12 @@ struct SpectralRewrite {
     grid: LegacySpectralGrid,
     phase: Option<Variant>,
     hanning: bool,
+}
+
+enum RewriteOutcome<T> {
+    Complete(T),
+    Unchanged,
+    Refused,
 }
 
 impl SpectralRewrite {
@@ -56,7 +63,6 @@ impl SpectralRewrite {
             return Ok(self.options.interpolation.is_empty());
         } else {
             match self.options.outframe.parse::<FrequencyRef>() {
-                Ok(FrequencyRef::GEO) => return Ok(self.options.interpolation.is_empty()),
                 Ok(FrequencyRef::Undefined) | Err(_) => return Ok(true),
                 Ok(target) => Some(target),
             }
@@ -425,12 +431,27 @@ impl PyMsTool {
                 return Ok(false);
             }
             let read_locks = std::mem::take(&mut ms.read_locks).into_keys().collect();
+            let hanning = rewrite.hanning;
             match rewrite_attached(ms, rewrite) {
-                Ok(Some(replacement)) => {
+                Ok(RewriteOutcome::Complete(mut replacement)) => {
+                    if !replacement.write_locks.is_empty() {
+                        replacement.write_locks.extend(
+                            std::mem::take(&mut ms.write_locks)
+                                .into_iter()
+                                .filter(|(path, _)| !path.starts_with(&ms.path)),
+                        );
+                    }
                     *attached = Some(replacement);
                     Ok(true)
                 }
-                Ok(None) => {
+                Ok(RewriteOutcome::Unchanged) => {
+                    ms.retain_tables(read_locks)?;
+                    if cvel && hanning {
+                        return ms.hanning_rows(HanningDataColumn::Both);
+                    }
+                    Ok(true)
+                }
+                Ok(RewriteOutcome::Refused) => {
                     ms.retain_tables(read_locks)?;
                     Ok(false)
                 }
@@ -498,7 +519,10 @@ fn has_unflagged_antenna(ms: &AttachedMs) -> PyResult<bool> {
     Ok(false)
 }
 
-fn rewrite_attached(ms: &AttachedMs, rewrite: SpectralRewrite) -> PyResult<Option<AttachedMs>> {
+fn rewrite_attached(
+    ms: &AttachedMs,
+    rewrite: SpectralRewrite,
+) -> PyResult<RewriteOutcome<AttachedMs>> {
     let operation = rewrite.method();
     let interpolation = rewrite.options.interpolation.clone();
     let link = ms.working_metadata_link();
@@ -510,15 +534,22 @@ fn rewrite_attached(ms: &AttachedMs, rewrite: SpectralRewrite) -> PyResult<Optio
     let workspace = tempfile::tempdir_in(ms.path.parent().unwrap_or_else(|| Path::new(".")))
         .map_err(runtime_error)?;
     let staged = workspace.path().join("spectral.ms");
-    if matches!(rewrite.grid, LegacySpectralGrid::FrameOnly) {
+    let frame_only = matches!(rewrite.grid, LegacySpectralGrid::FrameOnly);
+    if frame_only {
         stage_frame_only_ms(&ms.path, &staged).map_err(runtime_error)?;
         match reframe_staged_ms(&staged, &rewrite.options) {
             Ok(true) => {}
-            Ok(false) | Err(MsTransformError::RegridParameter { .. }) => return Ok(None),
+            Ok(false) | Err(MsTransformError::RegridParameter { .. }) => {
+                return Ok(RewriteOutcome::Refused);
+            }
             Err(error) => return Err(runtime_error(error)),
         }
-    } else if !regrid_to_stage(ms, rewrite, &staged)? {
-        return Ok(None);
+    } else {
+        match regrid_to_stage(ms, rewrite, &staged)? {
+            RewriteOutcome::Complete(()) => {}
+            RewriteOutcome::Unchanged => return Ok(RewriteOutcome::Unchanged),
+            RewriteOutcome::Refused => return Ok(RewriteOutcome::Refused),
+        }
     }
     let table = Table::open(TableOptions::new(&staged)).map_err(runtime_error)?;
     let history = spectral_history(&table, &staged, &interpolation)?;
@@ -533,6 +564,9 @@ fn rewrite_attached(ms: &AttachedMs, rewrite: SpectralRewrite) -> PyResult<Optio
     )
     .map_err(runtime_error)?;
     drop(table);
+    if !frame_only {
+        preserve_replacement_tree_entries(&ms.path, &staged).map_err(runtime_error)?;
+    }
     link.verify_directory().map_err(runtime_error)?;
     if !locks
         .iter()
@@ -540,15 +574,39 @@ fn rewrite_attached(ms: &AttachedMs, rewrite: SpectralRewrite) -> PyResult<Optio
     {
         return Err(runtime_error("The input changed while regridding"));
     }
-    destination.publish(&staged, &ms.path, operation)?;
     let keep_lock = operation == "regridspw" && !ms.write_locks.is_empty();
-    match AttachedMs::open(ms.path.clone(), true, keep_lock, false) {
-        Ok(mut replacement) => {
-            replacement.name = ms.name.clone();
-            Ok(Some(replacement))
-        }
+    let original_main = ms
+        .write_locks
+        .get(&ms.path)
+        .or_else(|| locks.iter().find(|lock| lock.path() == ms.path))
+        .ok_or_else(|| runtime_error("The original MeasurementSet has no write lock"))?;
+    let mut published_locks = lock_table_tree_for_replacement(&staged)
+        .map_err(runtime_error)?
+        .into_iter()
+        .map(|lock| {
+            let relative = lock
+                .path()
+                .strip_prefix(&staged)
+                .expect("lock under the stage");
+            (ms.path.join(relative), lock)
+        })
+        .collect::<Vec<_>>();
+    destination.publish(&staged, &ms.path, operation)?;
+    match reopen_rewritten_ms(ms, &mut published_locks, keep_lock) {
+        Ok(replacement) => Ok(RewriteOutcome::Complete(replacement)),
         Err(error) => {
-            if let Err(rollback) = exchange_directories(&staged, &ms.path) {
+            let rollback = if original_main.matches_table_path(&staged)
+                && published_locks
+                    .iter()
+                    .all(|(path, lock)| lock.matches_table_path(path))
+            {
+                exchange_directories(&staged, &ms.path)
+            } else {
+                Err(std::io::Error::other(
+                    "a locked directory changed at publication",
+                ))
+            };
+            if let Err(rollback) = rollback {
                 let backup = workspace.keep();
                 return Err(runtime_error(format!(
                     "Could not reopen the regridded MS: {error}; rollback failed: {rollback}; original at {}",
@@ -558,6 +616,22 @@ fn rewrite_attached(ms: &AttachedMs, rewrite: SpectralRewrite) -> PyResult<Optio
             Err(error)
         }
     }
+}
+
+fn reopen_rewritten_ms(
+    ms: &AttachedMs,
+    published_locks: &mut Vec<(std::path::PathBuf, TableWriteLock)>,
+    keep_lock: bool,
+) -> PyResult<AttachedMs> {
+    for (path, lock) in published_locks.iter_mut() {
+        lock.follow_directory_rename(path).map_err(runtime_error)?;
+    }
+    let mut replacement = AttachedMs::open(ms.path.clone(), true, false, false)?;
+    replacement.name = ms.name.clone();
+    if keep_lock {
+        replacement.write_locks.extend(published_locks.drain(..));
+    }
+    Ok(replacement)
 }
 
 fn spectral_history(main: &Table, staged: &Path, interpolation: &str) -> PyResult<String> {
@@ -581,7 +655,11 @@ fn spectral_history(main: &Table, staged: &Path, interpolation: &str) -> PyResul
     Ok(history)
 }
 
-fn regrid_to_stage(ms: &AttachedMs, rewrite: SpectralRewrite, staged: &Path) -> PyResult<bool> {
+fn regrid_to_stage(
+    ms: &AttachedMs,
+    rewrite: SpectralRewrite,
+    staged: &Path,
+) -> PyResult<RewriteOutcome<()>> {
     let operation = rewrite.method();
     let link = ms.working_metadata_link();
     let combine_spws =
@@ -604,13 +682,14 @@ fn regrid_to_stage(ms: &AttachedMs, rewrite: SpectralRewrite, staged: &Path) -> 
         ..Default::default()
     };
     match mstransform_task(&request, &options) {
+        Err(MsTransformError::LegacyRegridUnchanged) => return Ok(RewriteOutcome::Unchanged),
         Err(MsTransformError::Spectrum(_)) if operation == "regridspw" => {
             return Err(runtime_error("Regridding failed."));
         }
         Err(MsTransformError::RegridParameter { .. } | MsTransformError::Spectrum(_)) => {
-            return Ok(false);
+            return Ok(RewriteOutcome::Refused);
         }
         result => result.map_err(runtime_error)?,
     };
-    Ok(true)
+    Ok(RewriteOutcome::Complete(()))
 }
