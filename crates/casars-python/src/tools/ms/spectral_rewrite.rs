@@ -504,7 +504,7 @@ fn rewrite_attached(ms: &AttachedMs, rewrite: SpectralRewrite) -> PyResult<Optio
     let link = ms.working_metadata_link();
     link.verify_directory().map_err(runtime_error)?;
     check_write_access(&ms.path).map_err(runtime_error)?;
-    let destination = SortedDestination::inspect(&ms.path, operation)?;
+    let destination = SortedDestination::Table(ms.directory.clone());
     let locks = lock_table_tree_for_replacement_with_held(&ms.path, &ms.write_locks)
         .map_err(runtime_error)?;
     let workspace = tempfile::tempdir_in(ms.path.parent().unwrap_or_else(|| Path::new(".")))

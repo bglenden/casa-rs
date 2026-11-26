@@ -32,6 +32,7 @@ use crate::MeasurementSet;
 use crate::derived::engine::MsCalEngine;
 use crate::derived::parse_phase_direction;
 use crate::spectral_selection::CasaChannelFrequencies;
+use crate::subtables::FieldDirectionPolynomial;
 
 use super::channel_average::{AveragedStatistics, sigma_from_weight, weight_from_sigma};
 use super::{
@@ -72,16 +73,16 @@ struct Recent {
 }
 
 struct Frame {
-    engine: Arc<MsCalEngine>,
+    geometry: Arc<FrameGeometry>,
     target: MeasFrame,
     target_reference: FrequencyRef,
     metadata_reference: FrequencyRef,
     source_velocity: Option<f64>,
 }
 
-enum ReferenceIntegration {
-    Row(usize),
-    Coordinates { time: f64, field: usize },
+struct FrameGeometry {
+    engine: MsCalEngine,
+    field_polynomials: BTreeMap<usize, FieldDirectionPolynomial>,
 }
 
 const MIN_SOURCE_VELOCITY_M_PER_S: f64 = 1e-6;
@@ -120,13 +121,9 @@ impl Plan {
             Some(rows) if cvel => earliest_integration(input.main_table(), rows)?,
             _ => first_selected_row,
         };
-        let frame = Frame::new(
-            input,
-            options,
-            ReferenceIntegration::Row(first_integration),
-            None,
-        )?
-        .map(Arc::new);
+        let frame =
+            Frame::for_main_integration(input, options, first_integration, legacy.is_some())?
+                .map(Arc::new);
         let mut budget = GridBudget::new(budget_bytes, frame.is_some());
         let table = input.spectral_window().map_err(ms_error)?;
         let is_combined = combined.is_some();
@@ -209,7 +206,7 @@ impl Plan {
     ) -> Result<Self, MsTransformError> {
         let table = input.spectral_window().map_err(ms_error)?;
         let mut budget = GridBudget::new(budget_bytes, true);
-        let engine = Frame::open_engine(input, options)?;
+        let geometry = FrameGeometry::open(input, options, true)?;
         let mut windows = BTreeMap::<i32, Window>::new();
         let mut largest_windows = BTreeMap::<i32, i32>::new();
         for (id, origin) in layout.windows.iter().enumerate() {
@@ -218,9 +215,7 @@ impl Plan {
             let centres = table.chan_freq(row).map_err(ms_error)?;
             let widths = table.chan_width(row).map_err(ms_error)?;
             let mut bins = channel_bins[&origin.spw].clone();
-            let frame = origin
-                .frame_at_reference(input, options, &engine)?
-                .map(Arc::new);
+            let frame = origin.frame_at_reference(options, &geometry)?.map(Arc::new);
             let window = Window::new(
                 (options, legacy),
                 method,
@@ -698,29 +693,73 @@ fn fine_grid(
     (frequencies, Some(map))
 }
 
-impl Frame {
-    fn open_engine(
+impl FrameGeometry {
+    fn open(
         input: &MeasurementSet,
         options: &MsRegridOptions,
-    ) -> Result<Arc<MsCalEngine>, MsTransformError> {
-        if options.outframe.eq_ignore_ascii_case("SOURCE") {
+        legacy: bool,
+    ) -> Result<Arc<Self>, MsTransformError> {
+        // SubMS evaluates FIELD.phaseDirMeas at the integration epoch for
+        // every frequency frame, including the direction of an ephemeris.
+        let engine = if legacy || options.outframe.eq_ignore_ascii_case("SOURCE") {
             MsCalEngine::for_calibration(input)
         } else {
             MsCalEngine::new(input)
         }
-        .map(Arc::new)
-        .map_err(ms_error)
+        .map_err(ms_error)?;
+        let mut field_polynomials = BTreeMap::new();
+        if legacy {
+            let fields = input.field().map_err(ms_error)?;
+            for field in 0..fields.row_count() {
+                if let Some(polynomial) =
+                    fields.phase_direction_polynomial(field).map_err(ms_error)?
+                {
+                    field_polynomials.insert(field, polynomial);
+                }
+            }
+        }
+        Ok(Arc::new(Self {
+            engine,
+            field_polynomials,
+        }))
     }
 
-    fn new(
+    fn at(&self, time: f64, field: usize) -> crate::MsResult<MeasFrame> {
+        let Some(polynomial) = self.field_polynomials.get(&field) else {
+            return self.engine.spectral_frame_observatory(time, field);
+        };
+        let direction = polynomial.at_seconds(time);
+        let frame = self
+            .engine
+            .spectral_frame_observatory_direction(time, direction.direction.clone())?;
+        let resolved = direction.resolve_offset(&frame)?;
+        Ok(frame.with_direction(resolved))
+    }
+}
+
+impl Frame {
+    fn for_main_integration(
         input: &MeasurementSet,
         options: &MsRegridOptions,
-        integration: ReferenceIntegration,
-        engine: Option<&Arc<MsCalEngine>>,
+        row: usize,
+        legacy: bool,
     ) -> Result<Option<Self>, MsTransformError> {
         if options.outframe.trim().is_empty() {
             return Ok(None);
         }
+        let main = input.main_table();
+        let time = crate::subtables::get_f64(main, row, "TIME").map_err(ms_error)?;
+        let field = crate::subtables::get_i32(main, row, "FIELD_ID").map_err(ms_error)?;
+        let geometry = FrameGeometry::open(input, options, legacy)?;
+        Self::new(options, time, field as usize, &geometry).map(Some)
+    }
+
+    fn new(
+        options: &MsRegridOptions,
+        reference_time: f64,
+        reference_field: usize,
+        geometry: &Arc<FrameGeometry>,
+    ) -> Result<Self, MsTransformError> {
         let name = options.outframe.to_ascii_uppercase();
         let target_reference = if name == "SOURCE" {
             FrequencyRef::GEO
@@ -737,19 +776,6 @@ impl Frame {
         } else {
             target_reference
         };
-        let engine = engine.map_or_else(
-            || Self::open_engine(input, options),
-            |existing| Ok(Arc::clone(existing)),
-        )?;
-        let (reference_time, reference_field) = match integration {
-            ReferenceIntegration::Row(row) => {
-                let table = input.main_table();
-                let time = crate::subtables::get_f64(table, row, "TIME").map_err(ms_error)?;
-                let field = crate::subtables::get_i32(table, row, "FIELD_ID").map_err(ms_error)?;
-                (time, field as usize)
-            }
-            ReferenceIntegration::Coordinates { time, field } => (time, field),
-        };
         let phasecenter = options.phasecenter.trim();
         let field = if phasecenter.is_empty() {
             Some(reference_field)
@@ -759,7 +785,8 @@ impl Frame {
         let mut source_velocity = (name == "SOURCE").then_some(0.);
         let target = if let Some(field) = field {
             if name == "SOURCE" {
-                let velocity = engine
+                let velocity = geometry
+                    .engine
                     .attached_radial_velocity(reference_time, field)
                     .map_err(ms_error)?;
                 if phasecenter.is_empty()
@@ -773,23 +800,25 @@ impl Frame {
                 }
                 source_velocity = Some(velocity.map_or(0., |velocity| velocity.ms()));
             }
-            engine.spectral_frame_observatory(reference_time, field)
+            geometry.at(reference_time, field)
         } else {
             let direction = parse_phase_direction(phasecenter).ok_or_else(|| {
                 invalid(format!(
                     "Cannot interpret phasecenter {phasecenter:?} as a FIELD ID or direction."
                 ))
             })?;
-            engine.spectral_frame_observatory_direction(reference_time, direction)
+            geometry
+                .engine
+                .spectral_frame_observatory_direction(reference_time, direction)
         }
         .map_err(ms_error)?;
-        Ok(Some(Self {
-            engine,
+        Ok(Self {
+            geometry: Arc::clone(geometry),
             target,
             target_reference,
             metadata_reference,
             source_velocity,
-        }))
+        })
     }
 
     fn prepare(
@@ -816,13 +845,11 @@ impl Frame {
         time: f64,
         field: usize,
     ) -> Result<impl Fn(f64) -> f64 + use<>, MsTransformError> {
-        let origin = self
-            .engine
-            .spectral_frame_observatory(time, field)
-            .map_err(ms_error)?;
+        let origin = self.geometry.at(time, field).map_err(ms_error)?;
         let conversion = self.prepare(source, &origin)?;
         let correction = if let Some(offset) = self.source_velocity {
-            self.engine
+            self.geometry
+                .engine
                 .attached_radial_velocity(time, field)
                 .map_err(ms_error)?
                 .map(|velocity| velocity.ms())

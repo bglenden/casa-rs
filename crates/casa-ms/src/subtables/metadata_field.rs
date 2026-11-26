@@ -40,6 +40,47 @@ enum DirectionTime<'a> {
     FieldSeconds(f64),
 }
 
+pub(crate) struct FieldDirectionPolynomial {
+    origin: f64,
+    direction: MetadataDirection,
+    terms: Vec<[f64; 2]>,
+}
+
+impl FieldDirectionPolynomial {
+    fn read(
+        origin: f64,
+        direction: MetadataDirection,
+        terms: impl Iterator<Item = MsResult<MetadataDirection>>,
+    ) -> MsResult<Self> {
+        let terms = terms
+            .map(|term| term.map(|term| signed_angles(&term.direction)))
+            .collect::<MsResult<_>>()?;
+        Ok(Self {
+            origin,
+            direction,
+            terms,
+        })
+    }
+
+    pub(crate) fn at_seconds(&self, seconds: f64) -> MetadataDirection {
+        let mut direction = self.direction.clone();
+        let delta = seconds - self.origin;
+        if seconds < 1. || delta.abs() <= 1e-13 {
+            return direction;
+        }
+        let mut angles = signed_angles(&direction.direction);
+        let mut factor = 1.;
+        for term in &self.terms {
+            factor *= delta;
+            angles[0] += term[0] * factor;
+            angles[1] += term[1] * factor;
+        }
+        direction.direction =
+            MDirection::from_angles(angles[0], angles[1], direction.direction.refer());
+        direction
+    }
+}
+
 impl MeasurementSet {
     /// Evaluate the FIELD phase centre or reference direction as a metadata
     /// measure. The stored frame is retained for a fixed or polynomial field.
@@ -68,6 +109,29 @@ impl MeasurementSet {
 }
 
 impl MsField<'_> {
+    /// Read a phase polynomial once for an operation with many integration epochs.
+    pub(crate) fn phase_direction_polynomial(
+        &self,
+        row: usize,
+    ) -> MsResult<Option<FieldDirectionPolynomial>> {
+        let order = polynomial_order(self.num_poly(row)?)?;
+        if order == 0 {
+            return Ok(None);
+        }
+        let column = "PHASE_DIR";
+        let values = self.phase_dir(row)?;
+        let coefficient = |index| {
+            let angles = direction_components(self.table(), column, values, index)?;
+            direction_with_reference(self.table(), column, row, index, angles)
+        };
+        FieldDirectionPolynomial::read(
+            self.time(row)?,
+            coefficient(0)?,
+            (1..=order).map(coefficient),
+        )
+        .map(Some)
+    }
+
     /// Return the FIELD direction at `seconds` in the row's FIELD.TIME frame.
     /// A zero epoch uses the stored FIELD time. Coefficients and measure
     /// references follow the chosen direction column.
@@ -124,9 +188,7 @@ impl MsField<'_> {
                 max: self.row_count(),
             });
         }
-        let order = usize::try_from(self.num_poly(row)?).map_err(|_| {
-            MsError::InvalidInput("FIELD polynomial order must be nonnegative".into())
-        })?;
+        let order = polynomial_order(self.num_poly(row)?)?;
         let ephemeris = if order == 0 || kind == FieldDirectionColumn::Ephemeris {
             self.ephemeris_path(row)?
         } else {
@@ -151,7 +213,7 @@ impl MsField<'_> {
             let angles = direction_components(self.table(), column, values, index)?;
             direction_with_reference(self.table(), column, row, index, angles)
         };
-        let mut direction = coefficient(0)?;
+        let direction = coefficient(0)?;
         if order == 0 && ephemeris.is_none() {
             return Ok(direction);
         }
@@ -160,18 +222,8 @@ impl MsField<'_> {
             if seconds < 1. || (seconds - origin).abs() <= 1e-13 {
                 return Ok(direction);
             }
-            let delta = seconds - origin;
-            let mut angles = signed_angles(&direction.direction);
-            let mut factor = 1.0;
-            for term in 1..=order {
-                factor *= delta;
-                let term = signed_angles(&coefficient(term)?.direction);
-                angles[0] += term[0] * factor;
-                angles[1] += term[1] * factor;
-            }
-            direction.direction =
-                MDirection::from_angles(angles[0], angles[1], direction.direction.refer());
-            return Ok(direction);
+            return FieldDirectionPolynomial::read(origin, direction, (1..=order).map(coefficient))
+                .map(|polynomial| polynomial.at_seconds(seconds));
         }
         let path = ephemeris.expect("a constant field without ephemeris already returned");
         let sample = ephemeris_direction(&path, seconds, origin, reference)?;
@@ -226,6 +278,11 @@ impl MsField<'_> {
         };
         Ok((seconds, origin, reference))
     }
+}
+
+fn polynomial_order(value: i32) -> MsResult<usize> {
+    usize::try_from(value)
+        .map_err(|_| MsError::InvalidInput("FIELD polynomial order must be nonnegative".into()))
 }
 
 fn ephemeris_direction(

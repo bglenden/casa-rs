@@ -15,19 +15,18 @@ use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Array1;
 
-use crate::derived::engine::MsCalEngine;
 use crate::subtables::{MsDataDescription, MsSpectralWindow, get_i32};
 use crate::{MeasurementSet, SubtableId};
 
 use super::super::{MsRegridOptions, MsTransformError, maybe_log_transform_progress};
-use super::{Frame, ReferenceIntegration, invalid, ms_error, radial_shift};
+use super::{Frame, FrameGeometry, invalid, ms_error, radial_shift};
 
 const DDID: &str = "DATA_DESC_ID";
 const SPW_ID: &str = "SPECTRAL_WINDOW_ID";
 const SOURCE_ID: &str = "SOURCE_ID";
 
 /// Stage a locked MS for a frame-only `regridspw` and retain the unchanged
-/// tiled payloads outside the DATA_DESC_ID manager. The source locks must
+/// storage payloads outside the DATA_DESC_ID manager. The source locks must
 /// be held until the caller publishes or removes the staged table.
 ///
 /// # Errors
@@ -37,23 +36,24 @@ pub fn stage_frame_only_ms(source: &Path, stage: &Path) -> Result<(), MsTransfor
     let reusable = main
         .data_manager_info()
         .iter()
-        .filter(|manager| {
-            manager.dm_type.starts_with("Tiled") && !manager.columns.iter().any(|name| name == DDID)
-        })
+        .filter(|manager| !manager.columns.iter().any(|name| name == DDID))
         .map(|manager| manager.seq_nr)
         .collect::<BTreeSet<_>>();
     copy_locked_table_tree_with_shared_files(source, stage, |name| {
-        let Some((manager, cube)) = name
-            .to_str()
-            .and_then(|name| name.strip_prefix("table.f"))
-            .and_then(|name| name.split_once("_TSM"))
-        else {
+        let Some(file) = name.to_str().and_then(|name| name.strip_prefix("table.f")) else {
             return false;
         };
-        cube.parse::<u32>().is_ok()
-            && manager
-                .parse::<u32>()
-                .is_ok_and(|manager| reusable.contains(&manager))
+        let manager = if let Some((manager, cube)) = file.split_once("_TSM") {
+            if cube.parse::<u32>().is_err() {
+                return false;
+            }
+            manager
+        } else {
+            file.strip_suffix('i').unwrap_or(file)
+        };
+        manager
+            .parse::<u32>()
+            .is_ok_and(|manager| reusable.contains(&manager))
     })
     .map_err(ms_error)
 }
@@ -81,9 +81,9 @@ pub fn reframe_staged_ms(
         .subtable(SubtableId::SpectralWindow)
         .ok_or_else(|| invalid("Missing SPECTRAL_WINDOW.".into()))?;
     let spectral = MsSpectralWindow::new(windows);
-    let engine = Frame::open_engine(&ms, options)?;
+    let geometry = FrameGeometry::open(&ms, options, true)?;
     let records = layout.window_records(windows, |_, origin, record| {
-        if let Some(frame) = origin.frame_at_reference(&ms, options, &engine)? {
+        if let Some(frame) = origin.frame_at_reference(options, &geometry)? {
             update_window(
                 record,
                 &spectral,
@@ -253,24 +253,15 @@ pub(super) struct WindowOrigin {
 impl WindowOrigin {
     pub(super) fn frame_at_reference(
         &self,
-        ms: &MeasurementSet,
         options: &MsRegridOptions,
-        engine: &Arc<MsCalEngine>,
+        geometry: &Arc<FrameGeometry>,
     ) -> Result<Option<Frame>, MsTransformError> {
         let Some(field) = self.field else {
             return Ok(None);
         };
         let mut options = options.clone();
         options.phasecenter = field.to_string();
-        Frame::new(
-            ms,
-            &options,
-            ReferenceIntegration::Coordinates {
-                time: self.reference_time,
-                field: field as usize,
-            },
-            Some(engine),
-        )
+        Frame::new(&options, self.reference_time, field as usize, geometry).map(Some)
     }
 }
 

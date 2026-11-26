@@ -10,7 +10,7 @@ import pytest
 from casars import tools
 from test_tools_ms_addephemeris import assert_external_write_refused
 from test_tools_ms_createmultims import pinned_casa
-from test_tools_msmetadata import measures, native_dataset
+from test_tools_msmetadata import ephemeris_dataset, measures, native_dataset
 
 
 def read_cells(api, path, columns):
@@ -395,3 +395,45 @@ def test_cvel_converts_at_the_earliest_integration_without_reordering_rows(nativ
     actual = read_cells(casa, native / "SPECTRAL_WINDOW", axis)
     for column in axis:
         np.testing.assert_allclose(actual[column], expected[column], atol=1e-5, rtol=0)
+
+
+@pytest.mark.parametrize("motion", ["ephemeris", "polynomial"])
+@pytest.mark.parametrize("method, arguments", [
+    pytest.param("regridspw", {"mode": ""}, id="frame-only"),
+    pytest.param("regridspw", {"chanwidth": 2, "hanning": False}, id="regridspw-width"),
+    pytest.param("cvel", {"width": 2, "hanning": False}, id="cvel-width"),
+])
+def test_barycentric_rewrite_tracks_the_field_direction(native_dataset, tmp_path, request,
+                                                       motion, method, arguments):
+    casa = pinned_casa()
+    if motion == "ephemeris":
+        dataset, _ = request.getfixturevalue("ephemeris_dataset")
+    else:
+        dataset = native_dataset
+        first_integration = read_cells(casa, dataset, ("TIME",))["TIME"][0]
+        with closing(casa.table()) as table:
+            assert table.open(str(dataset / "FIELD"), nomodify=False)
+            assert table.putcell("TIME", 0, first_integration - 100.)
+            assert table.putcell("NUM_POLY", 0, 1)
+            coefficients = np.array([[0.3, 0.003], [0.4, -0.002]])
+            for column in ("PHASE_DIR", "REFERENCE_DIR", "DELAY_DIR"):
+                assert table.putcell(column, 0, coefficients)
+
+    axes = []
+    main = []
+    for api, name in ((casa, "reference"), (tools, "native")):
+        path = tmp_path / f"{name}.ms"
+        copytree(dataset, path)
+        with closing(api.ms()) as ms:
+            assert ms.open(str(path), nomodify=False)
+            assert getattr(ms, method)(outframe="BARY", **arguments) is True
+            assert ms.name() == str(path)
+        axes.append(read_cells(casa, path / "SPECTRAL_WINDOW", ("CHAN_FREQ", "CHAN_WIDTH", "MEAS_FREQ_REF")))
+        main.append(read_cells(casa, path, ("TIME", "DATA", "FLAG", "WEIGHT", "SIGMA")))
+
+    for column in axes[0]:
+        np.testing.assert_allclose(axes[1][column], axes[0][column], atol=1e-5, rtol=0, strict=True)
+    for column in ("TIME", "FLAG"):
+        np.testing.assert_array_equal(main[1][column], main[0][column], strict=True)
+    for column in ("DATA", "WEIGHT", "SIGMA"):
+        np.testing.assert_allclose(main[1][column], main[0][column], atol=1e-6, rtol=1e-5, strict=True)
