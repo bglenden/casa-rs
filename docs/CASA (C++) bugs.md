@@ -12278,3 +12278,14 @@ and its `table.dat` mode to 0600. With umask 022,
 `ms.regridspw(outframe="", chanwidth=2, hanning=False)` can recreate
 `table.dat` with mode 0644. Casa-rs retains the original directory and table
 file modes when publishing the rewritten MeasurementSet (#1030).
+
+## Frame-only regridding can write through a linked MAIN storage file
+
+In CASA 6.7.6.14, bind `DATA_DESC_ID` to an IncrementalStMan file, then
+replace that file in the MeasurementSet with a symbolic link to a copy
+outside the MS. With two fields sharing one input window,
+`ms.regridspw(outframe="BARY", mode="")` returns `True`, preserves the link,
+and changes its external target while assigning the new data-description IDs.
+Casa-rs requires a private writable payload for the replacement and refuses
+this linked layout before changing the original MeasurementSet or its external
+file (#1030).
