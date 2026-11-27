@@ -5,7 +5,7 @@ use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::CasaValue;
 use std::path::Path;
 
-use casa_calibration::ApplyCalibrationTableSpec;
+use casa_calibration::apply::ApplyCalibrationTableSpec;
 use casa_calibration::initweights::{Mode, initialize, initialize_tsys};
 
 use casa_calibration::attachment::OpenedMs;

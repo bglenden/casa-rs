@@ -13,7 +13,7 @@ use casa_plot_data::simulation::simalma_with_plots;
 use casa_simulation::{BackendRequest, SessionResources};
 use serde_json::json;
 
-#[path = "../../../crates/casa-simulation/tests/common/simalma_fixture.rs"]
+#[path = "../../../libs/casa/casa-simulation/tests/common/simalma_fixture.rs"]
 mod fixture;
 
 #[global_allocator]

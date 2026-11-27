@@ -14,7 +14,7 @@ use super::{
 use casa_calibration::attachment::{AttachmentError, ImagerAttachments};
 use casa_calibration::ft::setjy::standards::{FluxCatalog, FluxScale, canonical_tool_standard};
 use casa_calibration::interpolation::Curve;
-use casa_calibration::session::resolve_casa_calibration_selection;
+use casa_calibration::solve::resolve_casa_calibration_selection;
 
 /// Parameters to setjy on an attached CASA imager.
 pub struct ImagerSetJyRequest {

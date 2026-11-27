@@ -4,7 +4,7 @@
 use casa_core::{ArrayValue, ScalarValue};
 use casa_tables::Table;
 
-use casa_calibration::legacy_bpoly_chebyshev_value;
+use casa_calibration::apply::legacy_bpoly_chebyshev_value;
 
 use super::spectrum::{Curve, Ordinate};
 use super::table::array;

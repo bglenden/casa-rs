@@ -9,7 +9,7 @@ use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::CasaValue;
 use casa_ms::MsSelection;
 
-use casa_calibration::{SingleDishLineFinder, SingleDishLineFit, SingleDishSession};
+use casa_singledish::{SingleDishLineFinder, SingleDishLineFit, SingleDishSession};
 
 use super::{baseline::selected_windows, selector};
 

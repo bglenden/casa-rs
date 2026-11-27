@@ -11,8 +11,11 @@ use casa_tables::{Table, TableOptions};
 
 use super::{generate_edges, generate_position_switch, resolve_selection, selector, tsys};
 use casa_calibration::{
-    ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode, ApplyPlanRequest,
-    CalibrationOutputMode, execute::execute_single_dish_apply,
+    apply::{
+        ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode, ApplyPlanRequest,
+        execute_single_dish_apply,
+    },
+    output::CalibrationOutputMode,
 };
 
 pub(super) fn run(

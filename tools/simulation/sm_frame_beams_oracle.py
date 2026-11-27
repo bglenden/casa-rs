@@ -66,11 +66,11 @@ def collect(root, results, destination):
             else:
                 original, target = source / "model.image", destination / (name + ".image")
             shutil.copytree(original, target, ignore=shutil.ignore_patterns("table.lock"))
-            case["input"] = str(target.relative_to(root / "crates/casa-simulation/tests/data"))
+            case["input"] = str(target.relative_to(root / "libs/casa/casa-simulation/tests/data"))
             if case.get("circular") or case.get("constant_frequency_hz") is not None:
                 base = destination / (name + ".ms")
                 shutil.copytree(source / "base.ms", base, ignore=shutil.ignore_patterns("table.lock"))
-                case["base"] = str(base.relative_to(root / "crates/casa-simulation/tests/data"))
+                case["base"] = str(base.relative_to(root / "libs/casa/casa-simulation/tests/data"))
             if case.get("vp_table"):
                 beam = destination / (name + "-beam")
                 beam.mkdir()
@@ -79,7 +79,7 @@ def collect(root, results, destination):
                 if case.get("jones_beam"):
                     shutil.copytree(source / "jones.image", beam / "jones.image",
                                     ignore=shutil.ignore_patterns("table.lock"))
-                case["vp_table"] = str((beam / "beam.vp").relative_to(root / "crates/casa-simulation/tests/data"))
+                case["vp_table"] = str((beam / "beam.vp").relative_to(root / "libs/casa/casa-simulation/tests/data"))
             cases.append(case)
     return cases
 

@@ -8,13 +8,13 @@ use casa_contracts::{CasaValue, NumpyScalarType, ParameterValue};
 use casa_ms::{MeasurementSet, MsSelection};
 use casa_tables::TableWriteLock;
 
-use casa_calibration::delete_calibration_model;
+use casa_calibration::model_columns::delete_calibration_model;
 use casa_calibration::model_columns::reset_scratch_columns;
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let path = task.input_path("vis")?;
     if task.surface() == "uvsub" {
-        casa_calibration::subtract_visibility_model(&path, task.flag("reverse")?)
+        casa_calibration::uvsub::subtract_visibility_model(&path, task.flag("reverse")?)
             .map_err(|error| TaskFailure::execution(error.to_string()))?;
         super::history::record_task(task, &path);
         return TaskSuccess::new(CasaValue::None, &());

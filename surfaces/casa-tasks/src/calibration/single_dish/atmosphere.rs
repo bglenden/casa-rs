@@ -14,11 +14,11 @@ use casa_ms::{MeasurementSet, MsSelection, MsSelectionIoBudget, ResolvedMsSelect
 use casa_tables::{Table, TableOptions};
 use ndarray::Array1;
 
-use casa_calibration::SingleDishSession;
-use casa_calibration::single_dish::preparation::atmosphere::{
+use casa_singledish::SingleDishSession;
+use casa_singledish::preparation::atmosphere::{
     MainRows, SingleDishAtmosphere, inputs, thread_count,
 };
-use casa_calibration::single_dish::preparation::data_column;
+use casa_singledish::preparation::data_column;
 
 use super::selector;
 

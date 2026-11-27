@@ -8,9 +8,13 @@ use std::path::Path;
 use super::read::OutputFormat;
 use crate::calibration::CalibrationTaskResult;
 use casa_calibration::{
-    ApplyExecutionReport, ApplyPlan, BandpassSolveReport, CalibrationStatsReport,
-    CalibrationTableSummary, ExportCorrectedDataReport, FluxScaleReport, GainSolveReport,
-    GencalReport,
+    apply::{ApplyExecutionReport, ApplyPlan},
+    bandpass::BandpassSolveReport,
+    corrected_export::ExportCorrectedDataReport,
+    fluxscale::FluxScaleReport,
+    gencal::GencalReport,
+    solve::GainSolveReport,
+    table::{CalibrationStatsReport, CalibrationTableSummary},
 };
 
 /// `result` in `format`. JSON is the workflow's own report; the task reply
@@ -328,7 +332,9 @@ pub(super) fn render_apply_plan_text(plan: &ApplyPlan) -> String {
     out
 }
 
-fn format_apply_table_selection(selection: &casa_calibration::ApplyTableSelection) -> String {
+fn format_apply_table_selection(
+    selection: &casa_calibration::apply::ApplyTableSelection,
+) -> String {
     let mut parts = Vec::new();
     if !selection.field_ids.is_empty() {
         parts.push(format!("field={:?}", selection.field_ids));
@@ -453,7 +459,7 @@ fn render_gencal_report_text(report: &GencalReport) -> String {
 
 fn render_value_stats_block(
     out: &mut String,
-    stats: &casa_calibration::CalibrationValueStats,
+    stats: &casa_calibration::table::CalibrationValueStats,
     indent: usize,
 ) {
     let prefix = " ".repeat(indent);

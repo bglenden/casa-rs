@@ -44,7 +44,7 @@ def contract_root() -> Path:
 
 # Crates that exist only to support tests/dev/suites.
 TEST_ONLY_CRATES = {"casa-test-support", "casa-dev-tools", "casacore-interop", "casa-parity", "casa-perf-suite"}
-SHIPPED_CRATE_GLOBS = ("crates/*", "libs/*/*", "surfaces/*", "frontends/*")
+SHIPPED_CRATE_GLOBS = ("libs/*/*", "surfaces/*", "frontends/*")
 ALL_CRATE_GLOBS = (*SHIPPED_CRATE_GLOBS, "dev/*", "suites/*")
 
 BRIDGE_NAME = re.compile(r"casa[-_]task(?![-_]runtime)", re.IGNORECASE)

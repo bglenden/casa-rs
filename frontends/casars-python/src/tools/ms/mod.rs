@@ -108,7 +108,7 @@ impl AttachedMs {
             }
             vec![path.clone()]
         } else {
-            casa_calibration::visibility_model_source_paths(&path).map_err(runtime_error)?
+            casa_calibration::uvsub::visibility_model_source_paths(&path).map_err(runtime_error)?
         };
         let physical_parts = if reference_multi && (lock || writable) {
             main.cache_plain_table_paths()
@@ -300,7 +300,7 @@ impl PyMsTool {
                             TableWriteLock::acquire_to_reread(path, 0).map_err(runtime_error)?,
                         )
                     };
-                    casa_calibration::subtract_visibility_model_selected(
+                    casa_calibration::uvsub::subtract_visibility_model_selected(
                         &mut part,
                         reverse,
                         Some(&rows),
@@ -313,7 +313,7 @@ impl PyMsTool {
                     }
                 }
             } else if ms.write_locks.is_empty() {
-                casa_calibration::subtract_visibility_model(&ms.path, reverse)
+                casa_calibration::uvsub::subtract_visibility_model(&ms.path, reverse)
                     .map_err(runtime_error)?;
             } else {
                 for path in &ms.sources {
@@ -321,7 +321,7 @@ impl PyMsTool {
                         .write_locks
                         .get_mut(path)
                         .expect("permanent MS source lock");
-                    casa_calibration::subtract_visibility_model_holding(path, reverse, lock)
+                    casa_calibration::uvsub::subtract_visibility_model_holding(path, reverse, lock)
                         .map_err(runtime_error)?;
                 }
             }

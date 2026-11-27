@@ -59,10 +59,10 @@ pub mod schema;
 mod scratch_columns;
 mod selected_pointing;
 pub mod selection;
-mod single_dish_import;
 mod spectral_selection;
 mod subtable_overrides;
-mod subtable_rows;
+#[doc(hidden)]
+pub mod subtable_rows;
 pub mod subtables;
 mod tool_ephemeris;
 mod tool_history;
@@ -128,7 +128,6 @@ pub use selection::{
     parse_uv_distance_intervals, resolve_antenna_selector, resolve_field_selector_rows,
     resolve_spw_selector, resolve_time_selector, validate_ms_selector_edit,
 };
-pub use single_dish_import::{ImportedScanTable, read_asap, read_nro};
 pub use spectral_selection::{
     CasaChannelFrequencies, CombinedChannel, CubeAxisConfig, CubeAxisValue,
     CubeChannelContribution, CubeInterpolation, CubeSpecMode, CubeSpectralSetup,

@@ -13,9 +13,9 @@ from ci_scope import affected_scope, changed_paths, workspace_packages
 class ScopeTests(unittest.TestCase):
     def setUp(self):
         owners = {
-            **{f"crates/{name}": name for name in (
-                "casa-calibration", "test-util", "other",
-            )},
+            "libs/casa/casa-calibration": "casa-calibration",
+            "dev/test-util": "test-util",
+            "dev/other": "other",
             "frontends/casars-python": "casars-python",
             "surfaces/casa-tasks": "casa-tasks",
         }
@@ -58,7 +58,7 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(dev_scope.packages, "casa-test-support")
 
     def test_rust_source_reaches_direct_consumers(self):
-        scope = affected_scope(["crates/casa-calibration/src/lib.rs"])
+        scope = affected_scope(["libs/casa/casa-calibration/src/lib.rs"])
         self.assertEqual(scope.rust, "affected")
         self.assertEqual(scope.packages.split(), [
             "casa-calibration", "casa-tasks", "test-util",
@@ -66,7 +66,7 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(scope.python, "none")
 
     def test_rust_test_only_skips_package_builds(self):
-        scope = affected_scope(["crates/casa-calibration/tests/example.rs"])
+        scope = affected_scope(["libs/casa/casa-calibration/tests/example.rs"])
         self.assertEqual(scope.packages, "casa-calibration")
         self.assertEqual(scope.python, "none")
 
@@ -90,7 +90,7 @@ class ScopeTests(unittest.TestCase):
 
     def test_evidence_updates_preserve_scoped_checks(self):
         scope = affected_scope([
-            "crates/casa-calibration/src/lib.rs",
+            "libs/casa/casa-calibration/src/lib.rs",
             "tools/casa-compat/calibration_initweights_oracle.py",
             "resources/casa-compat/evidence/initweights.json",
         ])

@@ -11,7 +11,7 @@ use casa_tables::{Table, TableInfo, table_cache_name};
 
 use crate::calibration::managed_output::{ApplyMultiMsReport, ApplyPartitionReport};
 use crate::calibration::{CalibrationTaskRequest, ExecuteApplyTaskRequest};
-use casa_calibration::ApplyExecutionReport;
+use casa_calibration::apply::ApplyExecutionReport;
 
 pub(super) fn execute(
     task: &TaskInvocation<'_>,

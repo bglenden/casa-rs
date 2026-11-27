@@ -48,7 +48,7 @@ zarrs_filesystem = { version = "=0.3.14", optional = true }
 quick-xml = { version = "0.42", default-features = false }
 
 [dev-dependencies]
-casa-simulation = { path = "../../../crates/casa-simulation" }
+casa-simulation = { workspace = true }
 casa-observation.workspace = true
 casa-test-support = { path = "../../../dev/casa-test-support" }
 flate2 = "1"

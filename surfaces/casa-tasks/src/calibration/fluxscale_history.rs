@@ -3,7 +3,7 @@
 
 use crate::TaskInvocation;
 use casa_calibration::fluxscale::history::append_messages;
-use casa_calibration::{FluxScaleReport, FluxScaleRequest};
+use casa_calibration::fluxscale::{FluxScaleReport, FluxScaleRequest};
 use casa_contracts::{ParameterValue, python_repr};
 
 /// History failure is a warning after publication, as in the CASA task.

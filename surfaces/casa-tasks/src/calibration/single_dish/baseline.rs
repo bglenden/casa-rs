@@ -9,10 +9,8 @@ use casa_contracts::{CasaValue, ParameterValue};
 use casa_ms::{MeasurementSet, MsSelection};
 use casa_mstransform::TransformTaskHistory;
 
-use casa_calibration::single_dish::preparation::baseline::sinusoid::{
-    FftThreshold, INVALID_WAVE, WaveSelection,
-};
-use casa_calibration::{
+use casa_singledish::preparation::baseline::sinusoid::{FftThreshold, INVALID_WAVE, WaveSelection};
+use casa_singledish::{
     SingleDishBaseline, SingleDishBaselineBasis, SingleDishBaselineDiagnostics,
     SingleDishBaselineMode, SingleDishLineFinder, SingleDishSession, SingleDishSinusoid,
 };

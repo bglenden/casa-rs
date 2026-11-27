@@ -8,7 +8,7 @@ use casa_contracts::CasaValue;
 use casa_core::quanta::{Quantity, Unit};
 
 use casa_calibration::smooth::{Smoother, smooth_calibration_table};
-use casa_calibration::{
+use casa_calibration::wvr::{
     WvrAntennaReport, WvrError, WvrReport, WvrRequest, WvrSelectors, execute_wvr,
     resolve_wvr_selectors,
 };

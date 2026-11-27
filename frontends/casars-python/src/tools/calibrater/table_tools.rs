@@ -4,7 +4,8 @@
 use std::path::Path;
 
 use casa_calibration::{
-    CalibraterLifecycleError, CalibrationAccumulationRequest, update_calibration_table,
+    solve::CalibraterLifecycleError,
+    table::{CalibrationAccumulationRequest, update_calibration_table},
 };
 use pyo3::prelude::*;
 

@@ -12,6 +12,10 @@ publish = false
 workspace = true
 
 [dev-dependencies]
+casa-calibration.workspace = true
+casa-simulation.workspace = true
+flate2 = "1"
+tar = "0.4"
 casa-test-support = { path = "../../dev/casa-test-support" }
 casa-components.workspace = true
 casa-coordinates.workspace = true

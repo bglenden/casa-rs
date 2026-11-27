@@ -109,7 +109,7 @@ impl PyAgentFlagger {
             {
                 // CASA's writable NewCalTable open upgrades legacy tables.
                 drop(table);
-                casa_calibration::update_calibration_table(&path).map_err(runtime_error)?;
+                casa_calibration::table::update_calibration_table(&path).map_err(runtime_error)?;
                 table = open_table(&path)?;
             }
             let column_names = table.main_table().schema().into_iter()

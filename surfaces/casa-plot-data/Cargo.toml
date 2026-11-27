@@ -43,14 +43,14 @@ workspace = true
 [dependencies]
 casa-mstransform = { workspace = true, optional = true }
 casa-atmosphere = { workspace = true, optional = true }
-casa-calibration = { path = "../../crates/casa-calibration", optional = true }
+casa-calibration = { workspace = true, optional = true }
 casa-components = { workspace = true, optional = true }
 casa-images = { workspace = true, optional = true }
 casa-imaging-products = { workspace = true, optional = true }
 casa-imaging-runtime = { workspace = true, optional = true }
 casa-measures = { workspace = true, optional = true }
 casa-ms = { workspace = true, optional = true }
-casa-simulation = { path = "../../crates/casa-simulation", optional = true }
+casa-simulation = { workspace = true, optional = true }
 casa-tables = { workspace = true, optional = true }
 casa-core = { workspace = true, optional = true }
 ndarray = { workspace = true, optional = true }

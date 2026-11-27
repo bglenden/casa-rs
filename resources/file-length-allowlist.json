@@ -2,9 +2,9 @@
   "limit": 1500,
   "files": [
     "libs/casacore/casa-aipsio/src/aipsio.rs",
-    "crates/casa-calibration/src/execute.rs",
-    "crates/casa-calibration/tests/casa_calibration_parity.rs",
-    "crates/casa-calibration/tests/common/mod.rs",
+    "libs/casa/casa-calibration/src/execute.rs",
+    "suites/casa-parity/tests/cases/calibration/casa_calibration_parity.rs",
+    "libs/casa/casa-calibration/tests/common/mod.rs",
     "libs/casa/casa-imageanalysis/src/analysis.rs",
     "libs/casacore/casa-images/src/expr_parser.rs",
     "libs/casacore/casa-images/src/image.rs",

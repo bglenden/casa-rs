@@ -160,7 +160,7 @@ implementation, not a wrapper around casacore C++.
 | Persistent data | `casa-tables`, `casa-ms`, `casa-observation`, `casa-lattices`, `casa-images` |
 | Coordinates and runtime catalogs | `casa-coordinates`, `casa-measures` |
 | Numerics and Fourier transforms | `casa-numerics`, `casa-fft` |
-| Calibration, simulation, import | `casa-calibration`, `casa-simulation`, `casa-components`, `casa-atmosphere`, `casa-vla` |
+| Calibration, simulation, import | `casa-calibration`, `casa-singledish`, `casa-simulation`, `casa-components`, `casa-atmosphere`, `casa-vla` |
 | Imaging | `casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`, `casa-imaging-singledish`, `casa-imaging-application` |
 | Task contracts and execution | `casa-provider-contracts`, `casa-task-runtime`, `casars-imager`, `casars-imexplore`, `casars-msconvert`, `casars-simulation` |
 | Python | `frontends/casars-python/`, with its PyO3 extension `casars._core` |

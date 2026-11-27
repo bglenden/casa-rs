@@ -7,9 +7,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use casa_calibration::{
-    ApplyExecutionReport, ApplyPlan, BandpassSolveReport, CalibrationStatsReport,
-    CalibrationTableSummary, ExportCorrectedDataReport, FluxScaleReport, GainSolveReport,
-    GencalReport, SelectedData, SolveStats,
+    apply::{ApplyExecutionReport, ApplyPlan},
+    bandpass::BandpassSolveReport,
+    corrected_export::ExportCorrectedDataReport,
+    fluxscale::FluxScaleReport,
+    gencal::GencalReport,
+    solve::{GainSolveReport, SelectedData, SolveStats},
+    table::{CalibrationStatsReport, CalibrationTableSummary},
 };
 
 /// Canonical structured result for one calibration task execution.
