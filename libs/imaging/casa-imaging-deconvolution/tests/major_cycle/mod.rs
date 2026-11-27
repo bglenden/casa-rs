@@ -19,11 +19,11 @@ use casa_imaging_model::{
 };
 use num_complex::Complex64;
 
-#[path = "support/synthetic_pass.rs"]
+#[path = "../support/synthetic_pass.rs"]
 mod synthetic_pass;
 use synthetic_pass::{BLOCKS, SAMPLES, Scene};
 
-#[path = "support/problems.rs"]
+#[path = "../support/problems.rs"]
 mod problems;
 use problems::{
     empty_final_model, model_lifecycle, reconstruction_problem, reconstruction_problem_with_domains,

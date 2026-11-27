@@ -1286,5 +1286,5 @@ fn stage_products(
 }
 
 #[cfg(test)]
-#[path = "native/mvc_publication_law.rs"]
+#[path = "mvc_publication_law.rs"]
 mod mvc_publication_law;
