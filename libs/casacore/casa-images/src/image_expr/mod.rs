@@ -128,7 +128,7 @@ pub trait ImageExprValue:
     fn expr_sqrt(self) -> Self;
     /// Returns the absolute value, or magnitude for a complex value.
     fn expr_abs(self) -> Self;
-    /// Returns the complex conjugate; real values are unchanged.
+    /// Returns the complex conjugate, equal to the input for real values.
     fn expr_conj(self) -> Self;
 
     // Rounding / sign (component-wise for complex)
@@ -824,7 +824,7 @@ type SliceEvalFn<'a, T> =
 type OwnedSliceReader<T> =
     Arc<dyn Fn(&[usize], &[usize], &[usize]) -> Result<ArrayD<T>, ImageError> + Send + Sync>;
 /// Shared thread-safe validity reader. The arguments are the zero-based start, extent, and positive
-/// stride of each axis; true pixels are valid.
+/// stride of each axis. True pixels are valid.
 pub type OwnedMaskReader = Arc<
     dyn Fn(&[usize], &[usize], &[usize]) -> Result<Option<ArrayD<bool>>, ImageError> + Send + Sync,
 >;

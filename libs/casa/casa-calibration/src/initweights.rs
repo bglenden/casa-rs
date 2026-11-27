@@ -27,7 +27,7 @@ pub enum Mode {
 }
 
 impl Mode {
-    /// Maps a CASA wtmode token to its initializer; unknown modes return None.
+    /// Maps a CASA wtmode token to its initializer. Unknown modes return `None`.
     pub fn from_name(mode: &str) -> Option<Self> {
         Some(match mode {
             "nyq" => Self::Nyquist,

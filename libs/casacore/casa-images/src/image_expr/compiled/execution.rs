@@ -1170,7 +1170,7 @@ impl StreamingMaskState {
 pub struct MemorySnapshotImage<T: ImagePixel> {
     /// Shared immutable lattice pixels in image axis order.
     pub data: Arc<ArrayD<T>>,
-    /// Optional shared validity lattice with the same shape as the pixels; true means valid.
+    /// Optional shared validity lattice in the same shape as the pixels, with true for valid samples.
     pub mask: Option<Arc<ArrayD<bool>>>,
     /// Pixel-to-world transform, including coordinate frames and units.
     pub coordinates: CoordinateSystem,

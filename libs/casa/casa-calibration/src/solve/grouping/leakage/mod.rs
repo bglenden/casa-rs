@@ -118,7 +118,7 @@ impl LeakageSolveKind {
         !matches!(self, Self::Dlls | Self::Dflls) && !self.cross_hand()
     }
 
-    /// Reports whether the solver estimates cross-hand phase rather than antenna leakage.
+    /// Reports whether the solver estimates cross-hand phase.
     pub fn cross_hand(self) -> bool {
         matches!(self, Self::Xj | Self::XMueller | Self::Xf | Self::PosAng) || self.parallactic()
     }
@@ -252,8 +252,8 @@ pub(crate) struct LeakageEstimate {
 pub struct PolarizationSolveOutcome {
     /// Number of calibration rows written.
     pub rows: usize,
-    /// Source polarization estimates by source label and spectral-window ID; complex components
-    /// encode fractional Q and U.
+    /// Source polarization by source label and spectral-window ID. Complex components encode
+    /// fractional Q and U.
     pub source: BTreeMap<String, BTreeMap<i32, Complex32>>,
     /// Data selection summary for the solved intervals.
     pub selected: SelectedData,

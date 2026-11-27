@@ -124,8 +124,7 @@ pub enum CatalogMatch<'a> {
     Spectrum(CalibratorSpectrum<'a>),
     /// Neither source name nor catalog position identifies a supported calibrator.
     UnknownSource,
-    /// Identified calibrator without coefficients in this standard; carries the canonical source
-    /// name.
+    /// Identified calibrator without coefficients in this standard, with the canonical source name.
     MissingCoefficients(&'static str),
 }
 

@@ -15,7 +15,7 @@ pub struct OpenedMs {
     path: PathBuf,
     /// MeasurementSet read while holding the MAIN-table lock.
     pub measurement_set: MeasurementSet,
-    /// Exclusive MAIN-table lock; hand it to storage-changing operations that reopen the table.
+    /// Exclusive MAIN-table lock passed to storage-changing operations that reopen the table.
     pub lock: TableWriteLock,
 }
 

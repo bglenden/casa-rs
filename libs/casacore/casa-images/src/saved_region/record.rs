@@ -190,7 +190,7 @@ fn region_axes(coords: &CoordinateSystem) -> Vec<Option<RegionAxis>> {
 }
 
 /// Maps zero-based saved pixel axes to a target coordinate system. Celestial and spectral axes must
-/// have compatible frames; other axes match by name. An unknown axis returns an image error.
+/// have compatible frames. Other axes match by name. An unknown axis returns an image error.
 pub fn map_world_region_axes(
     name: &str,
     saved_coords: &CoordinateSystem,

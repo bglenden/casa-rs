@@ -722,7 +722,7 @@ pub enum PersistenceClass {
     Profile,
     /// A context suggestion outside persistent profile intent.
     SuggestionOnly,
-    /// A control for the current operation rather than persisted intent.
+    /// A control scoped to the current operation.
     RuntimeControl,
     /// Explicit authorization for an operation that requires confirmation.
     Confirmation,

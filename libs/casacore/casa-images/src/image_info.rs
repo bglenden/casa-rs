@@ -16,7 +16,7 @@ use crate::error::ImageError;
 pub enum ImageType {
     /// Image with no recognized scientific classification.
     Undefined,
-    /// Brightness or flux density; the image brightness keyword supplies the units.
+    /// Brightness or flux density in the units specified by the brightness keyword.
     Intensity,
     /// A point-spread or primary-beam response associated with the image.
     Beam,
