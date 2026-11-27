@@ -25,6 +25,7 @@ use super::super::axes::{
     legacy_subimage_coordinates_with_stokes, stokes_for_axis, subimage_coordinates_with_stokes,
 };
 use super::super::imsubimage::{SubimagePlan, SubimageRegion, region::SubimageSelection};
+use super::super::regions::crtf_polygon_contains;
 use super::super::{
     PixelRegion, direction_plane_axes, mask_error_wording, parse_image_channel_selection,
     parse_stokes_selection, region_pixels,
@@ -601,12 +602,12 @@ fn immath_region_pixel_mask(
                 Ok(boxes_union_mask(boxes, start, shape, plane))
             }
         }
-        PixelRegion::Polygon { plane: polygon, .. } => {
+        PixelRegion::Polygon { vertices, .. } => {
             let [x_axis, y_axis] = plane;
             Ok(ArrayD::from_shape_fn(IxDyn(shape), |idx| {
                 let x = start[x_axis] + idx[x_axis];
                 let y = start[y_axis] + idx[y_axis];
-                polygon.contains(x, y)
+                crtf_polygon_contains(vertices, x, y)
             }))
         }
     }

@@ -492,6 +492,19 @@ fn write_stokes_frequency_first(path: &Path) {
 
 const FRACTIONAL_TRIANGLE: &str = "poly [[0.75pix,0.75pix],[2.75pix,0.75pix],[0.75pix,2.75pix]]";
 
+fn polygon_statistics(path: &Path, polygon: &str) -> casa_imageanalysis::ImageStatisticsSummary {
+    let stats = casa_imageanalysis::imstat(&casa_imageanalysis::ImstatRequest {
+        imagename: path.to_path_buf(),
+        region: Some(polygon.to_string()),
+        ..Default::default()
+    })
+    .unwrap();
+    let casa_imageanalysis::ImstatOutcome::Global(stats) = stats else {
+        panic!("expected global statistics for {polygon}");
+    };
+    stats
+}
+
 #[test]
 fn crtf_polygons_match_casa_pixel_centre_selection() {
     let scratch = tempfile::tempdir().expect("scratch");
@@ -539,21 +552,91 @@ fn crtf_polygons_match_casa_pixel_centre_selection() {
     ];
     for (pixel, world, expected, blc, trc) in cases {
         for polygon in [pixel, world] {
-            let stats = match casa_imageanalysis::imstat(&casa_imageanalysis::ImstatRequest {
-                imagename: transposed.clone(),
-                region: Some(polygon.to_string()),
-                ..casa_imageanalysis::ImstatRequest::default()
-            })
-            .unwrap()
-            {
-                casa_imageanalysis::ImstatOutcome::Global(stats) => stats,
-                other => panic!("expected global statistics: {other:?}"),
-            };
+            let stats = polygon_statistics(&transposed, polygon);
             assert_eq!((stats.npts, stats.sum), expected, "{polygon}");
             assert_eq!(stats.blc, blc, "{polygon}");
             assert_eq!(stats.trc, trc, "{polygon}");
         }
     }
+}
+
+#[test]
+fn fractional_crtf_polygon_excludes_an_uncovered_scanline_pixel() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let transposed = copy_image("transposed.image", scratch.path());
+    let stats = polygon_statistics(
+        &transposed,
+        "poly [[0.25pix,0.25pix],[2.25pix,0.25pix],[0.25pix,2.25pix]]",
+    );
+    // CASA's LCPolygon truncates a negative crossing to zero at (1, 2).
+    // The only pixel centre inside this triangle is (1, 1).
+    assert_eq!((stats.npts, stats.sum), (10.0, 21_110.0));
+    assert_eq!(stats.blc, [0, 1, 1, 0]);
+    assert_eq!(stats.trc, [1, 1, 1, 4]);
+}
+
+#[test]
+fn long_crtf_edge_does_not_include_a_nearby_row() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let path = scratch.path().join("wide.image");
+    let mut coordinates = CoordinateSystem::new();
+    coordinates.add_coordinate(DirectionCoordinate::new(
+        DirectionRef::J2000,
+        Projection::new(ProjectionType::SIN),
+        [1.2, -0.4],
+        [-1.0e-5, 1.0e-5],
+        [0.0, 0.0],
+    ));
+    let shape = [2049, 4];
+    let mut image = PagedImage::<f32>::create(shape.to_vec(), coordinates, &path).unwrap();
+    let pixels = ndarray::ArrayD::from_elem(ndarray::IxDyn(&shape), 1.0);
+    image.put_slice(&pixels, &[0, 0]).unwrap();
+    image.save().unwrap();
+    drop(image);
+
+    // CASA 6.7.6-14 selects only row 2, however long the edge beside row 1.
+    let stats = polygon_statistics(
+        &path,
+        "poly [[0pix,1.001pix],[2048pix,1.001pix],[2048pix,2.9pix],[0pix,2.9pix]]",
+    );
+    assert_eq!((stats.npts, stats.sum), (2049.0, 2049.0));
+    assert_eq!(stats.blc, [0, 2]);
+    assert_eq!(stats.trc, [2048, 2]);
+}
+
+#[test]
+fn crtf_polygon_requires_two_image_axes() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let path = scratch.path().join("line.image");
+    let mut coordinates = CoordinateSystem::new();
+    coordinates.add_coordinate(LinearCoordinate::new(1, Vec::new(), Vec::new()));
+    let mut image = PagedImage::<f32>::create(vec![3], coordinates, &path).unwrap();
+    let pixels = ndarray::ArrayD::from_elem(ndarray::IxDyn(&[3]), 1.0);
+    image.put_slice(&pixels, &[0]).unwrap();
+    image.save().unwrap();
+    drop(image);
+
+    let region = Some("poly [[0pix,0pix],[2pix,0pix],[0pix,2pix]]".to_string());
+    let stats = casa_imageanalysis::imstat(&casa_imageanalysis::ImstatRequest {
+        imagename: path.clone(),
+        region: region.clone(),
+        ..Default::default()
+    });
+    assert!(matches!(
+        stats,
+        Err(casa_images::ImageError::ShapeMismatch { .. })
+    ));
+    let math = casa_imageanalysis::immath(&casa_imageanalysis::ImmathRequest {
+        imagename: vec![path],
+        outfile: scratch.path().join("math.image"),
+        expr: "IM0".to_string(),
+        region,
+        ..Default::default()
+    });
+    assert!(matches!(
+        math,
+        Err(casa_images::ImageError::ShapeMismatch { .. })
+    ));
 }
 
 #[test]

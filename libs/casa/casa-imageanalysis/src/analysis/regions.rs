@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::sync::Arc;
-
-use casa_images::saved_region::{PolygonPixelPlane, polygon_pixel_plane};
+use std::ops::RangeInclusive;
 
 use super::*;
 
@@ -234,7 +232,7 @@ pub(crate) enum PixelRegion {
     Boxes(Vec<[usize; 4]>),
     Polygon {
         bounds: [usize; 4],
-        plane: Arc<PolygonPixelPlane>,
+        vertices: Vec<[f64; 2]>,
     },
 }
 
@@ -328,12 +326,12 @@ pub(crate) fn region_pixel_mask(
                 })
             }
         }
-        PixelRegion::Polygon { plane, .. } => {
+        PixelRegion::Polygon { vertices, .. } => {
             let [x_axis, y_axis] = selection.plane;
             ArrayD::from_shape_fn(IxDyn(&selection.shape).f(), |idx| {
                 let x = selection.start[x_axis] + idx[x_axis];
                 let y = selection.start[y_axis] + idx[y_axis];
-                plane.contains(x, y)
+                crtf_polygon_contains(vertices, x, y)
             })
         }
     };
@@ -386,24 +384,93 @@ fn crtf_polygon_region<T: ImagePixel>(
             "invalid CASA CRTF polygon region {text:?}: expected at least three vertices"
         )));
     }
-    // Keep fractional vertices through world-to-pixel conversion. The plane
-    // evaluates integer pixel centres and trims its bounds to the mask.
+    // Evaluate the original fractional vertices at integer pixel centres,
+    // and report the bounds of the pixels the polygon actually selects.
     let vertices = crtf_coordinate_pairs_to_pixels(image, &pairs)?;
+    let bounds = crtf_polygon_bounds(image, &vertices)?;
+    Ok(Some(PixelRegion::Polygon { bounds, vertices }))
+}
+
+fn crtf_polygon_bounds<T: ImagePixel>(
+    image: &impl ImageInterface<T>,
+    vertices: &[[f64; 2]],
+) -> Result<[usize; 4], ImageError> {
+    let ranges = vertices.iter().fold(
+        [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ],
+        |[min_x, min_y, max_x, max_y], &[x, y]| {
+            [min_x.min(x), min_y.min(y), max_x.max(x), max_y.max(y)]
+        },
+    );
+    let shape = image.shape();
     let [x, y] = direction_plane_axes(image)?;
-    let plane = polygon_pixel_plane(&[vertices], image.shape(), [x, y]).ok_or_else(|| {
+    let [width, height] = match [x, y].map(|axis| shape.get(axis).copied()) {
+        [Some(width), Some(height)] if x != y && width > 0 && height > 0 => [width, height],
+        _ => {
+            return Err(ImageError::ShapeMismatch {
+                expected: shape.to_vec(),
+                got: ranges.map(|value| value.round() as usize).to_vec(),
+            });
+        }
+    };
+    let [min_x, min_y, max_x, max_y] = ranges;
+    let xs = min_x.floor() as usize..=(max_x.ceil() as usize).min(width - 1);
+    let ys = min_y.floor() as usize..=(max_y.ceil() as usize).min(height - 1);
+    let no_centres = || {
         ImageError::InvalidMetadata("CRTF polygon contains no pixel centres in the image".into())
-    })?;
-    let (start, shape) = plane.section(image.shape(), [x, y]);
-    let bounds = [
-        start[x],
-        start[y],
-        start[x] + shape[x] - 1,
-        start[y] + shape[y] - 1,
-    ];
-    Ok(Some(PixelRegion::Polygon {
-        bounds,
-        plane: Arc::new(plane),
-    }))
+    };
+    let [x0, x1] = occupied_polygon_axis(xs.clone(), &ys, |x, y| {
+        crtf_polygon_contains(vertices, x, y)
+    })
+    .ok_or_else(no_centres)?;
+    let [y0, y1] =
+        occupied_polygon_axis(ys, &(x0..=x1), |y, x| crtf_polygon_contains(vertices, x, y))
+            .ok_or_else(no_centres)?;
+    Ok([x0, y0, x1, y1])
+}
+
+/// Inspect only as far into each end of an axis as needed to find an
+/// occupied row or column. Interior pixels are evaluated when masking.
+fn occupied_polygon_axis(
+    axis: RangeInclusive<usize>,
+    cross_axis: &RangeInclusive<usize>,
+    contains: impl Fn(usize, usize) -> bool,
+) -> Option<[usize; 2]> {
+    let mut occupied = axis.filter(|&index| cross_axis.clone().any(|cross| contains(index, cross)));
+    let first = occupied.next()?;
+    Some([first, occupied.next_back().unwrap_or(first)])
+}
+
+pub(super) fn crtf_polygon_contains(vertices: &[[f64; 2]], x: usize, y: usize) -> bool {
+    // Allow projection roundoff in pixel units. The width of the boundary
+    // stays fixed even when an edge spans thousands of pixels.
+    const EDGE_TOLERANCE_PIXELS: f64 = 1.0e-6;
+    let (x, y) = (x as f64, y as f64);
+    let mut inside = false;
+    let mut previous = vertices[vertices.len() - 1];
+    for &[x1, y1] in vertices {
+        let [x0, y0] = previous;
+        if (x0.min(x1) - EDGE_TOLERANCE_PIXELS..=x0.max(x1) + EDGE_TOLERANCE_PIXELS).contains(&x)
+            && (y0.min(y1) - EDGE_TOLERANCE_PIXELS..=y0.max(y1) + EDGE_TOLERANCE_PIXELS)
+                .contains(&y)
+        {
+            let dx = x1 - x0;
+            let dy = y1 - y0;
+            let cross = (x - x0) * dy - (y - y0) * dx;
+            if cross.abs() <= EDGE_TOLERANCE_PIXELS * dx.hypot(dy) {
+                return true;
+            }
+        }
+        if (y0 > y) != (y1 > y) && x <= (x1 - x0) * (y - y0) / (y1 - y0) + x0 {
+            inside = !inside;
+        }
+        previous = [x1, y1];
+    }
+    inside
 }
 
 pub(super) fn crtf_polygon_parts(text: &str) -> Result<Option<Vec<[String; 2]>>, ImageError> {
