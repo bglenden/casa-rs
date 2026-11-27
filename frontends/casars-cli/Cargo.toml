@@ -12,7 +12,7 @@ autotests = false
 [features]
 default = ["calibration", "imaging", "images", "ms", "simulation", "vla"]
 calibration = ["ms", "casa-tasks/calibration"]
-imaging = ["casa-tasks/imaging", "dep:casa-imaging-application", "dep:libc"]
+imaging = ["casa-tasks/imaging", "dep:casa-imaging", "dep:libc"]
 images = ["casa-tasks/images"]
 ms = ["casa-tasks/ms"]
 simulation = ["ms", "casa-tasks/simulation"]
@@ -24,7 +24,7 @@ workspace = true
 
 [dependencies]
 casa-contracts = { path = "../../surfaces/casa-contracts" }
-casa-imaging-application = { path = "../../crates/casa-imaging-application", optional = true }
+casa-imaging = { workspace = true, optional = true }
 casa-tables.workspace = true
 casa-tasks = { path = "../../surfaces/casa-tasks" }
 libc = { version = "0.2", optional = true }
@@ -41,7 +41,7 @@ base64 = "0.22"
 casa-calibration = { path = "../../crates/casa-calibration" }
 casa-coordinates.workspace = true
 casa-images.workspace = true
-casa-imaging-deconvolution = { path = "../../crates/casa-imaging-deconvolution" }
+casa-imaging-deconvolution.workspace = true
 casa-lattices.workspace = true
 casa-ms = { workspace = true, features = ["msv4"] }
 casa-numerics.workspace = true

@@ -10,8 +10,6 @@ use std::path::{Path, PathBuf};
 use casa_coordinates::{CoordinateModel, ProjectionType, StokesType};
 use casa_core::{ArrayValue, Complex32};
 use casa_images::{GaussianBeam, PagedImage};
-use casa_imaging_application::store_law::compare_stores;
-use casa_imaging_application::{Cancel, HostResources, ImagingRequest, RunContext};
 use casa_ms::{MeasurementSet, VisibilityDataColumn};
 use casa_simulation::synthetic::{
     AnalyticComponent, AnalyticSpectrum, Antenna, CorruptionConfig, Field, NoiseCorruption,
@@ -460,45 +458,6 @@ impl Observation {
         Ok((result.run, products))
     }
 
-    /// The store law (#932, #942): under `controls`' geometry the batch
-    /// geometry of every sample equals its batch geometry in `converted`,
-    /// another store of the same observation (an MSv4 conversion), to the
-    /// law's 1e-12.
-    pub fn assert_store_geometry(&self, name: &str, controls: Value, converted: &Path) {
-        let request = self.request(name, controls);
-        let comparison = compare_stores(&request, &run_context(&request), converted)
-            .expect("both stores' geometry");
-        eprintln!("{name}: store geometry law {comparison:?}");
-        assert_eq!(comparison.unmatched, 0, "{name}: {comparison:?}");
-        assert!(
-            comparison.holds(),
-            "{name}: the converted store's geometry departs: {comparison:?}"
-        );
-    }
-
-    /// The request of `controls` merged over the T1 geometry.
-    pub(super) fn request(&self, name: &str, controls: Value) -> ImagingRequest {
-        let mut parameters = json!({
-            "vis": self.measurement_set,
-            "imagename": self.root.path().join(name),
-            "backend": "cpu",
-        });
-        let fields = parameters.as_object_mut().expect("parameters object");
-        for (key, value) in self.geometry.parameters() {
-            fields.insert(key.to_string(), value);
-        }
-        for (key, value) in controls.as_object().expect("controls object") {
-            fields.insert(key.clone(), value.clone());
-        }
-        imager_defaults(fields);
-        let Value::Object(parameters) = parameters else {
-            unreachable!("parameters are an object");
-        };
-        resolve_request(&ImagingParameters(parameters))
-            .expect("request")
-            .1
-    }
-
     /// `(DATA, MODEL_DATA)` of every unflagged parallel-hand sample.
     pub fn data_and_model(&self) -> Vec<(Complex32, Complex32)> {
         let ms = MeasurementSet::open(&self.measurement_set).expect("reopen T1 MS");
@@ -614,16 +573,6 @@ fn imager_defaults(fields: &mut serde_json::Map<String, Value>) {
             fields.entry("mosweight").or_insert_with(|| json!(false));
         }
         _ => {}
-    }
-}
-
-/// A run context for `request` on this host.
-pub(super) fn run_context(request: &ImagingRequest) -> RunContext {
-    RunContext {
-        host: HostResources::detect().expect("host resources"),
-        policy: request.resource_policy(),
-        cancel: Cancel::default(),
-        summary: None,
     }
 }
 

@@ -10,8 +10,7 @@ use casa_tasks::imaging::{
 /// Freed working buffers leave the process at once, so a run's footprint
 /// follows the memory its phases admit.
 #[global_allocator]
-static ALLOCATOR: casa_imaging_application::ReturningAllocator =
-    casa_imaging_application::ReturningAllocator;
+static ALLOCATOR: casa_imaging::ReturningAllocator = casa_imaging::ReturningAllocator;
 
 fn main() -> ExitCode {
     if let Err(error) = casars_cli::interrupt::install() {

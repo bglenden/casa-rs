@@ -1,22 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::path::Path;
+//! Thin PyO3 `ia.moments` wrapper delegating to [`casa_imageanalysis::tool::ops_transform::moments_image`].
 
 use casa_core::measures::doppler::DopplerRef;
-use casa_imageanalysis::analysis::{
-    ImageMomentOptions, SubimageRegion, ensure_artifacts_do_not_overlap,
-    ensure_outfile_does_not_alias_input, make_image_moments, moment_output_names,
-};
-use casa_images::image_history_rows;
+use casa_imageanalysis::tool::ops_transform::moments_image;
 use pyo3::prelude::*;
 
 use crate::convert::{DoubleList, IntList, StringList, Variant};
 use crate::tools::{LogLine, emit};
 
 use super::PyImageTool;
-use super::attachment::{AttachedImage, read_locked};
-use super::create::NamedImageStages;
-use super::handle::{ImageHandle, Storage, raised};
+use super::handle::{external_open_check, raised};
 use super::subimage::{RegionArgument, mask_argument, require_bool};
 
 #[pymethods]
@@ -90,139 +84,39 @@ impl PyImageTool {
             python_bool(drop),
             python_bool(stretch),
         );
-        let options = ImageMomentOptions {
-            moments: &moments,
-            axis,
-            region: region.selection(),
-            mask: Some(&mask),
-            stretch,
-            drop,
-            methods: &methods,
-            smoothing: (&axes, &kernels, &widths),
-            inclusion: &include,
-            exclusion: &exclude,
-            peak_snr: peaksnr as f32,
-            noise: stddev as f32,
-            doppler: parsed.unwrap_or(DopplerRef::RADIO),
-            destinations: &[],
-        };
-        let output = py.detach(|| {
+        let output = py.detach(|| -> PyResult<_> {
             let state = self.state();
             let Some(input) = &state.image else {
                 return Ok(None);
             };
-            build(
+            moments_image(
                 input,
-                options,
-                outfile.trim(),
-                smoothout.trim(),
+                &moments,
+                axis,
+                region.selection(),
+                Some(&mask),
+                stretch,
+                drop,
+                &methods,
+                (&axes, &kernels, &widths),
+                &include,
+                &exclude,
+                peaksnr as f32,
+                stddev as f32,
+                parsed.unwrap_or(DopplerRef::RADIO),
+                outfile,
+                smoothout,
                 overwrite,
                 state.history.then_some(history),
+                external_open_check(),
             )
             .map(Some)
+            .map_err(raised)
         })?;
         if output.is_some() {
             emit(py, "casars.tools.image", &logs)?;
         }
         Py::new(py, output.map_or_else(Self::new, Self::attached))
-    }
-}
-
-fn build(
-    input: &AttachedImage,
-    options: ImageMomentOptions<'_>,
-    outfile: &str,
-    smoothout: &str,
-    overwrite: bool,
-    history: Option<String>,
-) -> PyResult<AttachedImage> {
-    let (stages, output) = read_locked(input, |handle| {
-        let ImageHandle::Float(storage) = handle else {
-            return Err(raised("This method only supports float-valued images"));
-        };
-        let mut names = moment_output_names(
-            options.moments,
-            outfile,
-            handle.path().and_then(Path::to_str),
-        )
-        .map_err(raised)?;
-        let temporary = names[0].is_empty();
-        names.push(smoothout.to_owned());
-        let destinations = names
-            .iter()
-            .filter(|name| !name.is_empty())
-            .map(Path::new)
-            .collect::<Vec<_>>();
-        for destination in &destinations {
-            for source in handle
-                .path()
-                .into_iter()
-                .chain(input.operand_paths().iter().map(|path| path.as_path()))
-            {
-                ensure_outfile_does_not_alias_input(destination, source).map_err(raised)?;
-            }
-            if let Some(region) = options.region.and_then(SubimageRegion::external_path) {
-                ensure_artifacts_do_not_overlap(destination, region).map_err(raised)?;
-            }
-        }
-        let mut stages = NamedImageStages::new(names.iter().map(String::as_str), overwrite)?;
-        let mut products = storage.with_float_view(|image| {
-            let mut beams = image.image_info().map_err(raised)?.to_record();
-            input.beam_view().apply_to(&mut beams);
-            let options = ImageMomentOptions {
-                destinations: &destinations,
-                ..options
-            };
-            make_image_moments(image, handle.coordinate_record(), Some(&beams), options)
-                .map_err(raised)
-        })?;
-        let entries = match storage {
-            Storage::Paged(image) => {
-                image_history_rows(image.name().expect("persistent image")).map_err(raised)?
-            }
-            Storage::Temp { image, .. } => image.history_rows().map_err(raised)?.into_owned(),
-        };
-        let command = history.map(|details| {
-            [
-                concat!("version: casa-rs ", env!("CARGO_PKG_VERSION")).to_owned(),
-                details,
-            ]
-        });
-        let paths = stages.paths();
-        for (path, image) in paths.iter().zip(&mut products.moments) {
-            image.append_history_entries(&entries).map_err(raised)?;
-            if let Some(command) = &command {
-                image
-                    .append_history_at("image::moments", command)
-                    .map_err(raised)?;
-            }
-            if let Some(path) = path {
-                image.save_as(path).map_err(raised)?;
-            }
-        }
-        if let (Some(path), Some(image)) = (paths[products.moments.len()], &products.smoothed) {
-            image.save_as(path).map_err(raised)?;
-        }
-        if products.smoothed.is_none() {
-            stages.omit(products.moments.len());
-        }
-        let output = temporary.then(|| products.moments.remove(0));
-        Ok((stages, output))
-    })?;
-    let primary = stages.publish_and_open_primary()?;
-    match (primary, output) {
-        (None, Some(image)) => {
-            let record = image.coordinates().to_record();
-            Ok(AttachedImage::temporary(ImageHandle::Float(
-                Storage::Temp {
-                    image: Box::new(image),
-                    fits: None,
-                    record,
-                },
-            )))
-        }
-        (Some(image), None) => Ok(image),
-        _ => Err(raised("Expected exactly one primary moment image")),
     }
 }
 

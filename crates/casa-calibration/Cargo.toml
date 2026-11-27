@@ -21,10 +21,10 @@ casa-coordinates.workspace = true
 casa-images.workspace = true
 casa-lattices.workspace = true
 casa-fft.workspace = true
-casa-imaging-model = { path = "../casa-imaging-model" }
-casa-imaging-operator = { path = "../casa-imaging-operator" }
-casa-imaging-runtime = { path = "../casa-imaging-runtime" }
-casa-imaging-singledish = { path = "../casa-imaging-singledish" }
+casa-imaging-model.workspace = true
+casa-imaging-operator.workspace = true
+casa-imaging-runtime.workspace = true
+casa-imaging-singledish.workspace = true
 casa-measures.workspace = true
 casa-ms.workspace = true
 casa-numerics.workspace = true

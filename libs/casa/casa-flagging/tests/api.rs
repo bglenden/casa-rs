@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-#[path = "../../../casacore/casa-ms/tests/common/mod.rs"]
 mod common;
 
 use casa_core::{ArrayValue, Complex32, PrimitiveType, ScalarValue, Value};

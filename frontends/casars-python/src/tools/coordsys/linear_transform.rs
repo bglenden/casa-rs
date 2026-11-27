@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::TabularEdit;
-use casa_coordinates::{
-    Coordinate, CoordinateError, CoordinateModel, CoordinateSystem, CoordinateType,
-};
+use casa_coordinates::{CoordinateError, CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Array2;
 use numpy::{PyArrayDescrMethods, PyReadonlyArrayDyn, PyUntypedArray, PyUntypedArrayMethods};
@@ -20,64 +18,12 @@ fn raised(message: impl ToString) -> PyErr {
     PyRuntimeError::new_err(message.to_string())
 }
 
-fn has_zero_row(matrix: &Array2<f64>) -> bool {
-    matrix
-        .rows()
-        .into_iter()
-        .any(|row| row.iter().all(|&value| value == 0.0))
-}
-
-fn singular_linear_transform() -> PyErr {
-    raised("wcs wcsset_error: Linear transformation matrix is singular")
-}
-
 pub(in crate::tools) fn validate_restored_linear_coordinates(
     coordinates: &CoordinateSystem,
     record: &RecordValue,
 ) -> PyResult<()> {
-    if !(0..coordinates.n_coordinates()).any(|index| {
-        matches!(
-            coordinates.coordinate(index),
-            CoordinateModel::Linear(_) | CoordinateModel::System(_)
-        )
-    }) {
-        return Ok(());
-    }
-    for (index, placement) in coordinates
-        .coordinates_in_record(record)
-        .map_err(raised)?
-        .into_iter()
-        .enumerate()
-    {
-        let mapped = coordinates.coordinate(index);
-        let full;
-        let model = if matches!(
-            mapped,
-            CoordinateModel::Linear(_) | CoordinateModel::System(_)
-        ) && (placement.pixel_axes.len() != mapped.n_pixel_axes()
-            || placement.world_axes.len() != mapped.n_world_axes())
-        {
-            // The compact model can omit the invalid axis.
-            full = placement.model(record).map_err(raised)?;
-            &full
-        } else {
-            mapped
-        };
-        match model {
-            CoordinateModel::Linear(linear) => {
-                if linear.increment().contains(&0.0) || has_zero_row(linear.pc_matrix()) {
-                    return Err(singular_linear_transform());
-                }
-            }
-            CoordinateModel::System(nested) => {
-                if let Some(Value::Record(nested_record)) = record.get(&placement.field) {
-                    validate_restored_linear_coordinates(nested, nested_record)?;
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(())
+    casa_imageanalysis::tool::coords::validate_restored_linear_coordinates(coordinates, record)
+        .map_err(raised)
 }
 
 pub(super) fn matrix_input(value: Option<&Bound<'_, PyAny>>) -> PyResult<Array2<f64>> {
@@ -447,8 +393,10 @@ fn apply_matrix(
             .map_err(raised)?
             .into(),
         CoordinateModel::Linear(linear) => {
-            if has_zero_row(&matrix) {
-                return Err(singular_linear_transform());
+            if casa_imageanalysis::tool::coords::has_zero_row(&matrix) {
+                return Err(raised(
+                    "wcs wcsset_error: Linear transformation matrix is singular",
+                ));
             }
             linear.with_pc_matrix(matrix).into()
         }

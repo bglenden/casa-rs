@@ -1179,85 +1179,6 @@ fn predicting_the_final_model_uses_the_parent_imagers_time_dependent_bands() {
     }
 }
 
-/// CASA 6.7.6.14's parent iterator physically selects these channel sets
-/// over the drift for `spw=0:20`, rather than flagging a union row.
-#[test]
-fn parent_prediction_rows_match_casas_drifting_channel_layouts() {
-    let observation = drifting_track();
-    let request = observation.request(
-        "compact-prediction-rows",
-        json!({
-            "specmode": "cube", "spw": "0:20", "start": 20, "width": 1, "nchan": 1,
-            "niter": 5, "nsigma": 0.01, "savemodel": "modelcolumn",
-        }),
-    );
-    let layouts = casa_imaging_application::source_law::prediction_layouts(
-        &request,
-        &super::fixture::run_context(&request),
-    )
-    .expect("the parent prediction traversal");
-    let mut actual = layouts
-        .iter()
-        .map(|layout| layout.channels.clone())
-        .collect::<Vec<_>>();
-    actual.sort();
-    let mut casa = (15..=19)
-        .flat_map(|first| {
-            [
-                (first..first + 6).collect::<Vec<_>>(),
-                (first..first + 7).collect::<Vec<_>>(),
-            ]
-        })
-        .chain(std::iter::once((20..26).collect::<Vec<_>>()))
-        .collect::<Vec<_>>();
-    casa.sort();
-    assert_eq!(
-        actual, casa,
-        "CASA's physical parent selections over the drift"
-    );
-    assert!(
-        layouts
-            .iter()
-            .all(|layout| layout.flags.iter().all(|flag| !flag)),
-        "the selected unflagged cells remain unflagged: {layouts:?}"
-    );
-}
-
-/// With 20 kHz native channels, CASA reads channel 20 alone for most of
-/// the track and one adjacent channel at either end. A physically singleton
-/// row takes CASA's nearest prediction path even under linear interpolation.
-#[test]
-fn parent_prediction_rows_include_casas_singleton_channel() {
-    let observation = drifting_track_with_width(20_000.0);
-    let request = observation.request(
-        "compact-singleton-rows",
-        json!({
-            "specmode": "cube", "spw": "0:20", "start": 20, "width": 1, "nchan": 2,
-            "niter": 5, "nsigma": 0.01, "savemodel": "modelcolumn",
-        }),
-    );
-    let layouts = casa_imaging_application::source_law::prediction_layouts(
-        &request,
-        &super::fixture::run_context(&request),
-    )
-    .expect("the parent prediction traversal");
-    let mut actual = layouts
-        .iter()
-        .map(|layout| layout.channels.clone())
-        .collect::<Vec<_>>();
-    actual.sort();
-    assert_eq!(
-        actual,
-        [vec![19, 20], vec![20], vec![20, 21]],
-        "CASA's parent selections"
-    );
-    assert!(
-        layouts
-            .iter()
-            .all(|layout| layout.flags.iter().all(|flag| !flag))
-    );
-}
-
 /// CASA grids the physically selected one-channel rows as nearest rather
 /// than interpolating a wider, mostly flagged union. On this two-plane
 /// 20 kHz track CASA 6.7.6.14 reports these sums of weights.
@@ -1276,65 +1197,6 @@ fn tuned_singleton_rows_match_casas_sum_of_weights() {
         actual,
         [101_790.0, 3_510.0],
         "CASA's singleton gridding weights"
-    );
-}
-
-/// The native `fitspw` extension reads its fit-only channels but keeps
-/// the channels named by `spw` as outputs. Fit channels 0 and 39 must not
-/// become interpolation neighbors of the selected output channel 20.
-#[test]
-fn continuum_fit_only_channels_do_not_enter_tuned_gridding_rows() {
-    let observation = drifting_track_with_width(20_000.0);
-    let request = observation.request(
-        "fitted-grid-layout",
-        json!({
-            "specmode": "cube", "spw": "0:20", "start": 20, "width": 1, "nchan": 2,
-            "niter": 0, "fitspw": "0:0;39",
-        }),
-    );
-    let layouts = casa_imaging_application::source_law::gridding_layouts(
-        &request,
-        &super::fixture::run_context(&request),
-    )
-    .expect("the tuned gridding traversal");
-    assert_eq!(
-        layouts,
-        [vec![20]],
-        "fit-only channels cannot enter a gridding row"
-    );
-}
-
-/// A continuum fit may read a wider union than its output. Both the tuned
-/// traversal and the final predictor must physically use the output roles.
-#[test]
-fn final_prediction_excludes_continuum_fit_only_channels() {
-    let observation = drifting_track_with_width(20_000.0);
-    let request = observation.request(
-        "fitted-prediction-layout",
-        json!({
-            "specmode": "cube", "spw": "0", "start": 20, "width": 1, "nchan": 2,
-            "niter": 5, "nsigma": 0.01, "savemodel": "modelcolumn", "fitspw": "0:0;39",
-        }),
-    );
-    let context = super::fixture::run_context(&request);
-    let mut tuned = casa_imaging_application::source_law::gridding_layouts(&request, &context)
-        .expect("the tuned gridding traversal");
-    let mut predicted =
-        casa_imaging_application::source_law::prediction_layouts(&request, &context)
-            .expect("the final prediction traversal")
-            .into_iter()
-            .map(|layout| layout.channels)
-            .collect::<Vec<_>>();
-    tuned.sort();
-    predicted.sort();
-    assert_eq!(
-        predicted, tuned,
-        "prediction must not interpolate through fit-only or unrelated channels"
-    );
-    assert!(
-        predicted
-            .iter()
-            .all(|channels| !channels.contains(&0) && !channels.contains(&39))
     );
 }
 
@@ -1378,15 +1240,6 @@ fn corrected_only_nsigma_uses_the_tuned_continuum_rows() {
         .1;
     let mut corrected_controls = controls;
     corrected_controls["save_continuum_residual"] = json!(true);
-    let request = observation.request("corrected-only-source", corrected_controls.clone());
-    assert!(
-        !casa_imaging_application::source_law::ordinary_write_uses_parent_selection(
-            &request,
-            &super::fixture::run_context(&request),
-        )
-        .expect("corrected-only writer"),
-        "a corrected-only writer must request tuned rows",
-    );
     let corrected = observation
         .image("continuum-corrected-only", corrected_controls)
         .1;

@@ -3,7 +3,7 @@
 //! Current Hogbom iteration accounting defaults and explicit overrides.
 
 use casa_contracts::{ParameterValue, builtin_surface_bundle};
-use casa_imaging_application::{HogbomIterationAccounting, ImagingRequest};
+use casa_imaging::{HogbomIterationAccounting, ImagingRequest};
 use casa_tasks::{parse_profile, resolve_profile};
 
 #[test]

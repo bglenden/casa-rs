@@ -11,7 +11,7 @@ use pyo3::types::PyDict;
 use crate::tools::{LogLine, componentlist::image_component_model, emit, table::casa_record};
 
 use super::PyImageTool;
-use super::handle::{ImageHandle, Storage, raised, with_storage};
+use super::handle::{ImageHandle, raised, with_storage};
 use super::subimage::{Region, mask_argument};
 
 fn check_native_write(path: &Path, history: bool) -> std::io::Result<()> {
@@ -82,7 +82,9 @@ impl PyImageTool {
                     .map_err(|_| raised("Failed AlwaysAssert to.isWritable()"))?;
             }
             Region::reject_compound_record(region.as_ref())?;
-            attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
+            attachment
+                .require_lock(&mut image, casa_tables::LockType::Write)
+                .map_err(raised)?;
             let ImageHandle::Float(storage) = &mut *image else {
                 unreachable!("float image checked");
             };
@@ -104,9 +106,14 @@ impl PyImageTool {
             }
             if state.history {
                 let region = region.as_ref().map_or_else(|| "{...}".into(), Region::history);
-                image.record_history("modify", format!(
-                    "ia.modify(model={{...}}, region={region}, mask=\"{mask}\", subtract={subtract}, list={list}, stretch={stretch})"
-                ))?;
+                image
+                    .record_history(
+                        "modify",
+                        format!(
+                            "ia.modify(model={{...}}, region={region}, mask=\"{mask}\", subtract={subtract}, list={list}, stretch={stretch})"
+                        ),
+                    )
+                    .map_err(raised)?;
             }
             image.save().map_err(raised)?;
             Ok(true)

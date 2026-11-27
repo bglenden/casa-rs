@@ -8,9 +8,7 @@ use std::f64::consts::PI;
 use std::path::Path;
 
 use casa_images::{ImageBeamSet, PagedImage};
-use casa_imaging_application::{
-    BackendRequest as ImagingBackend, Cancel, ImagingRequest, RunContext, execute,
-};
+use casa_imaging::{BackendRequest as ImagingBackend, Cancel, ImagingRequest, RunContext, execute};
 use casa_imaging_runtime::charge_process_caches;
 use casa_ms::MeasurementSet;
 use casa_ms::columns::uvw_column::UvwColumn;
@@ -95,7 +93,7 @@ pub(super) fn prepare(
     // past the backend law (4.27e-4 versus 1e-4 on the CASA fixture).
     // The preceding simulation still predicts DATA on its requested device.
     request.backend = ImagingBackend::Cpu;
-    request.gridprecision = Some(casa_imaging_application::GridPrecision::F64);
+    request.gridprecision = Some(casa_imaging::GridPrecision::F64);
     // Imager::createFTMachine uses padding=1.0 for a single field,
     // unlike tclean's 1.2. Both still use composite-sized FFT grids.
     request.ft_padding = Some(casa_imaging_operator::PaddingFactor::new(1.0).map_err(failure)?);

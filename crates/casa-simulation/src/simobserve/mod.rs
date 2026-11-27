@@ -89,7 +89,7 @@ pub use parameters::SimobserveParameters;
 
 use std::path::{Path, PathBuf};
 
-pub use casa_imaging_application::Cancel;
+pub use casa_imaging::Cancel;
 
 use thiserror::Error;
 

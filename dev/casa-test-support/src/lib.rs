@@ -3,6 +3,7 @@ mod aipsio_oracle;
 pub mod ephemeris_table;
 pub mod gridder_interop;
 pub mod hogbom_interop;
+mod image_compare;
 mod image_oracle;
 mod image_oracle_impl;
 mod lattice_oracle;
@@ -30,6 +31,7 @@ mod test_data;
 
 pub use aipsio_oracle::*;
 use casa_aipsio::{Complex32, Complex64};
+pub use image_compare::{IMAGING_NRMS_TOLERANCE, image_nrms};
 pub use image_oracle::{HeldCppImageReader, HeldImageRead, ImageOracle};
 pub use image_oracle_impl::{
     CppImageExprBinaryOp, CppImageExprCompareOp, CppImageExprUnaryOp, CppMaskLogicalOp,

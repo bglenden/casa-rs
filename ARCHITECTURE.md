@@ -24,7 +24,7 @@ The casacore foundation libraries live in `libs/casacore/`. CASA component model
 | observation boundary (`casa-observation`) | The contracts MSv2 and MSv4 stores share: catalogue, `AccessRequest`, traversal and `VisibilityBatch` | `casa-core` |
 | native imaging (`casa-imaging-model`, `-operator`, `-deconvolution`, `-products`, `-runtime`, `-metal`) | Request science and compiled problem; the measurement operator; image-domain reconstruction; normalization and products; host resources, admission and the major-cycle pass; the Metal backend (see Imaging ownership) | the ADR-0016 layering below |
 | single-dish imaging (`casa-imaging-singledish`) | CASA's `SDGrid` as its own operator family (ADR-0016 decision 13) | execution layer of the ADR-0016 layering |
-| imaging application (`casa-imaging-application`) | Sole production composition of observation, reconstruction, products, resources and execution | native imaging owners, `casa-ms`, `casa-observation` |
+| imaging application (`casa-imaging`) | Sole production composition of observation, reconstruction, products, resources and execution | native imaging owners, `casa-ms`, `casa-observation` |
 | simulation (`casa-simulation`) | CASA's `sm` tool, `simutil`, `simobserve`, multi-array/TP `simanalyze`, `simalma`, and native developer fixtures | an application of the ADR-0016 layering |
 | image persistence (`casa-images`) | Typed images, expression evaluation, image I/O and sampling pixel planes | casacore foundations |
 | CASA image analysis (`casa-imageanalysis`) | Component-backed virtual images, convolution, mosaics, high-level regridding and analysis tasks | `casa-components` and casacore foundations including `casa-images` |
@@ -125,7 +125,7 @@ decision 10). Adding a crate to that set is the owner's decision.
 - `casa-imaging-runtime` owns host resources, admission, the major-cycle
   pass and its worker teams, cancellation, the paged cube state and the run
   summary. `casa-imaging-metal` implements `GridBackend` on Metal.
-- `casa-imaging-application` is the sole production composition. Its input
+- `casa-imaging` is the sole production composition. Its input
   is one `ImagingRequest`, made from the `tclean` parameters the provider
   catalog resolves; every route (command line, `--json-run`, Python) reaches
   it through that resolution, so the catalog is the only source of defaults.

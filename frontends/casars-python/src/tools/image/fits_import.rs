@@ -1,96 +1,27 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::borrow::Cow;
+//! Thin PyO3 `ia.fromfits` / `ia.newimagefromfits` / `ia.maketestimage` wrapper delegating to [`casa_imageanalysis::tool::fits`].
+
 use std::path::{Path, PathBuf};
 
-use casa_images::fits_read::FitsToolImport;
+use casa_imageanalysis::tool::fits::{ImportFitsRequest, import_fits};
 use pyo3::prelude::*;
 
 use super::PyImageTool;
-use super::attachment::AttachedImage;
-use super::create::publish_image;
-use super::handle::{ImageHandle, Storage, raised, with_storage};
+use super::handle::{external_open_check, raised};
 use super::lifecycle::resolve_image_path;
 
-struct ImportFits<'a> {
-    outfile: &'a str,
-    infile: &'a str,
+fn command(
+    outfile: &str,
+    infile: &str,
     whichrep: i64,
     whichhdu: i64,
     zeroblanks: bool,
     overwrite: bool,
-}
-
-impl ImportFits<'_> {
-    fn command(&self) -> String {
-        format!(
-            "ia.fromfits(outfile={:?}, fitsfile={:?}, whichrep={}, whichhdu={}, zeroBlanks={}, overwrite={})",
-            self.outfile,
-            self.infile,
-            self.whichrep,
-            self.whichhdu,
-            self.zeroblanks,
-            self.overwrite,
-        )
-    }
-
-    fn run(
-        &self,
-        expanded: PyResult<Cow<'_, str>>,
-        history: Option<(&str, String)>,
-    ) -> PyResult<AttachedImage> {
-        let whichrep = usize::try_from(self.whichrep).map_err(|_| {
-            raised("Exception: The Coordinate Representation index must be non-negative.")
-        })?;
-        let input = expanded?;
-        let input = Path::new(input.as_ref());
-        let mut source =
-            FitsToolImport::open_named(input, Path::new(self.infile), whichrep, self.whichhdu)
-                .map_err(raised)?;
-        if source.is_tile_compressed() {
-            return Err(raised(format!(
-                "Exception: No image at specified location in file {}.",
-                self.infile
-            )));
-        }
-        if self.overwrite
-            && !self.outfile.is_empty()
-            && let Ok(target) = Path::new(self.outfile).canonicalize()
-            && input.ancestors().any(|part| {
-                part.canonicalize()
-                    .is_ok_and(|resolved| resolved.starts_with(&target))
-            })
-        {
-            return Err(raised(
-                "Cannot overwrite an output that contains the source FITS file",
-            ));
-        }
-        publish_image(self.outfile, self.overwrite, |path| {
-            let mut storage = Storage::create(
-                source.shape().to_vec(),
-                source.coordinates().clone(),
-                path,
-                None,
-            )
-            .map_err(raised)?;
-            with_storage!(&mut storage, image => source.copy_pixels(&mut **image, self.zeroblanks))
-                .map_err(raised)?;
-            with_storage!(&mut storage, image => image.set_units(source.units)).map_err(raised)?;
-            with_storage!(&mut storage, image => image.set_image_info_record(source.image_info))
-                .map_err(raised)?;
-            with_storage!(&mut storage, image => image.set_misc_info(source.misc_info))
-                .map_err(raised)?;
-            with_storage!(&mut storage, image => image.append_history_entries(&source.history))
-                .map_err(raised)?;
-            let mut image = ImageHandle::Float(storage);
-            image.set_coordinate_record(source.coordinate_record)?;
-            if let Some((method, command)) = history {
-                image.record_history(method, command)?;
-            }
-            image.save().map_err(raised)?;
-            Ok(image)
-        })
-    }
+) -> String {
+    format!(
+        "ia.fromfits(outfile={outfile:?}, fitsfile={infile:?}, whichrep={whichrep}, whichhdu={whichhdu}, zeroBlanks={zeroblanks}, overwrite={overwrite})"
+    )
 }
 
 fn test_image_path() -> PathBuf {
@@ -129,21 +60,26 @@ impl PyImageTool {
         zeroblanks: bool,
         overwrite: bool,
     ) -> PyResult<bool> {
-        let expanded = resolve_image_path(py, infile);
+        let expanded = resolve_image_path(py, infile)?;
         py.detach(|| {
             let mut state = self.state();
-            let request = ImportFits {
+            let request = ImportFitsRequest {
                 outfile,
                 infile,
+                resolved_infile: Path::new(expanded.as_ref()),
                 whichrep,
                 whichhdu,
                 zeroblanks,
                 overwrite,
             };
-            state.image = Some(request.run(
-                expanded,
-                state.history.then(|| ("fromfits", request.command())),
-            )?);
+            let history = state.history.then(|| {
+                (
+                    "fromfits",
+                    command(outfile, infile, whichrep, whichhdu, zeroblanks, overwrite),
+                )
+            });
+            state.image =
+                Some(import_fits(&request, history, external_open_check()).map_err(raised)?);
             Ok(true)
         })
     }
@@ -160,17 +96,18 @@ impl PyImageTool {
         zeroblanks: bool,
         overwrite: bool,
     ) -> PyResult<Py<Self>> {
-        let expanded = resolve_image_path(py, infile);
+        let expanded = resolve_image_path(py, infile)?;
         let image = py.detach(|| {
-            ImportFits {
+            let request = ImportFitsRequest {
                 outfile,
                 infile,
+                resolved_infile: Path::new(expanded.as_ref()),
                 whichrep,
                 whichhdu,
                 zeroblanks,
                 overwrite,
-            }
-            .run(expanded, None)
+            };
+            import_fits(&request, None, external_open_check()).map_err(raised)
         })?;
         Py::new(py, Self::attached(image))
     }
@@ -184,9 +121,10 @@ impl PyImageTool {
             let infile = sample
                 .to_str()
                 .ok_or_else(|| raised("The CASA test image path is not UTF-8"))?;
-            let request = ImportFits {
+            let request = ImportFitsRequest {
                 outfile,
                 infile,
+                resolved_infile: &sample,
                 whichrep: 0,
                 whichhdu: 0,
                 zeroblanks: false,
@@ -198,7 +136,8 @@ impl PyImageTool {
                     format!("ia.maketestimage(outfile={outfile:?}, overwrite={overwrite})"),
                 )
             });
-            state.image = Some(request.run(Ok(Cow::Borrowed(infile)), history)?);
+            state.image =
+                Some(import_fits(&request, history, external_open_check()).map_err(raised)?);
             Ok(true)
         })
     }

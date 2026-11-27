@@ -23,7 +23,7 @@ pub use axes::{replace_stokes_axis_in_record, section_quality_labels, write_qual
 pub use channel_selection::parse_image_channel_selection;
 pub(in crate::analysis) use channel_selection::{ChannelSpan, parse_image_channel_spans};
 mod custom_values;
-mod exportfits;
+pub(crate) mod exportfits;
 mod expression_workspace;
 mod extrema;
 pub use expression_workspace::with_image_expression_workspace;
@@ -33,8 +33,8 @@ mod imhead_fits;
 mod imhead_masks;
 mod immath;
 mod importfits;
-mod imregrid;
-mod imsubimage;
+pub(crate) mod imregrid;
+pub(crate) mod imsubimage;
 pub use imsubimage::ImageRegionSection;
 pub use imsubimage::{
     ChannelLineFit, ChannelLineShape, ImageProfileFit, ImageProfileFitResult, ProfileDivisor,
@@ -80,12 +80,12 @@ mod transpose;
 pub use transpose::copy_transposed_image;
 mod world_header;
 
-mod immoments;
+pub(crate) mod immoments;
 pub use immoments::{
     ImageMomentOptions, ImageMomentProducts, make_image_moments, moment_output_names,
 };
 mod impbcor;
-mod impv;
+pub(crate) mod impv;
 pub use impv::{ImagePvProduct, generate_image_pv};
 mod imstat_log;
 mod lel_mask;

@@ -18,7 +18,7 @@
 mod dirty;
 
 use casa_contracts::{CasaEntry, CasaKey, CasaValue};
-use casa_imaging_application::{ImagingRequest, PlaneCycleRow, PlaneRows, ResidualStatistics};
+use casa_imaging::{ImagingRequest, PlaneCycleRow, PlaneRows, ResidualStatistics};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
@@ -477,7 +477,7 @@ mod tests {
     /// CASA's three codes and descriptions through the report.
     #[test]
     fn each_divergence_stop_keeps_its_casa_code() {
-        use casa_imaging_application::CleanStop;
+        use casa_imaging::CleanStop;
         for (stop_reason, code) in [
             (CleanStop::NoChange, 4),
             (CleanStop::DivergedFromPrevious, 5),

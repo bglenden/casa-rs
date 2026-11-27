@@ -18,14 +18,14 @@ members = [
     "libs/casacore/casa-lattices",
     "libs/casacore/casa-coordinates",
     "libs/casacore/casa-images",
-    "crates/casa-imaging-model",
-    "crates/casa-imaging-operator",
-    "crates/casa-imaging-deconvolution",
-    "crates/casa-imaging-products",
-    "crates/casa-imaging-application",
-    "crates/casa-imaging-runtime",
-    "crates/casa-imaging-singledish",
-    "crates/casa-imaging-metal",
+    "libs/imaging/casa-imaging-model",
+    "libs/imaging/casa-imaging-operator",
+    "libs/imaging/casa-imaging-deconvolution",
+    "libs/imaging/casa-imaging-products",
+    "libs/imaging/casa-imaging",
+    "libs/imaging/casa-imaging-runtime",
+    "libs/imaging/casa-imaging-singledish",
+    "libs/imaging/casa-imaging-metal",
     "crates/casa-simulation",
     "libs/casa/casa-atmosphere",
     "libs/casacore/casa-measures",
@@ -61,6 +61,14 @@ casa-core = { path = "libs/casacore/casa-core", version = "0.27.0" }
 casa-fft = { path = "libs/casacore/casa-fft", version = "0.27.0" }
 casa-imageanalysis = { path = "libs/casa/casa-imageanalysis", version = "0.27.0" }
 casa-images = { path = "libs/casacore/casa-images", version = "0.27.0" }
+casa-imaging = { path = "libs/imaging/casa-imaging", version = "0.27.0" }
+casa-imaging-deconvolution = { path = "libs/imaging/casa-imaging-deconvolution", version = "0.27.0" }
+casa-imaging-metal = { path = "libs/imaging/casa-imaging-metal", version = "0.27.0" }
+casa-imaging-model = { path = "libs/imaging/casa-imaging-model", version = "0.27.0" }
+casa-imaging-operator = { path = "libs/imaging/casa-imaging-operator", version = "0.27.0" }
+casa-imaging-products = { path = "libs/imaging/casa-imaging-products", version = "0.27.0" }
+casa-imaging-runtime = { path = "libs/imaging/casa-imaging-runtime", version = "0.27.0" }
+casa-imaging-singledish = { path = "libs/imaging/casa-imaging-singledish", version = "0.27.0" }
 casa-lattices = { path = "libs/casacore/casa-lattices", version = "0.27.0" }
 casa-measures = { path = "libs/casacore/casa-measures", version = "0.27.0" }
 casa-numerics = { path = "libs/casacore/casa-numerics", version = "0.27.0" }
@@ -125,7 +133,7 @@ opt-level = 3
 opt-level = 3
 [profile.test.package.casa-imaging-metal]
 opt-level = 3
-[profile.test.package.casa-imaging-application]
+[profile.test.package.casa-imaging]
 opt-level = 3
 [profile.test.package.casa-tasks]
 opt-level = 3

@@ -146,7 +146,7 @@ impl Parameters<'_> {
 /// Invalid parameters, missing inputs, unsupported input metadata or selections,
 /// resource admission or native imaging/analysis failures.
 pub fn simanalyze(request: &SimanalyzeRequest) -> Result<SimanalyzeOutcome, SimobserveError> {
-    simanalyze_with_controls(request, None, &casa_imaging_application::Cancel::new())
+    simanalyze_with_controls(request, None, &casa_imaging::Cancel::new())
 }
 
 /// Image, analyze, and emit figure inputs through `sink`.
@@ -157,11 +157,7 @@ pub fn simanalyze_with_plot_sink(
     request: &SimanalyzeRequest,
     sink: &mut dyn SimulationPlotSink,
 ) -> Result<SimanalyzeOutcome, SimobserveError> {
-    simanalyze_with_controls(
-        request,
-        Some(sink),
-        &casa_imaging_application::Cancel::new(),
-    )
+    simanalyze_with_controls(request, Some(sink), &casa_imaging::Cancel::new())
 }
 
 /// Analyze a simulation with caller-owned cancellation and an optional
@@ -172,7 +168,7 @@ pub fn simanalyze_with_plot_sink(
 pub fn simanalyze_with_controls<'a, 'b>(
     request: &SimanalyzeRequest,
     sink: Option<&'a mut (dyn SimulationPlotSink + 'b)>,
-    cancel: &casa_imaging_application::Cancel,
+    cancel: &casa_imaging::Cancel,
 ) -> Result<SimanalyzeOutcome, SimobserveError> {
     run(request, sink.map(|sink| (sink, None)), cancel)
 }
@@ -181,7 +177,7 @@ pub(crate) fn simanalyze_with_plot_sink_and_override(
     request: &SimanalyzeRequest,
     sink: &mut dyn SimulationPlotSink,
     output_file_override: Option<PathBuf>,
-    cancel: &casa_imaging_application::Cancel,
+    cancel: &casa_imaging::Cancel,
 ) -> Result<SimanalyzeOutcome, SimobserveError> {
     run(request, Some((sink, output_file_override)), cancel)
 }
@@ -189,7 +185,7 @@ pub(crate) fn simanalyze_with_plot_sink_and_override(
 fn run<'a, 'b>(
     request: &SimanalyzeRequest,
     plot_sink: Option<(&'a mut (dyn SimulationPlotSink + 'b), Option<PathBuf>)>,
-    cancel: &casa_imaging_application::Cancel,
+    cancel: &casa_imaging::Cancel,
 ) -> Result<SimanalyzeOutcome, SimobserveError> {
     crate::simobserve::check_cancel(cancel)?;
     let resources = request.resources;

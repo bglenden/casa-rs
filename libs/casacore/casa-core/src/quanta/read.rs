@@ -27,7 +27,7 @@
 //! strings are rejected here.
 //!
 //! Other readers in the workspace parse subsets of these forms for their own
-//! inputs: `parse_sexagesimal` in casa-imaging-application's phase-centre
+//! inputs: `parse_sexagesimal` in casa-imaging's phase-centre
 //! compiler and `parse_datetime_to_mjd` in casa-tables' TaQL functions.
 
 use std::fmt;

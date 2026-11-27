@@ -6,7 +6,7 @@ use std::{collections::BTreeSet, error::Error, path::PathBuf};
 
 use casa_contracts::{ParameterValue, PersistenceClass, TaskRunRequest, builtin_surface_bundle};
 use casa_core::measures::{doppler::DopplerRef, frequency::FrequencyRef};
-use casa_imaging_application::{
+use casa_imaging::{
     AwCfSource, AwProjection, Deconvolver, Gridder, ImagingRequest, PolarizationCoordinate,
     RestoringBeamPolicy, SpecMode, Weighting,
 };

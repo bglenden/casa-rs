@@ -21,6 +21,7 @@ casa-coordinates.workspace = true
 casa-images.workspace = true
 casa-lattices.workspace = true
 casa-measures.workspace = true
+casa-ms.workspace = true
 casa-tables.workspace = true
 casa-test-support = { path = "../../dev/casa-test-support" }
 casa-core.workspace = true
@@ -43,6 +44,11 @@ required-features = ["performance-tests"]
 [[test]]
 name = "measures_perf_vs_cpp"
 path = "tests/measures_perf_vs_cpp.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "ms_perf_vs_cpp"
+path = "tests/ms_perf_vs_cpp.rs"
 required-features = ["performance-tests"]
 
 [[test]]

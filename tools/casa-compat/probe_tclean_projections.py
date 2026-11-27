@@ -10,7 +10,7 @@ unittest/tclean). tclean images MS dirty in each projection, 100 × 100 cells
 of 8 arcsec as test_onefield_projections does; OUTDIR/projections.json
 records each image's direction coordinate and the world directions, in
 radians, casatools gives a set of its pixels, or the refusal for a name CASA
-does not take, and again for images centred south of the equator and on it. It is crates/casa-imaging-application/tests/data/
+does not take, and again for images centred south of the equator and on it. It is libs/imaging/casa-imaging/tests/data/
 projections-casa-6.7.6.14.json.
 """
 

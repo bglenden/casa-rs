@@ -242,7 +242,7 @@ fn image_noise(
     resources: SessionResources,
 ) -> Result<f64, SimutilError> {
     use casa_images::PagedImage;
-    use casa_imaging_application::{BackendRequest, Cancel, ImagingRequest, RunContext, execute};
+    use casa_imaging::{BackendRequest, Cancel, ImagingRequest, RunContext, execute};
 
     let cell = 6e3 / 250.0 / (frequency_hz / 1e9);
     let values = serde_json::json!({
@@ -254,7 +254,7 @@ fn image_noise(
         ImagingRequest::from_tclean_with_defaults(values.as_object().expect("imaging parameters"))
             .map_err(failed)?;
     request.backend = BackendRequest::Cpu;
-    request.gridprecision = Some(casa_imaging_application::GridPrecision::F64);
+    request.gridprecision = Some(casa_imaging::GridPrecision::F64);
     execute(
         &request,
         RunContext {

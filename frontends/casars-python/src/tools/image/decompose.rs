@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_imageanalysis::analysis::{DecompositionOptions, decompose_image};
-use casa_images::ImageInterface;
+//! Thin PyO3 `ia.decompose` wrapper delegating to [`casa_imageanalysis::tool::ops_fit::decompose`].
+
+use casa_imageanalysis::analysis::DecompositionOptions;
+use casa_imageanalysis::tool::ops_fit::decompose;
 use numpy::PyArrayDyn;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use super::PyImageTool;
-use super::attachment::read_locked;
-use super::handle::{ImageHandle, Storage, raised, with_storage};
+use super::handle::raised;
 use super::subimage::{RegionArgument, mask_argument, require_bool};
 
 #[pymethods]
@@ -34,48 +35,31 @@ impl PyImageTool {
         #[pyo3(from_py_with = require_bool)] stretch: bool,
     ) -> PyResult<Bound<'py, PyDict>> {
         let mask = mask_argument(mask)?;
-        let output = py.detach(|| {
+        let output = py.detach(|| -> PyResult<_> {
             let state = self.state();
             let Some(source) = &state.image else {
                 return Ok(None);
             };
-            read_locked(source, |image| {
-                let ImageHandle::Float(storage) = image else {
-                    return Err(raised("This application supports only real-valued images"));
-                };
-                let record = image.coordinate_record();
-                let decompose = |source: &dyn ImageInterface<f32>| {
-                    decompose_image(
-                        source,
-                        record,
-                        DecompositionOptions {
-                            region: region.selection(),
-                            mask: Some(&mask),
-                            stretch,
-                            simple,
-                            threshold,
-                            contours: ncontour,
-                            min_range: minrange,
-                            neighbor_axes: naxis,
-                            fit,
-                            maximum_rms: maxrms,
-                            max_retry: maxretry,
-                            max_iterations: maxiter,
-                            criterion: convcriteria,
-                        },
-                    )
-                    .map_err(raised)
-                };
-                match storage {
-                    Storage::Temp {
-                        image,
-                        fits: Some(fits),
-                        ..
-                    } => decompose(&fits.image_view(image)),
-                    _ => with_storage!(storage, image => decompose(image.as_ref())),
-                }
-            })
+            decompose(
+                source,
+                DecompositionOptions {
+                    region: region.selection(),
+                    mask: Some(&mask),
+                    stretch,
+                    simple,
+                    threshold,
+                    contours: ncontour,
+                    min_range: minrange,
+                    neighbor_axes: naxis,
+                    fit,
+                    maximum_rms: maxrms,
+                    max_retry: maxretry,
+                    max_iterations: maxiter,
+                    criterion: convcriteria,
+                },
+            )
             .map(Some)
+            .map_err(raised)
         })?;
         let result = PyDict::new(py);
         if let Some(output) = output {

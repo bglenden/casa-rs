@@ -1,0 +1,417 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Batch geometry on a small hand-made observation: the cases the
+//! selected-observation route's equality law (T1, T1.5) does not reach.
+
+use std::sync::Arc;
+
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::epoch::{EpochRef, MEpoch};
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::{MeasFrame, MeasureError};
+use casa_imaging_model::{
+    BatchGeometry, BatchGeometryError, CompiledProblem, DirectionFrame, FacetLayout,
+    FrequencyFrame, GeometryPlan, GeometryTraversal, GridFtProjection, PhaseCentreLaw,
+    PsfPhaseCentreLaw, SkyDirection,
+};
+use casa_observation::{BatchBuffers, Catalogue};
+
+#[allow(unused_imports)]
+use crate::{batch_observation, common, model_lifecycle_fixture};
+
+use batch_observation::{
+    MJD_DAYS, REFERENCE, UVW_M, catalogue, catalogue_in, fill, j2000, measures, problem,
+    problem_framed,
+};
+
+/// The geometry of every sample of one time of `catalogue`'s first
+/// partition under `problem`.
+fn apply(problem: &CompiledProblem, catalogue: &Arc<Catalogue>) -> (GeometryPlan, BatchGeometry) {
+    let plan =
+        GeometryPlan::compile(problem, catalogue, measures(), None).expect("a geometry plan");
+    let mut buffers = BatchBuffers::default();
+    fill(&mut buffers, catalogue, 0, 1);
+    let batch = buffers.batch().expect("a batch");
+    let mut geometry = BatchGeometry::default();
+    plan.apply(
+        &batch,
+        &[true; 3],
+        None,
+        &mut GeometryTraversal::default(),
+        &mut geometry,
+    )
+    .expect("batch geometry");
+    (plan, geometry)
+}
+
+/// Whether two reprojections of one sample agree to rounding.
+fn assert_close(actual: ([f64; 3], f64), expected: ([f64; 3], f64), what: &str) {
+    let difference = (0..3)
+        .map(|axis| (actual.0[axis] - expected.0[axis]).abs())
+        .fold((actual.1 - expected.1).abs(), f64::max);
+    assert!(
+        difference <= 1.0e-9,
+        "{what}: {actual:?} against {expected:?}"
+    );
+}
+
+/// A moving phase centre moves every facet with it: each facet's target is
+/// its own centre offset by the body's departure from the image reference
+/// direction, so the facets keep their layout on the sky.
+#[test]
+fn facets_follow_a_moving_phase_centre_from_the_image_reference() {
+    let field = j2000(0.9, -0.45);
+    let catalogue = catalogue(field.clone(), 1);
+    let problem = problem(
+        PhaseCentreLaw::Ephemeris("SUN".to_string()),
+        FacetLayout::Regular {
+            columns: 2,
+            rows: 2,
+        },
+        PsfPhaseCentreLaw::ImageDomainReference,
+    );
+    let (plan, geometry) = apply(&problem, &catalogue);
+    let frame = MeasFrame::new()
+        .with_epoch(MEpoch::from_mjd_seconds(MJD_DAYS * 86_400.0, EpochRef::UTC))
+        .with_position(catalogue.antennas[0].position.clone())
+        .with_measures(measures());
+    let (sun_longitude, sun_latitude) = MDirection::from_source_name("SUN", &frame)
+        .and_then(|sun| sun.convert_to(DirectionRef::J2000, &frame))
+        .expect("the Sun's J2000 direction")
+        .as_angles();
+    let shift = [sun_longitude - REFERENCE[0], sun_latitude - REFERENCE[1]];
+    let facets = problem.geometry().domains()[0].facets();
+    assert_eq!(plan.charts(), 4);
+    assert_eq!(facets.len(), 4);
+    for (chart, facet) in facets.iter().enumerate() {
+        let centre = facet.phase_centre();
+        let machine = GridFtProjection::faceted_between_directions(
+            &field,
+            &j2000(
+                centre.longitude_rad() + shift[0],
+                centre.latitude_rad() + shift[1],
+            ),
+        );
+        for (sample, uvw) in UVW_M.iter().enumerate() {
+            let projection = geometry.projection(sample, chart);
+            assert_close(
+                (projection.uvw_m, projection.phase_shift_m),
+                machine.apply(*uvw),
+                &format!("facet {chart}, sample {sample}"),
+            );
+        }
+    }
+    let first = geometry.projection(0, 0);
+    let last = geometry.projection(0, 3);
+    assert!(
+        (first.phase_shift_m - last.phase_shift_m).abs() > 1.0e-3,
+        "facets keep their layout: {first:?} against {last:?}"
+    );
+}
+
+/// A field in ICRS with no reference epoch (an MSv4 field) is converted to
+/// J2000 by the frame tie alone.
+#[test]
+fn an_icrs_field_without_an_epoch_is_tied_to_j2000() {
+    let icrs = MDirection::from_angles(0.9, -0.45, DirectionRef::ICRS);
+    let catalogue = catalogue(icrs.clone(), 1);
+    let problem = problem(
+        PhaseCentreLaw::Observation,
+        FacetLayout::Single,
+        PsfPhaseCentreLaw::ImageDomainReference,
+    );
+    let (_, geometry) = apply(&problem, &catalogue);
+    let frame = MeasFrame::new()
+        .with_position(catalogue.antennas[0].position.clone())
+        .with_measures(measures());
+    let field = icrs
+        .convert_to(DirectionRef::J2000, &frame)
+        .expect("ICRS to J2000 without an epoch");
+    let (longitude, latitude) = field.as_angles();
+    let machine = GridFtProjection::between_directions(
+        &j2000(longitude, latitude),
+        &j2000(REFERENCE[0], REFERENCE[1]),
+    );
+    let untied = GridFtProjection::between_directions(
+        &j2000(0.9, -0.45),
+        &j2000(REFERENCE[0], REFERENCE[1]),
+    );
+    for (sample, uvw) in UVW_M.iter().enumerate() {
+        let projection = geometry.projection(sample, 0);
+        let actual = (projection.uvw_m, projection.phase_shift_m);
+        assert_close(actual, machine.apply(*uvw), &format!("sample {sample}"));
+        assert_ne!(actual, untied.apply(*uvw), "the frame tie moves the field");
+    }
+}
+
+/// No consumer reads a PSF centred elsewhere than its model, so geometry
+/// refuses one rather than project to the model centre in silence.
+#[test]
+fn a_distinct_psf_phase_centre_is_refused() {
+    let problem = problem(
+        PhaseCentreLaw::Observation,
+        FacetLayout::Single,
+        PsfPhaseCentreLaw::Fixed(SkyDirection::new(DirectionFrame::J2000, 1.01, -0.5)),
+    );
+    let refused =
+        GeometryPlan::compile(&problem, &catalogue(j2000(0.9, -0.45), 1), measures(), None);
+    assert!(
+        matches!(refused, Err(BatchGeometryError::DistinctPsfCentre)),
+        "{refused:?}"
+    );
+}
+
+/// A plan applies only to batches of the catalogue it was compiled on.
+#[test]
+fn a_batch_of_another_catalogue_is_refused() {
+    let problem = problem(
+        PhaseCentreLaw::Observation,
+        FacetLayout::Single,
+        PsfPhaseCentreLaw::ImageDomainReference,
+    );
+    let compiled = catalogue(j2000(0.9, -0.45), 1);
+    let plan =
+        GeometryPlan::compile(&problem, &compiled, measures(), None).expect("a geometry plan");
+    let other = catalogue(j2000(0.9, -0.45), 1);
+    let mut buffers = BatchBuffers::default();
+    fill(&mut buffers, &other, 0, 1);
+    let batch = buffers.batch().expect("a batch");
+    let refused = plan.apply(
+        &batch,
+        &[true; 3],
+        None,
+        &mut GeometryTraversal::default(),
+        &mut BatchGeometry::default(),
+    );
+    assert!(
+        matches!(refused, Err(BatchGeometryError::Catalogue(_))),
+        "{refused:?}"
+    );
+}
+
+/// A moving phase centre that is neither `TRACKFIELD`, nor a body Measures
+/// names, nor given with its ephemeris table is refused when the plan
+/// compiles, not at the first batch.
+#[test]
+fn a_moving_centre_measures_does_not_name_is_refused_at_compile() {
+    let table = "/data/mars.eph";
+    let without_table = problem(
+        PhaseCentreLaw::Ephemeris(table.to_string()),
+        FacetLayout::Single,
+        PsfPhaseCentreLaw::ImageDomainReference,
+    );
+    let refused = GeometryPlan::compile(
+        &without_table,
+        &catalogue(j2000(0.9, -0.45), 1),
+        measures(),
+        None,
+    );
+    assert!(
+        matches!(&refused, Err(BatchGeometryError::UnsupportedEphemeris(refused)) if refused == table),
+        "{refused:?}"
+    );
+    // A body Measures names but has no model of fails as Measures does.
+    let pluto = problem(
+        PhaseCentreLaw::Ephemeris("PLUTO".to_string()),
+        FacetLayout::Single,
+        PsfPhaseCentreLaw::ImageDomainReference,
+    );
+    let refused = GeometryPlan::compile(&pluto, &catalogue(j2000(0.9, -0.45), 1), measures(), None);
+    assert!(
+        matches!(
+            refused,
+            Err(BatchGeometryError::Measures(
+                MeasureError::NotYetImplemented { .. }
+            ))
+        ),
+        "{refused:?}"
+    );
+}
+
+/// Rest-frame frequencies stay as they are; converting into or out of the
+/// rest frame needs a source velocity, which a phase centre that follows
+/// no ephemeris does not give, so such a batch is refused.
+#[test]
+fn only_rest_frequencies_stay_in_the_rest_frame() {
+    let field = j2000(0.9, -0.45);
+    let geometry_of = |window: FrequencyRef, source: FrequencyFrame, output: FrequencyFrame| {
+        let catalogue = catalogue_in(field.clone(), 1, window);
+        let problem = problem_framed(PhaseCentreLaw::Observation, source, output);
+        let plan =
+            GeometryPlan::compile(&problem, &catalogue, measures(), None).expect("a geometry plan");
+        let mut buffers = BatchBuffers::default();
+        fill(&mut buffers, &catalogue, 0, 1);
+        let batch = buffers.batch().expect("a batch");
+        let mut geometry = BatchGeometry::default();
+        plan.apply(
+            &batch,
+            &[true; 3],
+            None,
+            &mut GeometryTraversal::default(),
+            &mut geometry,
+        )
+        .map(|()| geometry.frequencies_hz(0).to_vec())
+    };
+    assert_eq!(
+        geometry_of(
+            FrequencyRef::REST,
+            FrequencyFrame::Rest,
+            FrequencyFrame::Rest
+        )
+        .expect("rest to rest"),
+        [1.4e9]
+    );
+    for (window, source, output) in [
+        (
+            FrequencyRef::REST,
+            FrequencyFrame::Rest,
+            FrequencyFrame::Lsrk,
+        ),
+        (
+            FrequencyRef::TOPO,
+            FrequencyFrame::Topocentric,
+            FrequencyFrame::Rest,
+        ),
+    ] {
+        let refused = geometry_of(window, source, output);
+        assert!(
+            matches!(refused, Err(BatchGeometryError::RestFrameWithoutVelocity)),
+            "{window:?} to {output:?}: {refused:?}"
+        );
+    }
+}
+
+/// A TOPO cube of TOPO rows is gridded through LSRK, as CASA grids it: its
+/// channels are fixed in LSRK at the image's anchor and each row is taken
+/// to LSRK at its own time. A row at the anchor, towards the image's
+/// reference direction, keeps its frequencies exactly; a later one is
+/// Doppler shifted from them. Every sample grids at the uv and phase-centre
+/// phase of its LSRK frequency, as the LSRK cube's does.
+#[test]
+fn a_topo_cube_is_gridded_through_lsrk() {
+    let catalogue = catalogue_in(j2000(REFERENCE[0], REFERENCE[1]), 1, FrequencyRef::TOPO);
+    let geometry_of = |output| {
+        let problem = problem_framed(
+            PhaseCentreLaw::Observation,
+            FrequencyFrame::Topocentric,
+            output,
+        );
+        let plan =
+            GeometryPlan::compile(&problem, &catalogue, measures(), None).expect("a geometry plan");
+        let mut buffers = BatchBuffers::default();
+        fill(&mut buffers, &catalogue, 0, 2);
+        let batch = buffers.batch().expect("a batch");
+        let mut geometry = BatchGeometry::default();
+        plan.apply(
+            &batch,
+            &[true; 6],
+            None,
+            &mut GeometryTraversal::default(),
+            &mut geometry,
+        )
+        .expect("batch geometry");
+        geometry
+    };
+    let topo = geometry_of(FrequencyFrame::Topocentric);
+    let lsrk = geometry_of(FrequencyFrame::Lsrk);
+    assert_eq!(topo.frequencies_hz(0), [1.4e9]);
+    let drift = topo.frequencies_hz(1)[0] / 1.4e9 - 1.0;
+    assert!(
+        drift != 0.0 && drift.abs() < 1.0e-8,
+        "Doppler drift over 10 s: {drift}"
+    );
+    for sample in 0..6 {
+        let time = sample / 3;
+        let [topo_hz, lsrk_hz] = [&topo, &lsrk].map(|geometry| geometry.frequencies_hz(time)[0]);
+        let (topo_uvw, lsrk_uvw) = (topo.projection(sample, 0), lsrk.projection(sample, 0));
+        for (axis, (topo_m, lsrk_m)) in topo_uvw.uvw_m.iter().zip(lsrk_uvw.uvw_m).enumerate() {
+            let [topo_wavelengths, lsrk_wavelengths] = [topo_m * topo_hz, lsrk_m * lsrk_hz];
+            assert!(
+                (topo_wavelengths - lsrk_wavelengths).abs() <= 1.0e-12 * lsrk_wavelengths.abs(),
+                "sample {sample} axis {axis}: {topo_wavelengths} against {lsrk_wavelengths}"
+            );
+        }
+        let [topo_phase, lsrk_phase] = [
+            topo_uvw.phase_shift_m * topo_hz,
+            lsrk_uvw.phase_shift_m * lsrk_hz,
+        ];
+        assert!(
+            (topo_phase - lsrk_phase).abs() <= 1.0e-12 * lsrk_phase.abs().max(1.0),
+            "sample {sample}: phase {topo_phase} against {lsrk_phase}"
+        );
+    }
+}
+
+/// A time with no row samples holds no geometry: its samples' projections
+/// and its frequencies stay NaN.
+#[test]
+fn a_time_without_rows_holds_no_geometry() {
+    let problem = problem(
+        PhaseCentreLaw::Observation,
+        FacetLayout::Single,
+        PsfPhaseCentreLaw::ImageDomainReference,
+    );
+    let catalogue = catalogue(j2000(0.9, -0.45), 1);
+    let plan =
+        GeometryPlan::compile(&problem, &catalogue, measures(), None).expect("a geometry plan");
+    let mut buffers = BatchBuffers::default();
+    fill(&mut buffers, &catalogue, 0, 2);
+    let batch = buffers.batch().expect("a batch");
+    let mut geometry = BatchGeometry::default();
+    let rows = [true, true, true, false, false, false];
+    plan.apply(
+        &batch,
+        &rows,
+        None,
+        &mut GeometryTraversal::default(),
+        &mut geometry,
+    )
+    .expect("batch geometry");
+    assert_eq!(geometry.frequencies_hz(0), [1.4e9]);
+    assert!(geometry.frequencies_hz(1)[0].is_nan());
+    for sample in 0..3 {
+        assert!(geometry.projection(sample, 0).phase_shift_m.is_finite());
+        assert!(geometry.projection(sample + 3, 0).phase_shift_m.is_nan());
+        assert!(
+            geometry
+                .pointing(sample + 3)
+                .antenna1
+                .longitude_rad()
+                .is_nan()
+        );
+    }
+}
+
+/// CASA's AW buffer lookup uses antenna 0 at the integration time even
+/// when the selected rows only contain other antennas (#1070).
+#[test]
+fn aw_pa_uses_antenna_zero_outside_the_selected_baseline() {
+    let field = j2000(0.9, -0.45);
+    let catalogue = catalogue(field.clone(), 1);
+    let problem = batch_observation::aw_problem();
+    let plan = GeometryPlan::compile(&problem, &catalogue, measures(), None).expect("plan");
+    let mut buffers = BatchBuffers::default();
+    fill(&mut buffers, &catalogue, 0, 1);
+    let batch = buffers.batch().expect("batch");
+    let mut geometry = BatchGeometry::default();
+    plan.apply(
+        &batch,
+        &[false, false, true],
+        None,
+        &mut GeometryTraversal::default(),
+        &mut geometry,
+    )
+    .expect("geometry");
+    let frame = MeasFrame::new()
+        .with_epoch(MEpoch::from_mjd_seconds(MJD_DAYS * 86_400.0, EpochRef::UTC))
+        .with_position(catalogue.antennas[0].position.clone())
+        .with_measures(measures());
+    let expected = field.parallactic_angle(&frame).expect("antenna-0 angle") as f32;
+    assert_eq!(geometry.aw_parallactic_angle(0), Some(expected));
+    let baseline_pa = geometry.parallactic_angles(2).expect("baseline angles");
+    assert_ne!(expected, -baseline_pa[0] as f32);
+    let bytes = plan.geometry_bytes(batch.samples(), batch.times(), batch.channel_count());
+    assert!(
+        geometry.capacity_bytes() <= bytes,
+        "AW PA scratch is charged"
+    );
+}

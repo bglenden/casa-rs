@@ -1,77 +1,17 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::path::Path;
+//! Thin PyO3 `ia.crop` wrapper delegating to [`casa_imageanalysis::tool::ops_spatial::crop_image`].
 
-use casa_coordinates::CoordinateType;
-use casa_core::RecordValue;
-use casa_imageanalysis::analysis::{
-    ImageCrop, ImageCropOptions, ensure_outfile_does_not_alias_input,
-};
-use casa_images::{ImageInterface, image_history_rows};
+use casa_imageanalysis::analysis::ImageCropOptions;
+use casa_imageanalysis::tool::ops_spatial::crop_image;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
 
 use crate::convert::IntList;
 
 use super::PyImageTool;
-use super::beam_view::BeamView;
-use super::beams::subset_beam_record;
-use super::create::publish_image;
-use super::handle::{ImageHandle, Storage, raised, with_storage};
+use super::handle::{emit_tool_logs, external_open_check, raised};
 use super::subimage::Region;
-
-fn copy(
-    image: &dyn ImageInterface<f32>,
-    coordinates: RecordValue,
-    options: ImageCropOptions<'_>,
-    beams: &BeamView,
-    path: Option<&Path>,
-) -> PyResult<Storage<f32>> {
-    let mut crop =
-        ImageCrop::new(image, Some(coordinates), options, Some(beams.record())).map_err(raised)?;
-    let record = crop.section.coordinate_record.take();
-    let beam_set = beams.beam_set().map_err(raised)?;
-    let mut info = crop.section.image_info().to_record();
-    if beam_set.is_multi() {
-        let channels = crop.beam_planes(
-            image.find_axis(CoordinateType::Spectral),
-            beam_set.n_channels(),
-        );
-        let polarizations =
-            crop.beam_planes(image.find_axis(CoordinateType::Stokes), beam_set.n_stokes());
-        subset_beam_record(
-            &mut info,
-            Some(beams.record()),
-            &beam_set,
-            &channels,
-            &polarizations,
-        )
-        .map_err(raised)?;
-    } else {
-        beams.apply_to(&mut info);
-    }
-    let mut product = Storage::create(
-        crop.section.shape.clone(),
-        crop.section.coordinates.clone(),
-        path,
-        None,
-    )
-    .map_err(raised)?;
-    with_storage!(&mut product, image_out => crop.copy_to(image, image_out.as_mut()))
-        .map_err(raised)?;
-    with_storage!(&mut product, image_out => image_out.set_image_info_record(info))
-        .map_err(raised)?;
-    if let Some(record) = record {
-        match &mut product {
-            Storage::Paged(image) => image.set_coordinate_record(record).map_err(raised)?,
-            Storage::Temp {
-                record: coordinates,
-                ..
-            } => *coordinates = record,
-        }
-    }
-    Ok(product)
-}
 
 #[pymethods]
 impl PyImageTool {
@@ -98,85 +38,54 @@ impl PyImageTool {
             _ => "[]",
         };
         let region = Region::capture(py, region);
-        let result = py.detach(|| {
+        let (result, logs) = py.detach(|| -> PyResult<_> {
             let state = self.state();
             let Some(attached) = state.image.as_ref() else {
-                return Ok(None);
+                return Ok((None, Vec::new()));
             };
             let region = region?;
-            publish_image(outfile, overwrite, |path| {
-                let mut original = attached.lock();
-                if !matches!(&*original, ImageHandle::Float(_)) {
-                    return Err(raised("This method only supports Float valued images"));
+            if record_argument || region.is_some() {
+                if !r#box.is_empty() {
+                    return Err(raised("box and regionPtr cannot be simultaneously specified"));
                 }
-                if record_argument || region.is_some() {
-                    if !r#box.is_empty() {
-                        return Err(raised("box and regionPtr cannot be simultaneously specified"));
-                    }
-                    if !chans.is_empty() || !stokes.is_empty() {
-                        return Err(raised(
-                            "regionPtr and regionName, chans, and/or stokes cannot be simultaneously specified",
-                        ));
-                    }
+                if !chans.is_empty() || !stokes.is_empty() {
+                    return Err(raised(
+                        "regionPtr and regionName, chans, and/or stokes cannot be simultaneously specified",
+                    ));
                 }
-                if !outfile.is_empty() && let Some(source) = original.path() {
-                    ensure_outfile_does_not_alias_input(Path::new(outfile), source).map_err(raised)?;
-                }
-                attached.require_pixel_read_lock(&mut original)?;
-                let coordinates = original.coordinate_record();
-                let ImageHandle::Float(source) = &*original else {
-                    unreachable!("only float images accept crop")
-                };
-                let axes = axes.as_ref().map_or(&[][..], |axes| axes.0.as_slice());
-                let options = ImageCropOptions {
-                    axes,
-                    box_selection: (!r#box.is_empty()).then_some(r#box),
-                    region: region.as_ref().map(Region::as_region),
-                    channels: (!chans.is_empty()).then_some(chans),
-                    stokes: (!stokes.is_empty()).then_some(stokes),
-                    mask: (!mask.is_empty()).then_some(mask),
-                    stretch,
-                };
-                let beams = attached.beam_view().clone();
-                let mut cropped = match source {
-                    Storage::Temp { image, fits: Some(fits), .. } => {
-                        copy(&fits.image_view(image), coordinates, options, &beams, path)
-                    }
-                    _ => with_storage!(source, image => copy(image.as_ref(), coordinates, options, &beams, path)),
-                }?;
-                let history = match source {
-                    Storage::Paged(image) => image_history_rows(image.name().expect("native image path")).map_err(raised)?,
-                    Storage::Temp { image, .. } => image.history_rows().map_err(raised)?.into_owned(),
-                };
-                with_storage!(&mut cropped, image => image.append_history_entries(&history)).map_err(raised)?;
-                let mut cropped = ImageHandle::Float(cropped);
-                if state.history {
-                    let axes = axes.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
-                    let region = region.as_ref().map_or_else(|| omitted_history.into(), Region::history);
-                    cropped.record_history("crop", format!("ia.crop(outfile={outfile:?}, axes=[{axes}], overwrite={overwrite}, region={region}, box={box:?}, chans={chans:?}, stokes={stokes:?}, mask={mask:?}, stretch={stretch}, wantreturn={wantreturn})", box = r#box))?;
-                }
-                let source = original.path().map_or_else(
-                    || "Temporary_Image".into(),
-                    |path| path.display().to_string(),
-                );
-                cropped.append_history_at(
-                    "::ImageCropper::_reportOldNewImageShapes",
-                    &[
-                        format!("Original {source} size => {:?}", original.shape()),
-                        format!("New {outfile} size => {:?}", cropped.shape()),
-                    ],
-                )?;
-                cropped.save().map_err(raised)?;
-                attached.release_requested_lock(&mut original)?;
-                Ok(cropped)
-            }).map(Some)
-        })?;
-        match result {
-            Some(attached) if wantreturn => Py::new(py, Self::attached(attached)),
-            other => {
-                py.detach(|| drop(other));
-                Py::new(py, Self::new())
             }
-        }
+            let axes = axes.as_ref().map_or(&[][..], |axes| axes.0.as_slice());
+            let options = ImageCropOptions {
+                axes,
+                box_selection: (!r#box.is_empty()).then_some(r#box),
+                region: region.as_ref().map(Region::as_region),
+                channels: (!chans.is_empty()).then_some(chans),
+                stokes: (!stokes.is_empty()).then_some(stokes),
+                mask: (!mask.is_empty()).then_some(mask),
+                stretch,
+            };
+            let history_command = state.history.then(|| {
+                let axes_str = axes.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+                let region_hist = region
+                    .as_ref()
+                    .map_or_else(|| omitted_history.into(), Region::history);
+                format!(
+                    "ia.crop(outfile={outfile:?}, axes=[{axes_str}], overwrite={overwrite}, region={region_hist}, box={box:?}, chans={chans:?}, stokes={stokes:?}, mask={mask:?}, stretch={stretch}, wantreturn={wantreturn})",
+                    box = r#box
+                )
+            });
+            crop_image(
+                attached,
+                outfile,
+                overwrite,
+                options,
+                wantreturn,
+                history_command,
+                external_open_check(),
+            )
+            .map_err(raised)
+        })?;
+        emit_tool_logs(py, &logs)?;
+        Py::new(py, result.map_or_else(Self::new, Self::attached))
     }
 }

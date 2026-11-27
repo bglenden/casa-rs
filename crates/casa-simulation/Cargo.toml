@@ -25,12 +25,12 @@ casa-components.workspace = true
 casa-coordinates.workspace = true
 casa-fft.workspace = true
 casa-images.workspace = true
-casa-imaging-application = { path = "../casa-imaging-application" }
-casa-imaging-model = { path = "../casa-imaging-model" }
-casa-imaging-operator = { path = "../casa-imaging-operator" }
-casa-imaging-products = { path = "../casa-imaging-products" }
-casa-imaging-runtime = { path = "../casa-imaging-runtime" }
-casa-imaging-singledish = { path = "../casa-imaging-singledish" }
+casa-imaging.workspace = true
+casa-imaging-model.workspace = true
+casa-imaging-operator.workspace = true
+casa-imaging-products.workspace = true
+casa-imaging-runtime.workspace = true
+casa-imaging-singledish.workspace = true
 casa-lattices.workspace = true
 casa-ms.workspace = true
 casa-numerics.workspace = true

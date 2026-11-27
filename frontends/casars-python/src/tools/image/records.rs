@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use casa_imageanalysis::tool::metadata::{misc_info_casa, set_history_casa, set_misc_info};
 use numpy::PyUntypedArray;
 use pyo3::exceptions::{PyOverflowError, PyTypeError};
 use pyo3::prelude::*;
@@ -9,10 +10,10 @@ use pyo3::types::{PyDict, PyList, PyString, PyTuple};
 
 use crate::convert::value::CasaValue;
 use crate::convert::{DoubleList, IntList};
-use crate::tools::{LogLine, emit, table};
+use crate::tools::table;
 
 use super::PyImageTool;
-use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
+use super::handle::{emit_tool_logs, raised};
 
 pub(super) fn numeric_axis_vector(value: &Bound<'_, PyAny>) -> PyResult<IntList> {
     if value.is_none() || value.is_instance_of::<PyTuple>() {
@@ -73,13 +74,14 @@ impl PyImageTool {
     fn miscinfo(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let value = py.detach(|| {
             let state = self.state();
-            let Some(image) = state.image.as_ref() else {
+            let Some(attachment) = state.image.as_ref() else {
                 return Ok(CasaValue::empty_record());
             };
-            let image = image.lock();
-            image.check_single_precision("miscinfo")?;
-            let record = with_pixels!(&*image, storage => with_storage!(storage, image => image.misc_info()));
-            Ok::<_, PyErr>(table::values::record(&record, image.path().unwrap_or(Path::new("."))))
+            let (record, path) = misc_info_casa(attachment).map_err(raised)?;
+            Ok::<_, PyErr>(table::values::record(
+                &record,
+                path.as_deref().unwrap_or(Path::new(".")),
+            ))
         })?;
         value.into_python(py)
     }
@@ -91,26 +93,7 @@ impl PyImageTool {
             let Some(attachment) = state.image.as_ref() else {
                 return Ok(false);
             };
-            let mut image = attachment.lock();
-            if let Some(directory) = attachment.saved_expression_directory() {
-                let path = image.path().ok_or_else(|| raised("Saved image expression has no name"))?;
-                directory.write_metadata(path, image.kind(), &record)?;
-            } else if image.image_type_name() == "ImageConcat" {
-                attachment.check_bound_name(&image)?;
-            } else {
-                attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
-            }
-            // CASA accepts this call on a MIRIAD attachment and records it
-            // in history. Subsequent reads and exports see the empty record.
-            if image.image_type_name() != "MIRIADImage" {
-                with_pixels!(&mut *image, storage => with_storage!(storage, image => image.set_misc_info(record)))
-                    .map_err(raised)?;
-            }
-            if state.history {
-                image.record_history("setmiscinfo", "ia.setmiscinfo(info={...})".into())?;
-            }
-            image.save().map_err(raised)?;
-            Ok(true)
+            set_misc_info(attachment, record, state.history).map_err(raised)
         })
     }
 
@@ -121,32 +104,17 @@ impl PyImageTool {
         origin: &str,
         history: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
-        let mut messages = string_vector(history, "history")?;
-        let only_empty_string = matches!(messages.as_slice(), [message] if message.is_empty());
-        let set = py.detach(|| {
+        let messages = string_vector(history, "history")?;
+        let (set, logs) = py.detach(|| {
             let state = self.state();
-            let Some(image) = state.image.as_ref() else {
-                return Ok(false);
+            let Some(attachment) = state.image.as_ref() else {
+                return Ok((false, Vec::new()));
             };
-            messages.retain(|message| !message.is_empty());
-            if !messages.is_empty() {
-                let location = if origin.is_empty() {
-                    "ImageHistory::addHistory".to_owned()
-                } else {
-                    format!("::{origin}")
-                };
-                let mut handle = image.lock();
-                image.check_bound_name(&handle)?;
-                handle.append_history_at(&location, &messages)?;
-            }
-            Ok::<_, PyErr>(true)
+            let logs = set_history_casa(attachment, origin, messages).map_err(raised)?;
+            Ok::<_, PyErr>((true, logs))
         })?;
-        if set && only_empty_string {
-            emit(
-                py,
-                "casars.tools.image",
-                &[LogLine::info("history string is empty")],
-            )?;
+        if set {
+            emit_tool_logs(py, &logs)?;
         }
         Ok(set)
     }

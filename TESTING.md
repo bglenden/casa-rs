@@ -399,7 +399,7 @@ does not stand in for a scientific comparison.
   projection, MT-MFS, model column, Metal, routes, interrupt). The store
   law holds a run's batch geometry in its MeasurementSet equal to its batch
   geometry in the MSv4 conversion, every sample on every channel, to 1e-12,
-  in either channel order (`casa_imaging_application::store_law`).
+  in either channel order (`casa_imaging::store_law` tests).
 - **T1.5, CASA-paired small fixtures** (local, before an imaging review):
   the casatestdata `refim_*` and kernel fixtures against CASA 6.7.6
   references, NRMS ≤ 1e-3 on every product and `.sumwt` within 5e-5. The
@@ -469,7 +469,7 @@ sandboxes on Apple silicon; a skip is not evidence that a Metal workload ran.
 (`casa_imaging_runtime::admit`), and an owner that changes what it keeps
 adds a counting law: a test that runs the owner and asserts its measured
 allocation stays within the bytes it charges (for example
-`the_batch_source_holds_at_most_its_charge` in `casa-imaging-application`).
+`the_batch_source_holds_at_most_its_charge` in `casa-imaging`).
 The allocator counts the whole process, so a law in a binary with other
 tests first calls the binary's `alone`, which reruns the law in a process of
 its own, as nextest runs every test. At T2, a run's peak footprint must stay
