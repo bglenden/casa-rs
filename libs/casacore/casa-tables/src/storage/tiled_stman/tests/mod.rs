@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use super::save_columns::shape_row_intervals;
 use super::*;
 use casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, Value};
 use ndarray::ArrayD;
