@@ -15,5 +15,5 @@ Create an empty in-memory table.
 use casa_tables::Table;
 
 let table = Table::new();
-assert!(table.is_empty());
+assert_eq!(table.row_count(), 0);
 ```
