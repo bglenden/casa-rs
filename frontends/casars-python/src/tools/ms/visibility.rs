@@ -22,7 +22,7 @@ use pyo3::types::{PyInt, PyList, PyListMethods, PyString};
 
 use super::attachment_info::{TableFiles, TableStamp};
 use super::iteration::VisibilityIteration;
-use super::metadata_link::{MetadataLink, MetadataSnapshot, compose_rows};
+use super::metadata_link::{MetadataLink, MetadataSnapshot};
 use super::owned_record::visibility_record;
 use super::selection_indices::selection_text;
 use super::subtable_queries::Subtables;
@@ -634,7 +634,8 @@ impl AttachedMs {
             .legacy_selection
             .iteration
             .as_ref()
-            .is_some_and(|cursor| current(&cursor.main));
+            .and_then(|cursor| cursor.main.as_deref())
+            .is_some_and(current);
         let vi1 = self
             .visibility
             .vi1
@@ -795,51 +796,7 @@ impl AttachedMs {
         Ok(true)
     }
 
-    pub(super) fn put_legacy_data_rows(&mut self, items: RecordValue) -> PyResult<bool> {
-        if !self.prepare_legacy_filter()? {
-            return Ok(false);
-        }
-        let link = self.working_metadata_link();
-        link.verify_directory().map_err(runtime_error)?;
-        let base = link.selected_rows().map_err(runtime_error)?;
-        let main = if let Some(iteration) = self.legacy_selection.positioned_iteration() {
-            iteration.main.verify_write_layout(&BTreeSet::new())?;
-            Arc::clone(&iteration.main)
-        } else {
-            self.visibility.current_main(&self.path)?
-        };
-        let rows = compose_rows(base.as_deref(), self.legacy_selection.rows()).map_or_else(
-            || (0..main.table.row_count()).collect(),
-            |rows| rows.into_owned(),
-        );
-        if rows.is_empty() {
-            return Ok(false);
-        }
-        let axes = &self.legacy_selection.axes;
-        let baseline = axes
-            .baseline_read
-            .as_ref()
-            .and_then(|read| read.write_grid(base.as_deref(), &self.legacy_selection));
-        let polarization = axes.polarization.clone();
-        let options = tool_visibility::LegacyVisibilityWriteOptions {
-            baseline,
-            channels: axes.channels,
-            polarization: polarization.as_deref(),
-            noncanonical_complex_polarization: axes.noncanonical_complex_polarization,
-        };
-        let Some(records) =
-            tool_visibility::VisibilityWriteRecord::new_legacy(&main.table, rows, items, options)
-                .map_err(runtime_error)?
-        else {
-            return Ok(false);
-        };
-        if !records.is_empty() {
-            self.write_visibility_records(&link, &main, &records, false)?;
-        }
-        Ok(true)
-    }
-
-    fn write_visibility_records(
+    pub(super) fn write_visibility_records(
         &mut self,
         link: &MetadataLink,
         main: &VisibilityMain,
@@ -859,7 +816,8 @@ impl AttachedMs {
             .legacy_selection
             .iteration
             .as_ref()
-            .is_some_and(|iteration| iteration.main.verify_write_layout(&BTreeSet::new()).is_ok());
+            .and_then(|iteration| iteration.main.as_deref())
+            .is_some_and(|main| main.verify_write_layout(&BTreeSet::new()).is_ok());
         let refresh_vi1 =
             self.visibility.vi1.as_ref().is_some_and(|iteration| {
                 iteration.main.verify_write_layout(&BTreeSet::new()).is_ok()
@@ -946,7 +904,7 @@ impl AttachedMs {
             if refresh_legacy_cursor
                 && let Some(iteration) = self.legacy_selection.iteration.as_mut()
             {
-                iteration.main = Arc::clone(&refreshed);
+                iteration.main = Some(Arc::clone(&refreshed));
             }
             if refresh_vi1 && let Some(iteration) = &mut self.visibility.vi1 {
                 iteration.main = Arc::clone(&refreshed);

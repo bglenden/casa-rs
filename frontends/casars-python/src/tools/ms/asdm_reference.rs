@@ -132,7 +132,7 @@ impl AttachedMs {
             self.legacy_selection
                 .iteration
                 .as_ref()
-                .map(|cursor| &cursor.main),
+                .and_then(|cursor| cursor.main.as_ref()),
         );
         let vi1 = current(self.visibility.vi1.as_ref().map(|cursor| &cursor.main));
         let baselines = self
@@ -149,7 +149,7 @@ impl AttachedMs {
             cursor.layout = Some(Arc::clone(&refreshed));
         }
         if legacy && let Some(cursor) = &mut self.legacy_selection.iteration {
-            cursor.main = Arc::clone(&refreshed);
+            cursor.main = Some(Arc::clone(&refreshed));
         }
         if vi1 && let Some(cursor) = &mut self.visibility.vi1 {
             cursor.main = Arc::clone(&refreshed);

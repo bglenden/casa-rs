@@ -37,6 +37,7 @@ use crate::subtables::{
 use crate::validate::{self, ValidationIssue};
 
 pub mod linked_subtables;
+mod memory;
 mod optional_subtables;
 
 /// The MS version number written by this crate.
@@ -72,15 +73,6 @@ pub struct MeasurementSet {
 }
 
 impl MeasurementSet {
-    /// Create an in-memory MeasurementSet from a builder.
-    ///
-    /// The resulting MS has empty tables with the correct schemas and
-    /// the MS_VERSION keyword set.
-    pub fn create_memory(builder: MeasurementSetBuilder) -> MsResult<Self> {
-        let schemas = builder.build_schemas()?;
-        Self::from_schemas(schemas, None)
-    }
-
     /// Prepare an in-memory MeasurementSet that writes into a caller-owned private stage.
     #[doc(hidden)]
     pub fn create_staged(path: &Path, builder: MeasurementSetBuilder) -> MsResult<Self> {

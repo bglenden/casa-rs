@@ -5,14 +5,16 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use casa_coordinates::StokesType;
+use casa_core::RecordValue;
 use casa_mstransform::tool_visibility::{
-    LegacyVisibilityAxes, LegacyVisibilityWriteGrid, VisibilityChannels, VisibilityPolarization,
-    VisibilityReadOptions,
+    self, LegacyVisibilityAxes, LegacyVisibilityWriteGrid, VisibilityChannels,
+    VisibilityPolarization, VisibilityReadOptions,
 };
 use pyo3::prelude::*;
 
 use super::legacy_selection::{LegacySelection, deprecation};
 use super::metadata_link::compose_rows;
+use super::owned_record::visibility_record;
 use super::visibility::{
     VisibilityMain, channel_argument, integer_argument, requested_strings, sampled_rows,
 };
@@ -56,7 +58,7 @@ impl LegacySelection {
 }
 
 pub(super) struct LegacyBaselineRead {
-    main: Arc<VisibilityMain>,
+    main: Option<Arc<VisibilityMain>>,
     working_rows: Option<Arc<[usize]>>,
     selected_rows: Option<Arc<[usize]>>,
     baselines: Option<Vec<(i32, i32)>>,
@@ -66,11 +68,13 @@ pub(super) struct LegacyBaselineRead {
 
 impl LegacyBaselineRead {
     pub(super) fn has_current_descriptor(&self) -> bool {
-        self.main.verify_write_layout(&BTreeSet::new()).is_ok()
+        self.main
+            .as_ref()
+            .is_none_or(|main| main.verify_write_layout(&BTreeSet::new()).is_ok())
     }
 
     pub(super) fn refresh_descriptor(&mut self, main: Arc<VisibilityMain>) {
-        self.main = main;
+        self.main = Some(main);
     }
 
     pub(super) fn write_grid(
@@ -246,36 +250,53 @@ impl AttachedMs {
             Some(rows) => stride.into_iter().map(|row| rows[row]).collect(),
             None => stride,
         };
-        let positioned = self.legacy_selection.positioned_iteration();
-        let snapshot = if items
-            .iter()
-            .any(|name| name.eq_ignore_ascii_case("axis_info"))
-        {
-            if let Some(snapshot) = positioned.and_then(|iteration| iteration.metadata.as_ref()) {
-                Some(Arc::clone(snapshot))
-            } else {
-                Some(link.snapshot(None).map_err(runtime_error)?)
-            }
-        } else {
-            None
-        };
-        let main = if let Some(iteration) = positioned {
-            iteration.main.verify_iterator_layout()?;
-            Arc::clone(&iteration.main)
-        } else {
-            self.visibility.current_main(&self.path)?
-        };
         let options = VisibilityReadOptions {
             average: options.average,
             baseline_gap: options.baseline_gap,
             ..self.legacy_selection.visibility_options()
         };
-        let record = main.read_rows(
-            &projected,
-            items,
-            snapshot.as_ref().map(|snapshot| &snapshot.ms),
-            options,
-        )?;
+        let (main, record) = if let Some(memory) = &self.memory_ms {
+            let record = tool_visibility::read_tool_visibility(
+                memory.main_table(),
+                &[],
+                None,
+                &projected,
+                items,
+                Some(memory),
+                options,
+            )
+            .map_err(runtime_error)?;
+            (None, visibility_record(record))
+        } else {
+            let positioned = self.legacy_selection.positioned_iteration();
+            let snapshot = if items
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case("axis_info"))
+            {
+                if let Some(snapshot) = positioned.and_then(|iteration| iteration.metadata.as_ref())
+                {
+                    Some(Arc::clone(snapshot))
+                } else {
+                    Some(link.snapshot(None).map_err(runtime_error)?)
+                }
+            } else {
+                None
+            };
+            let main = if let Some(main) = positioned.and_then(|iteration| iteration.main.as_ref())
+            {
+                main.verify_iterator_layout()?;
+                Arc::clone(main)
+            } else {
+                self.visibility.current_main(&self.path)?
+            };
+            let record = main.read_rows(
+                &projected,
+                items,
+                snapshot.as_ref().map(|snapshot| &snapshot.ms),
+                options,
+            )?;
+            (Some(main), record)
+        };
         link.verify_directory().map_err(runtime_error)?;
         self.legacy_selection.axes.baseline_read = options
             .baseline_gap
@@ -289,5 +310,66 @@ impl AttachedMs {
                 gap,
             });
         Ok(record)
+    }
+
+    pub(super) fn put_legacy_data_rows(&mut self, items: RecordValue) -> PyResult<bool> {
+        if !self.prepare_legacy_filter()? {
+            return Ok(false);
+        }
+        let link = self.working_metadata_link();
+        link.verify_directory().map_err(runtime_error)?;
+        let base = link.selected_rows().map_err(runtime_error)?;
+        let main = if self.memory_ms.is_some() {
+            None
+        } else if let Some(main) = self
+            .legacy_selection
+            .positioned_iteration()
+            .and_then(|iteration| iteration.main.as_ref())
+        {
+            main.verify_write_layout(&BTreeSet::new())?;
+            Some(Arc::clone(main))
+        } else {
+            Some(self.visibility.current_main(&self.path)?)
+        };
+        let table = main
+            .as_ref()
+            .map_or_else(|| self.legacy_main(), |main| &main.table);
+        let rows = compose_rows(base.as_deref(), self.legacy_selection.rows()).map_or_else(
+            || (0..table.row_count()).collect(),
+            |rows| rows.into_owned(),
+        );
+        if rows.is_empty() {
+            return Ok(false);
+        }
+        let axes = &self.legacy_selection.axes;
+        let baseline = axes
+            .baseline_read
+            .as_ref()
+            .and_then(|read| read.write_grid(base.as_deref(), &self.legacy_selection));
+        let polarization = axes.polarization.clone();
+        let options = tool_visibility::LegacyVisibilityWriteOptions {
+            baseline,
+            channels: axes.channels,
+            polarization: polarization.as_deref(),
+            noncanonical_complex_polarization: axes.noncanonical_complex_polarization,
+        };
+        let Some(records) =
+            tool_visibility::VisibilityWriteRecord::new_legacy(table, rows, items, options)
+                .map_err(runtime_error)?
+        else {
+            return Ok(false);
+        };
+        if let Some(memory) = &mut self.memory_ms {
+            tool_visibility::VisibilityWriteRecord::write_memory_records(memory, &records)
+                .map_err(runtime_error)?;
+        } else if !records.is_empty() {
+            self.write_visibility_records(
+                &link,
+                main.as_ref().expect("persisted legacy MAIN"),
+                &records,
+                false,
+            )?;
+        }
+        Ok(true)
     }
 }

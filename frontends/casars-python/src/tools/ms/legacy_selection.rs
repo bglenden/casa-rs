@@ -16,7 +16,9 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use super::legacy_iteration::LegacyIteration;
+use super::legacy_memory::LegacySubtables;
 use super::legacy_query_output::{PublishedLegacyQuery, QueryOutputOptions, StagedLegacyQuery};
+use super::legacy_query_subtable::QuerySubtable;
 use super::legacy_visibility::LegacyAxes;
 use super::metadata_link::compose_rows;
 use super::selection_indices::{selectinit_id, selection_dictionary, selection_text};
@@ -47,6 +49,11 @@ enum LegacyQueryParent {
     Attachment,
     Named(Arc<Vec<PathBuf>>),
     Transient,
+}
+
+enum PreparedLegacyQuery {
+    Disk(Box<StagedLegacyQuery>),
+    Memory(Box<AttachedMs>),
 }
 
 impl LegacySelection {
@@ -257,7 +264,7 @@ impl AttachedMs {
         let working = self.working_metadata_link();
         let working_rows = working.selected_rows().map_err(runtime_error)?;
         let refreshed = self.refresh_legacy_main()?;
-        let table = refreshed.as_ref().unwrap_or(&self.main);
+        let table = refreshed.as_ref().unwrap_or_else(|| self.legacy_main());
         let uncached = super::subtable_queries::Subtables::default();
         let subtables = if refreshed.is_some() {
             &uncached
@@ -269,8 +276,11 @@ impl AttachedMs {
             SubtableId::SpectralWindow,
             SubtableId::Polarization,
         ];
-        let subtables = subtables.read_range(table, &links).map_err(runtime_error)?;
-        let descriptions = &subtables[&SubtableId::DataDescription];
+        let subtables = LegacySubtables::read(subtables, self.memory_ms.as_ref(), table, &links)
+            .map_err(runtime_error)?;
+        let descriptions = subtables
+            .tables(SubtableId::DataDescription)
+            .map_err(runtime_error)?;
         let description_count = descriptions.iter().map(Table::row_count).sum::<usize>();
         let requested = requested.filter(|_| description_count > 1);
         let columns = match working_rows {
@@ -292,8 +302,12 @@ impl AttachedMs {
         }
         let (same_shape, channels) = common_visibility_shape(
             descriptions,
-            &subtables[&SubtableId::SpectralWindow],
-            &subtables[&SubtableId::Polarization],
+            subtables
+                .tables(SubtableId::SpectralWindow)
+                .map_err(runtime_error)?,
+            subtables
+                .tables(SubtableId::Polarization)
+                .map_err(runtime_error)?,
             &ids,
         )?;
         if !same_shape && let Some(first) = ids.first().copied() {
@@ -320,6 +334,9 @@ impl AttachedMs {
     }
 
     fn refresh_legacy_main(&self) -> PyResult<Option<Table>> {
+        if self.memory_ms.is_some() {
+            return Ok(None);
+        }
         self.working_metadata_link()
             .verify_directory()
             .map_err(runtime_error)?;
@@ -333,7 +350,7 @@ impl AttachedMs {
 
     pub(super) fn legacy_correlation_layout(&self) -> PyResult<(usize, Vec<i32>)> {
         let refreshed = self.refresh_legacy_main()?;
-        let table = refreshed.as_ref().unwrap_or(&self.main);
+        let table = refreshed.as_ref().unwrap_or_else(|| self.legacy_main());
         let uncached = super::subtable_queries::Subtables::default();
         let cache = if refreshed.is_some() {
             &uncached
@@ -341,9 +358,14 @@ impl AttachedMs {
             &self.subtables
         };
         let ids = [SubtableId::DataDescription, SubtableId::Polarization];
-        let linked = cache.read_range(table, &ids).map_err(runtime_error)?;
-        let descriptions = &linked[&SubtableId::DataDescription];
-        let polarization = &linked[&SubtableId::Polarization];
+        let linked = LegacySubtables::read(cache, self.memory_ms.as_ref(), table, &ids)
+            .map_err(runtime_error)?;
+        let descriptions = linked
+            .tables(SubtableId::DataDescription)
+            .map_err(runtime_error)?;
+        let polarization = linked
+            .tables(SubtableId::Polarization)
+            .map_err(runtime_error)?;
         let count = descriptions.iter().map(Table::row_count).sum::<usize>();
         let id = self
             .legacy_selection
@@ -389,9 +411,11 @@ impl AttachedMs {
         }
         let (selected, staged) = view.prepare_legacy_taql(text, &original_path)?;
         let nonempty = !selected.is_empty();
-        let output = staged
-            .map(|stage| stage.publish(&mut self.write_locks))
-            .transpose()?;
+        let output = match staged {
+            Some(PreparedLegacyQuery::Disk(stage)) => Some(stage.publish(&mut self.write_locks)?),
+            Some(PreparedLegacyQuery::Memory(view)) => Some(PublishedLegacyQuery::Independent(view)),
+            None => None,
+        };
         let view = self.legacy_view_mut();
         if let Some(PublishedLegacyQuery::Independent(mut output)) = output {
             output.legacy_selection.initial =
@@ -422,17 +446,24 @@ impl AttachedMs {
         &self,
         text: &str,
         original_path: &std::path::Path,
-    ) -> PyResult<(Arc<[usize]>, Option<StagedLegacyQuery>)> {
+    ) -> PyResult<(Arc<[usize]>, Option<PreparedLegacyQuery>)> {
         let previous = self.legacy_selection.rows();
         let working = self.working_metadata_link();
         let outer = working.selected_rows().map_err(runtime_error)?;
         let physical_rows = compose_rows(outer.as_deref(), previous);
         let refreshed = self.refresh_legacy_main()?;
-        let table = refreshed.as_ref().unwrap_or(&self.main);
+        let table = refreshed.as_ref().unwrap_or_else(|| self.legacy_main());
         let fast = select_projected_scalar_rows(table, text, physical_rows.as_deref())
             .map_err(runtime_error)?;
         let selection = if let Some(selection) = fast {
             selection
+        } else if let Some(memory) = &self.memory_ms {
+            if let Some(rows) = previous {
+                let view = memory.to_memory_rows(rows).map_err(runtime_error)?;
+                select_legacy_rows(&view, text).map_err(runtime_error)?
+            } else {
+                select_legacy_rows(memory, text).map_err(runtime_error)?
+            }
         } else {
             let snapshot = working
                 .snapshot_relative_rows(previous)
@@ -448,7 +479,21 @@ impl AttachedMs {
             let options = QueryOutputOptions::parse(&giving)?;
             let output = compose_rows(outer.as_deref(), Some(&selected)).expect("row projection");
             working.verify_directory().map_err(runtime_error)?;
-            self.stage_legacy_query(table, &output, &giving.table_name, options, original_path)?
+            if options.memory {
+                QuerySubtable::resolve(
+                    &giving.table_name,
+                    self.legacy_selection.query_parent(&self.path),
+                    &self.path,
+                )?;
+                self.memory_ms.is_none().then(|| {
+                    let mut memory = self.new_legacy_memory(&output)?;
+                    memory.legacy_selection.query_parent = LegacyQueryParent::Transient;
+                    Ok::<_, PyErr>(PreparedLegacyQuery::Memory(Box::new(memory)))
+                }).transpose()?
+            } else {
+                self.stage_legacy_query(table, &output, &giving.table_name, options, original_path)?
+                    .map(|stage| PreparedLegacyQuery::Disk(Box::new(stage)))
+            }
         } else {
             None
         };
@@ -523,11 +568,17 @@ impl AttachedMs {
                     self.legacy_selection.baselines = None;
                     return Ok(());
                 }
-                let (snapshot, _) = self
-                    .working_metadata_link()
-                    .source_and_rows()
-                    .map_err(runtime_error)?;
-                let antennas = snapshot.ms.antenna().map_err(runtime_error)?.row_count() as i32;
+                let snapshot;
+                let source = if let Some(memory) = &self.memory_ms {
+                    memory
+                } else {
+                    (snapshot, _) = self
+                        .working_metadata_link()
+                        .source_and_rows()
+                        .map_err(runtime_error)?;
+                    &snapshot.ms
+                };
+                let antennas = source.antenna().map_err(runtime_error)?.row_count() as i32;
                 ids.retain(|&id| {
                     (0..antennas).contains(&(id / 1000)) && (0..antennas).contains(&(id % 1000))
                 });

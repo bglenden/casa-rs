@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Validated row-axis writes through the MeasurementSet mutation session.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
-use casa_core::{ArrayValue, RecordValue, ScalarValue};
+use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use casa_tables::{
     ArrayShapeContract, ColumnType, RequiredScalarColumnValues, Table, TableWriteLock,
 };
@@ -266,6 +266,57 @@ impl<'a> VisibilityWriteRecord<'a> {
             layouts,
             plan,
         })
+    }
+
+    /// Apply the same CASA visibility record conversion to a detached
+    /// in-memory MeasurementSet. Validate and prepare all requested cells
+    /// before changing the active view.
+    /// # Errors
+    /// A destination cell, source shape, or column value is invalid.
+    pub fn write_memory_records(ms: &mut MeasurementSet, records: &[Self]) -> MsResult<()> {
+        let mut updates = Vec::new();
+        for record in records {
+            let targets = record
+                .rows
+                .iter()
+                .copied()
+                .zip(0..)
+                .collect::<BTreeMap<_, _>>();
+            let names = record.column_names().map(str::to_owned).collect();
+            let part = record.prepare_part(ms, targets.into_iter().collect(), names)?;
+            for (field, name) in record.columns.iter().zip(&part.names) {
+                let layouts = if field.column.cell_rank() == 0 {
+                    &[][..]
+                } else {
+                    &part.layouts
+                };
+                let values = row_column_batch(
+                    ms.main_table(),
+                    field,
+                    name,
+                    &part.rows,
+                    &part.positions,
+                    layouts,
+                    record.grid.as_ref(),
+                )?;
+                updates.push((part.rows.clone(), values));
+            }
+        }
+        let mut main = ms.main_table_mut().row_accessor_mut();
+        for (rows, column) in updates {
+            let values: Vec<_> = match column.values {
+                MeasurementSetMutationColumnValues::Scalars(values) => {
+                    values.into_iter().map(Value::Scalar).collect()
+                }
+                MeasurementSetMutationColumnValues::Arrays(values) => {
+                    values.into_iter().map(Value::Array).collect()
+                }
+            };
+            for (row, value) in rows.into_iter().zip(values) {
+                main.set_cell(row, &column.name, value)?;
+            }
+        }
+        Ok(())
     }
 
     /// Persist a validated part while the caller holds that MAIN table's lock.

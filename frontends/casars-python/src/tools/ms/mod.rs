@@ -11,6 +11,7 @@ mod fits_visibility;
 mod history;
 mod iteration;
 mod legacy_iteration;
+mod legacy_memory;
 mod legacy_query_config;
 mod legacy_query_output;
 mod legacy_query_subtable;
@@ -67,6 +68,7 @@ struct AttachedMs {
     main_files: attachment_info::TableFiles,
     main_stamp: Option<attachment_info::TableStamp>,
     asdm_index: Option<Option<Arc<casa_tables::AsdmBdfIndex>>>,
+    memory_ms: Option<MeasurementSet>,
     #[cfg(unix)]
     history_snapshot: Option<history::HistorySnapshot>,
     subtables: subtable_queries::Subtables,
@@ -148,6 +150,7 @@ impl AttachedMs {
             main_files,
             main_stamp,
             asdm_index: None,
+            memory_ms: None,
             #[cfg(unix)]
             history_snapshot: None,
             subtables: subtable_queries::Subtables::default(),
