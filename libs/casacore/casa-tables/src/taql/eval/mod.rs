@@ -25,6 +25,7 @@ mod arrays;
 
 use super::ast::{self, *};
 use super::error::TaqlError;
+use crate::casacore_order;
 
 /// A dynamically typed value produced by expression evaluation.
 ///
@@ -426,22 +427,34 @@ fn array_value_to_expr(arr: &casa_core::ArrayValue) -> ExprValue {
     let shape: Vec<usize> = arr.shape().to_vec();
 
     let data: Vec<ExprValue> = match arr {
-        AV::Bool(a) => a.t().iter().map(|v| ExprValue::Bool(*v)).collect(),
-        AV::UInt8(a) => a.t().iter().map(|v| ExprValue::Int(*v as i64)).collect(),
-        AV::UInt16(a) => a.t().iter().map(|v| ExprValue::Int(*v as i64)).collect(),
-        AV::UInt32(a) => a.t().iter().map(|v| ExprValue::Int(*v as i64)).collect(),
-        AV::Int16(a) => a.t().iter().map(|v| ExprValue::Int(*v as i64)).collect(),
-        AV::Int32(a) => a.t().iter().map(|v| ExprValue::Int(*v as i64)).collect(),
-        AV::Int64(a) => a.t().iter().map(|v| ExprValue::Int(*v)).collect(),
-        AV::Float32(a) => a.t().iter().map(|v| ExprValue::Float(*v as f64)).collect(),
-        AV::Float64(a) => a.t().iter().map(|v| ExprValue::Float(*v)).collect(),
-        AV::Complex32(a) => a
-            .t()
-            .iter()
+        AV::Bool(a) => casacore_order(a).map(|v| ExprValue::Bool(*v)).collect(),
+        AV::UInt8(a) => casacore_order(a)
+            .map(|v| ExprValue::Int(*v as i64))
+            .collect(),
+        AV::UInt16(a) => casacore_order(a)
+            .map(|v| ExprValue::Int(*v as i64))
+            .collect(),
+        AV::UInt32(a) => casacore_order(a)
+            .map(|v| ExprValue::Int(*v as i64))
+            .collect(),
+        AV::Int16(a) => casacore_order(a)
+            .map(|v| ExprValue::Int(*v as i64))
+            .collect(),
+        AV::Int32(a) => casacore_order(a)
+            .map(|v| ExprValue::Int(*v as i64))
+            .collect(),
+        AV::Int64(a) => casacore_order(a).map(|v| ExprValue::Int(*v)).collect(),
+        AV::Float32(a) => casacore_order(a)
+            .map(|v| ExprValue::Float(*v as f64))
+            .collect(),
+        AV::Float64(a) => casacore_order(a).map(|v| ExprValue::Float(*v)).collect(),
+        AV::Complex32(a) => casacore_order(a)
             .map(|v| ExprValue::Complex(Complex64::new(v.re as f64, v.im as f64)))
             .collect(),
-        AV::Complex64(a) => a.t().iter().map(|v| ExprValue::Complex(*v)).collect(),
-        AV::String(a) => a.t().iter().map(|v| ExprValue::String(v.clone())).collect(),
+        AV::Complex64(a) => casacore_order(a).map(|v| ExprValue::Complex(*v)).collect(),
+        AV::String(a) => casacore_order(a)
+            .map(|v| ExprValue::String(v.clone()))
+            .collect(),
     };
     ExprValue::Array(ArrayValue { shape, data })
 }

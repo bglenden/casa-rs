@@ -10,11 +10,12 @@
 use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use super::TaqlResult;
+use crate::casacore_order;
 
 /// Format a single [`Value`] as a display string.
 ///
-/// Scalars are printed in their natural representation. Arrays use `Debug`
-/// formatting. Records use `Debug` formatting.
+/// Scalars are printed in their natural representation. Arrays list elements in first-axis-fastest
+/// order. Records use `Debug` formatting.
 pub fn format_value(val: &Value) -> String {
     match val {
         Value::Scalar(s) => match s {
@@ -39,20 +40,14 @@ pub fn format_value(val: &Value) -> String {
 
 /// Format an [`ArrayValue`] as `[val1, val2, ...]`, matching C++ casacore output.
 ///
-/// Iterates in storage (column-major/Fortran) order to match C++ `getStorage()`.
+/// Iterates in logical column-major (Fortran) order to match C++ `getStorage()`.
 fn format_array_value(arr: &ArrayValue) -> String {
     use std::fmt::Write;
     let mut out = String::from("[");
 
-    /// Get a slice in storage (memory) order — column-major for Fortran-layout arrays.
-    fn storage_order<T>(a: &ndarray::ArrayD<T>) -> &[T] {
-        a.as_slice_memory_order()
-            .expect("casacore arrays are always contiguous")
-    }
-
     macro_rules! fmt_array {
         ($data:expr) => {
-            for (i, v) in storage_order($data).iter().enumerate() {
+            for (i, v) in casacore_order($data).enumerate() {
                 if i > 0 {
                     out.push_str(", ");
                 }
@@ -60,7 +55,7 @@ fn format_array_value(arr: &ArrayValue) -> String {
             }
         };
         ($data:expr, float) => {
-            for (i, v) in storage_order($data).iter().enumerate() {
+            for (i, v) in casacore_order($data).enumerate() {
                 if i > 0 {
                     out.push_str(", ");
                 }
@@ -79,7 +74,7 @@ fn format_array_value(arr: &ArrayValue) -> String {
         ArrayValue::Float32(a) => fmt_array!(a, float),
         ArrayValue::Float64(a) => fmt_array!(a, float),
         ArrayValue::Complex32(a) => {
-            for (i, c) in storage_order(a).iter().enumerate() {
+            for (i, c) in casacore_order(a).enumerate() {
                 if i > 0 {
                     out.push_str(", ");
                 }
@@ -87,7 +82,7 @@ fn format_array_value(arr: &ArrayValue) -> String {
             }
         }
         ArrayValue::Complex64(a) => {
-            for (i, c) in storage_order(a).iter().enumerate() {
+            for (i, c) in casacore_order(a).enumerate() {
                 if i > 0 {
                     out.push_str(", ");
                 }
