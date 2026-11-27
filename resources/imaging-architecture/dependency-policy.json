@@ -413,6 +413,5 @@
   "libs/imaging/casa-imaging-runtime/tests/returning_allocator.rs",
   "libs/imaging/casa-imaging-singledish/tests/grid_memory.rs",
   "libs/imaging/casa-imaging/tests/admission_memory.rs"
- ],
- "dual_module_files": []
+ ]
 }

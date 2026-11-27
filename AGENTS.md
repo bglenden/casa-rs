@@ -86,9 +86,10 @@ When sources disagree: code/tests/CI > ADRs > ARCHITECTURE/TESTING > issues.
 - Public APIs get rustdoc comparable in depth to the casacore doxygen.
 - Size limits are enforced, not reviewed. Functions stay under clippy's
   `too_many_lines` threshold (`clippy.toml`, code lines only). Files stay
-  under 1,500 lines (`scripts/check-file-length.py`, in `just arch-check`).
-  Split new code rather than add an exception; the existing exceptions only
-  shrink.
+  within 1,500 lines (`scripts/check-file-length.py`, in `just arch-check`).
+  A Rust module with child files uses `module/mod.rs`. A Cargo test target
+  keeps its entry file and puts helpers in a separately named directory.
+  Existing function-length exceptions only shrink.
 - No `TODO`, `FIXME`, `XXX`, or `HACK` without a GitHub issue reference.
 - A new third-party dependency is a recorded decision: why it is needed,
   that it is maintained, and a licence compatible with LGPL-3.0-or-later. A

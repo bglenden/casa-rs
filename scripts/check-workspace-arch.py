@@ -925,49 +925,15 @@ def python_dispatch_errors(source: str) -> list[str]:
     return errors
 
 
-def git_output(*args: str) -> str | None:
-    result = subprocess.run(
-        ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=False,
-    )
-    return result.stdout.strip() if result.returncode == 0 else None
+def dual_modules(source_paths: list[Path]) -> list[Path]:
+    return sorted(path for path in source_paths if path.with_suffix("").is_dir())
 
 
-def dual_module_baseline(base: str | None) -> set[str] | None:
-    """In a checkout, use the merge base so the allowance can only shrink."""
-    if base is None:
-        if git_output("rev-parse", "--show-toplevel") != str(REPO_ROOT):
-            return None  # Source archives have no review base.
-        base = git_output("merge-base", "HEAD", "refs/remotes/origin/main")
-        if base is None:
-            raise ValueError("cannot find the architecture merge base; supply --base or fetch origin/main")
-    base_policy = git_output("show", f"{base}:{POLICY.relative_to(REPO_ROOT)}")
-    if base_policy is not None and "dual_module_files" in (previous := json.loads(base_policy)):
-        return set(previous["dual_module_files"])
-    # A branch based before the allowance was introduced can only list
-    # pairs present in the base tree.
-    files = git_output("ls-tree", "-r", "--name-only", base)
-    if files is None:
-        raise ValueError(f"cannot read architecture base tree {base}")
-    paths = files.splitlines()
-    directories = {p.as_posix() for path in paths for p in Path(path).parents}
-    return {path for path in paths if path.endswith(".rs") and path[:-3] in directories}
-
-
-def dual_module_errors(actual: set[str], allowed: set[str], baseline: set[str] | None) -> list[str]:
-    errors = [f"dual Rust module: move {p} into its matching directory" for p in sorted(actual - allowed)]
-    errors += [f"stale dual-module allowance: {p}" for p in sorted(allowed - actual)]
-    if baseline is not None:
-        errors += [f"new dual-module allowance: {p}" for p in sorted(allowed - baseline)]
-    return errors
-
-
-def check_workspace(policy: dict, metadata: dict, baseline: set[str] | None) -> list[str]:
+def check_workspace(policy: dict, metadata: dict) -> list[str]:
     packages = metadata["packages"]
     by_directory = {str(Path(p["manifest_path"]).parent): p for p in packages}
-    old_pairs = set(policy.get("dual_module_files", []))
     exceptions = set(policy.get("test_target_exceptions", []))
     seen_exceptions = set()
-    dual_pairs = set()
     failures = []
     graph = {
         p["name"]: {
@@ -988,9 +954,9 @@ def check_workspace(policy: dict, metadata: dict, baseline: set[str] | None) -> 
         tier = package_tier(manifest)
         failures += dependency_rules(package, by_directory, set(policy["definitional_packages"]))
         source_paths = workspace_rust_files(root)
-        dual_pairs.update(
-            path.relative_to(REPO_ROOT).as_posix()
-            for path in source_paths if path.with_suffix("").is_dir()
+        failures.extend(
+            f"dual Rust module: move {path.relative_to(REPO_ROOT)} into its matching directory"
+            for path in dual_modules(source_paths)
         )
         if tier in LIBRARY_TIERS | {"surfaces"}:
             if any("bin" in target["kind"] for target in package["targets"]) or any(
@@ -1037,7 +1003,6 @@ def check_workspace(policy: dict, metadata: dict, baseline: set[str] | None) -> 
                 failures.append("casars-python needs its native Python task runner")
         failures.extend(f"{name} declares unused dependency {d}" for d in sorted(unused_dependencies(package, source_paths)))
     failures.extend(f"stale test target exception: {p}" for p in sorted(exceptions - seen_exceptions))
-    failures.extend(dual_module_errors(dual_pairs, old_pairs, baseline))
     return failures
 
 
@@ -1094,15 +1059,21 @@ def check_workspace_self_test() -> None:
     assert python_dispatch_errors("def _execute_task():\n    return 0\n")
     assert python_dispatch_errors(native + "import subprocess as sp\n")
     assert python_dispatch_errors(native + "from os import system as run\nrun('cli')\n")
-    assert not dual_module_errors({"old.rs"}, {"old.rs"}, {"old.rs"})
-    assert dual_module_errors({"new.rs"}, {"new.rs"}, {"old.rs"}) == ["new dual-module allowance: new.rs"]
+    with tempfile.TemporaryDirectory() as directory:
+        module = Path(directory) / "module.rs"
+        module.touch()
+        assert dual_modules([module]) == []
+        module.with_suffix("").mkdir()
+        assert dual_modules([module]) == [module]
+        entry = module.with_suffix("") / "mod.rs"
+        module.rename(entry)
+        assert dual_modules([entry]) == []
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--grandfather", action="store_true", help="print current violations in policy form")
     parser.add_argument("--self-test", action="store_true", help="check the test-stripping and layering logic")
-    parser.add_argument("--base", help="Git revision for the dual-module ratchet (default: origin/main merge base)")
     args = parser.parse_args()
     if args.self_test:
         check_workspace_self_test()
@@ -1112,11 +1083,7 @@ def main() -> int:
     if args.grandfather:
         print_grandfather(policy, metadata)
         return 0
-    try:
-        baseline = dual_module_baseline(args.base)
-    except ValueError as error:
-        parser.error(str(error))
-    failures = check_workspace(policy, metadata, baseline) + check_layering(policy, metadata) + check_source_rules(policy, metadata)
+    failures = check_workspace(policy, metadata) + check_layering(policy, metadata) + check_source_rules(policy, metadata)
     for failure in failures:
         print(f"workspace-arch: {failure}", file=sys.stderr)
     if failures:
