@@ -4,11 +4,48 @@
 //! several, and the rows' arrays can be read for the latter (#980). CASA's
 //! imaging iterator orders its buffers by `ARRAY_ID` first.
 
+use std::path::{Path, PathBuf};
+
 use casa_core::{ScalarValue, Value};
 use casa_ms::MeasurementSet;
 use casa_ms::observation_io::Msv2Observation;
+use casa_simulation::synthetic::{
+    Antenna, Field, ObservationRequest, SpectralSetup, generate_unflagged,
+};
 
-use super::fields::mosaic;
+/// A simulated mosaic of three fields observed in turn, one integration each,
+/// over twelve times.
+fn mosaic(root: &Path) -> PathBuf {
+    let mut request = ObservationRequest::vla_ppdisk(
+        root.join("unused.fits"),
+        root.join("mosaic.ms"),
+        vec![
+            Antenna::vla("VLA01", "N01", [-1_601_185.4, -5_041_977.5, 3_554_875.9]),
+            Antenna::vla("VLA02", "N02", [-1_601_085.4, -5_041_977.5, 3_554_875.9]),
+            Antenna::vla("VLA03", "N03", [-1_601_185.4, -5_041_877.5, 3_554_875.9]),
+        ],
+    );
+    request.predict_model = false;
+    request.start_time_mjd_seconds = 59_000.25 * 86_400.0;
+    request.duration_seconds = 115.0;
+    request.integration_seconds = 10.0;
+    request.spectral_windows = vec![SpectralSetup {
+        name: "band".to_string(),
+        start_frequency_hz: 44.0e9,
+        channel_width_hz: 2.0e6,
+        channel_count: 4,
+    }];
+    request.fields = [-0.45, -0.44, -0.43]
+        .iter()
+        .enumerate()
+        .map(|(index, dec)| Field {
+            name: format!("pointing{index}"),
+            phase_center_rad: [1.23, *dec],
+        })
+        .collect();
+    generate_unflagged(&request).expect("simulate");
+    request.output_ms
+}
 
 fn field_of(ms: &MeasurementSet, row: usize) -> i32 {
     match ms
@@ -26,7 +63,7 @@ fn field_of(ms: &MeasurementSet, row: usize) -> i32 {
 #[test]
 fn a_partition_states_its_one_array_or_that_it_holds_several() {
     let root = tempfile::tempdir().unwrap();
-    let (path, _) = mosaic(root.path(), 4);
+    let path = mosaic(root.path());
     let opened = Msv2Observation::open(&path).unwrap();
     let ids = opened.catalogue().partition_ids();
     assert!(!ids.is_empty());

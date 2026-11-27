@@ -5,8 +5,6 @@ mod field_selection_oracle;
 mod moving_geometry_casa;
 mod ms_create_roundtrip;
 mod ms_library_coverage;
-#[cfg(feature = "performance-tests")]
-mod ms_perf_vs_cpp;
 #[cfg(feature = "msv4")]
 mod observation_io;
 mod pointing_subtable_regression;

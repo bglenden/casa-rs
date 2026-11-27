@@ -40,9 +40,23 @@ fitsio = { version = "0.21", features = ["fitsio-src", "src-cmake"] }
 name = "api"
 path = "tests/api.rs"
 
+[[test]]
+name = "msv4_opening_memory"
+path = "tests/msv4_opening_memory.rs"
+required-features = ["msv4"]
+
+[[test]]
+name = "creation_plan_msv4_memory"
+path = "tests/creation_plan_msv4_memory.rs"
+required-features = ["msv4"]
+
 [dev-dependencies]
 casa-flagging.workspace = true
+casa-simulation = { path = "../../../crates/casa-simulation" }
 casa-test-support = { path = "../../../dev/casa-test-support" }
+flate2 = "1"
+tar = "0.4"
+zarrs = { version = "=0.23.14", default-features = false, features = ["filesystem", "blosc", "zstd"] }
 
 [[example]]
 name = "ms_trial_convert"

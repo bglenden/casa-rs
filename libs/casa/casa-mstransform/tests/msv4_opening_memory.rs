@@ -107,7 +107,7 @@ fn measured<T>(measured: impl FnOnce() -> T) -> (T, u64, u64) {
 /// The trial fixture `name`, unpacked into `root`.
 fn fixture(root: &Path, name: &str) -> PathBuf {
     let archive = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/ms_trial")
+        .join("../../casacore/casa-ms/tests/fixtures/ms_trial")
         .join(format!("{name}.tgz"));
     tar::Archive::new(flate2::read::GzDecoder::new(
         std::fs::File::open(archive).expect("the fixture"),

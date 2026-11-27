@@ -425,7 +425,7 @@ fn each_partition_reads_weight_spectrum_by_its_first_row() {
     for filled in [0, 1] {
         let root = tempfile::tempdir().expect("root");
         let path = fixture(root.path(), "ms_trial.ms");
-        super::convert::split_sessions(&path, false);
+        super::split_sessions(&path, false);
         let plain = {
             let observation = Msv2Observation::open(&path).expect("v2");
             [0, 1].map(|partition| {
