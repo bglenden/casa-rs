@@ -5,8 +5,7 @@
 //! `corrupt::jones` module's and its unit tests'; these laws hold what
 //! `corrupt` and `close` make of them.
 
-#[path = "predict_support/mod.rs"]
-mod predict_support;
+use crate::predict_support;
 
 use std::path::Path;
 

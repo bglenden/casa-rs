@@ -9,8 +9,7 @@
 //! fields, phase centres, rows) is all the steps take. Agreement with CASA
 //! is the `openfromms` scenarios' (`tools/simulation`).
 
-#[path = "predict_support/mod.rs"]
-mod predict_support;
+use crate::predict_support;
 
 use std::path::Path;
 

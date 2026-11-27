@@ -4,8 +4,8 @@
 #[path = "frequency.rs"]
 mod frequency;
 
-use super::input;
 use super::predict_support::{ANTENNAS, REFERENCE_MJD, read_main, resources, scan, session};
+use crate::apply_input as input;
 use casa_calibration::table::{
     SimulatedJones, SimulatedSolution, SolutionValues, write_simulated_jones_table,
 };

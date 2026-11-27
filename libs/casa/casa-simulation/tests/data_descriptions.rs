@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Simulation selections/calculations/appends resolve actual DD-to-SPW mappings.
-#[path = "existing_ms_calculations/mod.rs"]
-mod existing_ms_calculations;
+use crate::existing_ms_calculations;
 use casa_core::{
     ArrayValue, ScalarValue,
     measures::{EpochRef, MEpoch},

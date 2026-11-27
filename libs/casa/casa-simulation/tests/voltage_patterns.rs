@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Saved voltage-pattern tables affect simulated image and component DATA.
-#[path = "existing_ms_calculations/mod.rs"]
-mod existing_ms_calculations;
+use crate::existing_ms_calculations;
 
 use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{

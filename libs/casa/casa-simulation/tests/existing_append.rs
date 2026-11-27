@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Actual CASA input MSs retain old cells while observe appends new rows.
-#[path = "predict_support/mod.rs"]
-mod predict_support;
+use crate::predict_support;
 use casa_core::measures::{EpochRef, MEpoch};
 use casa_core::{ArrayValue, ScalarValue};
 use casa_simulation::{ApplySpec, ObserveManySpec, Pointing, Simulator, SimulatorOptions};

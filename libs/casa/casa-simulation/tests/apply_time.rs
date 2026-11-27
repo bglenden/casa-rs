@@ -1,17 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Time interpolation against independent CASA and dense-system spline controls.
-#[path = "apply_parameters/input.rs"]
-mod input;
-#[path = "predict_support/mod.rs"]
-mod predict_support;
+use crate::predict_support;
 #[path = "apply_time/regressions.rs"]
 mod regressions;
-#[path = "apply_parameters/support.rs"]
-#[allow(
-    dead_code,
-    reason = "time cases share the values and complete MS comparator"
-)]
-mod support;
+use crate::apply_support as support;
 #[path = "apply_time/support.rs"]
 mod time_support;
 

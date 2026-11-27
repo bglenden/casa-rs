@@ -2,10 +2,8 @@
 //! Multi-image prediction against independent CASA 6.7.6.14 DATA (#1053).
 //! The oracle preserves mosaic DATA before CASA's known cleanup abort.
 
-#[path = "pass_summary/mod.rs"]
-mod pass_summary;
-#[path = "predict_support/mod.rs"]
-mod predict_support;
+use crate::pass_summary;
+use crate::predict_support;
 
 use std::collections::BTreeMap;
 use std::io::Read;

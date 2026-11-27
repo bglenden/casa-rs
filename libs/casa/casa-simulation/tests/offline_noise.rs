@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA 6.7.6.14 OTF=False controls: a full A Noise field, reused on corrupt.
-#[path = "predict_support/mod.rs"]
-mod predict_support;
+use crate::predict_support;
 use casa_core::{ArrayValue, Complex32, ScalarValue};
 use casa_simulation::{NoiseSpec, Simulator, SimulatorOptions};
 use casa_tables::{Table, TableOptions};

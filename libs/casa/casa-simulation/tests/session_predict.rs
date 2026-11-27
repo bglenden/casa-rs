@@ -15,8 +15,7 @@
 //! Agreement with CASA's own `sm.predict` is measured by
 //! `tools/simulation/compare_sm_ms.py` on `sm_predict_scenarios.json`.
 
-#[path = "predict_support/mod.rs"]
-mod predict_support;
+use crate::predict_support;
 
 use casa_core::Correlation;
 use casa_simulation::VoltagePatternSpec;

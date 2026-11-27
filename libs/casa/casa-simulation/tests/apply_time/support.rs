@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Explicit synthetic CPARAM inputs, independent of interpolation implementation.
-use super::{input, predict_support, support};
+use super::support;
+use crate::{apply_input as input, predict_support};
 use casa_calibration::table::{
     SimulatedJones, SimulatedSolution, SolutionValues, write_simulated_jones_table,
 };

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Saved frequency-dependent inverse-polynomial curves modify simulated image and component signals.
-#[path = "existing_ms_calculations/mod.rs"]
-mod existing_ms_calculations;
+use crate::existing_ms_calculations;
 
 use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{

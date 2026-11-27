@@ -21,10 +21,8 @@
 //! different frequency and channel width, two integration times, dishes of
 //! 12 m and 7 m, and elevations from below the horizon to 26°.
 
-#[path = "pass_summary/mod.rs"]
-mod pass_summary;
-#[path = "predict_support/mod.rs"]
-mod predict_support;
+use crate::pass_summary;
+use crate::predict_support;
 
 use std::collections::HashMap;
 use std::path::Path;

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Actual CASA calculations with distinct channel/reference-frequency frames.
-#[path = "existing_ms_calculations/mod.rs"]
-mod existing_ms_calculations;
+use crate::existing_ms_calculations;
 
 #[test]
 fn distinct_reference_frequency_frames_match_actual_casa() {

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Actual CASA calculations on stored irregular channel axes.
-#[path = "existing_ms_calculations/mod.rs"]
-mod existing_ms_calculations;
+use crate::existing_ms_calculations;
 
 #[test]
 fn irregular_channel_predictions_and_bandpass_match_actual_casa() {

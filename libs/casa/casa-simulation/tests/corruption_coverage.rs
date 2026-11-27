@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Entire corruption steps skip uncovered windows, as installed CASA does.
-#[path = "apply_parameters/input.rs"]
-mod input;
-#[path = "predict_support/mod.rs"]
-mod predict_support;
+use crate::apply_input as input;
+use crate::predict_support;
 use casa_calibration::table::{
     SimulatedJones, SimulatedSolution, SolutionValues, write_simulated_jones_table,
 };

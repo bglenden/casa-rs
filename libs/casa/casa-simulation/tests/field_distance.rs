@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Finite-distance simulator image predictions against actual CASA DATA.
-#[path = "existing_ms_calculations/mod.rs"]
-mod existing_ms_calculations;
+use crate::existing_ms_calculations;
 use casa_core::measures::direction::{DirectionRef, MDirection};
 use casa_simulation::{
     BackendRequest, PredictSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions,

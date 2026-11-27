@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA image prediction over windows with different correlation setups.
-#[path = "existing_ms_calculations/mod.rs"]
-mod existing_ms_calculations;
+use crate::existing_ms_calculations;
 #[path = "mixed_correlations/review.rs"]
 mod review;
 use casa_core::measures::{EpochRef, MEpoch};

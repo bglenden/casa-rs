@@ -4,8 +4,7 @@
     dead_code,
     reason = "each layout test uses part of the shared comparison"
 )]
-#[path = "../predict_support/mod.rs"]
-pub(super) mod predict_support;
+pub(super) use crate::predict_support;
 
 use casa_core::measures::{EpochRef, MEpoch};
 use casa_core::{ArrayValue, ScalarValue};

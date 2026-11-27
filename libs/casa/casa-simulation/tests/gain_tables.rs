@@ -5,8 +5,7 @@
 //! it as the session that observed would have. Agreement with CASA is the
 //! corruption scenarios' (`tools/simulation/sm_corrupt_scenarios.json`).
 
-#[path = "predict_support/mod.rs"]
-mod predict_support;
+use crate::predict_support;
 
 use std::path::{Path, PathBuf};
 

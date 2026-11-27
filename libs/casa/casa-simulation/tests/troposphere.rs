@@ -16,10 +16,8 @@
 //! - DATA is bitwise the same for any worker count, for a budget that
 //!   splits integrations across batches, and after `openfromms`.
 
-#[path = "pass_summary/mod.rs"]
-mod pass_summary;
-#[path = "predict_support/mod.rs"]
-mod predict_support;
+use crate::pass_summary;
+use crate::predict_support;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

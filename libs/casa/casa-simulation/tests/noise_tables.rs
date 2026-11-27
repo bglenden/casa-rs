@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Optional simulation T/Tf noise-scale tables, against independent CASA output.
-#[path = "predict_support/mod.rs"]
-mod predict_support;
+use crate::predict_support;
 use std::{io::Read, path::Path};
 
 use casa_core::{ArrayValue, Complex32, ScalarValue};

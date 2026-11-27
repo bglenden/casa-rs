@@ -1,13 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Non-default G/D application arguments against independent CASA (#1053).
 
-#[path = "apply_parameters/input.rs"]
-mod input;
-#[path = "predict_support/mod.rs"]
-mod predict_support;
-
-#[path = "apply_parameters/support.rs"]
-mod support;
+use crate::apply_support as support;
 use flate2::read::GzDecoder;
 use serde_json::Value;
 use std::io::Read;

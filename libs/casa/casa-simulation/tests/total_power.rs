@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Actual CASA total-power sky inputs and telescope kernels.
-#[path = "image_frame_combinations/eop.rs"]
-mod eop;
-#[path = "existing_ms_calculations/mod.rs"]
-mod existing_ms_calculations;
+use crate::eop;
+use crate::existing_ms_calculations;
 use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{
     BackendRequest, CasaOutcome, PredictSpec, PredictionOptions, SessionResources, Simulator,

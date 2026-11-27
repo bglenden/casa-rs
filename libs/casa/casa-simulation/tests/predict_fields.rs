@@ -8,10 +8,8 @@
 //! `predict` prepares, bit for bit, and a budget that holds one set writes
 //! the same MeasurementSet as one that holds every field's.
 
-#[path = "pass_summary/mod.rs"]
-mod pass_summary;
-#[path = "predict_support/mod.rs"]
-mod predict_support;
+use crate::pass_summary;
+use crate::predict_support;
 
 use std::path::Path;
 

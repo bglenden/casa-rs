@@ -10,9 +10,9 @@ use casa_calibration::{
     },
     sd_solver::SingleDishSolveControls,
     solve::{
-        CalibrationSolveRequest, FringeControls, FringeCorrelation, GainNormalization,
-        GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest,
-        GainSolveRobustness, GainType, RefAntSelector,
+        CalibraterLifecycle, CalibrationSolveRequest, FringeControls, FringeCorrelation,
+        GainNormalization, GainSolveCombine, GainSolveInterval, GainSolveMode,
+        GainSolveModelSource, GainSolveRequest, GainSolveRobustness, GainType, RefAntSelector,
     },
 };
 use pyo3::exceptions::PyRuntimeError;
@@ -213,7 +213,7 @@ fn fringe_window(value: Option<&Bound<'_, PyAny>>) -> PyResult<[f64; 2]> {
 impl StandardSolver {
     fn bandpass(
         self,
-        frequency_interval: Option<casa_calibration::bandpass::BandpassFrequencyInterval>,
+        frequency_interval: Option<BandpassFrequencyInterval>,
         fill_gaps: usize,
     ) -> BandpassSolveRequest {
         BandpassSolveRequest {
@@ -305,7 +305,7 @@ fn standard_request(
 }
 
 fn configure_generic_spline(
-    state: &mut casa_calibration::solve::CalibraterLifecycle,
+    state: &mut CalibraterLifecycle,
     standard: StandardSolver,
     mode: casa_calibration::output::CalibrationOutputMode,
     apmode: &str,
@@ -391,17 +391,12 @@ impl super::PyCalibrater {
             CalibrationOutputMode::Replace
         };
         let family = r#type.unwrap_or("MF").to_ascii_uppercase();
-        let family =
-            casa_calibration::solve::CalibraterLifecycle::direct_solve_factory_alias(&family)
-                .map(str::to_owned)
-                .unwrap_or(family);
+        let family = CalibraterLifecycle::direct_solve_factory_alias(&family)
+            .map(str::to_owned)
+            .unwrap_or(family);
         let single_dish = single_dish_controls(&family, fraction, numedge, radius, smooth)?;
-        let polarization =
-            casa_calibration::solve::CalibraterLifecycle::recognizes_polarization_solve_type(
-                &family,
-            );
-        let gather_only =
-            casa_calibration::solve::CalibraterLifecycle::gather_only_solve_type(&family);
+        let polarization = CalibraterLifecycle::recognizes_polarization_solve_type(&family);
+        let gather_only = CalibraterLifecycle::gather_only_solve_type(&family);
         let baseline = matches!(
             family.as_str(),
             "M" | "M MUELLER" | "MF" | "MF MUELLER" | "A" | "A MUELLER"

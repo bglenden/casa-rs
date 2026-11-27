@@ -565,9 +565,12 @@ result = fluxscale(
     reference=os.environ["CASA_RS_FLUXSCALE_REFERENCE"],
     transfer=os.environ["CASA_RS_FLUXSCALE_TRANSFER"],
 )
-print(json.dumps(normalize(result), sort_keys=True))
+with open(os.environ["CASA_RS_CALIBRATION_JSON"], "w") as record:
+    json.dump(normalize(result), record, sort_keys=True)
 "#;
+    let record = tempfile::NamedTempFile::new().map_err(|error| error.to_string())?;
     let output = Command::new(&python)
+        .env("CASA_RS_CALIBRATION_JSON", record.path())
         .current_dir(casa_test_support::test_log_dir())
         .env("CASA_RS_FLUXSCALE_MS", ms_path)
         .env("CASA_RS_FLUXSCALE_INPUT", caltable)
@@ -585,7 +588,7 @@ print(json.dumps(normalize(result), sort_keys=True))
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    serde_json::from_slice(&output.stdout)
+    serde_json::from_reader(record.as_file())
         .map_err(|error| format!("parse CASA fluxscale json: {error}"))
 }
 
@@ -750,9 +753,12 @@ result = calstat(
     axis=os.environ["CASA_RS_CALSTAT_AXIS"],
     datacolumn=os.environ["CASA_RS_CALSTAT_DATACOLUMN"],
 )
-print(json.dumps(normalize(result), sort_keys=True))
+with open(os.environ["CASA_RS_CALIBRATION_JSON"], "w") as record:
+    json.dump(normalize(result), record, sort_keys=True)
 "#;
+    let record = tempfile::NamedTempFile::new().map_err(|error| error.to_string())?;
     let output = Command::new(&python)
+        .env("CASA_RS_CALIBRATION_JSON", record.path())
         .current_dir(casa_test_support::test_log_dir())
         .env("CASA_RS_CALSTAT_TABLE", caltable)
         .env("CASA_RS_CALSTAT_AXIS", axis)
@@ -768,7 +774,7 @@ print(json.dumps(normalize(result), sort_keys=True))
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    serde_json::from_slice(&output.stdout)
+    serde_json::from_reader(record.as_file())
         .map_err(|error| format!("parse CASA calstat json: {error}"))
 }
 

@@ -1,12 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Actual CASA legacy tables imposed on simulated DATA (SIM-16).
-#[path = "apply_parameters/input.rs"]
-mod input;
-#[path = "predict_support/mod.rs"]
-mod predict_support;
-#[path = "apply_parameters/support.rs"]
-#[allow(dead_code, reason = "reuse the complete MS comparison")]
-mod support;
+use crate::apply_input as input;
+use crate::apply_support as support;
+use crate::predict_support;
 
 use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{ApplySpec, Simulator, SimulatorOptions};

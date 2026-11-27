@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Synthetic sky-component signals against actual CASA 6.7.6.14 DATA.
-#[path = "image_frame_combinations/eop.rs"]
-mod eop;
-#[path = "existing_ms_calculations/mod.rs"]
-mod existing_ms_calculations;
+use crate::eop;
+use crate::existing_ms_calculations;
 use casa_core::measures::direction::{DirectionRef, MDirection};
 use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{

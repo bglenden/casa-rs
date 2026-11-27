@@ -28,6 +28,16 @@ mod normal;
 mod trace;
 pub(crate) mod writer;
 
+pub use crate::calibrater_lifecycle::{CalibraterLifecycle, CalibraterLifecycleError};
+pub use crate::selected_data::SelectedData;
+pub use crate::session::resolve_casa_calibration_selection;
+pub use crate::session::{
+    CalibrationDataset, CalibrationError, CalibrationSolveRequest, CalibrationSolveResult,
+    solve_calibration, solve_calibration_with_output_mode,
+};
+pub use crate::solve_stats::{AntennaSolveStats, SolveCounts, SolveStats, WindowSolveStats};
+pub use fringe::{FringeControls, FringeCorrelation};
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -1385,13 +1395,3 @@ mod solnorm_tests {
         assert!(close(&amplitudes(&rows[4]), &[4.0, 5.0]));
     }
 }
-
-pub use crate::calibrater_lifecycle::{CalibraterLifecycle, CalibraterLifecycleError};
-pub use crate::selected_data::SelectedData;
-pub use crate::session::resolve_casa_calibration_selection;
-pub use crate::session::{
-    CalibrationDataset, CalibrationError, CalibrationSolveRequest, CalibrationSolveResult,
-    solve_calibration, solve_calibration_with_output_mode,
-};
-pub use crate::solve_stats::{AntennaSolveStats, SolveCounts, SolveStats, WindowSolveStats};
-pub use fringe::{FringeControls, FringeCorrelation};

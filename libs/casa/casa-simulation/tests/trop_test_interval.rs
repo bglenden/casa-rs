@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Actual CASA iterator times and source-defined ramp through independent CASA ATM.
-#[path = "predict_support/mod.rs"]
-mod predict_support;
+use crate::predict_support;
 use casa_core::{ArrayValue, Complex32, ScalarValue};
 use casa_simulation::{PredictSpec, Simulator, SimulatorOptions, TroposphereSpec};
 use casa_tables::{Table, TableOptions};

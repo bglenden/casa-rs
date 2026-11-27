@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Actual CASA simulator image-layout outcomes and polarized visibilities.
-#[path = "existing_ms_calculations/mod.rs"]
-mod existing_ms_calculations;
+use crate::existing_ms_calculations;
 use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{BackendRequest, CasaOutcome, PredictSpec, Simulator, SimulatorOptions};
 use existing_ms_calculations::{copy, predict_support};

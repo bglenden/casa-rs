@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's remaining accepted image frames and beam/mosaic combinations.
-#[path = "image_frame_combinations/eop.rs"]
-mod eop;
-#[path = "existing_ms_calculations/mod.rs"]
-mod existing_ms_calculations;
+use crate::eop;
+use crate::existing_ms_calculations;
 use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{
     BackendRequest, PredictSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions,

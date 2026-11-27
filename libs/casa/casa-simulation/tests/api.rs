@@ -75,3 +75,15 @@ mod troposphere;
 mod tsys_noise;
 mod upstream_cpp;
 mod voltage_patterns;
+
+#[path = "apply_parameters/input.rs"]
+mod apply_input;
+#[path = "apply_parameters/support.rs"]
+mod apply_support;
+#[path = "support/casa_observatories.rs"]
+mod casa_observatories;
+#[path = "image_frame_combinations/eop.rs"]
+mod eop;
+mod existing_ms_calculations;
+mod pass_summary;
+mod predict_support;

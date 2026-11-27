@@ -46,10 +46,8 @@ mod coverage;
 mod feeds;
 #[path = "backends/offline_noise.rs"]
 mod offline_noise;
-#[path = "pass_summary/mod.rs"]
-mod pass_summary;
-#[path = "predict_support/mod.rs"]
-mod predict_support;
+use crate::pass_summary;
+use crate::predict_support;
 #[path = "backends/trop_test_ramp.rs"]
 mod trop_test_ramp;
 

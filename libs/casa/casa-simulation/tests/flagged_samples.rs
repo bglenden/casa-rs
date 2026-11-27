@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Existing-MS sample flags against independent CASA 6.7.6.14 (#1053).
 
-#[path = "pass_summary/mod.rs"]
-mod pass_summary;
-#[path = "predict_support/mod.rs"]
-mod predict_support;
+use crate::pass_summary;
+use crate::predict_support;
 
 use std::io::Read;
 use std::path::Path;

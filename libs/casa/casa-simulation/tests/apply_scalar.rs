@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Scalar T tables against CASA, across correlations and invalid solutions (#1053).
-#[path = "apply_parameters/input.rs"]
-mod input;
-#[path = "predict_support/mod.rs"]
-mod predict_support;
-#[path = "apply_parameters/support.rs"]
-mod support;
+use crate::apply_input as input;
+use crate::apply_support as support;
+use crate::predict_support;
 
 use flate2::read::GzDecoder;
 use serde_json::Value;

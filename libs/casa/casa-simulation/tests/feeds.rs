@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA multi-feed metadata and per-integration offset geometry.
-#[path = "predict_support/mod.rs"]
-mod predict_support;
+use crate::predict_support;
 use casa_core::measures::direction::{DirectionRef, MDirection};
 use casa_core::measures::{EpochRef, MEpoch, frequency::FrequencyRef};
 use casa_core::{ArrayValue, ScalarValue};

@@ -88,6 +88,7 @@
 //! the blocks that are not a write batch's ([`heap`]); the counters are the
 //! process's, so each law runs alone in a process of its own ([`alone`]).
 
+mod predict_support;
 #[path = "session_memory/total_power.rs"]
 mod total_power;
 

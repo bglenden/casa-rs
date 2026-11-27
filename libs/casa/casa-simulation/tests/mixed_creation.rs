@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Fresh simulations with several correlation/channel cell shapes.
-#[path = "existing_ms_calculations/mod.rs"]
-mod existing_ms_calculations;
+use crate::existing_ms_calculations;
 use casa_core::measures::frequency::FrequencyRef;
 use casa_simulation::{
     BackendRequest, PredictSpec, SessionResources, Simulator, SpectralWindowSpec,

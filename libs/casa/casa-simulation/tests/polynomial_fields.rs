@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Existing polynomial FIELD directions use CASA's iterator epoch.
-#[path = "existing_ms_calculations/mod.rs"]
-mod existing_ms_calculations;
+use crate::existing_ms_calculations;
 use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{
     BackendRequest, CasaOutcome, PredictSpec, SessionResources, Simulator, SimulatorOptions,

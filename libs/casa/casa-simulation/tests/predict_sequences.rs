@@ -15,8 +15,7 @@
 //! The refusals follow CASA's outcomes (`False`, raised, or not yet
 //! implemented), and a refused `predict` leaves the plan as it was.
 
-#[path = "predict_support/mod.rs"]
-mod predict_support;
+use crate::predict_support;
 
 use std::path::{Path, PathBuf};
 

@@ -19,8 +19,7 @@
 //! Agreement with CASA's own `sm.predict` through `WProjectFT` is measured
 //! by `tools/simulation/compare_sm_ms.py` on `sm_predict_scenarios.json`.
 
-#[path = "predict_support/mod.rs"]
-mod predict_support;
+use crate::predict_support;
 
 use std::path::Path;
 

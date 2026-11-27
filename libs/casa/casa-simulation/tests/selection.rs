@@ -5,10 +5,8 @@
 mod input;
 #[path = "selection/noise.rs"]
 mod noise;
-#[path = "pass_summary/mod.rs"]
-mod pass_summary;
-#[path = "predict_support/mod.rs"]
-mod predict_support;
+use crate::pass_summary;
+use crate::predict_support;
 
 use std::io::Read;
 use std::path::{Path, PathBuf};

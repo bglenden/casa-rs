@@ -36,8 +36,7 @@ use casa_simulation::simutil::receivers::{band_name, noise_temperature, polariza
 use casa_simulation::simutil::{SimutilError, python_float};
 use serde_json::Value;
 
-#[path = "support/casa_observatories.rs"]
-mod casa_observatories;
+use crate::casa_observatories;
 use casa_observatories::CasaObservatories;
 
 /// Whether two numbers agree to 1e-12, relative (absolute near zero).

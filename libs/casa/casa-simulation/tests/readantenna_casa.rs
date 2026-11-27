@@ -37,8 +37,7 @@ use casa_simulation::readantenna::{
 };
 use serde_json::Value;
 
-#[path = "support/casa_observatories.rs"]
-mod casa_observatories;
+use crate::casa_observatories;
 use casa_observatories::CasaObservatories;
 
 fn data_dir() -> PathBuf {

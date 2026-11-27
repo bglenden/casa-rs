@@ -1,13 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Simulator-accepted telescope defaults, including rejected factory aliases.
-#[path = "image_frame_combinations/eop.rs"]
-#[allow(
-    dead_code,
-    reason = "this fixture uses the captured observatory variant"
-)]
-mod eop;
-#[path = "existing_ms_calculations/mod.rs"]
-mod existing_ms_calculations;
+use crate::eop;
+use crate::existing_ms_calculations;
 use casa_simulation::{
     BackendRequest, CasaOutcome, PredictSpec, SessionResources, VoltagePatternSpec,
 };

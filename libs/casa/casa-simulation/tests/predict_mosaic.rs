@@ -5,8 +5,7 @@
 //! casa-rs does not build yet is refused. Its agreement with CASA is the
 //! `predict-mosaic-*` scenarios' (`tools/simulation/sm_predict_scenarios.json`).
 
-#[path = "predict_support/mod.rs"]
-mod predict_support;
+use crate::predict_support;
 
 use std::path::Path;
 
