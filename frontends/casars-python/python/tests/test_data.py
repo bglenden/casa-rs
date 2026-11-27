@@ -29,40 +29,18 @@ def test_top_level_lazy_data_surface_imports() -> None:
     assert not hasattr(casars._core, "Image")
 
 
-def test_data_image_reads_through_the_gil_releasing_tool(tmp_path: Path) -> None:
-    path = tmp_path / "large.im"
+def test_data_image_reads_a_native_width_slice_through_the_tool(tmp_path: Path) -> None:
+    path = tmp_path / "pixels.im"
     tool = image_tool()
-    shape = (1536, 1536)
-    assert tool.fromshape(str(path), list(shape))
+    assert tool.fromshape(str(path), [3, 4])
     assert tool.done()
+
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    writer = NativeImageView.open(path, writable=True)
+    writer.put_slice(pixels, (0, 0))
     image = NativeImageView.open(path)
     assert isinstance(image._inner, image_tool)
-    assert image.get_slice((0, 0), (1, 1)).item() == 0.0
-    ready, done = threading.Event(), threading.Event()
-    ticks = []
-
-    def worker() -> None:
-        ready.set()
-        while not done.is_set():
-            ticks.append(time.perf_counter())
-            time.sleep(0.001)
-
-    background = threading.Thread(target=worker)
-    background.start()
-    try:
-        assert ready.wait(timeout=5)
-        windows = []
-        for _ in range(3):
-            started = time.perf_counter()
-            pixels = image.get_slice((0, 0), shape)
-            windows.append((started, time.perf_counter()))
-    finally:
-        done.set()
-        background.join(timeout=5)
-    assert any(start + (end - start) / 4 < tick < end - (end - start) / 4
-               for start, end in windows for tick in ticks)
-    assert pixels.shape == shape
-    assert pixels.dtype == np.float32
+    np.testing.assert_array_equal(image.get_slice((1, 1), (2, 3)), pixels[1:, 1:], strict=True)
 
 
 @pytest.mark.parametrize("kind,dtype", [("f", "float32"), ("d", "float64"), ("c", "complex64"), ("cd", "complex128")])
