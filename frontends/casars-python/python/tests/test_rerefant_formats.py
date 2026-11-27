@@ -103,3 +103,55 @@ def test_rerefant_refuses_an_unsupported_msv4_antenna_frame(trial_calibration):
     assert failure.value.completion.parameter == "vis"
     assert "MSv4 antenna positions in other than ITRS" in str(failure.value)
     assert not Path("out.cal").exists()
+
+
+def test_rerefant_rejects_duplicate_msv4_reference_rows(trial_calibration):
+    caltable = trial_calibration
+    writer = table()
+    antenna_table = f"{caltable}/ANTENNA"
+    assert writer.open(antenna_table, nomodify=False)
+    duplicate_id = writer.nrows()
+    assert writer.copyrows(antenna_table, startrowin=3, nrow=1)
+    writer.close()
+
+    assert writer.open(caltable, nomodify=False)
+    source_row = int(np.flatnonzero(writer.getcol("ANTENNA1") == 3)[0])
+    duplicate_row = writer.nrows()
+    assert writer.copyrows(caltable, startrowin=source_row, nrow=1)
+    assert writer.putcell("ANTENNA1", duplicate_row, duplicate_id)
+    assert writer.putcell("CPARAM", duplicate_row, -writer.getcell("CPARAM", source_row))
+    writer.close()
+
+    with pytest.raises(tasks.TaskExecutionError, match="both match MSv4 antenna"):
+        tasks.rerefant(
+            vis="ms_trial.ps.zarr", tablein=caltable, caltable="out.cal",
+            refant="W32", refantmode="strict",
+        )
+    assert not Path("out.cal").exists()
+
+
+@pytest.mark.parametrize("position_reference", ["WGS84", "variable ITRF"])
+def test_rerefant_msv2_reference_selection_preserves_table_ordinals(
+    trial_calibration, position_reference
+):
+    writer = table()
+    assert writer.open("ms_trial.ms/ANTENNA", nomodify=False)
+    count = writer.nrows()
+    if position_reference == "WGS84":
+        description = {"type": "position", "Ref": "WGS84"}
+        assert writer.putcolkeyword("POSITION", "QuantumUnits", ["m", "rad", "rad"])
+        positions = np.repeat([[2000.0], [-1.878], [0.59]], count, axis=1)
+        assert writer.putcol("POSITION", positions)
+    else:
+        description = {"type": "position", "VarRefCol": "POSITION_REF"}
+        assert writer.addcols({"POSITION_REF": {"valueType": "string"}})
+        assert writer.putcol("POSITION_REF", np.full(count, "ITRF"))
+    assert writer.putcolkeyword("POSITION", "MEASINFO", description)
+    writer.close()
+
+    tasks.rerefant(
+        vis="ms_trial.ms", tablein=trial_calibration, caltable="out.cal",
+        refant="3", refantmode="strict",
+    )
+    _, references, _, _ = read_calibration("out.cal")
+    np.testing.assert_array_equal(references, np.full_like(references, 3))

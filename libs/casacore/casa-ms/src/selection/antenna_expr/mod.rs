@@ -115,9 +115,29 @@ pub struct AntennaRow<'a> {
     pub name: &'a str,
     /// The STATION column, compared exactly.
     pub station: &'a str,
-    /// The POSITION column: ITRF geocentric `[x, y, z]` in metres. Only
-    /// baseline-length terms (`<100m`, `1km~2km`) use it.
+    /// The stored POSITION components, ordinarily geocentric ITRF metres.
+    /// CASA's baseline-length selectors use the table's values directly.
     pub position_m: [f64; 3],
+}
+
+/// An owned casacore antenna row for selection in its own table's
+/// numbering. Position values retain the table's stored representation.
+pub struct StoredAntennaRow {
+    name: String,
+    station: String,
+    position: [f64; 3],
+}
+
+impl StoredAntennaRow {
+    /// The metadata view used by CASA's antenna selector.
+    #[must_use]
+    pub fn selection_row(&self) -> AntennaRow<'_> {
+        AntennaRow {
+            name: &self.name,
+            station: &self.station,
+            position_m: self.position,
+        }
+    }
 }
 
 /// A resolved antenna selection: which ordered (`ANTENNA1`, `ANTENNA2`)
@@ -503,25 +523,22 @@ impl MeasurementSet {
         &self,
         resolve: impl FnOnce(&[AntennaRow<'_>]) -> MsResult<T>,
     ) -> MsResult<T> {
-        let antenna = self.antenna()?;
-        let count = antenna.row_count();
-        let mut columns = Vec::with_capacity(count);
-        for row in 0..count {
-            columns.push((
-                antenna.name(row)?,
-                antenna.station(row)?,
-                antenna.position(row)?,
-            ));
-        }
-        let rows: Vec<AntennaRow<'_>> = columns
-            .iter()
-            .map(|(name, station, position_m)| AntennaRow {
-                name,
-                station,
-                position_m: *position_m,
-            })
-            .collect();
+        let stored = self.stored_antenna_rows()?;
+        let rows: Vec<_> = stored.iter().map(StoredAntennaRow::selection_row).collect();
         resolve(&rows)
+    }
+
+    pub(crate) fn stored_antenna_rows(&self) -> MsResult<Vec<StoredAntennaRow>> {
+        let antenna = self.antenna()?;
+        (0..antenna.row_count())
+            .map(|row| {
+                Ok(StoredAntennaRow {
+                    name: antenna.name(row)?,
+                    station: antenna.station(row)?,
+                    position: antenna.position(row)?,
+                })
+            })
+            .collect()
     }
 }
 

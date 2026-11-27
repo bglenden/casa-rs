@@ -31,6 +31,7 @@ use super::msv2::catalogue::{measure_reference, phase_frames, require_units};
 use super::update::storage;
 use super::{Msv2Observation, OpenOptions};
 use crate::columns::direction_columns::DirectionColumn;
+use crate::selection::antenna_expr::StoredAntennaRow;
 use crate::{MeasurementSet, MsError, SubtableId};
 
 /// One `ANTENNA` row, as content.
@@ -214,10 +215,11 @@ fn msv4_subtables(
 
 /// The antenna namespace of one store.
 pub enum AntennaNamespace {
-    /// Casacore ANTENNA rows. The row order is the MSv2's numbering.
-    Msv2(Vec<NamespaceAntenna>),
-    /// Antennas in MSv4 catalogue order. These indices are not casacore
-    /// table row numbers.
+    /// Casacore ANTENNA rows in MSv2 order, with the original position
+    /// values for selection in the table's own numbering.
+    Msv2(Vec<StoredAntennaRow>),
+    /// Antennas in MSv4 catalogue order, with positions in geocentric
+    /// ITRF metres for matching against a persisted namespace.
     Msv4(Vec<NamespaceAntenna>),
 }
 
@@ -247,11 +249,10 @@ pub fn antenna_namespace(source: &Path) -> Result<AntennaNamespace, ObservationE
             what: "an MSv4 antenna namespace without casa-ms's msv4 feature",
         });
     }
-    let ms = MeasurementSet::open(source).map_err(storage)?;
-    let table = ms
-        .subtable(SubtableId::Antenna)
-        .ok_or_else(|| invalid("no ANTENNA subtable"))?;
-    antennas(table).map(AntennaNamespace::Msv2)
+    MeasurementSet::open(source)
+        .and_then(|ms| ms.stored_antenna_rows())
+        .map(AntennaNamespace::Msv2)
+        .map_err(storage)
 }
 
 impl NamespaceRows {

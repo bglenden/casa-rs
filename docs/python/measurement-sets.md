@@ -63,5 +63,6 @@ the specific losses.
 For `tasks.rerefant` with an MSv4 input, `refant` selects antennas by
 name or row number in `tablein`'s `ANTENNA` subtable. The task matches them
 to the measurement set by station and position and checks that the names
-agree. With MSv2, `refant` selects from the MeasurementSet's `ANTENNA`
-subtable.
+agree. The task refuses an ambiguous identity before publishing the
+output. With MSv2, `refant` selects from the MeasurementSet's `ANTENNA`
+subtable using its stored row numbers and position values.

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Re-reference a calibration table across solution intervals.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use casa_core::{ArrayValue, ScalarValue, Value};
@@ -64,7 +63,11 @@ pub fn rereference_calibration_table(
 ) -> Result<(), RereferenceError> {
     let result = match antenna_namespace(ms_path)? {
         AntennaNamespace::Msv2(antennas) => {
-            let mut choices = reference_choices(&antennas, flexible, selector)
+            let rows: Vec<_> = antennas
+                .iter()
+                .map(|antenna| antenna.selection_row())
+                .collect();
+            let mut choices = reference_choices(&rows, flexible, selector)
                 .map_err(RereferenceError::Calibration)?;
             edit_calibration_table(input, destination, |table, _| {
                 edit_references(table, &mut choices)
@@ -73,7 +76,15 @@ pub fn rereference_calibration_table(
         AntennaNamespace::Msv4(antennas) => {
             edit_calibration_table(input, destination, |table, staged| {
                 let cal_antennas = NamespaceRows::read_antennas(staged).map_err(error_text)?;
-                let choices = reference_choices(&cal_antennas, flexible, selector)?;
+                let rows: Vec<_> = cal_antennas
+                    .iter()
+                    .map(|antenna| AntennaRow {
+                        name: &antenna.name,
+                        station: &antenna.station,
+                        position_m: antenna.position_m,
+                    })
+                    .collect();
+                let choices = reference_choices(&rows, flexible, selector)?;
                 let mut choices = bind_msv4_choices(&antennas, &cal_antennas, &choices)?;
                 edit_references(table, &mut choices)
             })
@@ -83,19 +94,11 @@ pub fn rereference_calibration_table(
 }
 
 fn reference_choices(
-    antennas: &[NamespaceAntenna],
+    antennas: &[AntennaRow<'_>],
     flexible: bool,
     selector: &str,
 ) -> Result<Vec<i32>, String> {
-    let rows: Vec<_> = antennas
-        .iter()
-        .map(|antenna| AntennaRow {
-            name: &antenna.name,
-            station: &antenna.station,
-            position_m: antenna.position_m,
-        })
-        .collect();
-    let preferred = resolve_reference_antennas(&rows, selector).map_err(error_text)?;
+    let preferred = resolve_reference_antennas(antennas, selector).map_err(error_text)?;
     let Some(&primary) = preferred.first() else {
         return Err("no reference antenna specified".into());
     };
@@ -135,26 +138,26 @@ fn bind_msv4_choices(
     table: &[NamespaceAntenna],
     choices: &[i32],
 ) -> Result<Vec<i32>, String> {
-    let mut bound = BTreeMap::new();
     let mut matched = Vec::with_capacity(choices.len());
     for &row in choices {
         let antenna = &table[row as usize];
         let mut candidates = antennas
             .iter()
-            .enumerate()
-            .filter(|(_, other)| same_antenna(antenna, other, 0.0));
-        if let Some((id, other)) = candidates.next() {
+            .filter(|other| same_antenna(antenna, other, 0.0));
+        if let Some(other) = candidates.next() {
             if candidates.next().is_some() || !names_agree(antenna, other) {
                 return Err(format!(
                     "calibration table antenna {} at station {} has no unique matching MSv4 antenna",
                     antenna.name, antenna.station
                 ));
             }
-            if let Some(previous) = bound.insert(id, row)
-                && previous != row
-            {
+            let duplicate = table
+                .iter()
+                .enumerate()
+                .find(|(id, candidate)| *id != row as usize && same_antenna(candidate, other, 0.0));
+            if let Some((id, _)) = duplicate {
                 return Err(format!(
-                    "calibration table antenna rows {previous} and {row} both match MSv4 antenna {}",
+                    "calibration table antenna rows {row} and {id} both match MSv4 antenna {}",
                     other.name
                 ));
             }
