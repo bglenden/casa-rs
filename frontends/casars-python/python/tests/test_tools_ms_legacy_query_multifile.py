@@ -93,3 +93,37 @@ with closing(import_module(sys.argv[1]).ms()) as selector:
         )
         with (output / "table.mf").open("rb") as stream:
             assert struct.unpack_from(">Q", stream.read(64), 40)[0] == 8192
+
+
+def test_legacy_taql_memory_to_multifile_and_failed_hdf5_preserve_selection(
+    native_dataset, tmp_path,
+):
+    casa = pinned_casa()
+    with closing(casa.table()) as source:
+        assert source.open(str(native_dataset))
+        source_rows = source.nrows()
+        expected = source.getcol("DATA", source_rows - 5, 5)[..., ::-1][..., 1:3]
+    for writer in (casa, tools):
+        output = tmp_path / f"{writer.__name__}.ms"
+        with closing(writer.ms()) as selector:
+            assert selector.open(str(native_dataset))
+            assert selector.selecttaqlold("True ORDERBY ROWID() DESC LIMIT 5 GIVING AS MEMORY")
+            query = f'True LIMIT 2 OFFSET 1 GIVING "{output}" AS '
+            with pytest.raises(RuntimeError, match="(?i)hdf5"):
+                selector.selecttaqlold(f'{query}[type="plain",storage="multihdf5"]')
+            assert not output.exists() and selector.nrowold(True) == 5
+            assert selector.selecttaqlold(
+                f'{query}[type="plain",storage="multifile",blocksize=64]'
+            )
+            assert selector.nrow() == source_rows and selector.nrowold(True) == 2
+            np.testing.assert_array_equal(selector.rangeold("rows")["rows"], [0, 1])
+            np.testing.assert_array_equal(
+                selector.getdataold(["data"])["data"], expected.astype(np.complex128), strict=True,
+            )
+        with (output / "table.mf").open("rb") as stream:
+            first_continuation = struct.unpack_from(">Q", stream.read(64), 8)[0]
+            assert first_continuation > 0
+        for reader in (casa, tools):
+            with closing(reader.table()) as table:
+                assert table.open(str(output))
+                np.testing.assert_array_equal(table.getcol("DATA"), expected, strict=True)
