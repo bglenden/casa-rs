@@ -161,11 +161,7 @@ pub fn select_projected_scalar_rows(
     let limit = select.limit.take();
     let reverse = match select.order_by.as_slice() {
         [] => false,
-        [order]
-            if !select.order_distinct
-                && matches!(&order.expr, Expr::FunctionCall { name, args }
-            if name.eq_ignore_ascii_case("rowid") && args.is_empty()) =>
-        {
+        [order] if !select.order_distinct && matches!(order.expr, Expr::RowNumber) => {
             !order.ascending
         }
         _ => return Ok(None),
@@ -183,6 +179,21 @@ pub fn select_projected_scalar_rows(
         rows
     };
     Ok(Some(LegacyTaqlSelection { rows, giving }))
+}
+
+#[cfg(test)]
+#[test]
+fn rowid_order_on_projected_rows_uses_view_positions_before_limiting() {
+    let source = Table::from_rows(vec![casa_core::RecordValue::default(); 8]);
+    let selected = select_projected_scalar_rows(
+        &source,
+        "True ORDERBY ROWID() DESC LIMIT 2 OFFSET 1 GIVING result AS PLAIN",
+        Some(&[7, 3, 7, 0]),
+    )
+    .unwrap()
+    .expect("ROWID ordering should use projected reads");
+    assert_eq!(selected.rows, [2, 1]);
+    assert_eq!(selected.giving.unwrap().table_name, "result");
 }
 
 /// Evaluate a legacy selector query against the ordered legacy row view.
