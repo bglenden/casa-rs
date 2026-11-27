@@ -5,8 +5,8 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::Path;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 use serde_json::Value;
@@ -129,15 +129,6 @@ fn observe(live: u64) {
 }
 
 const LAW_VAR: &str = "CASA_RS_COUNTING_LAW";
-const SETTLE: &str = "counting_heap::a_counting_law_process_settles";
-static SETTLED: AtomicBool = AtomicBool::new(false);
-
-#[test]
-#[ignore = "alone runs it before a law, in the law's process"]
-fn a_counting_law_process_settles() {
-    std::thread::sleep(std::time::Duration::from_millis(10));
-    SETTLED.store(true, Ordering::Relaxed);
-}
 
 /// Run the current test alone in a dedicated child process of this test binary.
 pub(crate) fn alone(name: &str) -> bool {
@@ -148,16 +139,13 @@ pub(crate) fn alone(name: &str) -> bool {
     );
     let ran = format!("{name} ran alone");
     if std::env::var_os(LAW_VAR).is_some_and(|law| law == name) {
-        assert!(
-            SETTLED.load(Ordering::Relaxed),
-            "{SETTLE} runs before {name}"
-        );
+        // Let libtest's initial thread and runner allocations settle in this fresh process.
+        std::thread::sleep(std::time::Duration::from_millis(10));
         println!("{ran}");
         return true;
     }
     let output = std::process::Command::new(std::env::current_exe().expect("this test binary"))
         .args([
-            SETTLE,
             name,
             "--exact",
             "--include-ignored",
@@ -295,9 +283,7 @@ pub(crate) struct Measured {
     pub(crate) reserved: u64,
 }
 
-struct SeedRecorder {
-    _phases: std::sync::Arc<Mutex<Vec<()>>>,
-}
+struct SeedRecorder;
 
 impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for SeedRecorder {
     fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
@@ -341,9 +327,7 @@ pub(crate) fn measure(request: &ImagingRequest, workers: usize, ceiling: u64) ->
     };
     let recorder = tracing_subscriber::layer::SubscriberExt::with(
         tracing_subscriber::registry(),
-        SeedRecorder {
-            _phases: std::sync::Arc::new(Mutex::new(Vec::new())),
-        },
+        SeedRecorder,
     );
     BASELINE.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
     MEASURING.store(true, Ordering::Relaxed);

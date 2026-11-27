@@ -4,7 +4,7 @@
 //! runs them, for wide dense complex kernels, with the CPU's region owners
 //! for reference. Samples cluster toward the uv centre as real coverage
 //! does, which is where atomics contend. Ignored; run with
-//! `cargo test -p casa-imaging-metal --release --test r2_measurement -- --ignored --nocapture`.
+//! `cargo test -p casa-imaging-metal --release --test api -- r2_measurement --ignored --nocapture`.
 
 #[allow(unused_imports)]
 use crate::common;

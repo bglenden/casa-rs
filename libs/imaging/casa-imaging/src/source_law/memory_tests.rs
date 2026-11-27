@@ -67,6 +67,23 @@ fn tile_staging(measurement_set: &Path) -> i64 {
         .unwrap_or(0)
 }
 
+fn drive_without_measuring(
+    request: &ImagingRequest,
+    planes_per_wave: u32,
+    memory: u64,
+) -> SourceDrive {
+    let context = RunContext {
+        host: HOST,
+        ..context(ResourcePolicy::Explicit { workers: 2, memory })
+    };
+    let mut noop = || {};
+    if request.savemodel == crate::SaveModel::ModelColumn || request.save_continuum_residual {
+        drive_batch_write(request, &context, &mut noop).expect("the write")
+    } else {
+        drive_batch_source(request, &context, planes_per_wave, &mut noop).expect("the source reads")
+    }
+}
+
 fn measure(request: &ImagingRequest, planes_per_wave: u32, memory: u64) -> (SourceDrive, i64) {
     let context = RunContext {
         host: HOST,
@@ -302,7 +319,7 @@ fn a_window_the_axis_misses_is_read_by_the_density_and_a_write_alone() {
             controls["niter"] = json!(10);
         }
         let image = root.path().join(name);
-        measure(&request(&[&two], &image, 256, controls), 8, 4 << 30).0
+        drive_without_measuring(&request(&[&two], &image, 256, controls), 8, 4 << 30)
     };
     let batches = TIMES.div_ceil(TIMES.div_ceil(OVERLAPPED_BLOCKS));
     let first = cube("first", "0", false);
@@ -323,7 +340,7 @@ fn a_pass_streams_in_overlapped_batches() {
     const TIMES: usize = 10;
     let root = tempfile::tempdir().expect("test root");
     let narrow = observation(root.path(), 16);
-    let (drive, _) = measure(
+    let drive = drive_without_measuring(
         &request(&[&narrow], &root.path().join("overlapped"), 256, json!({})),
         1,
         4 << 30,
