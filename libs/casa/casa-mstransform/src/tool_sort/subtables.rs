@@ -10,8 +10,16 @@ use casa_tables::{Table, TableOptions, TablePartNames, add_directory, strip_dire
 use casa_ms::subtable_path_from_main;
 use casa_ms::{MsError, MsResult, SubtableId};
 
-pub(super) fn check_named_output(input: &Path, output: &Path) -> MsResult<()> {
+pub(super) fn check_named_output(
+    input: &Path,
+    output: &Path,
+    replace_keyword: Option<(&Path, &str)>,
+) -> MsResult<PathBuf> {
     let root = reference_root(input)?;
+    let mut staging_parent = output
+        .parent()
+        .ok_or_else(|| invalid(output, "output has no parent"))?
+        .to_path_buf();
     let mut visited = BTreeSet::new();
     let mut pending = vec![(input.to_path_buf(), false)];
     let standard = SubtableId::ALL_REQUIRED
@@ -19,8 +27,17 @@ pub(super) fn check_named_output(input: &Path, output: &Path) -> MsResult<()> {
         .chain(SubtableId::ALL_OPTIONAL);
     while let Some((path, subtable)) = pending.pop() {
         let path = path.canonicalize().map_err(|error| invalid(&path, error))?;
-        if path.starts_with(output) || (subtable && path != root && output.starts_with(&path)) {
+        if path.starts_with(output) {
             return Err(invalid(output, "output overlaps a source table"));
+        }
+        if subtable && path != root && staging_parent.starts_with(&path) {
+            if replace_keyword.is_none() {
+                return Err(invalid(output, "output overlaps a source table"));
+            }
+            staging_parent = path
+                .parent()
+                .ok_or_else(|| invalid(output, "no staging parent outside the source table"))?
+                .to_path_buf();
         }
         if !visited.insert(path.clone()) {
             continue;
@@ -34,17 +51,27 @@ pub(super) fn check_named_output(input: &Path, output: &Path) -> MsResult<()> {
         }
         let table = Table::open(TableOptions::new(&path))?;
         for field in table.keywords().fields() {
+            let standard = standard.clone().any(|id| id.name() == field.name);
             let link = match &field.value {
                 Value::TableRef(link) if field.name != "SORTED_TABLE" => Some(link),
-                Value::Scalar(ScalarValue::String(link))
-                    if standard.clone().any(|id| id.name() == field.name) =>
-                {
-                    Some(link)
+                Value::Scalar(ScalarValue::String(link)) if standard => Some(link),
+                Value::Record(nested) => {
+                    protect_keyword_links(nested, &path, &mut pending);
+                    None
                 }
                 _ => None,
             };
             if let Some(link) = link {
-                pending.push((add_directory(link, &path), true));
+                let linked = add_directory(link, &path);
+                // The designated result keyword is republished with the new table.
+                // Protect standard MS subtables and all other names for that table.
+                if standard
+                    || linked != output
+                    || !matches!(replace_keyword,
+                    Some((owner, name)) if name == field.name && Table::keyword_descriptor_path(&path)? == owner)
+                {
+                    pending.push((linked, true));
+                }
             }
         }
         for column in table
@@ -53,15 +80,21 @@ pub(super) fn check_named_output(input: &Path, output: &Path) -> MsResult<()> {
             .flat_map(|schema| schema.columns())
         {
             if let Some(keys) = table.column_keywords(column.name()) {
-                for field in keys.fields() {
-                    if let Value::TableRef(link) = &field.value {
-                        pending.push((add_directory(link, &path), true));
-                    }
-                }
+                protect_keyword_links(keys, &path, &mut pending);
             }
         }
     }
-    Ok(())
+    Ok(staging_parent)
+}
+
+fn protect_keyword_links(record: &RecordValue, path: &Path, pending: &mut Vec<(PathBuf, bool)>) {
+    for field in record.fields() {
+        match &field.value {
+            Value::TableRef(link) => pending.push((add_directory(link, path), true)),
+            Value::Record(nested) => protect_keyword_links(nested, path, pending),
+            _ => {}
+        }
+    }
 }
 
 pub(super) fn copy_links(

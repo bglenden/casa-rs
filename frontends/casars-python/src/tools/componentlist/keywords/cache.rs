@@ -173,7 +173,7 @@ impl Cache {
             .map_err(fail);
         self.dirty = false;
         PENDING.fetch_sub(1, Ordering::Release);
-        crate::tools::table::component_keyword_published(path);
+        crate::tools::table::notify_keyword_change(path);
         result
     }
 }

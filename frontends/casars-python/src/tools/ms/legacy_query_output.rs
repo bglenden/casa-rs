@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Independent persisted outputs of a legacy MS TaQL selection.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
-use std::path::Path;
-use std::sync::MutexGuard;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, MutexGuard};
 
-use casa_mstransform::tool_sort::{check_named_output_path, write_selected_measurement_set_rows};
+use casa_mstransform::tool_sort::{
+    check_named_output_path, named_keyword_output_staging_parent,
+    write_selected_measurement_set_rows,
+};
 use casa_tables::publication::{
     check_write_access, exchange_directories, lock_table_tree_for_replacement,
     rename_without_replacing,
@@ -19,6 +23,7 @@ use pyo3::exceptions::PyNotImplementedError;
 use pyo3::prelude::*;
 
 use super::legacy_query_config::query_defaults;
+use super::legacy_query_subtable::QuerySubtable;
 use super::sort::SortedDestination;
 use super::{AttachedMs, runtime_error};
 
@@ -27,6 +32,21 @@ pub(super) struct QueryOutputOptions {
     overwrite: bool,
     endian: Option<EndianFormat>,
     storage: Option<QueryStorage>,
+}
+
+pub(super) struct StagedLegacyQuery {
+    output: PathBuf,
+    staged: PathBuf,
+    stage: tempfile::TempDir,
+    destination: SortedDestination,
+    subtable: Option<QuerySubtable>,
+    independent: bool,
+    _stage_lock: Option<TableWriteLock>,
+}
+
+pub(super) enum PublishedLegacyQuery {
+    Independent(Box<AttachedMs>),
+    Reference(Arc<Vec<PathBuf>>),
 }
 
 #[derive(Clone, Copy)]
@@ -69,13 +89,8 @@ impl QueryOutputOptions {
                 output.set(name, &value)?;
             }
         }
-        if giving.table_name.is_empty() {
+        if output.independent && giving.table_name.is_empty() {
             return Err(runtime_error("TaQL output must name a MeasurementSet"));
-        }
-        if giving.table_name.contains("::") {
-            return Err(PyNotImplementedError::new_err(
-                "ms.selecttaqlold subtable GIVING is not implemented in casa-rs (#1030)",
-            ));
         }
         Ok(output)
     }
@@ -193,45 +208,37 @@ fn option_value(field: &GivingOption) -> PyResult<(ExprValue, &'static str)> {
 }
 
 impl AttachedMs {
-    pub(super) fn save_legacy_query(
+    pub(super) fn stage_legacy_query(
         &self,
         table: &Table,
         rows: &[usize],
-        output: &Path,
+        name: &str,
         options: QueryOutputOptions,
         original: &Path,
-    ) -> PyResult<Option<Self>> {
+    ) -> PyResult<Option<StagedLegacyQuery>> {
+        if name.is_empty() {
+            return Ok(None);
+        }
         let endian = options
             .independent
             .then(|| options.copy_endian())
             .transpose()?;
-        let name = output
-            .file_name()
-            .ok_or_else(|| runtime_error("TaQL output must name a MeasurementSet"))?;
+        let active = self.legacy_selection.query_parent(&self.path);
+        let subtable = QuerySubtable::resolve(name, active, &self.path)?;
+        let output = if let Some(subtable) = &subtable {
+            subtable.output.clone()
+        } else {
+            canonical_named_output(name)?
+        };
         let parent = output
             .parent()
-            .ok_or_else(|| runtime_error("TaQL output has no parent directory"))?
-            .canonicalize()
-            .map_err(runtime_error)?;
-        let output = parent.join(name);
-        let current = self.path.as_path();
-        if options.independent {
-            for input in std::iter::once(current).chain((original != current).then_some(original)) {
-                if input.starts_with(&output) {
-                    return Err(runtime_error(
-                        "cannot overwrite the attached MeasurementSet with a named copy",
-                    ));
-                }
-                check_named_output_path(input, &output).map_err(runtime_error)?;
-            }
-        } else {
-            for input in [original, current]
-                .into_iter()
-                .chain(self.sources.iter().map(|path| path.as_path()))
-            {
-                crate::tools::table::refuse_nested(&output, input).map_err(PyErr::from)?;
-            }
-        }
+            .ok_or_else(|| runtime_error("TaQL output has no parent directory"))?;
+        let copy_parent = self.check_query_destination(
+            &output,
+            original,
+            options.independent,
+            subtable.as_ref(),
+        )?;
         crate::tools::table::check_target(&output).map_err(PyErr::from)?;
         let destination = SortedDestination::inspect(&output, "TaQL selection")?;
         if !options.overwrite && !matches!(destination, SortedDestination::Absent) {
@@ -239,7 +246,11 @@ impl AttachedMs {
         }
         let stage = tempfile::Builder::new()
             .prefix(".taql-ms-")
-            .tempdir_in(&parent)
+            .tempdir_in(if options.independent {
+                &copy_parent
+            } else {
+                parent
+            })
             .map_err(runtime_error)?;
         let staged = if let Some(endian) = endian {
             let staged = stage.path().join("selected.ms");
@@ -256,33 +267,133 @@ impl AttachedMs {
             let staged = stage.path().to_owned();
             table
                 .select_rows(rows)
-                .and_then(|view| view.save(TableOptions::new(&staged)))
+                .and_then(|view| view.save_relative_to(TableOptions::new(&staged), &output))
                 .map_err(runtime_error)?;
             staged
         };
         self.working_metadata_link()
             .verify_directory()
             .map_err(runtime_error)?;
-        let _stage_lock = options
+        let stage_lock = options
             .independent
             .then(|| TableWriteLock::acquire_to_reread(&staged, 1))
             .transpose()
             .map_err(runtime_error)?;
-        publish_selection(&output, &staged, stage, destination, |publication| {
-            options
-                .independent
-                .then(|| {
-                    Self::open_with_publication_guard(
-                        output.clone(),
-                        false,
-                        false,
-                        false,
-                        publication,
-                    )
-                })
-                .transpose()
-        })
+        Ok(Some(StagedLegacyQuery {
+            output,
+            staged,
+            stage,
+            destination,
+            subtable,
+            independent: options.independent,
+            _stage_lock: stage_lock,
+        }))
     }
+
+    fn check_query_destination(
+        &self,
+        output: &Path,
+        original: &Path,
+        independent: bool,
+        subtable: Option<&QuerySubtable>,
+    ) -> PyResult<PathBuf> {
+        let current = self.path.as_path();
+        let active = self.legacy_selection.query_parent(current);
+        let inputs = std::iter::once(current)
+            .chain((original != current).then_some(original))
+            .chain(active.filter(|path| *path != current && *path != original));
+        let mut parent = output
+            .parent()
+            .expect("validated output has a parent")
+            .to_owned();
+        if let Some(link) = subtable {
+            for input in inputs {
+                let outside =
+                    named_keyword_output_staging_parent(input, output, &link.owner, &link.keyword)
+                        .map_err(runtime_error)?;
+                if parent.starts_with(&outside) {
+                    parent = outside;
+                }
+            }
+        } else if independent {
+            for input in inputs {
+                if input.starts_with(output) {
+                    return Err(runtime_error(
+                        "cannot overwrite the attached MeasurementSet with a named copy",
+                    ));
+                }
+                check_named_output_path(input, output).map_err(runtime_error)?;
+            }
+        } else {
+            for input in inputs.chain(self.sources.iter().map(|path| path.as_path())) {
+                crate::tools::table::refuse_nested(output, input).map_err(PyErr::from)?;
+            }
+        }
+        Ok(parent)
+    }
+}
+
+impl StagedLegacyQuery {
+    pub(super) fn publish(
+        self,
+        retained: &mut BTreeMap<PathBuf, TableWriteLock>,
+    ) -> PyResult<PublishedLegacyQuery> {
+        let mut owner_lock = None;
+        let link_lock = if let Some(subtable) = &self.subtable {
+            let lock = match retained.get_mut(&subtable.owner) {
+                Some(lock) => lock,
+                None => owner_lock.insert(
+                    TableWriteLock::acquire_to_reread(&subtable.owner, 1).map_err(runtime_error)?,
+                ),
+            };
+            subtable.verify_lock(lock)?;
+            Some((subtable, lock))
+        } else {
+            None
+        };
+        publish_selection(
+            &self.output,
+            &self.staged,
+            self.stage,
+            self.destination,
+            |publication| {
+                let attached = self
+                    .independent
+                    .then(|| {
+                        AttachedMs::open_with_publication_guard(
+                            self.output.clone(),
+                            false,
+                            false,
+                            false,
+                            publication,
+                        )
+                    })
+                    .transpose()?;
+                if let Some((subtable, lock)) = link_lock {
+                    subtable.write_link(lock)?;
+                }
+                Ok(match attached {
+                    Some(attached) => PublishedLegacyQuery::Independent(Box::new(attached)),
+                    None => PublishedLegacyQuery::Reference(
+                        crate::tools::table::attach_table_paths(vec![self.output.clone()]),
+                    ),
+                })
+            },
+        )
+    }
+}
+
+fn canonical_named_output(name: &str) -> PyResult<PathBuf> {
+    let absolute = std::path::absolute(name).map_err(runtime_error)?;
+    let name = absolute
+        .file_name()
+        .ok_or_else(|| runtime_error("TaQL output must name a MeasurementSet"))?;
+    let parent = absolute
+        .parent()
+        .ok_or_else(|| runtime_error("TaQL output has no parent directory"))?
+        .canonicalize()
+        .map_err(runtime_error)?;
+    Ok(parent.join(name))
 }
 
 fn publish_selection<T>(
