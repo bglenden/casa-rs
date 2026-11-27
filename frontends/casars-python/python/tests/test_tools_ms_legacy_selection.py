@@ -251,7 +251,7 @@ def test_legacy_taql_explicit_disk_output(native_dataset, tmp_path, mode):
     casa = pinned_casa()
     source_table = casa.table()
     assert source_table.open(str(native_dataset))
-    selected = [7, 3, 8, 3]
+    selected = [7, 3, 8, 6]
     expected = source_table.getcol("UVW")[:, selected[::-1][:3]]
     source_rows = source_table.nrows()
     assert source_table.close()
@@ -308,4 +308,18 @@ def test_legacy_taql_output_options_record(native_dataset, tmp_path):
     with pytest.raises(NotImplementedError, match=r"MultiFile.*#1030"):
         reader.selecttaqlold(f'True GIVING "{target}" AS [type="plain", storage="multifile"]')
     assert not target.exists()
+    assert reader.done()
+
+
+def test_legacy_taql_disk_copy_uses_view_relative_ids_for_duplicate_rows(native_dataset, tmp_path):
+    reader = tools.ms()
+    assert reader.open(str(native_dataset))
+    assert reader.selectold({"rows": [7, 3, 8, 3]})
+    source = tools.table()
+    assert source.open(str(native_dataset))
+    expected = source.getcol("UVW")[:, [3, 8, 3]]
+    assert source.close()
+    target = tmp_path / "duplicate.ms"
+    assert reader.selecttaqlold(f'True ORDERBY ROWID() DESC LIMIT 3 GIVING "{target}" AS PLAIN')
+    np.testing.assert_array_equal(reader.getdataold(["uvw"])["uvw"], expected, strict=True)
     assert reader.done()
