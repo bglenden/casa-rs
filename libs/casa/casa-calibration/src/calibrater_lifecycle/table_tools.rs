@@ -103,6 +103,7 @@ impl CalibraterLifecycle {
                     seconds,
                     rate_smooth,
                 )
+                .map_err(|error| error.to_string())
             });
         result.map_err(|message| CalibraterLifecycleError::Smooth(MsError::InvalidInput(message)))
     }

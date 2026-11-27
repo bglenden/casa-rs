@@ -36,8 +36,9 @@ pub use msv4::{
     Msv4WriteCounters, Msv4Writer, STATION_NAMED, check_fields, kept_samples, unix_times,
 };
 pub use namespace::{
-    AntennaNamespace, NamespaceAntenna, NamespaceField, NamespaceRows, NamespaceWindow,
-    PersistedNamespace, antenna_namespace, persisted_namespace,
+    AntennaNamespace, CalibrationField, FieldNamespace, Msv2FieldSelection, NamespaceAntenna,
+    NamespaceField, NamespaceRows, NamespaceWindow, PersistedNamespace, antenna_namespace,
+    persisted_namespace, with_field_namespace,
 };
 pub use update::UpdateSession;
 #[cfg(unix)]

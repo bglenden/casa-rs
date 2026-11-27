@@ -7,7 +7,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use casa_core::{ArrayValue, Complex32, Value};
-use casa_ms::MeasurementSet;
+use casa_ms::observation_io::{
+    FieldNamespace, NamespaceField, NamespaceRows, ObservationError, with_field_namespace,
+};
+use casa_ms::selection::parser::{FieldSelectorRow, resolve_field_selector_rows};
 use casa_tables::{RequiredScalarColumnValues, Table, TableOptions};
 
 use crate::solution_edit::{edit_calibration_table, error_text};
@@ -32,8 +35,25 @@ impl Smoother {
     }
 }
 
-/// Smooths calibration solutions over a time interval in seconds for the selected fields and
-/// publishes the result.
+/// Failures in the MeasurementSet field reader or calibration-table edit.
+#[derive(Debug, thiserror::Error)]
+pub enum SmoothError {
+    /// The observation could not be opened.
+    #[error(transparent)]
+    Observation(#[from] ObservationError),
+    /// The selection, smoothing calculation, or table edit failed.
+    #[error("{0}")]
+    Calibration(String),
+}
+
+/// Smooth calibration solutions over a centered time window and publish
+/// the result. MSv2 field expressions use the MeasurementSet's FIELD
+/// numbering. With MSv4, expressions use the calibration table's FIELD
+/// numbering and the selected rows must identify fields in the observation.
+///
+/// # Errors
+/// When the observation cannot be opened, the selection cannot be resolved,
+/// or the calibration table cannot be smoothed or written.
 pub fn smooth_calibration_table(
     ms_path: &Path,
     input: &Path,
@@ -42,15 +62,83 @@ pub fn smooth_calibration_table(
     smoother: Smoother,
     seconds: f64,
     ratesmooth: bool,
-) -> Result<(), String> {
+) -> Result<(), SmoothError> {
     if seconds.is_nan() || seconds <= 0.0 {
-        return Err("smoothtime must be a positive duration in seconds".into());
+        return Err(SmoothError::Calibration(
+            "smoothtime must be a positive duration in seconds".into(),
+        ));
     }
-    let ms = MeasurementSet::open(ms_path).map_err(error_text)?;
-    let fields = ms.resolve_field_selector(field).map_err(error_text)?;
-    edit_calibration_table(input, destination, |table, path| {
-        smooth_table(table, path, &fields, smoother, seconds / 2.0, ratesmooth)
-    })
+    let smooth = |table: &mut Table, path: &Path, fields: &[i32]| {
+        smooth_table(table, path, fields, smoother, seconds / 2.0, ratesmooth)
+    };
+    with_field_namespace(ms_path, |namespace| match namespace {
+        FieldNamespace::Msv2(selection) => {
+            let fields = selection.select(field).map_err(error_text)?;
+            edit_calibration_table(input, destination, |table, path| {
+                smooth(table, path, &fields)
+            })
+        }
+        FieldNamespace::Msv4(catalogue) => {
+            edit_calibration_table(input, destination, |table, path| {
+                let fields = bound_fields(catalogue, path, field)?;
+                smooth(table, path, &fields)
+            })
+        }
+    })?
+    .map_err(SmoothError::Calibration)
+}
+
+fn bound_fields(
+    catalogue: &[NamespaceField],
+    path: &Path,
+    selector: &str,
+) -> Result<Vec<i32>, String> {
+    if selector.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let table = NamespaceRows::read_fields(path).map_err(error_text)?;
+    let rows: Vec<_> = table
+        .iter()
+        .map(|field| FieldSelectorRow {
+            name: &field.identity.name,
+            code: field.code.as_deref(),
+            flagged: field.flagged.unwrap_or_default(),
+        })
+        .collect();
+    let selected = resolve_field_selector_rows(&rows, selector).map_err(error_text)?;
+    for &row in &selected {
+        let field = &table[row as usize].identity;
+        let mut matches = catalogue.iter().filter(|entry| same_field(entry, field));
+        let Some(entry) = matches.next() else {
+            return Err(format!(
+                "calibration table field {} is absent from the MSv4 store",
+                field.name
+            ));
+        };
+        if matches.next().is_some()
+            || table
+                .iter()
+                .enumerate()
+                .any(|(id, other)| id != row as usize && same_field(entry, &other.identity))
+        {
+            return Err(format!(
+                "calibration table field {} has an ambiguous MSv4 identity",
+                field.name
+            ));
+        }
+    }
+    Ok(selected)
+}
+
+fn same_field(entry: &NamespaceField, field: &NamespaceField) -> bool {
+    let name = &entry.name;
+    let names_agree = *name == field.name
+        || name
+            .rsplit_once('_')
+            .is_some_and(|(base, suffix)| base == field.name && suffix.parse::<u32>().is_ok());
+    names_agree
+        && entry.phase_centre.refer() == field.phase_centre.refer()
+        && entry.phase_centre.as_angles() == field.phase_centre.as_angles()
 }
 
 fn smooth_table(

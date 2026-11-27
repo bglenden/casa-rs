@@ -11,9 +11,11 @@ in `.ps.zarr`.
 | `tasks.msconvert(vis=…)` | Read an existing MeasurementSet | Yes | Yes | [All four input/output pairings][format-tests] |
 | `tasks.msconvert(outputvis=…, outformat=…)` | Create a new MeasurementSet | `outformat="msv2"` | `outformat="msv4"` | [All four input/output pairings][format-tests] |
 | `tasks.rerefant(vis=…)` | Read antenna metadata for re-referencing a calibration table | Yes | Yes | [Read and verify the output calibration table][rerefant-tests] |
+| `tasks.smoothcal(vis=…)` | Read field metadata for smoothing a calibration table | Yes | Yes | [Verify field-specific smoothing on both stores][smoothcal-tests] |
 
 [format-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_msconvert_formats.py
 [rerefant-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_rerefant_formats.py
+[smoothcal-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_smoothcal_formats.py
 
 ## Choose the output format
 
@@ -66,3 +68,11 @@ to the measurement set by station and position and checks that the names
 agree. The task refuses an ambiguous identity before publishing the
 output. With MSv2, `refant` selects from the MeasurementSet's `ANTENNA`
 subtable using its stored row numbers and position values.
+
+## Smooth calibration tables
+
+For `tasks.smoothcal` with an MSv4 input, `field` selects rows of
+`tablein`'s `FIELD` subtable. The selected rows must identify unique
+observation fields by name and phase centre. With MSv2, `field` selects
+from the MeasurementSet's `FIELD` subtable. An empty selector smooths
+solutions for every field in the calibration table.
