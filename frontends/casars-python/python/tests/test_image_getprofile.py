@@ -374,3 +374,15 @@ def test_rest_frequency_quantities_and_negative_spectral_samples(casa):
             image.done()
     for native, expected in zip(*results[::-1]):
         _compare(native, expected)
+
+
+def test_getprofile_checks_attachment_and_precision_before_axis():
+    image = tools.image()
+    try:
+        with pytest.raises(RuntimeError, match="No image attached to tool"):
+            image.getprofile()
+        assert image.fromarray(pixels=np.ones((2, 2, 4)), type="d")
+        with pytest.raises(RuntimeError, match="does not support images with double precision"):
+            image.getprofile()
+    finally:
+        image.done()
