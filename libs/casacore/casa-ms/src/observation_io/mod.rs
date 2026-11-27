@@ -9,8 +9,9 @@
 //! and imports neither concrete adapter.
 //!
 //! The MSv2 adapter grids rows onto time × baseline at opening and
-//! partitions them as XRADIO's converter does, so both adapters deliver
-//! the same batches.
+//! partitions them using XRADIO's grid model. It divides grids by processor
+//! and separates simultaneous fields or scans where needed. Both adapters
+//! deliver the same batch representation.
 
 #[cfg(unix)]
 pub mod creation;
@@ -61,9 +62,10 @@ pub enum GroupClosure {
 
 /// How the MSv2 adapter divides MAIN rows into partitions, beyond the keys
 /// every partition has: data description, intents (`STATE::OBS_MODE`),
-/// observation, ephemeris and feed pair (XRADIO's mandatory
-/// `partition_scheme`, plus the feed pair MSv4 has no axis for). An MSv4
-/// store is already partitioned and ignores this.
+/// observation, ephemeris, feed pair and processor. Within each partition,
+/// two distinct fields or scans at the same time force a split by that
+/// key even when the option is off. An MSv4 store is already
+/// partitioned and ignores this.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PartitionScheme {
     /// Also split by `FIELD_ID`, as XRADIO's `partition_scheme=["FIELD_ID"]`.
@@ -79,8 +81,9 @@ pub struct OpenOptions {
     pub group_closure: GroupClosure,
     /// How an MSv2 is partitioned; see [`PartitionScheme`].
     pub partition_scheme: PartitionScheme,
-    /// Probe spectral weight availability before the optional field or scan
-    /// splits. Imaging keeps one weight extent across the resulting grids.
+    /// Probe spectral weight availability before processor and explicit
+    /// field and scan splits. Adaptive field and scan splits always share
+    /// the probe of their original partition.
     pub weight_spectrum_unsplit: bool,
     /// Interpret an incomplete MSv2 frequency descriptor as CASA's
     /// visibility iterator does: use the row's `MEAS_FREQ_REF` for its

@@ -75,20 +75,20 @@ struct Partition {
 
 /// An opened MeasurementSet v2 and its catalogue.
 ///
-/// Opening reads MAIN's key columns in row chunks and partitions the rows the way
-/// XRADIO's converter does (`DATA_DESC_ID` × `OBS_MODE` × `OBSERVATION_ID`
-/// × `EPHEMERIS_ID` and the opening's
-/// [`PartitionScheme`](super::PartitionScheme)), and further by the feed
-/// pair, which XRADIO does not split by. A row whose `STATE_ID` is -1 has
-/// no intents here, where XRADIO's converter gives it the last `STATE`
-/// row's `OBS_MODE` (NumPy's index -1), so an MS mixing such rows with
-/// `STATE` rows partitions differently. Each partition's rows are
-/// placed on its time × baseline grid (the `index` module). Each partition
-/// has one data group, `base`, associating `DATA`, `FLAG`,
-/// `WEIGHT_SPECTRUM` (when its first row has content, else `WEIGHT`) and
-/// `UVW`. Antenna,
-/// field and observation identities are the subtable rows; scans are the
-/// distinct `SCAN_NUMBER`s in ascending order.
+/// Opening reads MAIN's key columns in row chunks. It partitions by
+/// XRADIO's data description, observing mode, observation and ephemeris
+/// keys, by feed pair and processor, and by the opening's
+/// [`PartitionScheme`](super::PartitionScheme). A field or scan conflict
+/// at one time splits the affected partition by that key. Rows with
+/// `STATE_ID` -1 have no intents here. XRADIO uses NumPy's negative
+/// index and assigns them the last state's observing mode.
+///
+/// Each partition's rows occupy a time × ordered-baseline grid. The
+/// `base` data group associates `DATA`, `FLAG`, weights and `UVW`.
+/// [`OpenOptions::weight_spectrum_unsplit`] sets the extent whose first
+/// row decides whether to read `WEIGHT_SPECTRUM` or `WEIGHT`. Antenna,
+/// field and observation identities are the subtable rows. Scan identities
+/// are the distinct `SCAN_NUMBER`s in ascending order.
 ///
 /// Opening checks every unit and measure reference the batches rely on:
 /// `TIME` and `TIME_CENTROID` share one fixed reference (a variable
@@ -131,9 +131,9 @@ impl Msv2Observation {
     ///
     /// When the MeasurementSet cannot be opened, a subtable the catalogue
     /// needs is missing or malformed, a unit or measure reference is
-    /// outside the trial profile, or the rows do not fit their grids (two
-    /// rows in one cell, two fields or scans at one time, several
-    /// `PROCESSOR_ID`s in one partition).
+    /// outside the trial profile, or two rows still claim the same grid
+    /// cell after partitioning by processor and resolving field and scan
+    /// conflicts. The grid has no axis for repeated acquisitions.
     #[cfg(unix)]
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ObservationError> {
         Self::open_with(path, &OpenOptions::default())
@@ -157,10 +157,10 @@ impl Msv2Observation {
     /// (bounded by their files), the rows of the subtables its catalogue is
     /// read from (a table loads every row on first touch and keeps them)
     /// and what is read from them, then its index (its chunk of MAIN's key
-    /// columns, each partition's distinct times, baselines and processors as
-    /// the first pass finds them, at most one row's beyond what was granted,
-    /// then the scans and the grids) and its partitions' entries. The
-    /// totals asked for only grow, a few at a time; a caller that admits
+    /// columns, the survey and any additional split keys, at most one row's
+    /// survey entries beyond what was granted, then the scans and the grids)
+    /// and its partitions' entries. The totals asked for only grow, a few
+    /// at a time; a caller that admits
     /// memory admits each increase. An error from `grant` refuses the
     /// opening with nothing more allocated.
     /// Temporary payload staging in the spectral-weight content probes is
@@ -308,17 +308,22 @@ impl Msv2Observation {
             .collect();
         let mut partitions = Vec::new();
         let mut entries = Vec::new();
-        let mut grids = index.partitions.into_iter();
+        let Index {
+            partitions: indexed_grids,
+            scans,
+            states: main_states,
+        } = index;
+        let mut grids = indexed_grids.into_iter();
         let mut spectral_weights = false;
         let mut remaining_in_weight_group = 0;
         while let Some((key, grid)) = grids.next() {
             if remaining_in_weight_group == 0 {
-                let later = if options.weight_spectrum_unsplit {
-                    grids.as_slice()
-                } else {
-                    &[]
-                };
-                let (row, siblings) = weight_probe_row(&key, &grid, later);
+                let (row, siblings) = weight_probe_row(
+                    &key,
+                    &grid,
+                    grids.as_slice(),
+                    options.weight_spectrum_unsplit,
+                );
                 spectral_weights = has_content(main, "WEIGHT_SPECTRUM", row)?;
                 remaining_in_weight_group = siblings;
             } else {
@@ -364,9 +369,7 @@ impl Msv2Observation {
                 .filter_map(|state| known(*state, states.len()))
                 .map(|state| StateId(state as u32))
                 .collect();
-            let processor = grid
-                .processor
-                .and_then(|processor| known(processor, processors.len()))
+            let processor = known(key.processor, processors.len())
                 .map(|processor| ProcessorId(processor as u32));
             entries.push(PartitionEntry {
                 spectral_window: setup.spectral_window.clone(),
@@ -374,7 +377,7 @@ impl Msv2Observation {
                 frequency_frame: setup.frequency_frame,
                 channel_widths_hz: setup.channel_widths_hz.clone(),
                 correlations: setup.correlations.clone(),
-                intents: catalogue::intents(&key.obs_mode),
+                intents: catalogue::intents(key.obs_mode),
                 observation,
                 feeds: Some(feeds),
                 fields: super::distinct(&grid.field_per_time),
@@ -390,12 +393,13 @@ impl Msv2Observation {
             });
             partitions.push(Partition {
                 grid,
-                obs_mode: key.obs_mode,
+                obs_mode: key.obs_mode.to_owned(),
                 data_description_id,
                 spectral_window_id: setup.spectral_window_id,
                 spectral_weights,
             });
         }
+        drop(grids);
         if let Some((antenna, feed, window)) = feeds.varying(&catalogue::feed_reads(&entries)) {
             tracing::warn!(
                 "FEED states receptors that vary in time (first for antenna {antenna}, feed \
@@ -407,7 +411,7 @@ impl Msv2Observation {
             catalogue: Arc::new(Catalogue {
                 antennas,
                 fields,
-                scans: index.scans,
+                scans,
                 observations,
                 partitions: entries,
                 windows,
@@ -417,7 +421,7 @@ impl Msv2Observation {
             }),
             partitions,
             state_modes: modes,
-            main_states: index.states,
+            main_states,
             spectral_sigmas,
             feeds,
             tile_shapes,
@@ -1095,12 +1099,12 @@ impl Msv2Observation {
 }
 
 /// The most partition `(key, grid)`'s catalogue entry holds before it is
-/// built: its setup's copy, its intents (the parts of its `OBS_MODE`), its
-/// fields and scans (at most one of each per time), baselines, states and
-/// data groups (`groups`), and the receptors of each antenna its baselines
-/// name, `antennas` at most, each at most `receptors` bytes.
+/// built: its setup's copy, observing mode, intents, fields and scans
+/// (at most one of each per time), baselines, states and data groups
+/// (`groups`), and the receptors of each antenna its baselines name,
+/// `antennas` at most, each at most `receptors` bytes.
 fn entry_bytes(
-    (key, grid): &(index::PartitionKey, index::Grid),
+    (key, grid): &(index::PartitionKey<'_>, index::Grid),
     setups: &[catalogue::SpectralSetup],
     groups: &[DataGroupEntry],
     (receptors, antennas): (usize, usize),
@@ -1109,8 +1113,7 @@ fn entry_bytes(
         .ok()
         .and_then(|row| setups.get(row))
         .map_or(0, catalogue::SpectralSetup::heap_bytes);
-    let intents =
-        2 * key.obs_mode.len() + (key.obs_mode.matches(',').count() + 1) * size_of::<String>();
+    let (intents, scratch) = catalogue::intent_list_bytes(catalogue::mode_intents(key.obs_mode));
     let groups: usize = groups
         .iter()
         .map(|group| size_of::<DataGroupEntry>() + heap::group_bytes(group))
@@ -1118,7 +1121,9 @@ fn entry_bytes(
     let receptor_count = (2 * grid.baselines.len()).min(antennas);
     size_of::<PartitionEntry>()
         + setup
+        + key.obs_mode.len()
         + intents
+        + scratch
         + (grid.field_per_time.len() + grid.scan_per_time.len()) * size_of::<u32>()
         + size_of_val(grid.baselines.as_slice())
         + grid.states.len() * size_of::<StateId>()
@@ -1244,18 +1249,19 @@ fn weight_source(
     }
 }
 
-/// The unsplit grid's first row by time and then physical row number, and
-/// the number of immediately following grids that share that probe.
+/// The weight extent's first row by time and then physical row number,
+/// and the number of immediately following grids that share that probe.
 fn weight_probe_row(
-    key: &PartitionKey,
+    key: &PartitionKey<'_>,
     grid: &Grid,
-    later: &[(PartitionKey, Grid)],
+    later: &[(PartitionKey<'_>, Grid)],
+    unsplit: bool,
 ) -> (usize, usize) {
     let mut first = (grid.times_s[0], grid.first_time_row());
     let mut siblings = 0;
     for (_, sibling) in later
         .iter()
-        .take_while(|(other, _)| key.same_unsplit_partition(other))
+        .take_while(|(other, _)| key.same_weight_partition(other, unsplit))
     {
         let candidate = (sibling.times_s[0], sibling.first_time_row());
         if candidate
