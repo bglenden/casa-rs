@@ -706,5 +706,5 @@ pub(super) fn fill_rows(
 }
 
 #[cfg(test)]
-#[path = "asdm_stman_tests.rs"]
+#[path = "../asdm_stman_tests.rs"]
 mod tests;
