@@ -19,7 +19,7 @@ fn fits_the_frozen_casa_continuum_row_components() {
             let x = 1.0 - 2.0 * f64::from(channel) / 7.0;
             (x, constant + slope * x, 2.0 + f64::from(channel))
         });
-        let fit = fit_polynomial_row(&samples, 2, RowWeights::Supplied).unwrap();
+        let fit = fit_polynomial_row(samples.into_iter(), 2, RowWeights::Supplied).unwrap();
         close(fit[0], constant);
         close(fit[1], slope);
     }
@@ -33,14 +33,20 @@ fn normalized_and_residual_reweighted_fits_keep_their_distinct_results() {
         (1.0, 7.0, 1.0e-30),
     ];
     let mode = |passes| RowWeights::Reweighted(NonZeroUsize::new(passes).unwrap());
-    close(fit_polynomial_row(&samples, 1, mode(1)).unwrap()[0], 3.0);
-    close(fit_polynomial_row(&samples, 1, mode(2)).unwrap()[0], 1.0);
+    close(
+        fit_polynomial_row(samples.into_iter(), 1, mode(1)).unwrap()[0],
+        3.0,
+    );
+    close(
+        fit_polynomial_row(samples.into_iter(), 1, mode(2)).unwrap()[0],
+        1.0,
+    );
 }
 
 #[test]
 fn rank_deficient_fit_returns_the_minimum_norm_coefficients() {
     let samples = [(0.0, 2.0, 1.0), (0.0, 4.0, 3.0)];
-    let fit = fit_polynomial_row(&samples, 2, RowWeights::Supplied).unwrap();
+    let fit = fit_polynomial_row(samples.into_iter(), 2, RowWeights::Supplied).unwrap();
     close(fit[0], 3.5);
     close(fit[1], 0.0);
 }
@@ -56,7 +62,7 @@ fn reweighting_preserves_exact_fit_zero_residual_samples() {
         (2.0, 5.0, 1.0),
     ];
     let fit = fit_polynomial_row(
-        &samples,
+        samples.into_iter(),
         1,
         RowWeights::Reweighted(NonZeroUsize::new(2).unwrap()),
     )
