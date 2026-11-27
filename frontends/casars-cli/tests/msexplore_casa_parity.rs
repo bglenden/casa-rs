@@ -1066,7 +1066,7 @@ fn first_iterated_panel_point_region(
 
 fn apply_casa_flag_preview(
     ms_path: &Path,
-    preview: &casa_ms::MsFlagEditPreview,
+    preview: &casa_plot_data::msexplore::MsFlagEditPreview,
 ) -> Result<(), String> {
     let _guard = casa_plotms_lock().lock().expect("lock CASA plotms");
     let casa = discover_casa_python().ok_or_else(|| skip_reason(false))?;
