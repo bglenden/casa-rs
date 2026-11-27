@@ -33,7 +33,6 @@ rayon = "1"
 schemars = { version = "0.8", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sofars.workspace = true
 tempfile = "3"
 thiserror.workspace = true
 tracing.workspace = true

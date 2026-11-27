@@ -25,4 +25,3 @@ serde_json = { version = "1", features = ["raw_value"] }
 
 [dev-dependencies]
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order", "raw_value"] }
-tempfile = "3"

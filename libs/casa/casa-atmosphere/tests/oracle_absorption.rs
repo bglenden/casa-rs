@@ -6,7 +6,7 @@
 //! a negative separation), every per-channel opacity, phase delay and path
 //! length, the window averages and the per-layer absorption coefficients.
 
-mod common;
+use crate::common;
 
 use casa_atmosphere::absorption::{
     Absorber, AbsorptionChannel, channel_absorption, channel_totals,

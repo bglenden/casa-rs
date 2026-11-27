@@ -116,7 +116,7 @@ imaging-t44-mtmfs-products testdata_root casa_python casa_prefix:
 imaging-t59-low-memory representative_ms casa_prefix:
     test -d "{{representative_ms}}"
     test -e "{{casa_prefix}}.psf.tt0"
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test pass_laws residency::
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test api pass_laws::residency::
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging --test api continuum_application::domains_and_waves::
     CASA_RS_ISSUE607_MTMFS_MS="{{representative_ms}}" CASA_RS_ISSUE607_MTMFS_CASA_PREFIX="{{casa_prefix}}" CARGO_INCREMENTAL=0 cargo test -p casa-parity --test api mtmfs_publication_oracle::issue607_representative_mtmfs_matches_casa_products --release -- --ignored --exact --nocapture
 

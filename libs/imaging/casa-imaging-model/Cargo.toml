@@ -17,7 +17,6 @@ casa-coordinates.workspace = true
 casa-observation.workspace = true
 casa-core.workspace = true
 ndarray.workspace = true
-num-complex.workspace = true
 thiserror.workspace = true
 
 [[test]]

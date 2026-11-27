@@ -128,6 +128,7 @@ impl TaskSuccess {
     /// Replay an INFO message with its original time through the log sinks.
     /// If `fallback_to_text` is true and no INFO sink is enabled, display a
     /// timestamped line on stderr instead. The CASA return value is unchanged.
+    #[cfg(feature = "images")]
     #[must_use]
     pub fn with_replayed_info(
         self,

@@ -7,3 +7,5 @@ mod synthetic_pass;
 
 mod beam_statistics;
 mod minor_cycle;
+
+mod pass_laws;

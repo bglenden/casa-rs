@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Enforce the ADR-0016 imaging crate layering and source rules.
+"""Enforce workspace tiers, publishability and the ADR-0016 imaging rules.
 
 Checks, from `resources/imaging-architecture/dependency-policy.json`:
 
@@ -30,10 +30,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from graphlib import CycleError, TopologicalSorter
 import re
 import subprocess
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -42,7 +44,7 @@ POLICY = REPO_ROOT / "resources/imaging-architecture/dependency-policy.json"
 
 def cargo_metadata() -> dict:
     output = subprocess.run(
-        ["cargo", "metadata", "--no-deps", "--format-version", "1"],
+        ["cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"],
         check=True,
         capture_output=True,
         text=True,
@@ -240,7 +242,7 @@ def self_test() -> int:
         found = pattern.search(strip_inline_tests(source)) is not None
         if found != expected:
             failures += 1
-            print(f"imaging-dependencies self-test failed: {name}", file=sys.stderr)
+            print(f"workspace-arch self-test failed: {name}", file=sys.stderr)
     for name, files, expected in MODULE_CASES:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -251,7 +253,7 @@ def self_test() -> int:
             if found != expected:
                 failures += 1
                 print(
-                    f"imaging-dependencies self-test failed: {name}: {sorted(found)}",
+                    f"workspace-arch self-test failed: {name}: {sorted(found)}",
                     file=sys.stderr,
                 )
     for name, changes, packages, expected in LAYERING_CASES:
@@ -261,9 +263,9 @@ def self_test() -> int:
         )
         if len(found) != expected:
             failures += 1
-            print(f"imaging-dependencies self-test failed: {name}: {found}", file=sys.stderr)
+            print(f"workspace-arch self-test failed: {name}: {found}", file=sys.stderr)
     if failures == 0:
-        print("imaging-dependencies: self-test ok")
+        print("workspace-arch: self-test ok")
     return 1 if failures else 0
 
 
@@ -525,11 +527,11 @@ def module_declarations(source: str) -> list[tuple[tuple[str, ...], str, bool, s
     return declarations
 
 
-def declared_file(declaring: Path, inline: tuple[str, ...], name: str, path: str | None) -> Path | None:
+def declared_file(declaring: Path, inline: tuple[str, ...], name: str, path: str | None, *, target_root: bool = False) -> Path | None:
     """The file a `mod name;` in `declaring`, inside the `inline` modules,
     loads (the Rust reference's module source filenames and `path`
     attribute rules), or `None` when it names no file."""
-    mod_rs = declaring.name in ("mod.rs", "lib.rs", "main.rs") or declaring.parent.name == "bin"
+    mod_rs = target_root or declaring.name in ("mod.rs", "lib.rs", "main.rs") or declaring.parent.name == "bin"
     directory = declaring.parent if mod_rs else declaring.with_suffix("")
     if path is not None:
         base = directory.joinpath(*inline) if inline else declaring.parent
@@ -630,24 +632,301 @@ def print_grandfather(policy: dict, metadata: dict) -> None:
         print(json.dumps({"id": rule["id"], "grandfathered": sorted(rule_violations(rule))}, indent=1))
 
 
+# Workspace policy covers the physical layout. ADR-0016's logical imaging
+# layers are checked separately by check_layering.
+LIBRARY_TIERS = {"casacore", "imaging", "casa"}
+TIER_DEPENDENCIES = {
+    "casacore": {"casacore"},
+    "imaging": LIBRARY_TIERS,
+    "casa": LIBRARY_TIERS,
+    "surfaces": LIBRARY_TIERS | {"surfaces"},
+    "frontends": LIBRARY_TIERS | {"surfaces"},
+    "dev": LIBRARY_TIERS | {"surfaces", "dev"},
+    "suites": LIBRARY_TIERS | {"surfaces", "frontends", "dev", "suites"},
+}
+FEATURE_GATED = {"casa-tasks", "casa-plot-data", "casars-cli"}
+RUST_TOKENS = re.compile(r"""//|/\*|b?r#*"|b?["']|[A-Za-z_][A-Za-z_0-9]*""")
+
+
+def package_tier(manifest: Path) -> str:
+    parts = manifest.relative_to(REPO_ROOT).parts
+    if len(parts) == 4 and parts[0] == "libs" and parts[1] in LIBRARY_TIERS:
+        return parts[1]
+    if len(parts) == 3 and parts[0] in {"surfaces", "frontends", "dev", "suites"}:
+        return parts[0]
+    return ""
+
+
+def ui_dependency(name: str) -> bool:
+    return name.split("-", 1)[0].split("_", 1)[0] in {"clap", "pyo3"}
+
+
+def dependency_feature_is_wired(package: dict, dependency: dict) -> bool:
+    name = dependency.get("rename") or dependency["name"]
+    return dependency["optional"] and any(
+        entry in {name, f"dep:{name}"} or entry.startswith(f"{name}/")
+        for feature, entries in package["features"].items()
+        if feature not in {"default", name}
+        for entry in entries
+    )
+
+
+def dependency_rules(package: dict, by_directory: dict, definitional: set[str]) -> list[str]:
+    name = package["name"]
+    tier = package_tier(Path(package["manifest_path"]))
+    if not tier:
+        return [f"{name} has no workspace tier at {package['manifest_path']}"]
+    failures = []
+    for dependency in package["dependencies"]:
+        target_name = dependency["name"]
+        directory = dependency.get("path")
+        target = by_directory.get(directory)
+        target_tier = package_tier(Path(target["manifest_path"])) if target is not None else ""
+        dev = dependency["kind"] == "dev"
+        if tier in LIBRARY_TIERS | {"surfaces"} and ui_dependency(target_name):
+            failures.append(f"{name} depends on UI framework {target_name}")
+        if tier in LIBRARY_TIERS and target_tier in {"surfaces", "frontends"}:
+            failures.append(f"{name} has an upward dependency on {target_name}")
+        elif not dev and target is not None and target_tier not in TIER_DEPENDENCIES[tier]:
+            failures.append(f"{name} ({tier}) may not depend on {target_name} ({target_tier})")
+        if not dev and package["publish"] != [] and directory:
+            if target is None or target["publish"] == []:
+                failures.append(f"publishable {name} depends on private path crate {target_name}")
+            if dependency["req"] == "*":
+                failures.append(f"publishable {name} needs a registry version for {target_name}")
+        if (
+            not dev and name in FEATURE_GATED and target_tier in LIBRARY_TIERS
+            and target_name not in definitional and not dependency_feature_is_wired(package, dependency)
+        ):
+            failures.append(f"{name}'s {target_name} dependency must be optional and enabled by a domain feature")
+        if name == "casars-python" and target_name == "casa-aipsio":
+            failures.append("casars-python must use the typed libraries and may not depend on casa-aipsio")
+        if target_name == "objc2-metal":
+            if name != "casa-imaging-metal":
+                failures.append(f"{name} depends on objc2-metal outside casa-imaging-metal")
+            elif 'target_os = "macos"' not in (dependency.get("target") or ""):
+                failures.append("objc2-metal must be behind a macOS target dependency")
+    if name == "casa-imaging-runtime" and not any(
+        d["name"] == "casa-imaging-metal" and d["kind"] is None
+        and not d["optional"] and d.get("target") is None for d in package["dependencies"]
+    ):
+        failures.append("casa-imaging-runtime needs an unconditional casa-imaging-metal dependency")
+    return failures
+
+
+def rust_identifiers(source: str) -> set[str]:
+    """Identifiers in code, without occurrences in comments or literals."""
+    names = set()
+    position = 0
+    while (token := RUST_TOKENS.search(source, position)) is not None:
+        start = token.start()
+        position = token.end()
+        if token[0].startswith("/"):
+            position = comment_end(source, start)
+        elif '"' in token[0] or "'" in token[0]:
+            position = literal_end(source, start) or position
+        else:
+            names.add(token[0])
+    return names
+
+
+def module_sources(entry: Path) -> set[Path]:
+    """Rust files reached from an actual Cargo target root."""
+    pending = [entry]
+    reached = set()
+    while pending:
+        path = pending.pop()
+        if path in reached or not path.is_relative_to(REPO_ROOT):
+            continue
+        reached.add(path)
+        for inline, name, _, attribute in module_declarations(path.read_text(encoding="utf-8")):
+            child = declared_file(path, inline, name, attribute, target_root=path == entry)
+            if child is not None:
+                pending.append(child)
+    return reached
+
+
+def allocator_or_binary_test(entry: Path) -> bool:
+    for path in module_sources(entry):
+        source = path.read_text(encoding="utf-8")
+        uses_allocator = re.search(r"(?m)^\s*#\[\s*global_allocator\s*\]", source)
+        if (uses_allocator and "global_allocator" in rust_identifiers(source)) or re.search(
+            r'\b(?:env|option_env)!\s*\(\s*"CARGO_BIN_EXE_[^"]+"', source
+        ):
+            return True
+    return False
+
+
+def workspace_rust_files(root: Path) -> list[Path]:
+    files = []
+    for directory in ("src", "tests", "examples", "benches"):
+        files.extend(path for path in (root / directory).rglob("*.rs") if path.is_file())
+    return files
+
+
+def unused_dependencies(package: dict, files: list[Path]) -> set[str]:
+    declared = {d.get("rename") or d["name"] for d in package["dependencies"]}
+    if not declared:
+        return set()
+    sources = {path: path.read_text(encoding="utf-8") for path in files}
+    names = set().union(*(rust_identifiers(source) for source in sources.values()))
+    missing = {name for name in declared if name.replace("-", "_") not in names}
+    if not missing:
+        return set()
+    # Test targets can share fixture code through path attributes, including
+    # fixtures in another workspace crate.
+    root = Path(package["manifest_path"]).parent
+    helpers = {
+        (path.parent / attr[1]).resolve()
+        for path, source in sources.items()
+        for attr in PATH_ATTRIBUTE.finditer(source)
+    }
+    external = {
+        path for path in helpers if path.is_file() and path.is_relative_to(REPO_ROOT)
+        and not path.is_relative_to(root)
+    }
+    names.update(
+        identifier
+        for entry in external
+        for path in module_sources(entry)
+        for identifier in rust_identifiers(path.read_text(encoding="utf-8"))
+    )
+    return {name for name in missing if name.replace("-", "_") not in names}
+
+
+def check_workspace(policy: dict, metadata: dict) -> list[str]:
+    packages = metadata["packages"]
+    by_directory = {str(Path(p["manifest_path"]).parent): p for p in packages}
+    old_pairs = set(policy.get("dual_module_files", []))
+    exceptions = set(policy.get("test_target_exceptions", []))
+    seen_exceptions = set()
+    dual_pairs = set()
+    failures = []
+    graph = {
+        p["name"]: {
+            by_directory[d["path"]]["name"]
+            for d in p["dependencies"]
+            if d["kind"] != "dev" and d.get("path") in by_directory
+        }
+        for p in packages
+    }
+    try:
+        tuple(TopologicalSorter(graph).static_order())
+    except CycleError as error:
+        failures.append("workspace dependency cycle: " + " -> ".join(error.args[1]))
+    for package in packages:
+        name = package["name"]
+        manifest = Path(package["manifest_path"])
+        root = manifest.parent
+        tier = package_tier(manifest)
+        failures += dependency_rules(package, by_directory, set(policy["definitional_packages"]))
+        source_paths = workspace_rust_files(root)
+        dual_pairs.update(
+            path.relative_to(REPO_ROOT).as_posix()
+            for path in source_paths if path.with_suffix("").is_dir()
+        )
+        if tier in LIBRARY_TIERS | {"surfaces"}:
+            if any("bin" in target["kind"] for target in package["targets"]) or any(
+                (root / path).exists() for path in ("src/main.rs", "src/bin")
+            ):
+                failures.append(f"{name} must not ship binary targets below frontends")
+        if tier in LIBRARY_TIERS:
+            if tomllib.loads(manifest.read_text(encoding="utf-8"))["package"].get("publish") is not True:
+                failures.append(f"{name} must explicitly declare publish = true")
+            if "cpp-interop-tests" in package["features"]:
+                failures.append(f"{name} must move C++ interop to suites/casacore-interop")
+            tests = [target for target in package["targets"] if "test" in target["kind"]]
+            if not any(
+                target["name"] == "api" and Path(target["src_path"]) == root / "tests/api.rs"
+                for target in tests
+            ):
+                failures.append(f"{name} needs its default tests/api.rs target")
+            for target in tests:
+                if target["name"] == "api":
+                    continue
+                entry = Path(target["src_path"])
+                relative = entry.relative_to(REPO_ROOT).as_posix()
+                if relative in exceptions and allocator_or_binary_test(entry):
+                    seen_exceptions.add(relative)
+                else:
+                    failures.append(f"{relative} must use tests/api.rs or an approved isolated target")
+        for target in package["targets"]:
+            if "custom-build" in target["kind"]:
+                path = Path(target["src_path"])
+                source_paths.append(path)
+                if tier in LIBRARY_TIERS and re.search(r'\bserde_json\b|\.json["\x27]', path.read_text(encoding="utf-8")):
+                    failures.append(f"{name} library build script must not contain JSON probes")
+        if name == "casars-python":
+            native_tasks = root / "src/native_tasks.rs"
+            if not any(d["name"] == "casa-tasks" and d["kind"] is None for d in package["dependencies"]) or not (
+                native_tasks.is_file()
+                and re.search(r"\brun_task_in_process\s*\(", native_tasks.read_text(encoding="utf-8"))
+            ):
+                failures.append("casars-python must dispatch native tasks through casa-tasks")
+            for file in (native_tasks, root / "src/tasks.rs", root / "python/casars/tasks.py"):
+                if file.is_file() and re.search(r"\b(?:subprocess|Command::new|CASARS_\w+_BIN)\b", file.read_text(encoding="utf-8")):
+                    failures.append(f"{file.relative_to(REPO_ROOT)} must dispatch tasks in-process")
+        failures.extend(f"{name} declares unused dependency {d}" for d in sorted(unused_dependencies(package, source_paths)))
+    failures.extend(f"stale test target exception: {p}" for p in sorted(exceptions - seen_exceptions))
+    failures.extend(f"dual Rust module: move {p} into its matching directory" for p in sorted(dual_pairs - old_pairs))
+    failures.extend(f"stale dual-module allowance: {p}" for p in sorted(old_pairs - dual_pairs))
+    return failures
+
+
+def check_workspace_self_test() -> None:
+    def package(name, manifest, **changes):
+        return {"name": name, "manifest_path": str(REPO_ROOT / manifest),
+                "publish": None, "dependencies": [], "features": {}, **changes}
+
+    top = package("app", "surfaces/app/Cargo.toml", **{"publish": []})
+    low = package("lib", "libs/casacore/lib/Cargo.toml")
+    low["dependencies"] = [{
+        "name": "app", "path": str(REPO_ROOT / "surfaces/app"),
+        "kind": "build", "req": "*", "optional": False,
+    }]
+    errors = dependency_rules(low, {str(REPO_ROOT / "surfaces/app"): top}, set())
+    assert any("upward dependency" in e for e in errors), errors
+    assert any("registry version" in e for e in errors), errors
+    assert any("private path crate" in e for e in errors), errors
+    assert rust_identifiers('/* other::Call */ "absent::Call"; use used::Call;') == {"use", "used", "Call"}
+
+    metal = package("casa-imaging-runtime", "libs/imaging/casa-imaging-runtime/Cargo.toml")
+    metal["dependencies"] = [{
+        "name": "casa-imaging-metal", "kind": None, "optional": False,
+        "target": 'cfg(target_os = "macos")',
+    }]
+    assert "unconditional" in dependency_rules(metal, {}, set())[0]
+    metal["dependencies"][0]["target"] = None
+    assert not dependency_rules(metal, {}, set())
+
+    lib_directory = str(REPO_ROOT / "libs/casacore/lib")
+    adapter = package("casa-tasks", "surfaces/casa-tasks/Cargo.toml")
+    dep = {"name": "lib", "path": lib_directory, "kind": None, "req": "1", "optional": True}
+    adapter["dependencies"] = [dep]
+    assert any("domain feature" in e for e in dependency_rules(adapter, {lib_directory: low}, set()))
+    adapter["features"] = {"calibration": ["dep:lib"]}
+    assert not dependency_rules(adapter, {lib_directory: low}, set())
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--grandfather", action="store_true", help="print current violations in policy form")
     parser.add_argument("--self-test", action="store_true", help="check the test-stripping and layering logic")
     args = parser.parse_args()
     if args.self_test:
+        check_workspace_self_test()
         return self_test()
     policy = json.loads(POLICY.read_text(encoding="utf-8"))
     metadata = cargo_metadata()
     if args.grandfather:
         print_grandfather(policy, metadata)
         return 0
-    failures = check_layering(policy, metadata) + check_source_rules(policy, metadata)
+    failures = check_workspace(policy, metadata) + check_layering(policy, metadata) + check_source_rules(policy, metadata)
     for failure in failures:
-        print(f"imaging-dependencies: {failure}", file=sys.stderr)
+        print(f"workspace-arch: {failure}", file=sys.stderr)
     if failures:
         return 1
-    print("imaging-dependencies: ok")
+    print("workspace-arch: ok")
     return 0
 
 

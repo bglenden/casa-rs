@@ -16,7 +16,7 @@ use casa_imaging_runtime::pass::{
 use casa_imaging_runtime::{Admission, Demand, HostResources, ResourcePolicy, admit};
 use num_complex::Complex32;
 
-use crate::fixture::{
+use super::fixture::{
     IMAGE, Rows, Run, WIDTH_HZ, nearest_cube, offset_linear_cube, operator, planes, run,
     sparse_model, try_run, window_of, worst_relative,
 };
