@@ -366,6 +366,7 @@ impl TilePixel for Complex64 {
     const STORAGE_TYPE: PrimitiveType = PrimitiveType::Complex64;
 }
 
+use super::data_file::DataFile;
 use super::canonical::*;
 use super::data_type::CasacoreDataType;
 use super::table_control::{
@@ -733,7 +734,7 @@ fn write_bool_bits_fill(dst: &mut [u8], nrpixels: usize) {
 ///
 /// Returns the variant-specific data and the common base header.
 fn read_tiled_header(path: &Path) -> Result<(TiledVariant, TiledStManHeader), StorageError> {
-    let mut io = AipsIo::open(path, AipsOpenOption::Old)?;
+    let mut io = DataFile::aips(path)?;
 
     // The outermost AipsIO object is the derived-class envelope.
     let outer_type = io.get_next_type()?;
@@ -887,7 +888,7 @@ fn read_tiled_stman_base(io: &mut AipsIo) -> Result<TiledStManHeader, StorageErr
 /// need not be the group its columns' descriptions declare. `None` when the
 /// file is missing or does not parse.
 pub(crate) fn name_from_file(path: &Path) -> Option<String> {
-    let mut io = AipsIo::open(path, AipsOpenOption::Old).ok()?;
+    let mut io = DataFile::aips(path).ok()?;
     let outer_type = io.get_next_type().ok()?;
     io.getstart(&outer_type).ok()?;
     match outer_type.as_str() {
@@ -2366,7 +2367,7 @@ fn load_tiled_column_stman(
 
     // Read the TSM data file.
     let tsm_file_name = tsm_data_path(table_path, dm_seq_nr, cube.file_seq_nr as u32);
-    let file_data = std::fs::read(&tsm_file_name).map_err(|e| {
+    let file_data = DataFile::read_all(&tsm_file_name).map_err(|e| {
         StorageError::FormatMismatch(format!("cannot read {}: {e}", tsm_file_name.display()))
     })?;
 
@@ -2535,7 +2536,7 @@ fn load_tiled_shape_stman(
         let fseq = cube.file_seq_nr as u32;
         if let std::collections::hash_map::Entry::Vacant(e) = file_cache.entry(fseq) {
             let path = tsm_data_path(table_path, dm_seq_nr, fseq);
-            let data = std::fs::read(&path).map_err(|err| {
+            let data = DataFile::read_all(&path).map_err(|err| {
                 StorageError::FormatMismatch(format!("cannot read {}: {err}", path.display()))
             })?;
             e.insert(data);
@@ -2777,7 +2778,7 @@ fn load_tiled_data_stman(
         let fseq = cube.file_seq_nr as u32;
         if let std::collections::hash_map::Entry::Vacant(e) = file_cache.entry(fseq) {
             let path = tsm_data_path(table_path, dm_seq_nr, fseq);
-            let data = std::fs::read(&path).map_err(|err| {
+            let data = DataFile::read_all(&path).map_err(|err| {
                 StorageError::FormatMismatch(format!("cannot read {}: {err}", path.display()))
             })?;
             e.insert(data);
@@ -2966,7 +2967,7 @@ fn load_tiled_cell_stman(
         let fseq = cube.file_seq_nr as u32;
         if let std::collections::hash_map::Entry::Vacant(e) = file_cache.entry(fseq) {
             let path = tsm_data_path(table_path, dm_seq_nr, fseq);
-            let data = std::fs::read(&path).map_err(|err| {
+            let data = DataFile::read_all(&path).map_err(|err| {
                 StorageError::FormatMismatch(format!("cannot read {}: {err}", path.display()))
             })?;
             e.insert(data);
@@ -9389,7 +9390,7 @@ fn write_tiled_file_tile(
 }
 
 struct TileReadSessionFile {
-    file: std::fs::File,
+    file: DataFile,
     file_position: u64,
     read_ahead_start: u64,
     read_ahead: Vec<u8>,
@@ -9425,7 +9426,7 @@ impl TileReadSession {
             std::collections::hash_map::Entry::Occupied(entry) => Ok(entry.into_mut()),
             std::collections::hash_map::Entry::Vacant(entry) => {
                 let path = tsm_data_path(table_path, dm_seq_nr, file_seq_nr);
-                let file = OpenOptions::new().read(true).open(&path).map_err(|err| {
+                let file = DataFile::open(&path).map_err(|err| {
                     StorageError::FormatMismatch(format!("cannot read {}: {err}", path.display()))
                 })?;
                 Ok(entry.insert(TileReadSessionFile {

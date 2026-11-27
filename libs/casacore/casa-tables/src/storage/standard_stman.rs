@@ -23,6 +23,7 @@ use casa_aipsio::{AipsIo, ByteOrder};
 
 use casa_core::{ArrayValue, ScalarValue, Value};
 
+use super::data_file::{DataFile, DataRead};
 use super::canonical::{
     canonical_element_size, read_bool_bits, read_f32_be, read_f32_le, read_f32_slice_be,
     read_f32_slice_le, read_f64_be, read_f64_le, read_f64_slice_be, read_f64_slice_le,
@@ -222,7 +223,7 @@ struct SsmIndex {
 // Header parsing
 // ---------------------------------------------------------------------------
 
-fn parse_ssm_header(file: &mut File) -> Result<SsmHeader, StorageError> {
+fn parse_ssm_header(file: &mut impl DataRead) -> Result<SsmHeader, StorageError> {
     file.seek(SeekFrom::Start(0))?;
     let mut header_buf = vec![0u8; SSM_HEADER_SIZE as usize];
     file.read_exact(&mut header_buf)?;
@@ -306,7 +307,7 @@ pub(crate) fn dm_name_from_blob(data: &[u8]) -> Option<String> {
 /// Whether an existing on-disk `StandardStMan` file uses smaller buckets than
 /// casa-rs's 32 KiB default (such as casacore's default 32-row layout).
 pub(crate) fn ssm_has_small_buckets(data_path: &Path) -> Result<bool, StorageError> {
-    let mut file = File::open(data_path)?;
+    let mut file = DataFile::open(data_path)?;
     let header = parse_ssm_header(&mut file)?;
     Ok(header.bucket_size < DEFAULT_SSM_BUCKET_SIZE)
 }
@@ -317,7 +318,7 @@ pub(crate) fn ssm_spec(
     dm_seq_nr: u32,
 ) -> Result<casa_core::RecordValue, StorageError> {
     let data_path = table_path.join(format!("{}{dm_seq_nr}", super::TABLE_DATA_FILE_PREFIX));
-    let mut file = File::open(&data_path)?;
+    let mut file = DataFile::open(&data_path)?;
     let header = parse_ssm_header(&mut file)?;
     let bucket_size = i32::try_from(header.bucket_size)
         .map_err(|_| StorageError::FormatMismatch("SSM bucket size exceeds i32".into()))?;
@@ -359,12 +360,12 @@ fn read_block_u32(io: &mut AipsIo) -> Result<Vec<u32>, StorageError> {
 // ---------------------------------------------------------------------------
 
 fn read_bucket(
-    file: &mut File,
+    file: &mut impl DataRead,
     header: &SsmHeader,
     bucket_nr: u32,
 ) -> Result<Vec<u8>, StorageError> {
     let offset = SSM_HEADER_SIZE + (bucket_nr as u64) * (header.bucket_size as u64);
-    let file_len = file.metadata()?.len();
+    let file_len = file.data_len()?;
     if offset + header.bucket_size as u64 > file_len {
         return Err(StorageError::FormatMismatch(format!(
             "SSM bucket {bucket_nr} out of range: offset={offset}, bucket_size={}, file_len={file_len}",
@@ -377,7 +378,7 @@ fn read_bucket(
     Ok(buf)
 }
 
-fn parse_ssm_indices(file: &mut File, header: &SsmHeader) -> Result<Vec<SsmIndex>, StorageError> {
+fn parse_ssm_indices(file: &mut impl DataRead, header: &SsmHeader) -> Result<Vec<SsmIndex>, StorageError> {
     if header.nr_indices == 0 || header.first_idx_bucket < 0 {
         return Ok(Vec::new());
     }
@@ -639,7 +640,7 @@ pub(crate) fn read_ssm_file_columns(
     col_descs: &[(usize, &ColumnDescContents)],
     nrrow: usize,
 ) -> Result<Vec<(String, SsmColumnResult)>, StorageError> {
-    let mut file = File::open(file_path)?;
+    let mut file = DataFile::open(file_path)?;
     let header = parse_ssm_header(&mut file)?;
     let dm_info = parse_ssm_dm_blob(dm_blob)?;
     let indices = parse_ssm_indices(&mut file, &header)?;
@@ -858,7 +859,7 @@ pub(crate) fn read_ssm_scalar_column_rows(
         return Ok(Some(Vec::new()));
     }
 
-    let mut file = File::open(file_path)?;
+    let mut file = DataFile::open(file_path)?;
     let header = parse_ssm_header(&mut file)?;
     let dm_info = parse_ssm_dm_blob(dm_blob)?;
     let indices = parse_ssm_indices(&mut file, &header)?;
@@ -1044,7 +1045,7 @@ pub(crate) fn read_ssm_required_scalar_columns_rows_reusing(
         return Ok(());
     }
 
-    let mut file = File::open(file_path)?;
+    let mut file = DataFile::open(file_path)?;
     let header = parse_ssm_header(&mut file)?;
     let dm_info = parse_ssm_dm_blob(dm_blob)?;
     let indices = parse_ssm_indices(&mut file, &header)?;
@@ -1426,7 +1427,7 @@ fn read_ssm_indirect_cell(
     reason = "predates the function-length limit; #705"
 )]
 fn read_column_from_buckets(
-    file: &mut File,
+    file: &mut impl DataRead,
     header: &SsmHeader,
     index: &SsmIndex,
     column_offset: usize,
@@ -1795,7 +1796,7 @@ fn read_column_from_buckets(
 /// Iterate over data buckets and process column data for non-Bool, non-String types.
 #[allow(clippy::too_many_arguments)]
 fn read_typed_column<F>(
-    file: &mut File,
+    file: &mut impl DataRead,
     header: &SsmHeader,
     index: &SsmIndex,
     column_offset: usize,

@@ -27,6 +27,7 @@ use casa_aipsio::internal::{AipsIoBufferWriter, AipsIoSliceReader, detect_aipsio
 use casa_aipsio::{AipsIo, ByteOrder};
 use casa_core::ScalarValue;
 
+use super::data_file::DataFile;
 use super::canonical::{
     read_f32_be, read_f32_le, read_f64_be, read_f64_le, read_i16_be, read_i16_le, read_i32_be,
     read_i32_le, read_i64_be, read_i64_le, read_u16_be, read_u16_le, read_u32_be, read_u32_le,
@@ -203,7 +204,7 @@ pub(crate) fn ism_spec(
     dm_seq_nr: u32,
 ) -> Result<casa_core::RecordValue, StorageError> {
     let data_path = table_path.join(format!("{}{dm_seq_nr}", super::TABLE_DATA_FILE_PREFIX));
-    let mut file = File::open(&data_path)?;
+    let mut file = DataFile::open(&data_path)?;
     let header = parse_ism_header(&mut file)?;
     let bucket_size = i32::try_from(header.bucket_size)
         .map_err(|_| StorageError::FormatMismatch("ISM bucket size exceeds i32".into()))?;
@@ -229,7 +230,7 @@ pub(crate) fn ism_spec(
 // Index parsing (at end of file, after all buckets)
 // ---------------------------------------------------------------------------
 
-fn parse_ism_index(file: &mut File, header: &IsmHeader) -> Result<IsmIndex, StorageError> {
+fn parse_ism_index(file: &mut (impl Read + Seek), header: &IsmHeader) -> Result<IsmIndex, StorageError> {
     let index_offset = ISM_HEADER_SIZE + (header.nr_buckets as u64) * (header.bucket_size as u64);
     file.seek(SeekFrom::Start(index_offset))?;
 
@@ -301,7 +302,7 @@ pub(super) fn appended_ism_index(
 // ---------------------------------------------------------------------------
 
 fn read_ism_bucket(
-    file: &mut File,
+    file: &mut (impl Read + Seek),
     header: &IsmHeader,
     bucket_nr: u32,
 ) -> Result<Vec<u8>, StorageError> {
@@ -584,7 +585,7 @@ pub(crate) fn read_ism_file_columns(
     total_column_count: usize,
     nrrow: usize,
 ) -> Result<Vec<(String, IsmColumnResult)>, StorageError> {
-    let mut file = File::open(file_path)?;
+    let mut file = DataFile::open(file_path)?;
     let header = parse_ism_header(&mut file)?;
     let _dm_name = parse_ism_dm_blob(dm_blob)?;
     let index = parse_ism_index(&mut file, &header)?;
@@ -831,7 +832,7 @@ pub(crate) fn fill_ism_f64_array_rows(
         return Ok(axis0_count);
     }
     let _dm_name = parse_ism_dm_blob(dm_blob)?;
-    let mut file = File::open(file_path)?;
+    let mut file = DataFile::open(file_path)?;
     let header = parse_ism_header(&mut file)?;
     let index = parse_ism_index(&mut file, &header)?;
     let mut requests: Vec<_> = selected_rows.iter().copied().enumerate().collect();
@@ -951,7 +952,7 @@ pub(crate) fn read_ism_required_scalar_columns_rows_reusing(
         return Ok(());
     }
 
-    let mut file = File::open(file_path)?;
+    let mut file = DataFile::open(file_path)?;
     let header = parse_ism_header(&mut file)?;
     let index = parse_ism_index(&mut file, &header)?;
     let contiguous_rows = selected_rows
@@ -1174,7 +1175,7 @@ pub(crate) fn read_ism_scalar_column(
     }
 
     let _dm_name = parse_ism_dm_blob(dm_blob)?;
-    let mut file = File::open(file_path)?;
+    let mut file = DataFile::open(file_path)?;
     let header = parse_ism_header(&mut file)?;
     let index = parse_ism_index(&mut file, &header)?;
     let big_endian = header.big_endian;
@@ -1223,7 +1224,7 @@ fn read_ism_scalar_columns_rows_uncached(
     preserve_defaults: bool,
 ) -> Result<Vec<Vec<Option<ScalarValue>>>, StorageError> {
     let _dm_name = parse_ism_dm_blob(dm_blob)?;
-    let mut file = File::open(file_path)?;
+    let mut file = DataFile::open(file_path)?;
     let header = parse_ism_header(&mut file)?;
     let index = parse_ism_index(&mut file, &header)?;
     let big_endian = header.big_endian;
@@ -1490,7 +1491,7 @@ pub(crate) fn write_ism_file(
 }
 
 pub(super) fn ism_layout(path: &Path) -> Result<(bool, u32, u32), StorageError> {
-    let header = parse_ism_header(&mut File::open(path)?)?;
+    let header = parse_ism_header(&mut DataFile::open(path)?)?;
     Ok((
         header.big_endian,
         header.bucket_size,
