@@ -18,6 +18,7 @@ use casa_core::{ArrayValue, Complex32, Value};
 use ndarray::ShapeBuilder;
 use tempfile::tempdir;
 
+use super::save_columns::save_single_column_tiled_column_stman;
 use super::*;
 use crate::{DataManagerKind, EndianFormat, SelectedArray2DCells, Table, TableOptions};
 
