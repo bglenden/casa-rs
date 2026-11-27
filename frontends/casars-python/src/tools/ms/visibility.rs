@@ -37,7 +37,7 @@ pub(super) struct VisibilityState {
     averaged: bool,
     baseline_write: Option<(i32, i64)>,
     recent_baseline_read: bool,
-    main: Option<Arc<VisibilityMain>>,
+    pub(super) main: Option<Arc<VisibilityMain>>,
     range_subtables: Subtables,
     pub(super) time_measures: OnceLock<Arc<dyn MeasuresProvider>>,
     channels: Option<VisibilityChannels>,
@@ -704,50 +704,6 @@ impl AttachedMs {
         } else {
             Ok(true)
         }
-    }
-
-    /// Rebind active visibility cursors to the newly published BDF paths.
-    pub(super) fn refresh_asdm_readers(&mut self) -> PyResult<()> {
-        self.visibility.main = None;
-        let current = |layout: Option<&Arc<VisibilityMain>>| {
-            layout.is_some_and(|layout| layout.verify_write_layout(&BTreeSet::new()).is_ok())
-        };
-        let modern = current(
-            self.visibility
-                .iteration
-                .as_ref()
-                .and_then(|cursor| cursor.layout.as_ref()),
-        );
-        let legacy = current(
-            self.legacy_selection
-                .iteration
-                .as_ref()
-                .map(|cursor| &cursor.main),
-        );
-        let vi1 = current(self.visibility.vi1.as_ref().map(|cursor| &cursor.main));
-        let baselines = self
-            .legacy_selection
-            .axes
-            .baseline_read
-            .as_ref()
-            .is_some_and(|layout| layout.has_current_descriptor());
-        if !modern && !legacy && !vi1 && !baselines {
-            return Ok(());
-        }
-        let refreshed = self.visibility.current_main(&self.path)?;
-        if modern && let Some(cursor) = &mut self.visibility.iteration {
-            cursor.layout = Some(Arc::clone(&refreshed));
-        }
-        if legacy && let Some(cursor) = &mut self.legacy_selection.iteration {
-            cursor.main = Arc::clone(&refreshed);
-        }
-        if vi1 && let Some(cursor) = &mut self.visibility.vi1 {
-            cursor.main = Arc::clone(&refreshed);
-        }
-        if baselines && let Some(layout) = &mut self.legacy_selection.axes.baseline_read {
-            layout.refresh_descriptor(refreshed);
-        }
-        Ok(())
     }
 
     pub(super) fn putdata_rows(&mut self, items: RecordValue) -> PyResult<bool> {

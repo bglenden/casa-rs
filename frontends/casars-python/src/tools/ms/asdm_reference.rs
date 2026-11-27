@@ -12,6 +12,7 @@ use pyo3::types::{PyBytes, PyBytesMethods};
 use crate::tools::casacore_path::expand_asdm_path;
 
 use super::selection_indices::selection_text;
+use super::visibility::VisibilityMain;
 use super::{AttachedMs, PyMsTool, runtime_error};
 
 #[pymethods]
@@ -113,6 +114,50 @@ impl AttachedMs {
             self.refresh_asdm_readers()?;
         }
         Ok(relocated)
+    }
+
+    /// Rebind active visibility cursors to the newly published BDF paths.
+    pub(super) fn refresh_asdm_readers(&mut self) -> PyResult<()> {
+        self.visibility.main = None;
+        let current = |layout: Option<&Arc<VisibilityMain>>| {
+            layout.is_some_and(|layout| layout.verify_write_layout(&BTreeSet::new()).is_ok())
+        };
+        let modern = current(
+            self.visibility
+                .iteration
+                .as_ref()
+                .and_then(|cursor| cursor.layout.as_ref()),
+        );
+        let legacy = current(
+            self.legacy_selection
+                .iteration
+                .as_ref()
+                .map(|cursor| &cursor.main),
+        );
+        let vi1 = current(self.visibility.vi1.as_ref().map(|cursor| &cursor.main));
+        let baselines = self
+            .legacy_selection
+            .axes
+            .baseline_read
+            .as_ref()
+            .is_some_and(|layout| layout.has_current_descriptor());
+        if !modern && !legacy && !vi1 && !baselines {
+            return Ok(());
+        }
+        let refreshed = self.visibility.current_main(&self.path)?;
+        if modern && let Some(cursor) = &mut self.visibility.iteration {
+            cursor.layout = Some(Arc::clone(&refreshed));
+        }
+        if legacy && let Some(cursor) = &mut self.legacy_selection.iteration {
+            cursor.main = Arc::clone(&refreshed);
+        }
+        if vi1 && let Some(cursor) = &mut self.visibility.vi1 {
+            cursor.main = Arc::clone(&refreshed);
+        }
+        if baselines && let Some(layout) = &mut self.legacy_selection.axes.baseline_read {
+            layout.refresh_descriptor(refreshed);
+        }
+        Ok(())
     }
 }
 
