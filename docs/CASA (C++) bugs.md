@@ -7831,7 +7831,7 @@ duplicated axis. An out-of-range or negative axis is refused with the catchable
 uncontrolled path, not a policy.
 
 casa-rs refuses a duplicated axis with `Invalid cursor axes: [0, 0]: an axis
-is named twice; CASA 6.7.6.14 aborts on it` (libs/casa/casa-imageanalysis/src/analysis.rs,
+is named twice; CASA 6.7.6.14 aborts on it` (libs/casa/casa-imageanalysis/src/analysis/regions.rs,
 `parse_axes`), keeping every other axes form CASA accepts, including the
 minimum-forms `-1` for all axes (#977).
 
@@ -8129,7 +8129,7 @@ message and drops the closing `')'` of the 144-character
 on a synthetic 160-digit `"0123..."` history entry, CASA drops `'3'` at index
 143 between `>...012` and `>456...`.
 
-casa-rs (`libs/casa/casa-imageanalysis/src/analysis/exportfits.rs`, `wrap_fits_history_text`)
+casa-rs (`libs/casa/casa-imageanalysis/src/analysis/exportfits/mod.rs`, `wrap_fits_history_text`)
 splits at 72 characters on the first card and `>` plus 71 characters on each
 continuation card without skipping characters, emitting all 48 cards on
 `cube_i.im` so both casa-rs and CASA 6.7.6.14 `ia.history(list=False)` read back

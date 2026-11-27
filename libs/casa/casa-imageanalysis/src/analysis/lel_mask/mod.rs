@@ -1115,5 +1115,5 @@ fn validate_mask_name<T: ImagePixel>(
 }
 
 #[cfg(all(test, unix))]
-#[path = "../../tests/support/mask_operand_lock.rs"]
+#[path = "../../../tests/support/mask_operand_lock.rs"]
 mod tests;
