@@ -7,11 +7,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_core::measures::EpochRef;
+use casa_core::measures::frequency::FrequencyRef;
 use casa_core::{ScalarValue, Value};
 use casa_ms::MeasurementSet;
 use casa_ms::observation_io::{Msv2Observation, Msv4Observation, Msv4ProcessingSetWriter};
 use casa_observation::{
-    AccessRequest, BatchBuffers, FieldId, Grouping, ObservationError, PartitionId, ReadEvent, Roles,
+    AccessRequest, BatchBuffers, FieldId, Grouping, ObservationError, PartitionId, ReadEvent,
+    Roles, WindowId,
 };
 use zarrs::array::{Array, ArraySubset};
 use zarrs::filesystem::FilesystemStore;
@@ -349,6 +351,116 @@ fn copy_dir(from: &Path, to: &Path) {
         } else {
             std::fs::copy(entry.path(), target).expect("copy");
         }
+    }
+}
+
+/// An XRADIO processing set with two datasets stating the same window.
+fn shared_msv4_window(root: &Path) -> (PathBuf, PathBuf) {
+    let store = fixture(root, "ms_trial.ps.zarr");
+    let copy = store.join("ms_trial_1");
+    copy_dir(&dataset(&store), &copy);
+    (store, copy.join("frequency/zarr.json"))
+}
+
+#[test]
+fn shared_msv4_window_metadata_opens_as_one_window() {
+    let root = tempfile::tempdir().expect("root");
+    let (store, _) = shared_msv4_window(root.path());
+    let opened = Msv4Observation::open(store).expect("compatible datasets open");
+    let catalogue = opened.catalogue();
+    assert_eq!(catalogue.partitions.len(), 2);
+    assert_eq!(catalogue.windows.len(), 1);
+    for partition in &catalogue.partitions {
+        assert_eq!(partition.window, WindowId(0));
+    }
+    let window = &catalogue.windows[0];
+    assert_eq!(window.name, "trial_0");
+    let reference = window
+        .reference_frequency
+        .as_ref()
+        .expect("reference frequency");
+    assert_eq!(reference.hz(), 44_512_000_000.0);
+    assert_eq!(reference.refer(), FrequencyRef::LSRK);
+}
+
+#[test]
+fn shared_msv4_window_conflicts_are_refused_by_name() {
+    for (path, value, attribute) in [
+        (
+            "/attributes/reference_frequency/data",
+            44_513_000_000.0.into(),
+            "reference_frequency",
+        ),
+        (
+            "/attributes/reference_frequency/attrs/observer",
+            "TOPO".into(),
+            "reference_frequency",
+        ),
+        (
+            "/attributes/channel_width/data",
+            64_000_000.0.into(),
+            "channel_width",
+        ),
+        ("/attributes/observer", "TOPO".into(), "observer"),
+    ] {
+        let root = tempfile::tempdir().expect("root");
+        let (store, frequency) = shared_msv4_window(root.path());
+        edit_json(&frequency, |metadata| {
+            *metadata.pointer_mut(path).expect("fixture attribute") = value;
+        });
+        assert_msv4_window_conflict(&store, attribute);
+    }
+}
+
+#[test]
+fn shared_msv4_window_channel_centres_must_agree() {
+    let root = tempfile::tempdir().expect("root");
+    let (store, _) = shared_msv4_window(root.path());
+    let zarr = Arc::new(FilesystemStore::new(&store).expect("store"));
+    let frequency = Array::open(zarr, "/ms_trial_1/frequency").expect("frequency");
+    let subset = ArraySubset::new_with_shape(frequency.shape().to_vec());
+    let mut channels: Vec<f64> = frequency.retrieve_array_subset(&subset).expect("channels");
+    channels[0] += 1.0;
+    frequency
+        .store_array_subset(&subset, &channels)
+        .expect("shifted channel");
+    assert_msv4_window_conflict(&store, "channel frequencies");
+}
+
+#[test]
+fn shared_msv4_window_reference_presence_must_agree() {
+    let root = tempfile::tempdir().expect("root");
+    let (store, frequency) = shared_msv4_window(root.path());
+    let remove_reference = |metadata: &mut serde_json::Value| {
+        metadata["attributes"]
+            .as_object_mut()
+            .expect("attributes")
+            .remove("reference_frequency");
+    };
+    edit_json(&frequency, remove_reference);
+    assert_msv4_window_conflict(&store, "reference_frequency");
+
+    edit_json(
+        &store.join("ms_trial_0/frequency/zarr.json"),
+        remove_reference,
+    );
+    let opened = Msv4Observation::open(store).expect("both references unstated");
+    let catalogue = opened.catalogue();
+    assert_eq!(catalogue.partitions.len(), 2);
+    assert_eq!(catalogue.windows.len(), 1);
+    assert!(catalogue.windows[0].reference_frequency.is_none());
+}
+
+fn assert_msv4_window_conflict(store: &Path, attribute: &str) {
+    match Msv4Observation::open(store) {
+        Err(ObservationError::InvalidStore { reason }) => {
+            assert!(
+                reason.contains("trial_0") && reason.contains(attribute),
+                "{reason}"
+            );
+        }
+        Err(other) => panic!("refused otherwise: {other}"),
+        Ok(_) => panic!("opened with conflicting {attribute}"),
     }
 }
 
