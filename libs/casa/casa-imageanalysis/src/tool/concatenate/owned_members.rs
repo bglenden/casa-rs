@@ -20,34 +20,6 @@ use super::super::native_rename::{NativeTableMove, move_native_table, move_read_
 use super::super::table_locks::lock_table_tree;
 use super::inputs::{ConcatInputEntry, InputRevision};
 
-/// Concatenation storage policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConcatMode {
-    /// Virtual manifest pointing to member images in their current locations (`nomovevirtual`).
-    NoMoveVirtual,
-    /// Virtual manifest owning copied member directories inside the `.imgconcat` directory (`copyvirtual`).
-    CopyVirtual,
-    /// Virtual manifest owning moved member directories inside the `.imgconcat` directory (`movevirtual`).
-    MoveVirtual,
-    /// Materialized single-table paged copy (`paged`).
-    PagedCopy,
-}
-
-impl ConcatMode {
-    /// Parses CASA's concatenation mode selector (`nomovevirtual`, `copyvirtual`, `movevirtual`, `paged`).
-    pub fn parse(mode: &str) -> ImageToolResult<Self> {
-        match mode.trim().to_ascii_lowercase().as_str() {
-            "nomovevirtual" | "n" => Ok(Self::NoMoveVirtual),
-            "copyvirtual" | "c" => Ok(Self::CopyVirtual),
-            "movevirtual" | "m" => Ok(Self::MoveVirtual),
-            "" | "paged" | "p" => Ok(Self::PagedCopy),
-            other => Err(ImageToolError::new(format!(
-                "Unsupported concatenation mode '{other}'; expected 'nomovevirtual', 'copyvirtual', 'movevirtual', or 'paged'."
-            ))),
-        }
-    }
-}
-
 struct OwnedMember {
     source: PathBuf,
     resolved: PathBuf,

@@ -443,7 +443,7 @@ pub fn copy_image(
         }
     }
     let mut live_coordinates = None;
-    let handle = publish_image(
+    let mut output = publish_image(
         request.outfile,
         request.overwrite,
         is_external_open,
@@ -462,39 +462,8 @@ pub fn copy_image(
             Ok(copied)
         },
     )?;
-    let mut output = AttachedImage::from_handle(handle);
     if let Some((record, system)) = live_coordinates {
         output.keep_live_coordinates(record, system);
     }
     Ok(output)
-}
-
-/// Copies `infile` (or a selected region/mask subset) into a new image handle.
-#[allow(clippy::too_many_arguments)]
-pub fn copy_from_image(
-    infile: &Path,
-    outfile: &str,
-    region: Option<SubimageRegion<'_>>,
-    mask: Option<&str>,
-    dropdeg: bool,
-    overwrite: bool,
-    stretch: bool,
-    record_history: bool,
-    is_external_open: ExternalPathCheck<'_>,
-) -> ImageToolResult<ImageHandle> {
-    let attached = AttachedImage::open(infile)?;
-    let request = super::subimage::SubimageRequest {
-        outfile,
-        region,
-        mask,
-        dropdeg,
-        overwrite,
-        list: false,
-        stretch,
-        wantreturn: true,
-        keepaxes: &[],
-    };
-    let (handle, _) =
-        super::subimage::extract_subimage(&attached, &request, record_history, is_external_open)?;
-    Ok(handle.expect("wantreturn=true returns handle"))
 }

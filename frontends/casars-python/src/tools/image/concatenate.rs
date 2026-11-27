@@ -1,14 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! PyO3 `imageconcat` binding delegating domain staging and concatenation to `casa_imageanalysis`.
+//! Thin PyO3 `ia.imageconcat` binding delegating domain staging and concatenation to `casa_imageanalysis`.
 
 use std::path::{Path, PathBuf};
 
-use casa_imageanalysis::tool::concatenate::build_paged_concat;
-use casa_imageanalysis::tool::concatenate::virtual_image::{
-    VirtualConcatOptions, stage_nomove, stage_owned,
-};
-use casa_imageanalysis::tool::error::ToolLogLine;
+use casa_imageanalysis::tool::concatenate::concatenate_casa_images;
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyTuple};
@@ -16,9 +12,7 @@ use pyo3::types::{PyList, PyTuple};
 use crate::convert::Variant;
 
 use super::PyImageTool;
-use super::attachment;
-use super::create::{publish_image, publish_owned_virtual_concat, publish_virtual_concat};
-use super::handle::{ImageHandle, emit_tool_logs, raised};
+use super::handle::{emit_tool_logs, external_open_check, raised};
 use super::lifecycle::resolve_image_path;
 
 fn filename_argument(value: Option<&Bound<'_, PyAny>>) -> PyResult<Variant> {
@@ -105,43 +99,6 @@ fn filenames(py: Python<'_>, files: &Variant) -> PyResult<Vec<PathBuf>> {
     Ok(result)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn record_concat_history(
-    output: &mut ImageHandle,
-    outfile: &str,
-    files: &Variant,
-    axis: i64,
-    relax: bool,
-    tempclose: bool,
-    overwrite: bool,
-    reorder: bool,
-    mode: &str,
-) -> PyResult<()> {
-    let name = if outfile.is_empty() {
-        "Temporary_Image".into()
-    } else {
-        std::path::absolute(outfile)
-            .map_err(raised)?
-            .display()
-            .to_string()
-    };
-    let infiles = match files {
-        Variant::Text(text) => format!("'{text}'"),
-        files => files.describe(),
-    };
-    output
-        .append_history_at(
-            "::image::imageconcat",
-            &[
-                format!("Ran ia.imageconcat on {name}"),
-                format!(
-                    "ia.imageconcat(outfile='{outfile}', infiles={infiles}, axis={axis}, relax={relax}, tempclose={tempclose}, overwrite={overwrite}, reorder={reorder}, mode='{mode}')"
-                ),
-            ],
-        )
-        .map_err(raised)
-}
-
 #[pymethods]
 impl PyImageTool {
     /// Combine images along one axis and return the resulting image tool.
@@ -161,126 +118,35 @@ impl PyImageTool {
     ) -> PyResult<Py<PyImageTool>> {
         let files = filename_argument(infiles)?;
         let paths = filenames(py, &files)?;
-        if !outfile.is_empty() && Path::new(outfile).exists() && !overwrite {
-            return Err(raised(format!(
-                "Exception: {outfile} exists and overwrite is false."
-            )));
-        }
         let mode_letter = mode.as_bytes().first().map(u8::to_ascii_lowercase);
-        match mode_letter {
-            Some(b'p') => {}
-            Some(b'n' | b'c' | b'm') if outfile.is_empty() => {
-                return Err(raised(
-                    "Exception: An empty outname can be used only if mode == PAGED.",
-                ));
-            }
-            Some(b'n' | b'c' | b'm') => {}
-            _ => return Err(raised(format!("Unsupported mode {mode}"))),
-        }
         let expanded = if mode_letter != Some(b'p') {
             resolve_image_path(py, outfile)?
         } else {
             std::borrow::Cow::Borrowed(outfile)
         };
-        if !expanded.is_empty() {
-            let destination = Path::new(expanded.as_ref());
-            let existing = destination
-                .exists()
-                .then(|| attachment::key_py(destination))
-                .transpose()?;
-            for path in &paths {
-                if let Some(existing) = &existing
-                    && &attachment::key_py(path)? == existing
-                {
-                    return Err(raised(format!(
-                        "Invalid Table operation: SetupNewTable {} is already opened (is in the table cache)",
-                        existing.display()
-                    )));
-                }
-                casa_imageanalysis::tool::attachment::ensure_outfile_does_not_alias_input(
-                    destination,
-                    path,
-                )
-                .map_err(raised)?;
-            }
-        }
-        let mut logs = Vec::new();
-        let result = py.detach(|| {
+        let files_history = match &files {
+            Variant::Text(text) => format!("'{text}'"),
+            files => files.describe(),
+        };
+        let (result, logs) = py.detach(|| {
             let history = self.state().history;
-            let options = VirtualConcatOptions {
+            concatenate_casa_images(
+                outfile,
+                expanded.as_ref(),
+                &paths,
+                &files_history,
                 axis,
                 relax,
                 tempclose,
+                overwrite,
                 reorder,
-            };
-            if mode_letter != Some(b'p') {
-                let attached = if mode_letter == Some(b'n') {
-                    publish_virtual_concat(
-                        outfile,
-                        expanded.as_ref(),
-                        overwrite,
-                        |final_path, stage| {
-                            stage_nomove(&options, &paths, final_path, stage, &mut logs)
-                                .map_err(raised)
-                        },
-                    )
-                } else {
-                    let (attached, cleanup_warnings) = publish_owned_virtual_concat(
-                        outfile,
-                        expanded.as_ref(),
-                        overwrite,
-                        |final_path, stage| {
-                            stage_owned(
-                                &options,
-                                &paths,
-                                final_path,
-                                stage,
-                                mode_letter == Some(b'm'),
-                                &mut logs,
-                            )
-                            .map_err(raised)
-                        },
-                    )?;
-                    logs.extend(cleanup_warnings.into_iter().map(ToolLogLine::warning));
-                    Ok(attached)
-                }?;
-                if history {
-                    record_concat_history(
-                        &mut attached.lock(),
-                        outfile,
-                        &files,
-                        axis,
-                        relax,
-                        tempclose,
-                        overwrite,
-                        reorder,
-                        mode,
-                    )?;
-                }
-                Ok(attached)
-            } else {
-                publish_image(outfile, overwrite, |path| {
-                    let mut output = build_paged_concat(&paths, outfile, &options, path, &mut logs)
-                        .map_err(raised)?;
-                    if history {
-                        record_concat_history(
-                            &mut output,
-                            outfile,
-                            &files,
-                            axis,
-                            relax,
-                            tempclose,
-                            overwrite,
-                            reorder,
-                            mode,
-                        )?;
-                    }
-                    output.save().map_err(raised)?;
-                    Ok(output)
-                })
-            }
-        });
+                mode,
+                history,
+                external_open_check(),
+            )
+            .map_err(raised)
+        })?;
         emit_tool_logs(py, &logs)?;
-        Py::new(py, Self::attached(result?))
+        Py::new(py, Self::attached(result))
     }
 }

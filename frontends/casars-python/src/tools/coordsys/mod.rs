@@ -12,7 +12,6 @@ mod doppler;
 mod frame_metadata;
 mod inspect;
 mod linear_transform;
-pub(super) use linear_transform::validate_restored_linear_coordinates;
 mod mixed_transform;
 mod observation;
 mod ordering;

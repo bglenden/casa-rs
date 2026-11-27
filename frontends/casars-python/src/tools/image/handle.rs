@@ -10,10 +10,8 @@ use pyo3::prelude::*;
 
 pub(super) use casa_imageanalysis::tool::attachment::ExternalPathCheck;
 pub(super) use casa_imageanalysis::tool::error::{ImageToolError, ToolLogLevel, ToolLogLine};
-pub(super) use casa_imageanalysis::tool::handle::{ImageHandle, Storage};
-pub(super) use casa_imageanalysis::{
-    with_image_handle_pixels as with_pixels, with_image_storage as with_storage,
-};
+pub(super) use casa_imageanalysis::tool::handle::ImageHandle;
+pub(super) use casa_imageanalysis::with_image_storage as with_storage;
 
 use crate::tools::{LogLine, emit, not_yet_implemented_in};
 

@@ -239,6 +239,6 @@ impl PyImageTool {
                 .map_err(raised)
         })?;
         emit_tool_logs(py, &logs)?;
-        Py::new(py, result.map_or_else(Self::new, Self::attached_handle))
+        Py::new(py, result.map_or_else(Self::new, Self::attached))
     }
 }

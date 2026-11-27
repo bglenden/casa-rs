@@ -4,9 +4,27 @@
 
 use std::path::{Path, PathBuf};
 
-use super::attachment::{AttachedImage, ExternalPathCheck, remove_image_path};
+use casa_images::ImagePixelType;
+
+use super::attachment::{
+    AttachedImage, ExternalPathCheck, remove_file as remove_registered_file, remove_image_path,
+};
 use super::error::{ImageToolError, ImageToolResult, ToolLogLine};
-use super::handle::ImageHandle;
+use super::handle::{ImageHandle, Storage, with_pixels};
+
+fn save_if_writable(attached: &AttachedImage, image: &mut ImageHandle) -> ImageToolResult<()> {
+    if attached.is_read_only() || image.read_only_file_type().is_some() {
+        return Ok(());
+    }
+    let writable = with_pixels!(&*image, storage => match storage {
+        Storage::Paged(paged) => paged.is_writable(),
+        Storage::Temp { .. } => true,
+    });
+    if writable {
+        image.save()?;
+    }
+    Ok(())
+}
 
 /// Pure-Rust stateful image tool matching CASA `casac.image` session semantics.
 #[derive(Default)]
@@ -34,14 +52,148 @@ impl ImageToolState {
         }
     }
 
-    /// Creates an `ImageToolState` directly from an [`ImageHandle`].
-    pub fn from_handle(handle: ImageHandle) -> Self {
-        Self::attached(AttachedImage::from_handle(handle))
-    }
-
     /// Returns whether an image is currently attached (`isopen`).
     pub fn is_open(&self) -> bool {
         self.image.is_some()
+    }
+
+    /// Returns whether the attached image is backed by persistent disk storage (`ispersistent`).
+    pub fn is_persistent(&self) -> ImageToolResult<bool> {
+        self.image
+            .as_ref()
+            .map_or(Ok(false), AttachedImage::is_persistent)
+    }
+
+    /// Returns the image pixel shape as `i64` vector (`shape`).
+    pub fn shape_i64(&self) -> Vec<i64> {
+        self.image.as_ref().map_or_else(Vec::new, |image| {
+            image
+                .lock()
+                .shape()
+                .iter()
+                .map(|&size| size as i64)
+                .collect()
+        })
+    }
+
+    /// Returns CASA's pixel type name (`"float"`, `"double"`, `"complex"`, `"dcomplex"`, or `""`).
+    pub fn pixel_type_casa(&self) -> &'static str {
+        match self.image.as_ref().map(|image| image.lock().kind()) {
+            Some(ImagePixelType::Float32) => "float",
+            Some(ImagePixelType::Float64) => "double",
+            Some(ImagePixelType::Complex32) => "complex",
+            Some(ImagePixelType::Complex64) => "dcomplex",
+            None => "",
+        }
+    }
+
+    /// Returns CASA's attached image display path or temporary label (`name(strippath)`).
+    pub fn casa_name(&self, strippath: bool) -> ImageToolResult<String> {
+        let Some(attached) = self.image.as_ref() else {
+            return Ok("none".into());
+        };
+        let image = attached.lock();
+        image.check_single_precision("name")?;
+        let Some(path) = attached.name_path(&image) else {
+            let label = match image.image_type_name() {
+                "ImageExpr" => "",
+                "ComponentListImage" => "Temporary ComponentListImage",
+                _ => "Temporary_Image",
+            };
+            return Ok(label.into());
+        };
+        if strippath {
+            Ok(path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned())
+        } else {
+            let path = std::path::absolute(path)?;
+            Ok(path.to_string_lossy().into_owned())
+        }
+    }
+
+    /// Opens an image given pre-resolved `expanded` path string and display `infile` (`open`).
+    pub fn open_expanded(
+        &mut self,
+        infile: &str,
+        expanded: &str,
+        cache: bool,
+    ) -> ImageToolResult<()> {
+        if infile.is_empty() {
+            return Err(ImageToolError::new("Exception: File name is empty."));
+        }
+        let path = Path::new(expanded);
+        if !path.exists() {
+            return Err(ImageToolError::new(format!(
+                "Exception: File {infile} does not exist.."
+            )));
+        }
+        self.image = None;
+        let path = std::path::absolute(path)?;
+        let lexical = casa_tables::lexical_absolute(&path);
+        let attached =
+            AttachedImage::open_resolved_with_cache(&lexical, &path, Path::new(infile), cache)?;
+        self.image = Some(attached);
+        Ok(())
+    }
+
+    /// Detaches without flushing or erroring (`casac.image.close`).
+    pub fn detach(&mut self) -> Option<AttachedImage> {
+        self.image.take()
+    }
+
+    /// Detaches and optionally removes the attached image, returning the removed name (`casac.image.done`).
+    pub fn done_casa(
+        &mut self,
+        remove: bool,
+        is_external_open: ExternalPathCheck<'_>,
+    ) -> ImageToolResult<Option<String>> {
+        let attached = self.image.take();
+        if remove && let Some(attached) = attached {
+            attached.remove_registered(is_external_open).map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Detaches and removes the attached image, returning `Ok(None)` if already detached (`casac.image.remove`).
+    pub fn remove_casa(
+        &mut self,
+        is_external_open: ExternalPathCheck<'_>,
+    ) -> ImageToolResult<Option<String>> {
+        self.image
+            .take()
+            .map(|attached| attached.remove_registered(is_external_open))
+            .transpose()
+    }
+
+    /// Renames the currently attached single-precision image in place (`casac.image.rename`).
+    pub fn rename_casa<E>(
+        &mut self,
+        name: &str,
+        expanded: Result<String, E>,
+        overwrite: bool,
+        is_external_open: ExternalPathCheck<'_>,
+    ) -> ImageToolResult<bool>
+    where
+        E: Into<ImageToolError>,
+    {
+        let Some(current) = self.image.as_ref() else {
+            return Ok(false);
+        };
+        current.lock().check_single_precision("rename")?;
+        let current = self.image.take().expect("an attached image");
+        let renamed = current.rename_with(
+            name,
+            || expanded.map_err(Into::into),
+            overwrite,
+            self.history,
+            is_external_open,
+        )?;
+        self.image = Some(renamed);
+        Ok(true)
     }
 
     /// Returns the attached image or CASA's standard error when detached.
@@ -66,7 +218,7 @@ impl ImageToolState {
     pub fn close(&mut self) -> ImageToolResult<bool> {
         if let Some(attached) = self.image.take() {
             let mut image = attached.lock();
-            image.save()?;
+            save_if_writable(&attached, &mut image)?;
             let _ = image.unlock_storage();
         }
         Ok(true)
@@ -86,7 +238,7 @@ impl ImageToolState {
                 logs.push(ToolLogLine::info(format!("deleted table {removed}")));
             } else {
                 let mut image = attached.lock();
-                image.save()?;
+                save_if_writable(&attached, &mut image)?;
                 let _ = image.unlock_storage();
             }
             if verbose {
@@ -96,29 +248,40 @@ impl ImageToolState {
         Ok((true, logs))
     }
 
-    /// Removes the specified file or currently attached image (`removefile` / `remove`).
+    /// Removes the currently attached image (`remove`) via `OpenImages`-checked deletion.
     pub fn remove(
         &mut self,
         done: bool,
-        force: bool,
+        _force: bool,
         is_external_open: ExternalPathCheck<'_>,
     ) -> ImageToolResult<Vec<ToolLogLine>> {
-        let Some(attached) = self.image.as_ref() else {
+        // Both CASA forms detach the tool before attempting deletion so a removed path stays detached.
+        let _ = done;
+        let Some(attached) = self.image.take() else {
             return Err(ImageToolError::new("No image attached to remove."));
         };
-        let logs = attached.remove_disk_file(force, is_external_open)?;
-        if done {
-            self.image = None;
-        }
-        Ok(logs)
+        let removed = attached.remove_registered(is_external_open)?;
+        Ok(vec![ToolLogLine::info(format!("deleted table {removed}"))])
     }
 
-    /// Removes an arbitrary image path from disk without requiring an attachment.
+    /// Removes an arbitrary image path from disk via `OpenImages`-checked table deletion.
     pub fn remove_path(
         file: &Path,
         force: bool,
         is_external_open: ExternalPathCheck<'_>,
     ) -> ImageToolResult<Vec<ToolLogLine>> {
+        if file.is_dir() {
+            if remove_registered_file(file, is_external_open)? {
+                return Ok(vec![ToolLogLine::info(format!(
+                    "Removed {}",
+                    file.display()
+                ))]);
+            }
+            return Err(ImageToolError::new(format!(
+                "{} does not exist or is not a table.",
+                file.display()
+            )));
+        }
         if !force && is_external_open(file) {
             return Err(ImageToolError::new(format!(
                 "Cannot remove {}: file is currently open in a table tool.",

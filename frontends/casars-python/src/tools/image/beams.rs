@@ -3,7 +3,7 @@
 //! Thin PyO3 restoring-beam wrappers delegating to [`casa_imageanalysis::tool::beams`].
 
 pub(super) use casa_imageanalysis::tool::beams::{
-    beam_area_record, common_beam_record, image_info, restoring_beam_record,
+    beam_area_record, common_beam_record, restoring_beam_record,
 };
 use pyo3::prelude::*;
 

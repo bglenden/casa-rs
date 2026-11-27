@@ -6,18 +6,17 @@ use std::cmp::Ordering;
 use std::path::Path;
 
 use casa_core::{Complex32, Complex64};
-use casa_images::{ImageError, ImageInterface, ImagePixel, MutableImageInterface};
+use casa_images::{
+    ImageError, ImageInterface, ImagePixel, MutableImageInterface, TempImage, TempStoragePolicy,
+};
 use casa_tables::LockType;
 use ndarray::{ArrayD, IxDyn};
 
+use crate::analysis::evaluate_pixel_expression;
 use crate::analysis::imsubimage::{
     ImageInsertion, ImageNoise, ImagePixelSelection, MaskReplacementOptions,
     MaskReplacementOutcome, SubimageRegion, put_image_region, replace_masked_complex_pixels,
     replace_masked_real_pixels, validate_mask_replacement_region, validate_put_region_shapes,
-};
-use crate::analysis::{
-    ImageToolExpressionInputs, ImageToolPixelExpression, calculate_complex_pixels,
-    calculate_real_pixels, evaluate_pixel_expression,
 };
 
 use super::attachment::AttachedImage;
@@ -76,78 +75,6 @@ pub fn add_noise(
     Ok(true)
 }
 
-/// Evaluates a LEL pixel expression in-place on `attached` (`ia.calc`).
-pub fn calc_in_place(
-    attached: &AttachedImage,
-    pixels: &str,
-    verbose: bool,
-    record_history: bool,
-) -> ImageToolResult<Vec<ToolLogLine>> {
-    if pixels.trim().is_empty() {
-        return Err(ImageToolError::new(
-            "ia.calc requires a non-empty pixel expression.",
-        ));
-    }
-    let inputs = ImageToolExpressionInputs::resolve(pixels)?;
-    let (compiled, _) = inputs.compile_lazy_inferred()?;
-
-    let mut image = attached.lock();
-    attached.require_write_lock(&mut image, "calc")?;
-    attached.check_native_write(&image)?;
-
-    match (&mut *image, compiled) {
-        (ImageHandle::Float(Storage::Paged(p)), ImageToolPixelExpression::Real(expr)) => {
-            calculate_real_pixels(p.as_mut(), &expr)?;
-        }
-        (
-            ImageHandle::Float(Storage::Temp { image: t, .. }),
-            ImageToolPixelExpression::Real(expr),
-        ) => {
-            calculate_real_pixels(t.as_mut(), &expr)?;
-        }
-        (ImageHandle::Complex(Storage::Paged(p)), ImageToolPixelExpression::Complex(expr)) => {
-            calculate_complex_pixels(p.as_mut(), &expr)?;
-        }
-        (
-            ImageHandle::Complex(Storage::Temp { image: t, .. }),
-            ImageToolPixelExpression::Complex(expr),
-        ) => {
-            calculate_complex_pixels(t.as_mut(), &expr)?;
-        }
-        (ImageHandle::Float(_), ImageToolPixelExpression::Complex(_)) => {
-            return Err(ImageToolError::new(
-                "Cannot assign complex expression result to a real image.",
-            ));
-        }
-        (ImageHandle::Complex(_), ImageToolPixelExpression::Real(_)) => {
-            return Err(ImageToolError::new(
-                "Cannot assign real expression result to a complex image.",
-            ));
-        }
-        (_, ImageToolPixelExpression::Boolean(_)) => {
-            return Err(ImageToolError::new(
-                "ia.calc requires a numeric pixel expression.",
-            ));
-        }
-        _ => {
-            return Err(ImageToolError::new(
-                "ia.calc supports single-precision float or complex images.",
-            ));
-        }
-    }
-
-    if record_history {
-        image.record_history("calc", format!("ia.calc(pixels={pixels:?})"))?;
-    }
-    image.save()?;
-    let logs = if verbose {
-        vec![ToolLogLine::info(format!("Calculated '{pixels}'"))]
-    } else {
-        Vec::new()
-    };
-    Ok(logs)
-}
-
 /// Inserts pixels from `infile` into `attached` (`ia.insert`).
 pub fn insert_image(
     attached: &AttachedImage,
@@ -166,26 +93,34 @@ pub fn insert_image(
 
     let (mut target, copied) = if lock_order == Some(Ordering::Equal) {
         let mut target = attached.lock();
-        attached.require_lock(&mut target, LockType::Write)?;
-        let source = ImageHandle::open(source_path)?;
-        let copied = copy_input_handle(&mut target, &source, infile, region, locate)?;
+        attached.require_write_lock(&mut target, "insert")?;
+        let snapshot = snapshot_single_precision_handle(&target)?;
+        let copied = copy_input_handle(&mut target, &snapshot, infile, region, locate);
+        let release = attached.release_requested_lock(&mut target);
+        let copied = copied?;
+        release?;
         (target, copied)
     } else {
         let source = AttachedImage::open_for_ordered_read(source_path)?;
-        let (mut target, source_image) = if lock_order == Some(Ordering::Less) {
+        let (mut target, mut source_image) = if lock_order == Some(Ordering::Less) {
             let mut target = attached.lock();
             let mut source_image = source.lock();
-            attached.require_lock(&mut target, LockType::Write)?;
-            source.require_lock(&mut source_image, LockType::Read)?;
+            attached.require_write_lock(&mut target, "insert")?;
+            source.require_pixel_read_lock(&mut source_image)?;
             (target, source_image)
         } else {
             let mut source_image = source.lock();
             let mut target = attached.lock();
-            source.require_lock(&mut source_image, LockType::Read)?;
-            attachment_require_write(attached, &mut target)?;
+            source.require_pixel_read_lock(&mut source_image)?;
+            attached.require_write_lock(&mut target, "insert")?;
             (target, source_image)
         };
-        let copied = copy_input_handle(&mut target, &source_image, infile, region, locate)?;
+        let copied = copy_input_handle(&mut target, &source_image, infile, region, locate);
+        let release_source = source.release_requested_lock(&mut source_image);
+        let release_target = attached.release_requested_lock(&mut target);
+        let copied = copied?;
+        release_source?;
+        release_target?;
         (target, copied)
     };
 
@@ -200,11 +135,36 @@ pub fn insert_image(
     Ok((true, logs))
 }
 
-fn attachment_require_write(
-    attached: &AttachedImage,
-    target: &mut ImageHandle,
-) -> ImageToolResult<()> {
-    attached.require_lock(target, LockType::Write)
+fn snapshot_single_precision_handle(source: &ImageHandle) -> ImageToolResult<ImageHandle> {
+    let shape = source.shape().to_vec();
+    let coordinates = source.coordinates().clone();
+    let record = source.coordinate_record();
+    match source {
+        ImageHandle::Float(storage) => {
+            let mut temp = TempImage::<f32>::new(shape, coordinates, TempStoragePolicy::Memory)?;
+            storage.with_float_view(|view| super::create::copy_typed_storage(view, &mut temp))?;
+            Ok(ImageHandle::Float(Storage::Temp {
+                image: Box::new(temp),
+                record,
+                fits: None,
+            }))
+        }
+        ImageHandle::Complex(storage) => {
+            let mut temp =
+                TempImage::<Complex32>::new(shape, coordinates, TempStoragePolicy::Memory)?;
+            with_storage!(storage, img => {
+                super::create::copy_typed_storage(img.as_ref(), &mut temp)
+            })?;
+            Ok(ImageHandle::Complex(Storage::Temp {
+                image: Box::new(temp),
+                record,
+                fits: None,
+            }))
+        }
+        ImageHandle::Double(_) | ImageHandle::DComplex(_) => Err(ImageToolError::new(
+            "Exception: Unsupported image data type.",
+        )),
+    }
 }
 
 fn copy_input_handle(

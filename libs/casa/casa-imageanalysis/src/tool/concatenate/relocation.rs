@@ -16,24 +16,6 @@ use crate::analysis::ImageToolExpressionInputs;
 use super::super::error::{ImageToolError, ImageToolResult};
 use super::super::handle::{ImageHandle, same_file_identity};
 
-/// Resolves a stored concatenation member path relative to `owner_dir`.
-pub fn resolve_member_path(stored: &str, owner_dir: &Path) -> PathBuf {
-    let p = Path::new(stored);
-    if p.is_absolute() {
-        p.to_path_buf()
-    } else {
-        owner_dir.join(p)
-    }
-}
-
-/// Resolves all stored concatenation member path strings relative to `owner_dir`.
-pub fn resolve_all_member_paths(entries: &[String], owner_dir: &Path) -> Vec<PathBuf> {
-    entries
-        .iter()
-        .map(|entry| resolve_member_path(entry, owner_dir))
-        .collect()
-}
-
 /// Validates that renaming a virtual concatenation directory from `source` to `destination`
 /// preserves every relative member/operand symlink and expression reference.
 pub fn check_rename(source: &Path, destination: &Path) -> ImageToolResult<()> {

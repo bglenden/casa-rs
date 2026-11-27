@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_core::{RecordValue, quanta::Quantity};
 use casa_imageanalysis::analysis::{
     HistogramOptions, ImageCropOptions, ImagePadOptions, ImageRegridTarget, SmoothingKernel,
     SubimageRegion,
 };
 use casa_imageanalysis::tool::add_axes::{AddDegAxesRequest, add_degenerate_axes};
-use casa_imageanalysis::tool::attachment::{AttachedImage, no_external_open};
+use casa_imageanalysis::tool::attachment::{AttachedImage, no_external_open, remove_file};
 use casa_imageanalysis::tool::beam_ops::{
-    SetBeamRequest, deconvolve_component_beam, rotate_restoring_beam, set_restoring_beam,
+    FullSetBeamRequest, deconvolve_component_beam, rotate_beam_quantity, set_restoring_beam_full,
 };
 use casa_imageanalysis::tool::beams::{
-    BeamExtremumKind, RestoringBeamQuery, beam_area_arcsec2, beam_extremum, common_beam,
-    restoring_beam,
+    beam_area_record, common_beam_record, restoring_beam_record,
 };
-use casa_imageanalysis::tool::concatenate::{ImageConcatRequest, concatenate_images};
+use casa_imageanalysis::tool::concatenate::concatenate_casa_images;
 use casa_imageanalysis::tool::conformance::check_conformance;
-use casa_imageanalysis::tool::convertflux::convert_flux;
+use casa_imageanalysis::tool::convertflux::convert_flux_quantity;
 use casa_imageanalysis::tool::coordinate_conversion::{to_pixel, to_world};
 use casa_imageanalysis::tool::coords::default_record_for_shape;
 use casa_imageanalysis::tool::create::{
@@ -25,24 +25,24 @@ use casa_imageanalysis::tool::imagecalc::image_calc;
 use casa_imageanalysis::tool::lifecycle::ImageToolState;
 use casa_imageanalysis::tool::locking::{has_lock, lock_image, unlock_image};
 use casa_imageanalysis::tool::mask_expression::calc_mask;
-use casa_imageanalysis::tool::masks::{MaskHandlerResult, mask_handler};
+use casa_imageanalysis::tool::masks::mask_handler_casa;
 use casa_imageanalysis::tool::metadata::{
     brightness_unit, image_history, image_shape, image_type, misc_info, set_brightness_unit,
-    set_history, set_misc_info,
+    set_history_casa, set_misc_info,
 };
 use casa_imageanalysis::tool::ops_edit::{add_noise, set_pixels_and_mask};
 use casa_imageanalysis::tool::ops_fit::{bounding_box, histograms};
 use casa_imageanalysis::tool::ops_spatial::{crop_image, pad_image};
 use casa_imageanalysis::tool::ops_transform::{collapse_image, regrid_attached, smooth_axis};
 use casa_imageanalysis::tool::pixels::{GetChunkRequest, PixelChunk, get_chunk, put_chunk};
-use casa_imageanalysis::tool::point::{PixelScalar, pixel_value};
+use casa_imageanalysis::tool::point::{PixelScalar, pixel_value_casa};
 use casa_imageanalysis::tool::region_read::{GetRegionRequest, get_region};
 use casa_imageanalysis::tool::serialization::{image_from_record, image_to_record};
 use casa_imageanalysis::tool::slice::{GetSliceRequest, extract_slice};
 use casa_imageanalysis::tool::statistics::{StatisticsRequest, image_statistics};
 use casa_imageanalysis::tool::subimage::{SubimageRequest, extract_subimage};
 use casa_imageanalysis::tool::summary::{SummaryOptions, summarize_image};
-use casa_imageanalysis::tool::transpose::{TransposeOrder, transpose_image};
+use casa_imageanalysis::tool::transpose::{TransposeOrder, transpose_attached};
 use casa_images::{GaussianBeam, ImagePixelType};
 use ndarray::{ArrayD, IxDyn};
 
@@ -100,53 +100,92 @@ fn pure_rust_image_tool_lifecycle_beams_and_metadata() {
     );
     set_misc_info(&attached, misc, true).unwrap();
     assert!(misc_info(&attached).unwrap().get("observer").is_some());
-    set_history(&attached, "test", &["custom note".to_owned()]).unwrap();
+    set_history_casa(&attached, "test", vec!["custom note".to_owned()]).unwrap();
     assert!(!image_history(&attached).unwrap().is_empty());
 
     // Set and query restoring beam + rotate + deconvolve + convertflux
-    set_restoring_beam(
+    let empty_rec = RecordValue::default();
+    set_restoring_beam_full(
         &attached,
-        &SetBeamRequest {
-            major: Some((4.0, "arcsec".to_owned())),
-            minor: Some((2.0, "arcsec".to_owned())),
-            pa: Some((30.0, "deg".to_owned())),
-            beam_record: None,
+        &FullSetBeamRequest {
+            quantities: Some([
+                Quantity::new(4.0, "arcsec").unwrap(),
+                Quantity::new(2.0, "arcsec").unwrap(),
+                Quantity::new(30.0, "deg").unwrap(),
+            ]),
+            beam: &empty_rec,
+            beam_history: "{}",
+            input_histories: ["'4arcsec'", "'2arcsec'", "'15deg'"],
             remove: false,
             log: true,
             channel: -1,
             polarization: -1,
+            imagename: "",
+            imagename_path: None,
+            has_axis_args: true,
         },
         true,
-        Some("ia.setrestoringbeam()".to_owned()),
     )
     .unwrap();
-    match restoring_beam(&attached, -1, -1).unwrap() {
-        RestoringBeamQuery::Single(b) => {
-            assert!((b.major_in("arcsec").unwrap() - 4.0).abs() < 1e-6);
-        }
-        other => panic!("expected single beam, got {other:?}"),
-    }
-    rotate_restoring_beam(&attached, 15.0, true, None).unwrap();
-    let (cb, _) = common_beam(&attached).unwrap();
-    assert!((cb.position_angle_in("deg").unwrap() - 45.0).abs() < 1e-6);
-    assert!(beam_area_arcsec2(&attached, -1, -1).unwrap() > 0.0);
-    let min_b = beam_extremum(&attached, BeamExtremumKind::Min).unwrap();
-    assert!((min_b.beam.minor_in("arcsec").unwrap() - 2.0).abs() < 1e-6);
+    let rb = restoring_beam_record(
+        &attached.beam_view(),
+        || attached.lock().coordinate_record(),
+        -1,
+        -1,
+        "list",
+    )
+    .unwrap();
+    assert!(rb.get("major").is_some());
+    rotate_beam_quantity(
+        &attached,
+        &Quantity::new(15.0, "deg").unwrap(),
+        true,
+        "'15deg'",
+    )
+    .unwrap();
+    let cb = common_beam_record(&attached.lock(), &attached.beam_view()).unwrap();
+    assert!(cb.get("major").is_some());
+    assert!(cb.get("minor").is_some());
+    let pa = match cb.get("pa") {
+        Some(casa_core::Value::Record(rec)) => match (rec.get("value"), rec.get("unit")) {
+            (
+                Some(casa_core::Value::Scalar(casa_core::ScalarValue::Float64(val))),
+                Some(
+                    casa_core::Value::TableRef(unit)
+                    | casa_core::Value::Scalar(casa_core::ScalarValue::String(unit)),
+                ),
+            ) if unit == "deg" => *val,
+            other => panic!("unexpected pa record {other:?}"),
+        },
+        other => panic!("unexpected commonbeam pa {other:?}"),
+    };
+    assert!((pa - 45.0).abs() < 1e-6);
+    let cb_beam = GaussianBeam::from_record(&rb).unwrap();
+    let area_rec = beam_area_record(&attached.lock(), &attached.beam_view(), -1, -1).unwrap();
+    assert!(area_rec.get("arcsec2").is_some());
     let dec = deconvolve_component_beam(
         GaussianBeam::new(
             (8.0 / 3600.0_f64).to_radians(),
             (6.0 / 3600.0_f64).to_radians(),
             45.0_f64.to_radians(),
         ),
-        cb,
+        cb_beam,
     )
     .unwrap();
     assert!(dec.fit.major_in("arcsec").unwrap() > 0.0);
-    let flux = convert_flux(
-        &attached, 2.0, "Jy/beam", 4.0, 2.0, "gaussian", false, -1, -1,
+    let (flux, _) = convert_flux_quantity(
+        &attached.lock(),
+        &attached.beam_view(),
+        Quantity::new(2.0, "Jy/beam").unwrap(),
+        [
+            Quantity::new(4.0, "arcsec").unwrap(),
+            Quantity::new(2.0, "arcsec").unwrap(),
+        ],
+        false,
+        (-1, -1),
     )
     .unwrap();
-    assert!((flux.value - 2.0).abs() < 1e-6);
+    assert!((flux.value() - 2.0).abs() < 1e-6);
 
     let (summary, _) = summarize_image(
         &attached,
@@ -167,7 +206,9 @@ fn pure_rust_image_tool_lifecycle_beams_and_metadata() {
     let w = to_world(&attached, &[3.0, 3.0, 0.0, 0.0], "").unwrap();
     let p = to_pixel(&attached, &w).unwrap();
     assert!((p[0] - 3.0).abs() < 1e-4);
-    let pv = pixel_value(&attached, &[1, 1, 0, 0]).unwrap();
+    let pv = pixel_value_casa(&attached, &[1.0, 1.0, 0.0, 0.0])
+        .unwrap()
+        .unwrap();
     assert!(pv.mask);
     match pv.value {
         PixelScalar::Float(v) => assert!((v - 4.0).abs() < 1e-5),
@@ -178,7 +219,7 @@ fn pure_rust_image_tool_lifecycle_beams_and_metadata() {
 #[test]
 fn pure_rust_image_tool_chunks_stats_and_masks() {
     let dir = tempfile::tempdir().unwrap();
-    let (_img_path, data, _state, attached) = create_test_cube(dir.path(), "base.im");
+    let (img_path, data, _state, attached) = create_test_cube(dir.path(), "base.im");
 
     // Chunks, region read, slice, masks, boundingbox, histograms, stats
     let chunk = get_chunk(
@@ -269,13 +310,16 @@ fn pure_rust_image_tool_chunks_stats_and_masks() {
     .unwrap();
     assert!((stats.npts.iter().sum::<f64>() - 256.0).abs() < 1e-6);
 
-    // Mask expression and mask handler
-    assert!(calc_mask(&attached, "'base.im' > 0", "m1", true, true).unwrap_or(false) || true);
-    let m1_arr = ArrayD::from_elem(IxDyn(&[8, 8, 1, 4]), true);
-    let mut chunk_write = PixelChunk::Float(data);
+    // Mask expression, put_chunk read-back, and mask handler
+    let mask_expr = format!("'{}' > 2.0", img_path.display());
+    assert!(calc_mask(&attached, &mask_expr, "m1", true, true).unwrap());
+    let masks = mask_handler_casa(&attached, "get", &[], false).unwrap();
+    assert_eq!(masks, vec!["m1".to_owned()]);
+
+    let scaled = data.mapv(|v| v * 2.0);
     put_chunk(
         &attached,
-        &chunk_write,
+        &PixelChunk::Float(scaled.clone()),
         &[0, 0, 0, 0],
         &[1, 1, 1, 1],
         false,
@@ -283,11 +327,24 @@ fn pure_rust_image_tool_chunks_stats_and_masks() {
         true,
     )
     .unwrap();
-    let _ = (&m1_arr, &mut chunk_write);
-    match mask_handler(&attached, "get", &[], false).unwrap() {
-        MaskHandlerResult::Names(_) => {}
-        _ => panic!("expected mask names"),
+    let read_back = get_chunk(
+        &attached,
+        &GetChunkRequest {
+            getmask: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    match read_back.pixels {
+        PixelChunk::Float(arr) => {
+            assert!((arr[[0, 0, 0, 0]] - scaled[[0, 0, 0, 0]]).abs() < 1e-5);
+            assert!((arr[[3, 2, 0, 1]] - scaled[[3, 2, 0, 1]]).abs() < 1e-5);
+        }
+        other => panic!("expected Float chunk, got {other:?}"),
     }
+    let read_mask = read_back.mask.expect("mask returned");
+    assert!(!read_mask[[0, 0, 0, 0]]);
+    assert!(read_mask[[7, 7, 0, 3]]);
 }
 
 #[test]
@@ -314,11 +371,10 @@ fn pure_rust_image_tool_subimage_spatial_and_transforms() {
         &no_external_open,
     )
     .unwrap();
-    let sub_h = sub_opt.unwrap();
-    assert_eq!(sub_h.shape(), &[8, 8, 4]);
-    let sub_att = AttachedImage::from_handle(sub_h);
+    let sub_att = sub_opt.unwrap();
+    assert_eq!(sub_att.lock().shape(), &[8, 8, 4]);
 
-    let trans_h = transpose_image(
+    let trans_att = transpose_attached(
         &sub_att,
         "",
         &TransposeOrder::Digits("102".to_owned()),
@@ -326,9 +382,8 @@ fn pure_rust_image_tool_subimage_spatial_and_transforms() {
         true,
         &no_external_open,
     )
-    .unwrap()
-    .0;
-    assert_eq!(trans_h.shape(), &[8, 8, 4]);
+    .unwrap();
+    assert_eq!(trans_att.lock().shape(), &[8, 8, 4]);
 
     let col_h = collapse_image(
         &attached,
@@ -454,10 +509,10 @@ fn pure_rust_image_tool_serialization_calc_concat_and_rename() {
 
     let rec = image_to_record(&attached).unwrap();
     let restored = image_from_record(&rec, "", true, &no_external_open).unwrap();
-    assert_eq!(restored.shape(), &[8, 8, 1, 4]);
+    assert_eq!(restored.lock().shape(), &[8, 8, 1, 4]);
 
     let shape2 = vec![4, 4];
-    let (h2d, _) = create_from_shape(
+    let (att2d, _) = create_from_shape(
         &FromShapeRequest {
             outfile: "",
             shape: shape2.clone(),
@@ -471,8 +526,7 @@ fn pure_rust_image_tool_serialization_calc_concat_and_rename() {
         &no_external_open,
     )
     .unwrap();
-    let att2d = AttachedImage::from_handle(h2d);
-    let (deg_h, _) = add_degenerate_axes(
+    let (deg_att, _) = add_degenerate_axes(
         &att2d,
         &AddDegAxesRequest {
             outfile: "",
@@ -488,15 +542,15 @@ fn pure_rust_image_tool_serialization_calc_concat_and_rename() {
         &no_external_open,
     )
     .unwrap();
-    assert_eq!(deg_h.shape(), &[4, 4, 1, 1]);
+    assert_eq!(deg_att.lock().shape(), &[4, 4, 1, 1]);
 
     add_noise(&att2d, "normal", &[0.0, 0.1], &[1, 2], None, false, None).unwrap();
     set_pixels_and_mask(&att2d, Some("2.0"), -1, None, false, None).unwrap();
 
     // imagecalc & concatenate
     let calc_expr = format!("'{}' * 2.0", img_path.display());
-    let (calc_h, _) = image_calc("", &calc_expr, true, "", false, &no_external_open).unwrap();
-    assert_eq!(calc_h.shape(), &[8, 8, 1, 4]);
+    let (calc_att, _) = image_calc("", &calc_expr, true, "", false, &no_external_open).unwrap();
+    assert_eq!(calc_att.lock().shape(), &[8, 8, 1, 4]);
 
     let img_b = dir.path().join("base_b.im");
     let (_, _) = create_from_array(
@@ -511,40 +565,41 @@ fn pure_rust_image_tool_serialization_calc_concat_and_rename() {
     )
     .unwrap();
 
-    let (concat_paged, _) = concatenate_images(
-        &ImageConcatRequest {
-            outfile: String::new(),
-            infiles: vec![img_path.clone(), img_b.clone()],
-            axis: 3,
-            relax: true,
-            tempclose: false,
-            overwrite: true,
-            mode: "paged".to_owned(),
-            reorder: false,
-        },
+    let (concat_paged, _) = concatenate_casa_images(
+        "",
+        "",
+        &[img_path.clone(), img_b.clone()],
+        "['base.im', 'base_b.im']",
+        3,
+        true,
+        false,
+        true,
+        false,
+        "paged",
         false,
         &no_external_open,
     )
     .unwrap();
-    assert_eq!(concat_paged.shape(), &[8, 8, 1, 8]);
+    assert_eq!(concat_paged.lock().shape(), &[8, 8, 1, 8]);
 
     let concat_virt_path = dir.path().join("joined.imgconcat");
-    let (concat_virt, _) = concatenate_images(
-        &ImageConcatRequest {
-            outfile: concat_virt_path.to_str().unwrap().to_owned(),
-            infiles: vec![img_path.clone(), img_b],
-            axis: 3,
-            relax: true,
-            tempclose: true,
-            overwrite: true,
-            mode: "nomovevirtual".to_owned(),
-            reorder: false,
-        },
+    let concat_virt_str = concat_virt_path.to_str().unwrap();
+    let (concat_virt, _) = concatenate_casa_images(
+        concat_virt_str,
+        concat_virt_str,
+        &[img_path.clone(), img_b],
+        "['base.im', 'base_b.im']",
+        3,
+        true,
+        true,
+        true,
+        false,
+        "nomovevirtual",
         false,
         &no_external_open,
     )
     .unwrap();
-    assert_eq!(concat_virt.shape(), &[8, 8, 1, 8]);
+    assert_eq!(concat_virt.lock().shape(), &[8, 8, 1, 8]);
 
     // Rename & done
     unlock_image(&attached).unwrap();
@@ -568,20 +623,17 @@ fn create_parity_cube(dir: &std::path::Path) -> (std::path::PathBuf, AttachedIma
     pixels[[4, 4, 0, 4]] = 5.0;
     pixels[[4, 3, 0, 4]] = 2.5;
     pixels[[3, 4, 0, 4]] = 2.5;
-    let attached = AttachedImage::from_handle(
-        create_from_array(
-            base_path.to_str().unwrap(),
-            PixelArrayInput::Float(pixels),
-            None,
-            false,
-            true,
-            false,
-            false,
-            &no_external_open,
-        )
-        .unwrap()
-        .0,
-    );
+    let (attached, _) = create_from_array(
+        base_path.to_str().unwrap(),
+        PixelArrayInput::Float(pixels),
+        None,
+        false,
+        true,
+        false,
+        false,
+        &no_external_open,
+    )
+    .unwrap();
     (base_path, attached)
 }
 
@@ -767,7 +819,7 @@ fn beam_summary_stats_copy_and_record_round_trip_without_python() {
     assert!(is_conform(&attached, copy_path.to_str().unwrap(), &copy_path).unwrap());
     let rec = image_to_record(&copied).unwrap();
     let restored = image_from_record_with_history(&rec, "", true, true, &no_external_open).unwrap();
-    assert_eq!(restored.shape(), &[8, 8, 1, 8]);
+    assert_eq!(restored.lock().shape(), &[8, 8, 1, 8]);
 }
 
 #[test]
@@ -807,7 +859,16 @@ fn pixel_edit_and_spatial_ops_run_without_python() {
     )
     .unwrap();
 
-    let _ = mask_handler_casa(&copied, "set", &["m0".into()], true).unwrap_or_default();
+    let mask_expr = format!("'{}' > 0", copy_path.display());
+    assert!(calc_mask(&copied, &mask_expr, "m0", true, true).unwrap());
+    let masks = mask_handler_casa(&copied, "get", &[], false).unwrap();
+    assert_eq!(masks, vec!["m0".to_owned()]);
+    assert_eq!(
+        mask_handler_casa(&copied, "set", &["m0".into()], true).unwrap(),
+        vec!["T".to_owned()]
+    );
+    let default_mask = mask_handler_casa(&copied, "default", &[], false).unwrap();
+    assert_eq!(default_mask, vec!["m0".to_owned()]);
     let pv = pixel_value_casa(&copied, &[4.0, 4.0, 0.0, 4.0])
         .unwrap()
         .unwrap();
@@ -1088,7 +1149,7 @@ fn transform_and_convolution_ops_run_without_python() {
         &no_external_open,
     )
     .unwrap();
-    assert_eq!(tp.shape(), &[15, 15, 1, 8]);
+    assert_eq!(tp.lock().shape(), &[15, 15, 1, 8]);
 }
 
 #[test]
@@ -1207,4 +1268,220 @@ fn fitting_and_profile_ops_run_without_python() {
     )
     .unwrap();
     assert!(prof_rec.get("valid").is_some());
+}
+
+#[test]
+fn published_on_disk_images_stay_registered_and_support_rename_and_remove_refusal() {
+    use casa_components::ComponentList;
+    use casa_coordinates::CoordinateSystem;
+    use casa_imageanalysis::tool::create::create_from_component_list;
+    use std::collections::BTreeMap;
+
+    let dir = tempfile::tempdir().unwrap();
+    let shape_path = dir.path().join("shape_disk.im");
+    let (shape_att, _) = create_from_shape(
+        &FromShapeRequest {
+            outfile: shape_path.to_str().unwrap(),
+            shape: vec![4, 4, 1, 1],
+            csys_record: None,
+            linear: true,
+            overwrite: true,
+            log: false,
+            pixel_type: ImagePixelType::Float32,
+        },
+        false,
+        &no_external_open,
+    )
+    .unwrap();
+    // Newly created on-disk handle must already be registered so removing it is refused.
+    assert!(remove_file(&shape_path, &no_external_open).is_err());
+
+    // In-place rename while open (Blocking #2) preserves attachment and moves table cleanly.
+    assert!(lock_image(&shape_att, "write", 1).unwrap());
+    let renamed_path = dir.path().join("shape_renamed.im");
+    let mut state = ImageToolState::attached(shape_att);
+    assert!(
+        state
+            .rename_casa(
+                renamed_path.to_str().unwrap(),
+                Ok::<_, casa_imageanalysis::tool::ImageToolError>(
+                    renamed_path.to_str().unwrap().to_owned()
+                ),
+                false,
+                &no_external_open,
+            )
+            .unwrap()
+    );
+    assert!(!shape_path.exists());
+    assert!(renamed_path.join("table.dat").is_file());
+    assert_eq!(state.casa_name(true).unwrap(), "shape_renamed.im");
+    let att_after = state.detach().unwrap();
+    put_chunk(
+        &att_after,
+        &PixelChunk::Float(ArrayD::from_elem(IxDyn(&[4, 4, 1, 1]), 3.5)),
+        &[0, 0, 0, 0],
+        &[1, 1, 1, 1],
+        false,
+        false,
+        false,
+    )
+    .unwrap();
+    drop(att_after);
+    assert!(remove_file(&renamed_path, &no_external_open).unwrap());
+
+    // Component-list image published on disk with cache=false is registered and readable.
+    let cl_path = dir.path().join("comp_disk.im");
+    let rec = default_record_for_shape(&[4, 4, 1, 2], false).unwrap();
+    let coords = CoordinateSystem::from_record(&rec).unwrap();
+    let (cl_att, _) = create_from_component_list(
+        cl_path.to_str().unwrap(),
+        vec![4, 4, 1, 2],
+        coords,
+        rec,
+        &BTreeMap::new(),
+        ComponentList::default(),
+        false,
+        true,
+        false,
+        &no_external_open,
+    )
+    .unwrap();
+    assert!(remove_file(&cl_path, &no_external_open).is_err());
+    drop(cl_att);
+    assert!(remove_file(&cl_path, &no_external_open).unwrap());
+}
+
+#[test]
+fn owned_virtual_concat_copy_move_and_rollback_without_python() {
+    let dir = tempfile::tempdir().unwrap();
+    let p1 = dir.path().join("in1.im");
+    let p2 = dir.path().join("in2.im");
+    for path in [&p1, &p2] {
+        let (att, _) = create_from_array(
+            path.to_str().unwrap(),
+            PixelArrayInput::Float(ArrayD::from_elem(IxDyn(&[4, 4, 1, 2]), 2.0)),
+            None,
+            false,
+            true,
+            false,
+            false,
+            &no_external_open,
+        )
+        .unwrap();
+        drop(att);
+    }
+
+    let copy_virt = dir.path().join("copy_v.imgconcat");
+    let (copy_att, _) = concatenate_casa_images(
+        copy_virt.to_str().unwrap(),
+        copy_virt.to_str().unwrap(),
+        &[p1.clone(), p2.clone()],
+        "['in1.im', 'in2.im']",
+        3,
+        true,
+        true,
+        true,
+        false,
+        "copyvirtual",
+        false,
+        &no_external_open,
+    )
+    .unwrap();
+    assert_eq!(copy_att.lock().shape(), &[4, 4, 1, 4]);
+    assert!(p1.exists() && p2.exists());
+    drop(copy_att);
+
+    // Hold p2 open to verify movevirtual rolls back and leaves p1/p2 intact.
+    let blocker = AttachedImage::open(&p2).unwrap();
+    let move_fail = dir.path().join("move_fail.imgconcat");
+    assert!(
+        concatenate_casa_images(
+            move_fail.to_str().unwrap(),
+            move_fail.to_str().unwrap(),
+            &[p1.clone(), p2.clone()],
+            "['in1.im', 'in2.im']",
+            3,
+            true,
+            true,
+            true,
+            false,
+            "movevirtual",
+            false,
+            &no_external_open,
+        )
+        .is_err()
+    );
+    assert!(p1.exists() && p2.exists());
+    assert!(!move_fail.exists());
+    drop(blocker);
+
+    let move_virt = dir.path().join("move_v.imgconcat");
+    let (move_att, _) = concatenate_casa_images(
+        move_virt.to_str().unwrap(),
+        move_virt.to_str().unwrap(),
+        &[p1.clone(), p2.clone()],
+        "['in1.im', 'in2.im']",
+        3,
+        true,
+        true,
+        true,
+        false,
+        "movevirtual",
+        false,
+        &no_external_open,
+    )
+    .unwrap();
+    assert_eq!(move_att.lock().shape(), &[4, 4, 1, 4]);
+    assert!(!p1.exists() && !p2.exists());
+}
+
+#[test]
+fn read_only_paged_image_close_done_unlock_and_open_refusal() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ro.im");
+    let (created, _) = create_from_array(
+        path.to_str().unwrap(),
+        PixelArrayInput::Float(ArrayD::from_elem(IxDyn(&[4, 4]), 7.0)),
+        None,
+        false,
+        true,
+        false,
+        false,
+        &no_external_open,
+    )
+    .unwrap();
+    drop(created);
+
+    // Read-only directory without table.lock opens a !is_writable() PagedImage attachment.
+    let _ = std::fs::remove_file(path.join("table.lock"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o555);
+        std::fs::set_permissions(&path, perms).unwrap();
+    }
+    let ro = AttachedImage::open_resolved(&path, &path, &path).unwrap();
+    assert!(matches!(
+        &*ro.lock(),
+        casa_imageanalysis::tool::handle::ImageHandle::Float(
+            casa_imageanalysis::tool::handle::Storage::Paged(paged)
+        ) if !paged.is_writable()
+    ));
+    assert!(unlock_image(&ro).unwrap());
+    let mut state = ImageToolState::attached(ro);
+    assert!(state.close().unwrap());
+
+    let ro2 = AttachedImage::open_resolved(&path, &path, &path).unwrap();
+    assert!(remove_file(&path, &no_external_open).is_err());
+    let mut state2 = ImageToolState::attached(ro2);
+    assert!(state2.done(false, false, &no_external_open).unwrap().0);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).unwrap();
+    }
+    assert!(remove_file(&path, &no_external_open).unwrap());
 }

@@ -3,22 +3,22 @@
 //! Image creation workflows (`fromshape`, `fromarray`, `fromfits`, `fromcomplist`, `maketestimage`).
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use casa_components::ComponentList;
 use casa_coordinates::CoordinateSystem;
-use casa_core::{Complex32, Complex64, RecordValue};
+use casa_core::{Complex32, Complex64, RecordValue, Value};
 use casa_images::fits_read::FitsToolImport;
 use casa_images::{ImageInterface, ImagePixel, ImagePixelType, MutableImageInterface};
 use ndarray::{ArrayD, IxDyn};
 
 use crate::ComponentListImage;
 
-use super::attachment::ExternalPathCheck;
-use super::coords::default_record_for_shape;
+use super::attachment::{AttachedImage, ExternalPathCheck};
+use super::coords::{default_record_for_shape, validate_restored_linear_coordinates};
 use super::error::{ImageToolError, ImageToolResult, ToolLogLine};
 use super::handle::{ImageHandle, Storage, with_storage};
-use super::publish::{publish_directory, publish_image};
+use super::publish::{StagedImage, publish_image, publish_staged_pair};
 
 /// Pixel data variants supported by `fromarray` / `newimagefromarray`.
 pub enum PixelArrayInput {
@@ -68,7 +68,7 @@ pub fn create_from_shape(
     request: &FromShapeRequest<'_>,
     record_history: bool,
     is_external_open: ExternalPathCheck<'_>,
-) -> ImageToolResult<(ImageHandle, Vec<ToolLogLine>)> {
+) -> ImageToolResult<(AttachedImage, Vec<ToolLogLine>)> {
     if request.shape.is_empty() || request.shape.contains(&0) {
         return Err(ImageToolError::new(format!(
             "Invalid shape {:?}; all dimensions must be positive.",
@@ -160,7 +160,7 @@ pub fn create_from_array(
     log: bool,
     record_history: bool,
     is_external_open: ExternalPathCheck<'_>,
-) -> ImageToolResult<(ImageHandle, Vec<ToolLogLine>)> {
+) -> ImageToolResult<(AttachedImage, Vec<ToolLogLine>)> {
     let shape = match &pixels {
         PixelArrayInput::Float(a) => a.shape().to_vec(),
         PixelArrayInput::Double(a) => a.shape().to_vec(),
@@ -254,7 +254,7 @@ pub fn create_from_fits(
     beam: Option<&RecordValue>,
     record_history: bool,
     is_external_open: ExternalPathCheck<'_>,
-) -> ImageToolResult<(ImageHandle, Vec<ToolLogLine>)> {
+) -> ImageToolResult<(AttachedImage, Vec<ToolLogLine>)> {
     let import = FitsToolImport::open(fitsfile, whichrep, whichhdu as i64)?;
     let _ = (defaultaxes, defaultaxesvalues);
     let shape = import.shape().to_vec();
@@ -331,7 +331,7 @@ pub fn create_from_fits(
     ))
 }
 
-/// Creates a [`ComponentListImage`]-backed handle (`fromcomplist`).
+/// Creates a [`ComponentListImage`]-backed [`AttachedImage`] (`fromcomplist`).
 #[allow(clippy::too_many_arguments)]
 pub fn create_from_component_list(
     outfile: &str,
@@ -344,17 +344,20 @@ pub fn create_from_component_list(
     overwrite: bool,
     log: bool,
     is_external_open: ExternalPathCheck<'_>,
-) -> ImageToolResult<(ImageHandle, Vec<ToolLogLine>)> {
+) -> ImageToolResult<(AttachedImage, Vec<ToolLogLine>)> {
     let image = ComponentListImage::new(shape.clone(), components, coordinates, cache)?;
-    let handle = if outfile.is_empty() {
-        ImageHandle::from_component(image, coordinate_record)?
+    let attached = if outfile.is_empty() {
+        AttachedImage::temporary(ImageHandle::from_component(image, coordinate_record)?)
     } else {
-        let out_path = Path::new(outfile);
-        publish_directory(out_path, overwrite, is_external_open, |stage| {
+        let attached = publish_image(outfile, overwrite, is_external_open, |dest| {
+            let stage = dest.ok_or_else(|| ImageToolError::new("Missing componentlist stage"))?;
             image.write_native(stage, &coordinate_record, spectral_records)?;
-            Ok(())
+            Ok(ImageHandle::open_native_with_cache(stage, None, cache)?)
         })?;
-        ImageHandle::open_native_with_cache(out_path, None, cache)?
+        if !cache {
+            attached.lock().disable_component_cache()?;
+        }
+        attached
     };
     let mut logs = Vec::new();
     if log {
@@ -362,7 +365,7 @@ pub fn create_from_component_list(
             "Created componentlist image of shape {shape:?}"
         )));
     }
-    Ok((handle, logs))
+    Ok((attached, logs))
 }
 
 /// Creates CASA's canonical small FITS test image on disk/temp (`maketestimage`) from a resolved FITS path.
@@ -372,7 +375,7 @@ pub fn create_test_image_from_fits(
     overwrite: bool,
     record_history: bool,
     is_external_open: ExternalPathCheck<'_>,
-) -> ImageToolResult<(ImageHandle, Vec<ToolLogLine>)> {
+) -> ImageToolResult<(AttachedImage, Vec<ToolLogLine>)> {
     if !fits_path.exists() {
         return Err(ImageToolError::new(format!(
             "Cannot locate test FITS image at {}",
@@ -414,4 +417,335 @@ pub fn copy_typed_storage<T: ImagePixel>(
         dst.set_default_mask(&default)?;
     }
     Ok(())
+}
+
+/// Request parameters for CASA `fromshape`/`fromarray`/`newimagefromshape`/`newimagefromarray`.
+pub struct CasaCreateRequest<'a> {
+    /// CASA creation method name (`"fromshape"`, `"fromarray"`, `"newimagefromshape"`, `"newimagefromarray"`).
+    pub method: &'a str,
+    /// User-supplied output path (empty creates a temporary in-memory image).
+    pub outfile: &'a str,
+    /// Deferred path-expansion result for `outfile`, checked after parameter validation.
+    pub expanded: Result<&'a str, &'a str>,
+    /// Explicit coordinate system record (empty builds default coordinates).
+    pub csys_record: RecordValue,
+    /// Use linear coordinates when building default coordinates.
+    pub linear: bool,
+    /// Overwrite existing `outfile`.
+    pub overwrite: bool,
+    /// Log creation message.
+    pub log: bool,
+    /// Pixel type string (`"f"`, `"d"`, `"c"`, `"cd"`).
+    pub kind: &'a str,
+}
+
+/// Pixel payload and formatted history string for CASA `fromarray`/`newimagefromarray`.
+pub struct CasaArrayPayload {
+    /// Pixel values array.
+    pub pixels: PixelArrayInput,
+    /// Preformatted pixel array text for history entries.
+    pub history_pixels: String,
+}
+
+/// Input source for CASA `ia.fromcomplist`.
+pub enum ComponentListSource {
+    /// Parsed record model and per-component spectral records.
+    Loaded {
+        /// Parsed component list.
+        components: ComponentList,
+        /// Per-component spectral records.
+        spectral_records: BTreeMap<usize, RecordValue>,
+        /// Any informational log messages produced while parsing the record.
+        logs: Vec<ToolLogLine>,
+    },
+    /// Path to an on-disk component list table.
+    Table(PathBuf),
+}
+
+/// Creates a CASA image matching `fromshape` / `fromarray` / `newimagefromshape` / `newimagefromarray`.
+pub fn create_casa_image(
+    request: &CasaCreateRequest<'_>,
+    shape_arg: Option<&[i64]>,
+    array_arg: Option<CasaArrayPayload>,
+    history: bool,
+    is_external_open: ExternalPathCheck<'_>,
+) -> ImageToolResult<AttachedImage> {
+    let (shape, pixels, history_pixels, is_complex_input) = if let Some(payload) = array_arg {
+        if !matches!(request.kind.to_ascii_lowercase().as_str(), "f" | "d") {
+            return Err(ImageToolError::new(format!(
+                "Exception: Unsupported value for type: {:?}. Supported values are \"d\" and \"f\"",
+                request.kind
+            )));
+        }
+        let shape = match &payload.pixels {
+            PixelArrayInput::Float(a) => a.shape().to_vec(),
+            PixelArrayInput::Double(a) => a.shape().to_vec(),
+            PixelArrayInput::Complex(a) => a.shape().to_vec(),
+            PixelArrayInput::DComplex(a) => a.shape().to_vec(),
+        };
+        let is_complex = matches!(
+            &payload.pixels,
+            PixelArrayInput::Complex(_) | PixelArrayInput::DComplex(_)
+        );
+        (
+            shape,
+            Some(payload.pixels),
+            Some(payload.history_pixels),
+            is_complex,
+        )
+    } else {
+        let shape_raw = shape_arg.unwrap_or(&[0]);
+        if shape_raw.is_empty() {
+            return Err(ImageToolError::new(
+                "Exception: The shape must have more than zero elements.",
+            ));
+        }
+        if shape_raw.iter().any(|&length| length <= 0) {
+            return Err(ImageToolError::new(
+                "Exception: All elements of shape must be positive.",
+            ));
+        }
+        let shape: Vec<usize> = shape_raw.iter().map(|&length| length as usize).collect();
+        (shape, None, None, false)
+    };
+
+    let record = if request.csys_record.fields().is_empty() {
+        default_record_for_shape(&shape, request.linear)?
+    } else if let [field] = request.csys_record.fields()
+        && let Value::Record(record) = &field.value
+    {
+        record.clone()
+    } else {
+        request.csys_record.clone()
+    };
+    let coordinates = CoordinateSystem::from_record(&record)
+        .map_err(|_| ImageToolError::new("Exception: Invalid coordinate system record"))?;
+    if !request.csys_record.is_empty() {
+        validate_restored_linear_coordinates(&coordinates, &record)?;
+    }
+    let kind_lower = request.kind.to_ascii_lowercase();
+    let pixel_type = match (kind_lower.as_str(), is_complex_input) {
+        ("f", false) => ImagePixelType::Float32,
+        ("d", false) => ImagePixelType::Float64,
+        ("c", _) | ("f", true) => ImagePixelType::Complex32,
+        ("cd", _) | ("d", true) => ImagePixelType::Complex64,
+        _ => {
+            return Err(ImageToolError::new(
+                "Exception: Input parm type must be either 'f', 'c', 'd', or 'cd'",
+            ));
+        }
+    };
+    if coordinates.n_pixel_axes() != shape.len() {
+        return Err(ImageToolError::new(
+            "Exception: Supplied CoordinateSystem and image shape are inconsistent.",
+        ));
+    }
+
+    let expanded = request.expanded.map_err(ImageToolError::new)?;
+    let primary = StagedImage::allocate_creation(request.outfile, expanded, request.overwrite)?;
+    publish_staged_pair(
+        primary,
+        None,
+        request.overwrite,
+        is_external_open,
+        |path, _| {
+            let mut image = match pixel_type {
+                ImagePixelType::Float32 => {
+                    let data = pixels.as_ref().map(|p| match p {
+                        PixelArrayInput::Float(a) => a.clone(),
+                        PixelArrayInput::Double(a) => a.mapv(|v| v as f32),
+                        _ => unreachable!("real pixels"),
+                    });
+                    ImageHandle::Float(Storage::create(
+                        shape.clone(),
+                        coordinates,
+                        path,
+                        data.as_ref(),
+                    )?)
+                }
+                ImagePixelType::Float64 => {
+                    let data = pixels.as_ref().map(|p| match p {
+                        PixelArrayInput::Double(a) => a.clone(),
+                        PixelArrayInput::Float(a) => a.mapv(f64::from),
+                        _ => unreachable!("real pixels"),
+                    });
+                    ImageHandle::Double(Storage::create(
+                        shape.clone(),
+                        coordinates,
+                        path,
+                        data.as_ref(),
+                    )?)
+                }
+                ImagePixelType::Complex32 => {
+                    let data = pixels.as_ref().map(|p| match p {
+                        PixelArrayInput::Complex(a) => a.clone(),
+                        PixelArrayInput::DComplex(a) => {
+                            a.mapv(|v| Complex32::new(v.re as f32, v.im as f32))
+                        }
+                        PixelArrayInput::Float(a) => a.mapv(|v| Complex32::new(v, 0.0)),
+                        PixelArrayInput::Double(a) => a.mapv(|v| Complex32::new(v as f32, 0.0)),
+                    });
+                    ImageHandle::Complex(Storage::create(
+                        shape.clone(),
+                        coordinates,
+                        path,
+                        data.as_ref(),
+                    )?)
+                }
+                ImagePixelType::Complex64 => {
+                    let data = pixels.as_ref().map(|p| match p {
+                        PixelArrayInput::DComplex(a) => a.clone(),
+                        PixelArrayInput::Complex(a) => {
+                            a.mapv(|v| Complex64::new(v.re.into(), v.im.into()))
+                        }
+                        PixelArrayInput::Double(a) => a.mapv(|v| Complex64::new(v, 0.0)),
+                        PixelArrayInput::Float(a) => a.mapv(|v| Complex64::new(v.into(), 0.0)),
+                    });
+                    ImageHandle::DComplex(Storage::create(
+                        shape.clone(),
+                        coordinates,
+                        path,
+                        data.as_ref(),
+                    )?)
+                }
+            };
+            image.set_coordinate_record(record)?;
+            let (storage_name, filename) = if request.outfile.is_empty() {
+                ("Temp", String::new())
+            } else {
+                ("Paged", format!("'{}'", request.outfile))
+            };
+            let pixel_label = match image {
+                ImageHandle::Float(_) => "float",
+                ImageHandle::Double(_) => "double",
+                ImageHandle::Complex(_) => "Complex",
+                ImageHandle::DComplex(_) => "DComplex",
+            };
+            let creation = format!(
+                "Created {storage_name} image {filename} of shape {shape:?} with {pixel_label} valued pixels.",
+            );
+            image.append_history_at("::ImageFactory::createImage", &[creation])?;
+            if history {
+                let args = match history_pixels.as_deref() {
+                    Some(hist) if request.method == "newimagefromarray" => {
+                        format!("outfile={:?}, pixels={hist}", request.outfile)
+                    }
+                    Some(hist) => format!("pixels={hist}"),
+                    None => format!(
+                        "outfile={:?}, shape={}",
+                        request.outfile,
+                        format!("{shape:?}").replace(' ', ""),
+                    ),
+                };
+                let kind_arg = if request.method == "newimagefromarray" {
+                    String::new()
+                } else {
+                    format!(", type={:?}", request.kind)
+                };
+                let call = format!(
+                    "ia.{}({args}, csys={{...}}, linear={}, overwrite={}, log={}{kind_arg})",
+                    request.method, request.linear, request.overwrite, request.log
+                );
+                image.record_history(request.method, call)?;
+            }
+            image.save()?;
+            Ok((image, None))
+        },
+    )
+}
+
+/// Creates a CASA `ComponentListImage` matching `ia.fromcomplist`.
+#[allow(clippy::too_many_arguments)]
+pub fn create_casa_complist_image(
+    outfile: &str,
+    expanded: &str,
+    shape: &[i64],
+    csys_record: RecordValue,
+    source: ComponentListSource,
+    overwrite: bool,
+    log: bool,
+    cache: bool,
+    history: bool,
+    is_external_open: ExternalPathCheck<'_>,
+) -> ImageToolResult<(AttachedImage, Vec<ToolLogLine>)> {
+    if !(2..=4).contains(&shape.len()) {
+        return Err(ImageToolError::new(
+            "ComponentListImages must have 2, 3, or 4 dimensions",
+        ));
+    }
+    if shape.iter().any(|&length| length <= 0) {
+        return Err(ImageToolError::new("TiledShape: shape has to be > 0"));
+    }
+    let shape: Vec<usize> = shape.iter().map(|&length| length as usize).collect();
+    let record = if csys_record.fields().is_empty() {
+        default_record_for_shape(&shape, false)?
+    } else if let [field] = csys_record.fields()
+        && let Value::Record(record) = &field.value
+    {
+        record.clone()
+    } else {
+        csys_record.clone()
+    };
+    let coordinates = CoordinateSystem::from_record(&record)
+        .map_err(|_| ImageToolError::new("Exception: Invalid coordinate system record"))?;
+    if !csys_record.is_empty() {
+        validate_restored_linear_coordinates(&coordinates, &record)?;
+    }
+    if coordinates.n_pixel_axes() != shape.len() {
+        return Err(ImageToolError::new(
+            "Exception: Supplied CoordinateSystem and image shape are inconsistent.",
+        ));
+    }
+
+    let stage = StagedImage::allocate_creation(outfile, expanded, overwrite)?;
+    let (components, spectral_records, mut messages) = match source {
+        ComponentListSource::Loaded {
+            components,
+            spectral_records,
+            logs,
+        } => (components, spectral_records, logs),
+        ComponentListSource::Table(path) => {
+            let components = ComponentList::read_table(path)
+                .map_err(|err| ImageToolError::new(err.to_string()))?;
+            let table_record = components
+                .to_record()
+                .map_err(|err| ImageToolError::new(err.to_string()))?;
+            (
+                ComponentList::from_record(&table_record)
+                    .map_err(|err| ImageToolError::new(err.to_string()))?,
+                BTreeMap::new(),
+                Vec::new(),
+            )
+        }
+    };
+    let message = format!("Created ComponentListImage {outfile} of shape {shape:?}.");
+    let comp_image = ComponentListImage::new(shape.clone(), components, coordinates, cache)?;
+    let attachment = publish_staged_pair(stage, None, overwrite, is_external_open, |path, _| {
+        if let Some(path) = path {
+            comp_image.write_native(path, &record, &spectral_records)?;
+        }
+        let mut image = ImageHandle::from_component(comp_image, record)?;
+        if path.is_none() {
+            image.append_history_at(
+                "ImageFactory::createComponentListImage",
+                std::slice::from_ref(&message),
+            )?;
+            if history {
+                image.record_history(
+                    "fromcomplist",
+                    format!(
+                        "ia.fromcomplist(outfile={outfile:?}, shape={shape:?}, cl={{...}}, csys={{...}}, overwrite={overwrite}, log={log}, cache={cache})"
+                    ),
+                )?;
+            }
+        }
+        Ok((image, None))
+    })?;
+    if !cache && !outfile.is_empty() {
+        attachment.lock().disable_component_cache()?;
+    }
+    if log {
+        messages.push(ToolLogLine::info(message));
+    }
+    Ok((attachment, messages))
 }

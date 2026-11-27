@@ -2,10 +2,10 @@
 
 //! Image statistics computation (`ia.statistics`) for attached images.
 
-pub mod flux;
-pub mod region_planes;
-pub mod report;
-pub mod sampled;
+pub(crate) mod flux;
+pub(crate) mod region_planes;
+pub(crate) mod report;
+pub(crate) mod sampled;
 
 use std::path::Path;
 
@@ -489,14 +489,14 @@ pub fn image_statistics(
         ));
     }
     let single_precision = matches!(&*image, ImageHandle::Float(_));
-    attached.require_pixel_read_lock(&mut image)?;
-    let spectral_velocity = SpectralVelocity::from_image(&image);
     let axes = request.axes.clone().unwrap_or_default();
     if axes.iter().any(|&axis| axis >= image.shape().len()) {
         return Err(ImageToolError::new(format!(
             "Invalid cursor axes: {axes:?}."
         )));
     }
+    attached.require_pixel_read_lock(&mut image)?;
+    let spectral_velocity = SpectralVelocity::from_image(&image);
     let fits_backed = image.fits().is_some();
 
     let computed = (|| {

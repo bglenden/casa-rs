@@ -2,117 +2,15 @@
 
 //! Peak flux <-> integrated flux conversion (`ia.convertflux`).
 
-use casa_coordinates::{Coordinate, CoordinateSystem, CoordinateType};
+use casa_coordinates::{Coordinate, CoordinateSystem};
 use casa_core::quanta::unit_val::UnitVal;
 use casa_core::quanta::{Quantity, Unit, casacore};
 use casa_images::{BeamComponent, GaussianBeam, ImagePixelType};
 
-use super::attachment::AttachedImage;
 use super::beam_view::BeamView;
-use super::beams::{RestoringBeamQuery, beam_for_units, restoring_beam};
+use super::beams::beam_for_units;
 use super::error::{ImageToolError, ImageToolResult, ToolLogLine};
 use super::handle::{ImageHandle, with_pixels, with_storage};
-
-/// Converted flux quantity returned by [`convert_flux`].
-#[derive(Debug, Clone)]
-pub struct ConvertedFlux {
-    /// Numeric value in `unit`.
-    pub value: f64,
-    /// Unit string (e.g. `"Jy"` or `"Jy/beam"`).
-    pub unit: String,
-}
-
-/// Converts between peak brightness (`Jy/beam`) and integrated flux (`Jy`) using the
-/// restoring beam and component major/minor FWHMs (`ia.convertflux`).
-#[allow(clippy::too_many_arguments)]
-pub fn convert_flux(
-    attached: &AttachedImage,
-    value: f64,
-    unit: &str,
-    major_arcsec: f64,
-    minor_arcsec: f64,
-    _type_str: &str,
-    topeak: bool,
-    channel: isize,
-    polarization: isize,
-) -> ImageToolResult<ConvertedFlux> {
-    if major_arcsec <= 0.0 || minor_arcsec <= 0.0 {
-        return Err(ImageToolError::new(
-            "Major and minor component widths must be positive.",
-        ));
-    }
-    let beam: GaussianBeam = match restoring_beam(attached, channel, polarization)? {
-        RestoringBeamQuery::Single(b) => b,
-        RestoringBeamQuery::Empty => {
-            // Fall back to pixel solid angle if brightness unit is Jy/pixel
-            let image = attached.lock();
-            let coords = image.coordinates();
-            if let Some(dir_idx) = coords.find_coordinate(CoordinateType::Direction) {
-                let dir = coords.coordinate(dir_idx);
-                let inc = dir.increment();
-                let rad_to_arcsec = 180.0 * 3600.0 / std::f64::consts::PI;
-                let pix_area_arcsec2 =
-                    (inc[0] * rad_to_arcsec).abs() * (inc[1] * rad_to_arcsec).abs();
-                let src_area =
-                    std::f64::consts::PI / (4.0 * 2.0_f64.ln()) * major_arcsec * minor_arcsec;
-                let factor = src_area / pix_area_arcsec2;
-                let out_val = if topeak {
-                    value / factor
-                } else {
-                    value * factor
-                };
-                let out_unit = if topeak {
-                    format!("{unit}/pixel").replace("/pixel/pixel", "/pixel")
-                } else {
-                    unit.replace("/pixel", "")
-                };
-                return Ok(ConvertedFlux {
-                    value: out_val,
-                    unit: out_unit,
-                });
-            }
-            return Err(ImageToolError::new(
-                "Image has no restoring beam or direction pixel size.",
-            ));
-        }
-        RestoringBeamQuery::PerPlane(_) => {
-            return Err(ImageToolError::new(
-                "Image has per-plane beams; specify channel and polarization.",
-            ));
-        }
-    };
-
-    let beam_maj = beam.major_in("arcsec")?;
-    let beam_min = beam.minor_in("arcsec")?;
-    if beam_maj <= 0.0 || beam_min <= 0.0 {
-        return Err(ImageToolError::new("Restoring beam axes must be positive."));
-    }
-    let beam_factor = (major_arcsec * minor_arcsec) / (beam_maj * beam_min);
-    let out_val = if topeak {
-        value / beam_factor
-    } else {
-        value * beam_factor
-    };
-    let clean_unit = if unit.trim().is_empty() {
-        "Jy"
-    } else {
-        unit.trim()
-    };
-    let out_unit = if topeak {
-        if clean_unit.contains("/beam") {
-            clean_unit.to_owned()
-        } else {
-            format!("{clean_unit}/beam")
-        }
-    } else {
-        clean_unit.trim_end_matches("/beam").to_owned()
-    };
-
-    Ok(ConvertedFlux {
-        value: out_val,
-        unit: out_unit,
-    })
-}
 
 struct FluxAreas {
     pixel: f64,

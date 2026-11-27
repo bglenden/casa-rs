@@ -313,54 +313,6 @@ pub fn move_read_only_directory(
     }
 }
 
-/// Replaces `destination` atomically with `staged` directory (preserving recovery info on cleanup error).
-pub fn publish_staged_directory(stage: TempDir, destination: &Path) -> ImageToolResult<()> {
-    let staged_path = stage.path().to_path_buf();
-    if let Ok(meta) = destination.symlink_metadata() {
-        if !meta.is_dir() {
-            return Err(ImageToolError::new(format!(
-                "Cannot replace non-directory '{}' with an image directory.",
-                destination.display()
-            )));
-        }
-        if exchange_directories(&staged_path, destination).is_ok() {
-            close_stage(stage, destination)?;
-            return Ok(());
-        }
-        let parent = destination
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        let backup = tempfile::Builder::new()
-            .prefix(".casars-replace-backup-")
-            .tempdir_in(parent)?;
-        let retained = backup.path().join("previous");
-        move_dir_across_fs(destination, &retained)?;
-        match move_dir_across_fs(&staged_path, destination) {
-            Ok(()) => {
-                let _ = stage.keep();
-                close_stage(backup, destination)?;
-                Ok(())
-            }
-            Err(err) => {
-                let _ = move_dir_across_fs(&retained, destination);
-                let _ = backup.keep();
-                Err(err.into())
-            }
-        }
-    } else {
-        if let Err(err) = rename_without_replacing(&staged_path, destination) {
-            if err.kind() == ErrorKind::CrossesDevices {
-                copy_locked_external_tree(&staged_path, destination, |_| true)?;
-            } else {
-                return Err(err.into());
-            }
-        }
-        let _ = stage.keep();
-        Ok(())
-    }
-}
-
 /// Closes a staging directory, preserving its path in an error message if cleanup fails.
 pub fn close_stage(stage: TempDir, target: &Path) -> ImageToolResult<()> {
     let recovery = stage.path().to_path_buf();
@@ -371,17 +323,6 @@ pub fn close_stage(stage: TempDir, target: &Path) -> ImageToolResult<()> {
             recovery.display()
         ))
     })
-}
-
-fn move_dir_across_fs(from: &Path, to: &Path) -> io::Result<()> {
-    match rename_without_replacing(from, to) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == ErrorKind::CrossesDevices => {
-            copy_locked_external_tree(from, to, |_| true)?;
-            fs::remove_dir_all(from)
-        }
-        Err(err) => Err(err),
-    }
 }
 
 fn move_with_read_only_root(

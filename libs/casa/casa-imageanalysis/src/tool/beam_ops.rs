@@ -4,7 +4,6 @@
 
 use std::path::Path;
 
-use casa_coordinates::CoordinateType;
 use casa_core::quanta::{Quantity, Unit, casacore};
 use casa_core::{RecordField, RecordValue, ScalarValue, Value};
 use casa_images::{
@@ -16,32 +15,11 @@ use casa_tables::LockType;
 use super::attachment::AttachedImage;
 use super::beam_view::BeamView;
 use super::beams::{
-    axis_length, beam_for_units, image_info, image_info_record, image_info_with_beams,
-    parse_beam_record, plane_axes, stored_beam_record, subrecord, validate_beam_indices,
+    axis_length, beam_for_units, image_info, image_info_record, plane_axes, stored_beam_record,
+    subrecord,
 };
 use super::error::{ImageToolError, ImageToolResult, ToolLogLine};
 use super::handle::{ImageHandle, Storage, with_pixels};
-
-/// Parameters for `set_restoring_beam`.
-#[derive(Debug, Clone)]
-pub struct SetBeamRequest {
-    /// Explicit major axis as `(value, unit)`, if overriding.
-    pub major: Option<(f64, String)>,
-    /// Explicit minor axis as `(value, unit)`, if overriding.
-    pub minor: Option<(f64, String)>,
-    /// Explicit position angle as `(value, unit)`, if overriding.
-    pub pa: Option<(f64, String)>,
-    /// Pre-parsed beam record, if supplied via `beam={...}`.
-    pub beam_record: Option<RecordValue>,
-    /// Remove all beams if `true`.
-    pub remove: bool,
-    /// Optional log toggle.
-    pub log: bool,
-    /// Channel index (`< 0` means unset).
-    pub channel: isize,
-    /// Polarization index (`< 0` means unset).
-    pub polarization: isize,
-}
 
 /// Result of deconvolving a component Gaussian from a restoring beam.
 #[derive(Debug, Clone)]
@@ -52,171 +30,6 @@ pub struct DeconvolveBeamResult {
     pub point: bool,
     /// Log lines produced during deconvolution.
     pub logs: Vec<ToolLogLine>,
-}
-
-/// Sets, replaces, or removes the restoring beam(s) on `attached`.
-pub fn set_restoring_beam(
-    attached: &AttachedImage,
-    request: &SetBeamRequest,
-    record_history: bool,
-    history_command: Option<String>,
-) -> ImageToolResult<()> {
-    let mut image = attached.lock();
-    attached.require_write_lock(&mut image, "setrestoringbeam")?;
-
-    let mut beam_view = attached.beam_view();
-    let current = beam_view
-        .beam_set()
-        .unwrap_or_else(|_| ImageBeamSet::empty());
-
-    let next_beams = if request.remove {
-        ImageBeamSet::empty()
-    } else {
-        let base_beam = if let Some(record) = &request.beam_record {
-            parse_beam_record(record)?
-        } else if current.is_single() {
-            current.single_beam().unwrap_or_default()
-        } else if !current.is_empty() && request.channel >= 0 {
-            let (ch, pol) = validate_beam_indices(
-                image.shape(),
-                image.coordinates(),
-                request.channel,
-                request.polarization,
-                false,
-            )?;
-            let c = ch.unwrap_or(0).min(current.n_channels().saturating_sub(1));
-            let p = pol.unwrap_or(0).min(current.n_stokes().saturating_sub(1));
-            *current.beam(c, p)
-        } else {
-            GaussianBeam::default()
-        };
-
-        let updated = build_beam_from_parts(base_beam, request)?;
-        if request.channel < 0 && request.polarization < 0 {
-            ImageBeamSet::new(updated)
-        } else {
-            let (ch, pol) = validate_beam_indices(
-                image.shape(),
-                image.coordinates(),
-                request.channel,
-                request.polarization,
-                false,
-            )?;
-            let shape = image.shape();
-            let coords = image.coordinates();
-            let n_chan = coords
-                .find_coordinate(CoordinateType::Spectral)
-                .map_or(1, |ax| shape[ax]);
-            let n_stokes = coords
-                .find_coordinate(CoordinateType::Stokes)
-                .map_or(1, |ax| shape[ax]);
-            let mut next = if current.is_multi()
-                && current.n_channels() == n_chan
-                && current.n_stokes() == n_stokes
-            {
-                current
-            } else {
-                let fill = current.single_beam().unwrap_or(updated);
-                ImageBeamSet::with_shape(n_chan, n_stokes, fill)
-            };
-            let chan_range: Vec<usize> = match ch {
-                Some(c) => vec![c],
-                None => (0..n_chan).collect(),
-            };
-            let stokes_range: Vec<usize> = match pol {
-                Some(p) => vec![p],
-                None => (0..n_stokes).collect(),
-            };
-            for c in chan_range {
-                for &p in &stokes_range {
-                    next.set_beam(Some(c), Some(p), updated)?;
-                }
-            }
-            next
-        }
-    };
-
-    let info = image_info_with_beams(&image, next_beams)?;
-    let info_record = info.to_record();
-    image.set_image_info_record(info_record.clone())?;
-    beam_view.capture(&info_record);
-    if record_history && let Some(command) = history_command {
-        image.record_history("setrestoringbeam", command)?;
-    }
-    image.save()?;
-    Ok(())
-}
-
-/// Replaces all beams in `attached` using a parsed [`ImageBeamSet`].
-pub fn replace_beam_set(
-    attached: &AttachedImage,
-    beam_set: ImageBeamSet,
-    record_history: bool,
-    history_method: &str,
-    history_command: Option<String>,
-) -> ImageToolResult<()> {
-    let mut image = attached.lock();
-    attached.require_write_lock(&mut image, history_method)?;
-    let info = image_info_with_beams(&image, beam_set)?;
-    let record = info.to_record();
-    image.set_image_info_record(record.clone())?;
-    attached.beam_view().capture(&record);
-    if record_history && let Some(command) = history_command {
-        image.record_history(history_method, command)?;
-    }
-    image.save()?;
-    Ok(())
-}
-
-/// Rotates all restoring beams on `attached` counter-clockwise by `angle_deg` degrees.
-///
-/// Matches CASA's handling on beamless images by accumulating `empty_angle_degrees`.
-pub fn rotate_restoring_beam(
-    attached: &AttachedImage,
-    angle_deg: f64,
-    record_history: bool,
-    history_command: Option<String>,
-) -> ImageToolResult<()> {
-    let mut image = attached.lock();
-    attached.require_write_lock(&mut image, "rotatebeam")?;
-    let mut beam_view = attached.beam_view();
-    let beams = beam_view.beam_set().map_err(|err| err.to_string())?;
-    if beams.is_empty() {
-        beam_view.empty_angle_degrees += angle_deg;
-        return Ok(());
-    }
-
-    let mut grid = Vec::with_capacity(beams.n_channels());
-    for chan in 0..beams.n_channels() {
-        let mut row = Vec::with_capacity(beams.n_stokes());
-        for stokes in 0..beams.n_stokes() {
-            let beam = *beams.beam(chan, stokes);
-            let pa_deg = beam.position_angle_in("deg")? + angle_deg;
-            let rotated =
-                GaussianBeam::new(beam.major, beam.minor, wrap_pa_rad(pa_deg.to_radians()));
-            row.push(rotated);
-        }
-        grid.push(row);
-    }
-    let next = if let Some(single) = beams.single_beam() {
-        let pa_deg = single.position_angle_in("deg")? + angle_deg;
-        ImageBeamSet::new(GaussianBeam::new(
-            single.major,
-            single.minor,
-            wrap_pa_rad(pa_deg.to_radians()),
-        ))
-    } else {
-        ImageBeamSet::from_grid(grid)
-    };
-    let info = image_info_with_beams(&image, next)?;
-    let record = info.to_record();
-    image.set_image_info_record(record.clone())?;
-    beam_view.capture(&record);
-    if record_history && let Some(command) = history_command {
-        image.record_history("rotatebeam", command)?;
-    }
-    image.save()?;
-    Ok(())
 }
 
 /// Deconvolves a source Gaussian from a beam Gaussian (both supplied as `GaussianBeam`).
@@ -251,54 +64,6 @@ pub fn effective_image_info(attached: &AttachedImage) -> ImageToolResult<ImageIn
     let mut record = super::beams::image_info(&image)?.to_record();
     attached.beam_view().apply_to(&mut record);
     Ok(ImageInfo::from_record(&record)?)
-}
-
-fn build_beam_from_parts(
-    base: GaussianBeam,
-    request: &SetBeamRequest,
-) -> ImageToolResult<GaussianBeam> {
-    let stored = StoredGaussianBeam::new(
-        casa_core::quanta::Quantity::new(base.major_in("arcsec")?, "arcsec")?,
-        casa_core::quanta::Quantity::new(base.minor_in("arcsec")?, "arcsec")?,
-        casa_core::quanta::Quantity::new(base.position_angle_in("deg")?, "deg")?,
-    )?;
-    let stored = if let Some((val, unit)) = &request.major {
-        let q = casa_core::quanta::Quantity::new(*val, unit.as_str())?;
-        stored.with_component(casa_images::BeamComponent::Major, q)?
-    } else {
-        stored
-    };
-    let stored = if let Some((val, unit)) = &request.minor {
-        let q = casa_core::quanta::Quantity::new(*val, unit.as_str())?;
-        stored.with_component(casa_images::BeamComponent::Minor, q)?
-    } else {
-        stored
-    };
-    let stored = if let Some((val, unit)) = &request.pa {
-        let q = casa_core::quanta::Quantity::new(*val, unit.as_str())?;
-        stored.with_component(casa_images::BeamComponent::PositionAngle, q)?
-    } else {
-        stored
-    };
-    let beam = GaussianBeam::from_record(&stored.to_record())?;
-    if beam.is_null() {
-        return Err(ImageToolError::new(
-            "Restoring beam cannot have zero major or minor axis unless remove=True.",
-        ));
-    }
-    Ok(beam)
-}
-
-fn wrap_pa_rad(mut rad: f64) -> f64 {
-    let half_pi = std::f64::consts::FRAC_PI_2;
-    let pi = std::f64::consts::PI;
-    while rad > half_pi {
-        rad -= pi;
-    }
-    while rad <= -half_pi {
-        rad += pi;
-    }
-    rad
 }
 
 /// Parameters for full CASA `ia.setrestoringbeam` behavior.
@@ -1040,6 +805,21 @@ pub fn deconvolve_from_beam(
         RecordField::new("fit", Value::Record(RecordValue::new(fit_fields))),
         RecordField::new("return", Value::Scalar(ScalarValue::Bool(unresolved))),
     ]))
+}
+
+/// Validates that `attached` supports component deconvolution and returns the restoring
+/// [`GaussianBeam`] for `(channel, polarization)` (`ia.deconvolvecomponentlist`).
+pub fn deconvolve_attached_beam_context(
+    attached: &AttachedImage,
+    channel: i64,
+    polarization: i64,
+) -> ImageToolResult<GaussianBeam> {
+    deconvolve_beam_context(
+        &attached.lock(),
+        &attached.beam_view(),
+        channel,
+        polarization,
+    )
 }
 
 /// Validates that `image` supports component deconvolution and returns the restoring [`GaussianBeam`]

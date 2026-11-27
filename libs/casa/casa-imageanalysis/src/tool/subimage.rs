@@ -44,7 +44,7 @@ pub fn extract_subimage(
     request: &SubimageRequest<'_>,
     record_history: bool,
     is_external_open: ExternalPathCheck<'_>,
-) -> ImageToolResult<(Option<ImageHandle>, Vec<ToolLogLine>)> {
+) -> ImageToolResult<(Option<AttachedImage>, Vec<ToolLogLine>)> {
     let mut logs = Vec::new();
     if request.outfile.is_empty() && !request.wantreturn {
         logs.push(ToolLogLine::warning(

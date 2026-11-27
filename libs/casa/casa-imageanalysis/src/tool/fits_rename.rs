@@ -10,7 +10,9 @@ use std::path::Path;
 use casa_tables::lexical_absolute;
 use casa_tables::publication::{check_write_access, rename_without_replacing};
 
-use super::attachment::AttachedImage;
+use super::attachment::{
+    AttachedImage, ExternalPathCheck, conflicting_images, in_use_by_expression, key, registry,
+};
 use super::error::{ImageToolError, ImageToolResult};
 use super::handle::same_file_snapshot;
 use super::native_rename::rename_destination;
@@ -26,8 +28,16 @@ impl FitsDirectory {
         expanded: &str,
         overwrite: bool,
         history: bool,
+        is_external_open: ExternalPathCheck<'_>,
     ) -> ImageToolResult<AttachedImage> {
-        rename(old_name, name, expanded, overwrite, history)
+        rename(
+            old_name,
+            name,
+            expanded,
+            overwrite,
+            history,
+            is_external_open,
+        )
     }
 }
 
@@ -38,6 +48,7 @@ pub fn rename(
     expanded: &str,
     overwrite: bool,
     history: bool,
+    is_external_open: ExternalPathCheck<'_>,
 ) -> ImageToolResult<AttachedImage> {
     if old_name.as_os_str() == OsStr::new(name) {
         return Err(ImageToolError::new(
@@ -96,6 +107,25 @@ pub fn rename(
             "RegularFile::copy/move: target file {} already exists and is not writable",
             destination.display()
         )));
+    }
+    if is_external_open(&destination) {
+        return Err(ImageToolError::new(format!(
+            "Cannot rename image because {} is still open in this process",
+            destination.display()
+        )));
+    }
+    if destination.exists() {
+        let dest_key = key(&destination)?;
+        let registry = registry();
+        if conflicting_images(&registry, &dest_key, 0)
+            || in_use_by_expression(&registry, &dest_key)
+            || is_external_open(&dest_key)
+        {
+            return Err(ImageToolError::new(format!(
+                "Cannot rename image because {} is still open in this process",
+                destination.display()
+            )));
+        }
     }
     let result = if overwrite {
         fs::rename(&source, &destination)

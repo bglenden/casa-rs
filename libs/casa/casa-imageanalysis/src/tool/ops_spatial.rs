@@ -94,7 +94,7 @@ pub fn crop_image(
             "outfile was not specified and wantreturn is false. The resulting image will be inaccessible",
         ));
     }
-    Ok((wantreturn.then(|| AttachedImage::from_handle(output)), logs))
+    Ok((wantreturn.then_some(output), logs))
 }
 
 fn crop_float(
@@ -200,7 +200,7 @@ pub fn decimate_image(
             Ok(out)
         })
     })?;
-    Ok(AttachedImage::from_handle(output))
+    Ok(output)
 }
 
 fn decimate_typed<T: DecimationPixel>(
@@ -271,7 +271,7 @@ pub fn pad_image(
             Ok(out)
         })
     })?;
-    Ok(wantreturn.then(|| AttachedImage::from_handle(output)))
+    Ok(wantreturn.then_some(output))
 }
 
 fn pad_float(
@@ -357,7 +357,7 @@ pub fn pbcor_image(
             })
         })
         .transpose()?;
-    let handle = publish_image(outfile, overwrite, is_external_open, |dest| {
+    let result = publish_image(outfile, overwrite, is_external_open, |dest| {
         if let Some(beam) = &beam_attachment {
             let source_first = attached
                 .native_path()
@@ -409,7 +409,7 @@ pub fn pbcor_image(
             })
         }
     })?;
-    Ok(AttachedImage::from_handle(handle))
+    Ok(result)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -533,7 +533,7 @@ pub fn rebin_image(
     is_external_open: ExternalPathCheck<'_>,
 ) -> ImageToolResult<AttachedImage> {
     let mut live_coordinates = None;
-    let handle = publish_image(outfile, overwrite, is_external_open, |dest| {
+    let mut result = publish_image(outfile, overwrite, is_external_open, |dest| {
         read_locked(attached, |handle| {
             match handle {
                 ImageHandle::Double(_) => {
@@ -574,7 +574,6 @@ pub fn rebin_image(
             Ok(out)
         })
     })?;
-    let mut result = AttachedImage::from_handle(handle);
     if let Some((record, system)) = live_coordinates {
         result.keep_live_coordinates(record, system);
     }
@@ -831,5 +830,5 @@ pub fn pv_image(
             "outfile was not specified and wantreturn is false. The resulting image will be inaccessible",
         ));
     }
-    Ok((wantreturn.then(|| AttachedImage::from_handle(handle)), logs))
+    Ok((wantreturn.then_some(handle), logs))
 }

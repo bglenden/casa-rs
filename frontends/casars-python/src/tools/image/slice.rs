@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_images::RegridMethod;
-use casa_images::{PixelSlice, get_slice};
-use num_complex::{Complex32, Complex64};
+//! Thin PyO3 `ia.getslice` wrapper delegating to [`casa_imageanalysis::tool::slice`].
+
+use casa_imageanalysis::tool::slice::{SliceRecordResult, get_slice_attached, parse_slice_method};
+use casa_images::PixelSlice;
+use num_complex::Complex64;
 use numpy::PyUntypedArray;
 use pyo3::exceptions::{PySystemError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
 
 use super::PyImageTool;
-use super::handle::{ImageHandle, Storage, raised, with_storage};
+use super::handle::raised;
 use crate::convert::{double_vector_element, value::CasaValue};
 
 struct SliceVector {
@@ -118,13 +120,8 @@ impl FromPyObject<'_, '_> for SliceVector {
 struct SliceMethod(String);
 
 impl SliceMethod {
-    fn parse(&self) -> PyResult<RegridMethod> {
-        match self.0.as_bytes().first().map(u8::to_ascii_uppercase) {
-            Some(b'N') => Ok(RegridMethod::Nearest),
-            Some(b'L') => Ok(RegridMethod::Linear),
-            Some(b'C') => Ok(RegridMethod::Cubic),
-            _ => Err(raised("Illegal interpolation method")),
-        }
+    fn parse(&self) -> PyResult<casa_images::RegridMethod> {
+        parse_slice_method(&self.0).map_err(raised)
     }
 }
 
@@ -218,57 +215,31 @@ impl PyImageTool {
             axes.get(1).copied().unwrap_or(-1),
         ];
         let coord = coord.indices("coord")?;
-        let output = py.detach(|| {
+        let output = py.detach(|| -> PyResult<CasaValue> {
             let state = self.state();
             let Some(attachment) = state.image.as_ref() else {
                 return Ok(CasaValue::empty_record());
             };
             let npts = usize::try_from(npts).map_err(|_| raised("npts must be non-negative"))?;
             let method = method.parse()?;
-            let mut image = attachment.lock();
-            attachment
-                .require_pixel_read_lock(&mut image)
-                .map_err(raised)?;
-            macro_rules! read {
-                ($view:expr, $pixels:expr) => {
-                    get_slice($view, &x.values, &y.values, axes, &coord, npts, method)
-                        .map(|slice| record(slice, axes, $pixels))
-                        .map_err(raised)
-                };
-            }
-            let result = match &*image {
-                ImageHandle::Float(Storage::Temp {
-                    image,
-                    fits: Some(fits),
-                    ..
-                }) => {
-                    read!(&fits.image_view(image), |pixels: Vec<f32>| {
-                        CasaValue::floats(pixels.into_iter().map(f64::from).collect())
-                    })
-                }
-                ImageHandle::Float(storage) => with_storage!(storage, view => {
-                    read!(view.as_ref(), |pixels: Vec<f32>| {
-                        CasaValue::floats(pixels.into_iter().map(f64::from).collect())
-                    })
+            let result =
+                get_slice_attached(attachment, &x.values, &y.values, axes, &coord, npts, method)
+                    .map_err(raised)?;
+            Ok(match result {
+                SliceRecordResult::Float { axes, slice } => record(slice, axes, |pixels| {
+                    CasaValue::floats(pixels.into_iter().map(f64::from).collect())
                 }),
-                ImageHandle::Double(storage) => with_storage!(storage, view => {
-                    read!(view.as_ref(), CasaValue::floats)
+                SliceRecordResult::Double { axes, slice } => record(slice, axes, CasaValue::floats),
+                SliceRecordResult::Complex { axes, slice } => record(slice, axes, |pixels| {
+                    complex(
+                        pixels
+                            .into_iter()
+                            .map(|value| Complex64::new(f64::from(value.re), f64::from(value.im)))
+                            .collect(),
+                    )
                 }),
-                ImageHandle::Complex(storage) => with_storage!(storage, view => {
-                    read!(view.as_ref(), |pixels: Vec<Complex32>| {
-                        complex(pixels.into_iter().map(|value| {
-                            Complex64::new(f64::from(value.re), f64::from(value.im))
-                        }).collect())
-                    })
-                }),
-                ImageHandle::DComplex(storage) => with_storage!(storage, view => {
-                    read!(view.as_ref(), complex)
-                }),
-            };
-            let release = attachment
-                .release_requested_lock(&mut image)
-                .map_err(raised);
-            result.and_then(|value| release.map(|()| value))
+                SliceRecordResult::DComplex { axes, slice } => record(slice, axes, complex),
+            })
         })?;
         output.into_python(py)
     }

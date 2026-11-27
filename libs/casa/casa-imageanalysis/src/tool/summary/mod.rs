@@ -2,8 +2,8 @@
 
 //! Image summary metadata and text report generation (`ia.summary`).
 
-pub mod coordinates;
-pub mod plane_beams;
+pub(crate) mod coordinates;
+pub(crate) mod plane_beams;
 
 use std::fmt::Write;
 

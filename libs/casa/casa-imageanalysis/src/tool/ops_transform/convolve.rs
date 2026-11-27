@@ -86,7 +86,7 @@ pub fn convolve_image(
         .map(AttachedImage::open_for_ordered_read)
         .transpose()?;
     let mut coordinates = None;
-    let handle = publish_image(outfile, overwrite, is_external_open, |dest| {
+    let mut out = publish_image(outfile, overwrite, is_external_open, |dest| {
         let run_build = |image: &ImageHandle, k: Option<&ImageHandle>| {
             convolve_build(
                 attached,
@@ -122,7 +122,6 @@ pub fn convolve_image(
         coordinates = AttachedImage::capture_live_coordinates(&product)?;
         Ok(product)
     })?;
-    let mut out = AttachedImage::from_handle(handle);
     if let Some((record, system)) = coordinates {
         out.keep_live_coordinates(record, system);
     }
@@ -259,7 +258,7 @@ pub fn convolve_2d_gaussian(
     is_external_open: ExternalPathCheck<'_>,
 ) -> ImageToolResult<AttachedImage> {
     let mut live_coordinates = None;
-    let handle = publish_image(outfile, overwrite, is_external_open, |path| {
+    let mut product = publish_image(outfile, overwrite, is_external_open, |path| {
         read_locked(attached, |source| {
             if !matches!(source, ImageHandle::Float(_) | ImageHandle::Double(_)) {
                 return Err(ImageToolError::new(
@@ -330,7 +329,6 @@ pub fn convolve_2d_gaussian(
             Ok(output)
         })
     })?;
-    let mut product = AttachedImage::from_handle(handle);
     if let Some((record, system)) = live_coordinates {
         product.keep_live_coordinates(record, system);
     }
@@ -604,7 +602,7 @@ pub fn sepconvolve_image(
 ) -> ImageToolResult<AttachedImage> {
     let destination = options.destination;
     let region = options.region;
-    let handle = publish_image(outfile, overwrite, is_external_open, |stage| {
+    publish_image(outfile, overwrite, is_external_open, |stage| {
         read_locked(attached, |handle| {
             handle.check_single_precision("sepconvolve")?;
             let ImageHandle::Float(source) = handle else {
@@ -623,8 +621,7 @@ pub fn sepconvolve_image(
             finalize_output_history(&mut output, &entries, "sepconvolve", history_command, None)?;
             Ok(output)
         })
-    })?;
-    Ok(AttachedImage::from_handle(handle))
+    })
 }
 
 fn sepconvolve_float(
@@ -677,7 +674,7 @@ pub fn smooth_axis(
         SmoothingKernel::Hanning => "hanning",
     };
     let mut live_coordinates = None;
-    let handle = publish_image(outfile, overwrite, is_external_open, |path| {
+    let mut product = publish_image(outfile, overwrite, is_external_open, |path| {
         read_locked(attached, |image| {
             image.check_single_precision(method_name)?;
             if !outfile.is_empty() {
@@ -730,7 +727,6 @@ pub fn smooth_axis(
             Ok(output)
         })
     })?;
-    let mut product = AttachedImage::from_handle(handle);
     if let Some((record, system)) = live_coordinates {
         product.keep_live_coordinates(record, system);
     }

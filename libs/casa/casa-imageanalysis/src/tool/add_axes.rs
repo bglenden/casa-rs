@@ -119,13 +119,13 @@ impl<'a> AddDegAxesRequest<'a> {
     }
 }
 
-/// Appends requested degenerate axes to `attached`, returning a new [`ImageHandle`] and logs.
+/// Appends requested degenerate axes to `attached`, returning a new [`AttachedImage`] and logs.
 pub fn add_degenerate_axes(
     attached: &AttachedImage,
     request: &AddDegAxesRequest<'_>,
     record_history: bool,
     is_external_open: ExternalPathCheck<'_>,
-) -> ImageToolResult<(ImageHandle, Vec<ToolLogLine>)> {
+) -> ImageToolResult<(AttachedImage, Vec<ToolLogLine>)> {
     if !request.outfile.is_empty()
         && !request.overwrite
         && Path::new(request.outfile).symlink_metadata().is_ok()

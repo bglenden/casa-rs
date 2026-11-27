@@ -35,105 +35,6 @@ pub struct PixelValueResult {
     pub pixel: Vec<i64>,
 }
 
-/// Evaluates `ia.pixelvalue` at `pixel` coordinates (defaulting to reference pixel when empty).
-pub fn pixel_value(attached: &AttachedImage, pixel: &[isize]) -> ImageToolResult<PixelValueResult> {
-    let mut image = attached.lock();
-    attached.require_pixel_read_lock(&mut image)?;
-    let shape = image.shape().to_vec();
-    let unit = image.units().to_owned();
-    let ndim = shape.len();
-    let coords = image.coordinates();
-
-    let resolved: Vec<usize> = if pixel.is_empty() {
-        let mut ref_pix = vec![0usize; ndim];
-        for c_idx in 0..coords.n_coordinates() {
-            let coord = coords.coordinate(c_idx);
-            let rp = coord.reference_pixel();
-            for (local_i, ax_opt) in coords
-                .coordinate_pixel_axes(c_idx)
-                .unwrap_or_default()
-                .into_iter()
-                .enumerate()
-            {
-                if let Some(ax) = ax_opt {
-                    let rounded = rp.get(local_i).copied().unwrap_or(0.0).round() as isize;
-                    ref_pix[ax] = rounded.clamp(0, shape[ax] as isize - 1) as usize;
-                }
-            }
-        }
-        ref_pix
-    } else {
-        let mut pos = Vec::with_capacity(ndim);
-        for (axis, &dim) in shape.iter().enumerate() {
-            let p = pixel.get(axis).copied().unwrap_or(0);
-            if p < 0 || (p as usize) >= dim {
-                return Err(ImageToolError::new(format!(
-                    "Pixel coordinate {p} out of bounds on axis {axis} (length {dim}).",
-                )));
-            }
-            pos.push(p as usize);
-        }
-        pos
-    };
-
-    let ones = vec![1usize; ndim];
-    let (value, mask) = match &*image {
-        ImageHandle::Float(storage) => {
-            if let Some(fits) = image.fits() {
-                let metadata = match storage {
-                    Storage::Temp { image, .. } => image.as_ref(),
-                    Storage::Paged(_) => unreachable!(),
-                };
-                let view = fits.image_view(metadata);
-                let (v, m) = read_one(&view, &resolved, &ones)?;
-                (PixelScalar::Float(v), m)
-            } else {
-                with_storage!(storage, img => {
-                    let (v, m) = read_one(img.as_ref(), &resolved, &ones)?;
-                    (PixelScalar::Float(v), m)
-                })
-            }
-        }
-        ImageHandle::Double(storage) => with_storage!(storage, img => {
-            let (v, m) = read_one(img.as_ref(), &resolved, &ones)?;
-            (PixelScalar::Double(v), m)
-        }),
-        ImageHandle::Complex(storage) => with_storage!(storage, img => {
-            let (v, m) = read_one(img.as_ref(), &resolved, &ones)?;
-            (PixelScalar::Complex(v), m)
-        }),
-        ImageHandle::DComplex(storage) => with_storage!(storage, img => {
-            let (v, m) = read_one(img.as_ref(), &resolved, &ones)?;
-            (PixelScalar::DComplex(v), m)
-        }),
-    };
-
-    Ok(PixelValueResult {
-        mask,
-        value,
-        unit,
-        pixel: resolved.into_iter().map(|v| v as i64).collect(),
-    })
-}
-
-fn read_one<T: ImagePixel>(
-    image: &dyn ImageInterface<T>,
-    start: &[usize],
-    ones: &[usize],
-) -> ImageToolResult<(T, bool)> {
-    let vals = image.get_slice(start, ones, ones)?;
-    let mask = image
-        .get_mask_slice(start, ones, ones)?
-        .and_then(|m| m.iter().next().copied())
-        .unwrap_or(true);
-    let val = vals
-        .iter()
-        .next()
-        .copied()
-        .ok_or_else(|| ImageToolError::new("Failed to read single pixel value."))?;
-    Ok((val, mask))
-}
-
 /// Resolves CASA's `pixel` selector against `coordinates` and `shape`, returning `None` when out of bounds.
 pub fn pixel_position(
     coordinates: &casa_coordinates::CoordinateSystem,
@@ -237,4 +138,45 @@ pub fn pixel_value_casa(
     };
     image.release_requested_lock()?;
     Ok(Some(result))
+}
+
+/// Error returned when constructing a constant float pixel array (`ia.makearray`).
+#[derive(Debug, Clone)]
+pub enum MakeArrayError {
+    /// Invalid dimension values (negative or non-finite).
+    InvalidShape(ImageToolError),
+    /// Requested element count or allocation exceeds available memory.
+    OutOfMemory,
+}
+
+/// Allocates a column-major constant float array of `dims` filled with `value` (`ia.makearray`).
+pub fn make_constant_array(
+    value: f64,
+    dims: &[f64],
+) -> Result<(Vec<usize>, Vec<f64>), MakeArrayError> {
+    let shape = if dims.is_empty() {
+        vec![1]
+    } else {
+        dims.iter()
+            .map(|&size| {
+                if size.is_finite() && size >= 0.0 {
+                    Ok(size as usize)
+                } else {
+                    Err(MakeArrayError::InvalidShape(ImageToolError::new(
+                        "image array dimensions must be non-negative",
+                    )))
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let size = shape
+        .iter()
+        .try_fold(1_usize, |acc, &axis| acc.checked_mul(axis))
+        .ok_or(MakeArrayError::OutOfMemory)?;
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(size)
+        .map_err(|_| MakeArrayError::OutOfMemory)?;
+    values.resize(size, value);
+    Ok((shape, values))
 }

@@ -5,7 +5,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use casa_images::ImageError;
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{TableWriteLock, lexical_absolute};
 
@@ -15,143 +14,19 @@ use super::attachment::{
 use super::concatenate::owned_members::{MemberMoves, OwnedOperands};
 use super::error::{ImageToolError, ImageToolResult};
 use super::handle::{ImageHandle, same_file_identity};
-use super::native_rename::publish_staged_directory;
 use super::table_locks::lock_table_tree;
 
-/// Validates `outfile` against `overwrite`, open tables, and mask operands, then stages a build.
-///
-/// When `outfile` is empty, `build(None)` produces an in-memory/temporary [`ImageHandle`].
-/// When `outfile` is non-empty, `build(Some(stage_path))` writes a native image into a
-/// temporary sibling directory, and `publish_image` atomically installs it onto `outfile`
-/// and reopens the handle bound to the final path.
+/// Validates `outfile` against `overwrite`, open tables, and mask operands, then stages a build
+/// returning a registered [`AttachedImage`].
 pub fn publish_image(
     outfile: &str,
     overwrite: bool,
     is_external_open: ExternalPathCheck<'_>,
     build: impl FnOnce(Option<&Path>) -> ImageToolResult<ImageHandle>,
-) -> ImageToolResult<ImageHandle> {
-    publish_staged_pair_core(
-        StagedImage::allocate(outfile)?,
-        None,
-        overwrite,
-        is_external_open,
-        |target, _| Ok((build(target)?, None)),
-        |installed, _| Ok(ImageHandle::open(&installed.stage.target)?),
-        |handle| handle,
-    )
-}
-
-/// Validates and publishes a directory-backed product (`.imgconcat`, `.imgexpr`, or component table)
-/// built by `build(stage_path)` inside a staging directory.
-pub fn publish_directory(
-    outfile: &Path,
-    overwrite: bool,
-    is_external_open: ExternalPathCheck<'_>,
-    build: impl FnOnce(&Path) -> ImageToolResult<()>,
-) -> ImageToolResult<()> {
-    validate_output_target(outfile, overwrite, is_external_open)?;
-    let parent = output_parent(outfile);
-    if !parent.exists() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let stage = tempfile::Builder::new()
-        .prefix(".casars-dir-stage-")
-        .tempdir_in(parent)?;
-    build(stage.path())?;
-    publish_staged_directory(stage, outfile)
-}
-
-/// Checks whether `outfile` may be created or overwritten safely.
-pub fn validate_output_target(
-    destination: &Path,
-    overwrite: bool,
-    is_external_open: ExternalPathCheck<'_>,
-) -> ImageToolResult<()> {
-    if destination.as_os_str().is_empty() {
-        return Ok(());
-    }
-    if !overwrite && destination.symlink_metadata().is_ok() {
-        return Err(ImageToolError::new(format!(
-            "File {} exists, and the user does not want to remove it.",
-            destination.display()
-        )));
-    }
-    if is_external_open(destination) {
-        return Err(ImageToolError::new(format!(
-            "Cannot overwrite {}: file is currently open.",
-            destination.display()
-        )));
-    }
-    if overwrite
-        && let Ok(meta) = destination.symlink_metadata()
-        && !meta.is_dir()
-    {
-        return Err(ImageToolError::new(format!(
-            "Cannot overwrite non-directory file {} with a CASA image.",
-            destination.display()
-        )));
-    }
-    Ok(())
-}
-
-/// Staged directory reservation for secondary output images (`fitcomponents`, `fft`, `moments`).
-pub struct StagedImageOutput {
-    destination: PathBuf,
-    stage_dir: tempfile::TempDir,
-    stage_path: PathBuf,
-}
-
-impl StagedImageOutput {
-    /// Reserves a staging slot adjacent to `destination`, validating overwrite/external open state.
-    pub fn prepare(
-        destination: &Path,
-        overwrite: bool,
-        is_external_open: ExternalPathCheck<'_>,
-    ) -> ImageToolResult<Self> {
-        validate_output_target(destination, overwrite, is_external_open)?;
-        let parent = output_parent(destination);
-        if !parent.exists() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let stage_dir = tempfile::Builder::new()
-            .prefix(".casars-stage-")
-            .tempdir_in(parent)?;
-        let stage_path = stage_dir.path().join("product");
-        Ok(Self {
-            destination: destination.to_path_buf(),
-            stage_dir,
-            stage_path,
-        })
-    }
-
-    /// Returns the temporary path into which the product image should be written.
-    pub fn path(&self) -> &Path {
-        &self.stage_path
-    }
-
-    /// Atomically publishes the staged image onto its final destination path.
-    pub fn commit(self) -> ImageToolResult<PathBuf> {
-        let parent = output_parent(&self.destination);
-        let inner_stage = self.stage_dir.keep();
-        let final_stage = tempfile::TempDir::new_in(parent)?;
-        let final_stage_path = final_stage.path().to_path_buf();
-        std::fs::remove_dir(&final_stage_path)?;
-        std::fs::rename(&self.stage_path, &final_stage_path)?;
-        let _ = std::fs::remove_dir_all(&inner_stage);
-        publish_staged_directory(final_stage, &self.destination)?;
-        Ok(self.destination)
-    }
-}
-
-/// Converts an `ImageError` encountered during staged I/O into [`ImageToolError`].
-pub fn staged_io_error(error: ImageError) -> ImageToolError {
-    ImageToolError::from(error)
-}
-
-fn output_parent(path: &Path) -> &Path {
-    path.parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."))
+) -> ImageToolResult<AttachedImage> {
+    publish_image_pair(outfile, "", overwrite, is_external_open, |target, _| {
+        Ok((build(target)?, None))
+    })
 }
 
 fn output_exists(name: &str) -> ImageToolError {
@@ -486,18 +361,6 @@ fn report_publication_recovery(
     ))
 }
 
-/// Builds and publishes a single image, returning a registered [`AttachedImage`].
-pub fn publish_attached_image(
-    outfile: &str,
-    overwrite: bool,
-    is_external_open: ExternalPathCheck<'_>,
-    build: impl FnOnce(Option<&Path>) -> ImageToolResult<ImageHandle>,
-) -> ImageToolResult<AttachedImage> {
-    publish_image_pair(outfile, "", overwrite, is_external_open, |target, _| {
-        Ok((build(target)?, None))
-    })
-}
-
 /// Stages and publishes a `nomovevirtual` concatenation image as an [`AttachedImage`].
 pub fn publish_virtual_concat(
     outfile: &str,
@@ -646,29 +509,6 @@ pub fn publish_staged_pair(
         Option<&Path>,
     ) -> ImageToolResult<(ImageHandle, Option<ImageHandle>)>,
 ) -> ImageToolResult<AttachedImage> {
-    publish_staged_pair_core(
-        primary,
-        companion,
-        overwrite,
-        is_external_open,
-        build,
-        InstalledImage::open,
-        AttachedImage::temporary,
-    )
-}
-
-fn publish_staged_pair_core<R>(
-    primary: Option<StagedImage>,
-    companion: Option<StagedImage>,
-    overwrite: bool,
-    is_external_open: ExternalPathCheck<'_>,
-    build: impl FnOnce(
-        Option<&Path>,
-        Option<&Path>,
-    ) -> ImageToolResult<(ImageHandle, Option<ImageHandle>)>,
-    open_primary: impl FnOnce(&InstalledImage, &mut OpenImages) -> ImageToolResult<R>,
-    wrap_temporary: impl FnOnce(ImageHandle) -> R,
-) -> ImageToolResult<R> {
     check_distinct(primary.as_ref(), companion.as_ref())?;
     let output_paths = primary
         .iter()
@@ -683,7 +523,7 @@ fn publish_staged_pair_core<R>(
     })?;
     drop(secondary);
     let temporary = if primary.is_none() {
-        Some(wrap_temporary(image))
+        Some(AttachedImage::temporary(image))
     } else {
         drop(image);
         None
@@ -711,10 +551,10 @@ fn publish_staged_pair_core<R>(
 
     match persistent
         .then(|| {
-            open_primary(
-                installed.last().expect("primary is installed last"),
-                &mut registry,
-            )
+            installed
+                .last()
+                .expect("primary is installed last")
+                .open(&mut registry)
         })
         .transpose()
     {
@@ -973,7 +813,7 @@ mod tests {
             )?))
         })
         .unwrap();
-        assert_eq!(created.shape(), &[4, 4]);
+        assert_eq!(created.lock().shape(), &[4, 4]);
         assert!(target.join("table.dat").is_file());
         drop(created);
 
@@ -999,7 +839,7 @@ mod tests {
             )?))
         })
         .unwrap();
-        assert_eq!(replaced.shape(), &[6, 6]);
+        assert_eq!(replaced.lock().shape(), &[6, 6]);
     }
 
     #[test]

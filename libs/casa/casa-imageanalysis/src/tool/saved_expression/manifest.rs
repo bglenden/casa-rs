@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
-use std::fs::{self, File};
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use casa_core::{PrimitiveType, RecordValue};
 use casa_images::ImagePixelType;
 use casa_images::expr_file::{
-    ToolExpressionManifest, encode_tool_manifest, is_image_expr, read_tool_manifest,
+    ToolExpressionManifest, encode_tool_manifest, read_tool_manifest,
     read_tool_manifest_from_reader,
 };
 
@@ -382,64 +382,4 @@ fn write_staged(file: &mut fs::File, before: &fs::Metadata, content: &[u8]) -> I
     file.write_all(content)?;
     file.set_permissions(before.permissions())?;
     Ok(file.sync_all()?)
-}
-
-/// Returns whether `path` is a saved LEL expression directory (`imageexpr.json`).
-pub fn is_saved_expression_dir(path: &Path) -> bool {
-    is_image_expr(path)
-}
-
-/// Reads a saved expression manifest from `directory/imageexpr.json`.
-pub fn read_manifest(directory: &Path) -> ImageToolResult<ToolExpressionManifest> {
-    Ok(read_tool_manifest(directory)?)
-}
-
-/// Reads a saved expression manifest from an open reader.
-pub fn read_manifest_from_reader(
-    reader: impl std::io::Read,
-) -> ImageToolResult<ToolExpressionManifest> {
-    Ok(read_tool_manifest_from_reader(reader)?)
-}
-
-/// Writes `imageexpr.json` atomically into `directory` via temp file persistence.
-pub fn write_manifest(
-    directory: &Path,
-    expression: &str,
-    pixel_type: PrimitiveType,
-    misc: &RecordValue,
-) -> ImageToolResult<()> {
-    fs::create_dir_all(directory)?;
-    let encoded = encode_tool_manifest(expression, pixel_type, misc)?;
-    let manifest_path = directory.join(MANIFEST);
-    let mut temp = tempfile::NamedTempFile::new_in(directory)?;
-    temp.write_all(&encoded)?;
-    temp.as_file().sync_all()?;
-    temp.persist(&manifest_path)?;
-    Ok(())
-}
-
-/// Saves `misc_info` back into an existing expression directory, preserving expression text.
-pub fn update_manifest_misc_info(
-    directory: &Path,
-    pixel_type: PrimitiveType,
-    misc: &RecordValue,
-) -> ImageToolResult<()> {
-    let manifest = read_tool_manifest(directory)?;
-    write_manifest(directory, &manifest.expression, pixel_type, misc)
-}
-
-/// Opens the manifest file inside `directory` and parses it.
-pub fn open_and_read_manifest(directory: &Path) -> ImageToolResult<ToolExpressionManifest> {
-    let file = File::open(directory.join(MANIFEST)).map_err(|err| {
-        ImageToolError::new(format!(
-            "Cannot open expression manifest in '{}': {err}",
-            directory.display()
-        ))
-    })?;
-    read_manifest_from_reader(file)
-}
-
-/// Returns the manifest file path for a saved expression directory.
-pub fn manifest_file_path(directory: &Path) -> PathBuf {
-    directory.join(MANIFEST)
 }

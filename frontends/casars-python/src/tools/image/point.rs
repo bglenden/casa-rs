@@ -2,9 +2,9 @@
 
 //! Thin PyO3 `ia.pixelvalue` / `ia.makearray` wrapper delegating to [`casa_imageanalysis::tool::point`].
 
-pub(super) use casa_imageanalysis::tool::point::pixel_position;
-use casa_imageanalysis::tool::point::{PixelScalar, pixel_value_casa};
-use casa_images::{ImageInterface, ImagePixel};
+use casa_imageanalysis::tool::point::{
+    MakeArrayError, PixelScalar, make_constant_array, pixel_value_casa,
+};
 use num_complex::Complex64;
 use pyo3::exceptions::{PyMemoryError, PySystemError};
 use pyo3::prelude::*;
@@ -13,13 +13,6 @@ use crate::convert::{DoubleList, value::CasaValue};
 
 use super::PyImageTool;
 use super::handle::raised;
-
-pub(super) fn pixel_sample<T: ImagePixel>(
-    image: &(impl ImageInterface<T> + ?Sized),
-    pixel: &[usize],
-) -> PyResult<(T, bool)> {
-    casa_imageanalysis::tool::point::pixel_sample(image, pixel).map_err(raised)
-}
 
 struct ArrayConstant(f64);
 
@@ -82,30 +75,10 @@ impl PyImageTool {
         shape: DoubleList,
     ) -> PyResult<Py<PyAny>> {
         let array = py.detach(|| {
-            let shape = if shape.0.is_empty() {
-                vec![1]
-            } else {
-                shape
-                    .0
-                    .into_iter()
-                    .map(|size| {
-                        if size.is_finite() && size >= 0.0 {
-                            Ok(size as usize)
-                        } else {
-                            Err(raised("image array dimensions must be non-negative"))
-                        }
-                    })
-                    .collect::<PyResult<Vec<_>>>()?
-            };
-            let size = shape
-                .iter()
-                .try_fold(1_usize, |size, &axis| size.checked_mul(axis))
-                .ok_or_else(|| PyMemoryError::new_err("image array is too large"))?;
-            let mut values = Vec::new();
-            values
-                .try_reserve_exact(size)
-                .map_err(|_| PyMemoryError::new_err("image array is too large"))?;
-            values.resize(size, v.0);
+            let (shape, values) = make_constant_array(v.0, &shape.0).map_err(|err| match err {
+                MakeArrayError::InvalidShape(err) => raised(err),
+                MakeArrayError::OutOfMemory => PyMemoryError::new_err("image array is too large"),
+            })?;
             Ok::<_, PyErr>(CasaValue::Floats { shape, values })
         })?;
         array.into_python(py)

@@ -119,24 +119,6 @@ pub fn image_history(attached: &AttachedImage) -> ImageToolResult<Vec<String>> {
         .map_err(ImageToolError::from)
 }
 
-/// Appends custom history lines to the image (`ia.sethistory()`).
-pub fn set_history(
-    attached: &AttachedImage,
-    origin: &str,
-    history: &[String],
-) -> ImageToolResult<bool> {
-    let mut image = attached.lock();
-    attached.require_write_lock(&mut image, "sethistory")?;
-    let origin = if origin.is_empty() {
-        "::image::sethistory"
-    } else {
-        origin
-    };
-    image.append_history_at(origin, history)?;
-    image.save()?;
-    Ok(true)
-}
-
 /// Appends custom history lines matching CASA `ia.sethistory(origin, history)` behavior.
 pub fn set_history_casa(
     attached: &AttachedImage,

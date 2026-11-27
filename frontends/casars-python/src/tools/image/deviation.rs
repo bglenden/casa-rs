@@ -6,8 +6,9 @@ use std::path::Path;
 
 use casa_core::quanta::Quantity;
 use casa_imageanalysis::analysis::{DeviationOptions, SubimageRegion};
-use casa_imageanalysis::tool::ops_transform::deviation_image;
-use casa_images::resample::RegridMethod;
+use casa_imageanalysis::tool::ops_transform::{
+    deviation_image, parse_deviation_grid, parse_deviation_interpolation,
+};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyString};
 
@@ -207,30 +208,14 @@ impl PyImageTool {
             let Some(attachment) = state.image.as_ref() else {
                 return Ok(None);
             };
-            let grid_arr: [i64; 2] = grid
-                .0
-                .as_slice()
-                .try_into()
-                .map_err(|_| raised("grid must have exactly two positive integer values"))?;
-            if grid_arr.iter().any(|&entry| entry <= 0) {
-                return Err(raised("Both grid value(s) must be positive"));
-            }
-            let interpolation = match interp.to_ascii_lowercase().as_bytes().first() {
-                Some(b'c') => RegridMethod::Cubic,
-                Some(b'l') => RegridMethod::Linear,
-                Some(b'n') => RegridMethod::Nearest,
-                _ => {
-                    return Err(raised(format!(
-                        "Interpolation algorithm {interp} is not supported."
-                    )));
-                }
-            };
+            let grid_arr = parse_deviation_grid(&grid.0).map_err(raised)?;
+            let interpolation = parse_deviation_interpolation(interp).map_err(raised)?;
             let options = DeviationOptions {
                 region: region.selection(),
                 mask: Some(&mask),
                 stretch,
                 destination: (!outfile.is_empty()).then(|| Path::new(outfile)),
-                grid: grid_arr.map(|entry| entry as usize),
+                grid: grid_arr,
                 anchor: anchor.selection.as_ref().copied().map_err(raised)?,
                 x_length: xlength.parse("xlength")?,
                 y_length: (!ylength.is_empty())

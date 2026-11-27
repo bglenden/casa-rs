@@ -5,7 +5,8 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
-use casa_core::{ArrayD, ArrayValue, Complex32, RecordValue, ScalarValue, Value};
+use casa_coordinates::CoordinateType;
+use casa_core::{ArrayD, ArrayValue, Complex32, Complex64, RecordValue, ScalarValue, Value};
 use casa_images::{Image, ImageInterface, MutableImageInterface, PagedImage};
 use casa_lattices::TiledShape;
 use ndarray::{Dimension, IxDyn};
@@ -23,7 +24,7 @@ use crate::analysis::with_mask_output_paths;
 
 use super::attachment::{AttachedImage, ExternalPathCheck, read_locked};
 use super::error::{ImageToolError, ImageToolResult, ToolLogLine};
-use super::handle::{ImageHandle, Storage, with_storage};
+use super::handle::{ImageHandle, Storage, with_pixels, with_storage};
 use super::product_helpers::with_float_image_view;
 use super::publish::{NamedImageStages, publish_image_set};
 use super::text_output::StagedTextOutput;
@@ -34,6 +35,62 @@ pub enum ProfileData {
     Float(ImageReadProfile<f32>),
     /// Single-precision complex profile.
     Complex(ImageReadProfile<Complex32>),
+}
+
+impl ProfileData {
+    /// Converts this profile into CASA's record representation plus the per-point pixel counts (`npix`).
+    pub fn into_record_and_counts(self) -> (RecordValue, Vec<usize>) {
+        match self {
+            Self::Float(profile) => profile_to_record(profile, |values| {
+                ArrayValue::Float64(profile_vector(values.into_iter().map(f64::from).collect()))
+            }),
+            Self::Complex(profile) => profile_to_record(profile, |values| {
+                ArrayValue::Complex64(profile_vector(
+                    values
+                        .into_iter()
+                        .map(|value| Complex64::new(value.re.into(), value.im.into()))
+                        .collect(),
+                ))
+            }),
+        }
+    }
+}
+
+fn profile_to_record<T: CollapsePixel>(
+    profile: ImageReadProfile<T>,
+    convert_values: impl FnOnce(Vec<T>) -> ArrayValue,
+) -> (RecordValue, Vec<usize>) {
+    let mut record = RecordValue::default();
+    for (field, values) in [
+        (
+            "coords",
+            ArrayValue::Float64(profile_vector(profile.coordinates)),
+        ),
+        ("mask", ArrayValue::Bool(profile_vector(profile.mask))),
+        (
+            "planes",
+            ArrayValue::Float64(profile_vector(profile.planes)),
+        ),
+        ("values", convert_values(profile.values)),
+    ] {
+        record.upsert(field, Value::Array(values));
+    }
+    record.upsert("xUnit", Value::Scalar(ScalarValue::String(profile.x_unit)));
+    record.upsert("yUnit", Value::Scalar(ScalarValue::String(profile.y_unit)));
+    (record, profile.counts)
+}
+
+fn profile_vector<T>(values: Vec<T>) -> ArrayD<T> {
+    ArrayD::from_shape_vec(IxDyn(&[values.len()]), values).expect("one-dimensional profile")
+}
+
+/// Returns the spectral pixel axis index of `attached`, if present.
+pub fn spectral_axis_index(attached: &AttachedImage) -> Option<usize> {
+    let handle = attached.lock();
+    with_pixels!(
+        &*handle,
+        storage => with_storage!(storage, img => img.find_axis(CoordinateType::Spectral))
+    )
 }
 
 /// Sigma input source for `ia.fitprofile`.

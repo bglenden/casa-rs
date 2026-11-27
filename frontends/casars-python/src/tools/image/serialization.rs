@@ -11,7 +11,6 @@ use pyo3::types::PyDict;
 use crate::tools::table::{casa_record, values};
 
 use super::PyImageTool;
-use super::attachment::AttachedImage;
 use super::handle::{external_open_check, raised};
 
 #[pymethods]
@@ -39,7 +38,7 @@ impl PyImageTool {
         py.detach(|| {
             let mut state = self.state();
             state.image = None;
-            let handle = image_from_record_with_history(
+            let attached = image_from_record_with_history(
                 &record,
                 outfile,
                 true,
@@ -47,7 +46,7 @@ impl PyImageTool {
                 external_open_check(),
             )
             .map_err(raised)?;
-            state.image = Some(AttachedImage::from_handle(handle));
+            state.image = Some(attached);
             Ok(true)
         })
     }

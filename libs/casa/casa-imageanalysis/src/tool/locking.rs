@@ -169,11 +169,19 @@ pub fn lock_image(attached: &AttachedImage, mode: &str, nattempts: isize) -> Ima
     Ok(acquired)
 }
 
-/// Releases the current lock on `attached` and its expression inputs, flushing paged edits.
+/// Releases the current lock on `attached` and its expression inputs, flushing writable paged edits.
 pub fn unlock_image(attached: &AttachedImage) -> ImageToolResult<bool> {
     let mut image = attached.lock();
     attached.check_bound_name(&image)?;
-    image.save()?;
+    let writable = !attached.is_read_only()
+        && image.read_only_file_type().is_none()
+        && with_pixels!(&*image, storage => match storage {
+            Storage::Paged(paged) => paged.is_writable(),
+            Storage::Temp { .. } => true,
+        });
+    if writable {
+        image.save()?;
+    }
     if attached.has_advisory_lock() {
         return Ok(true);
     }
@@ -212,4 +220,32 @@ pub fn set_caching(attached: &AttachedImage, active: bool) -> ImageToolResult<bo
         image.disable_component_cache()?;
     }
     Ok(true)
+}
+
+/// Checks single-precision lock status `[read_held, write_held]` (`ia.haslock`).
+pub fn has_lock_single_precision(attached: &AttachedImage) -> ImageToolResult<Vec<bool>> {
+    attached.lock().check_single_precision("haslock")?;
+    has_lock(attached, None)
+}
+
+/// Acquires a read or write lock on a single-precision image (`ia.lock`).
+pub fn lock_single_precision(
+    attached: &AttachedImage,
+    writelock: bool,
+    nattempts: i32,
+) -> ImageToolResult<bool> {
+    let mut handle = attached.lock();
+    handle.check_single_precision("lock")?;
+    let kind = if writelock {
+        LockType::Write
+    } else {
+        LockType::Read
+    };
+    attached.lock_with_inputs(&mut handle, kind, nattempts.max(0) as u32, false)
+}
+
+/// Releases locks on a single-precision image and flushes writable tiles (`ia.unlock`).
+pub fn unlock_single_precision(attached: &AttachedImage) -> ImageToolResult<bool> {
+    attached.lock().check_single_precision("unlock")?;
+    unlock_image(attached)
 }

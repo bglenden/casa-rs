@@ -10,7 +10,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use casa_core::{ArrayD, Complex32, Complex64, PrimitiveType, RecordValue};
-use casa_images::expr_file::{ToolExpressionManifest, is_image_expr, read_info};
+use casa_images::expr_file::{
+    ToolExpressionManifest, is_image_expr, read_info, read_tool_manifest,
+};
 use casa_images::{
     ImageError, ImageExprBuilder, ImageExprValue, ImageExpression, ImageInterface, MiriadImage,
     TempImage, is_image_concat,
@@ -22,15 +24,11 @@ use crate::analysis::{
     BoundImageToolOperands, ImageToolExpressionInputs, ImageToolPixelExpression,
 };
 
-use super::attachment::{AttachedImage, ExternalPathCheck};
+use super::attachment::AttachedImage;
 use super::error::{ImageToolError, ImageToolResult};
 use super::handle::{ImageHandle, Storage, with_storage};
-use super::publish::publish_directory;
 
-pub use manifest::{
-    SavedExpressionDirectory, is_saved_expression_dir, read_manifest, update_manifest_misc_info,
-    write_manifest,
-};
+pub use manifest::SavedExpressionDirectory;
 
 /// Validates that a pixel expression has numeric pixels and non-empty coordinates.
 pub fn check_expression_geometry(
@@ -74,8 +72,8 @@ pub fn open(path: &Path) -> ImageToolResult<AttachedImage> {
 
 /// Opens a persistent `.imgexpr` directory as a read-only [`ImageHandle`].
 pub fn open_handle(path: &Path) -> Result<ImageHandle, ImageError> {
-    let manifest = manifest::read_manifest(path)
-        .map_err(|err| ImageError::InvalidMetadata(err.to_string()))?;
+    let manifest =
+        read_tool_manifest(path).map_err(|err| ImageError::InvalidMetadata(err.to_string()))?;
     let owner_dir = path.parent().unwrap_or_else(|| Path::new("."));
     let inputs = ImageToolExpressionInputs::resolve_in_directory(&manifest.expression, owner_dir)?;
     let (pixels, inferred_single) = inputs.compile_lazy_inferred()?;
@@ -319,21 +317,6 @@ pub fn evaluate_mask(
         check_output_dependencies(target, &graph.paths, false)?;
     }
     Ok(inputs.evaluate_mask_with_bound_operands(&operands, shape)?)
-}
-
-/// Persists a LEL pixel expression to `outfile` as a `.imgexpr` directory.
-pub fn save_expression_directory(
-    outfile: &Path,
-    expression: &str,
-    pixel_type: PrimitiveType,
-    misc: &RecordValue,
-    overwrite: bool,
-    is_external_open: ExternalPathCheck<'_>,
-) -> ImageToolResult<ImageHandle> {
-    publish_directory(outfile, overwrite, is_external_open, |stage| {
-        write_manifest(stage, expression, pixel_type, misc)
-    })?;
-    Ok(ImageHandle::open(outfile)?)
 }
 
 /// Re-exports `casa_images::expr_file::is_image_expr`.

@@ -108,11 +108,6 @@ impl AttachedImage {
         Self::without_table(image, None, None)
     }
 
-    /// Alias for [`Self::temporary`].
-    pub fn from_handle(image: ImageHandle) -> Self {
-        Self::temporary(image)
-    }
-
     /// Wraps a handle together with explicit advisory/tempclose/read-only metadata.
     pub fn from_handle_with_options(
         image: ImageHandle,
@@ -608,19 +603,31 @@ impl AttachedImage {
 
     /// Renames the persistent backing file or directory (`ia.rename`), updating registry leases.
     pub fn rename_with(
-        self,
+        mut self,
         name: &str,
         expand: impl FnOnce() -> ImageToolResult<String>,
         overwrite: bool,
         history: bool,
         is_external_open: ExternalPathCheck<'_>,
     ) -> ImageToolResult<Self> {
+        self.rename_impl(name, expand, overwrite, history, is_external_open)?;
+        Ok(self)
+    }
+
+    fn rename_impl(
+        &mut self,
+        name: &str,
+        expand: impl FnOnce() -> ImageToolResult<String>,
+        overwrite: bool,
+        history: bool,
+        is_external_open: ExternalPathCheck<'_>,
+    ) -> ImageToolResult<(PathBuf, Vec<ToolLogLine>)> {
         if name.is_empty() {
             return Err(ImageToolError::new(
                 "Exception: new file name must be specified.",
             ));
         }
-        let Some(source) = &self.key else {
+        let Some(source) = self.key.clone() else {
             return self.rename_non_native(name, expand, overwrite, history, is_external_open);
         };
         let source_changed = || {
@@ -634,7 +641,7 @@ impl AttachedImage {
             self.check_bound_name(&image)
                 .map_err(|_| source_changed())?;
             (
-                self.name_path(&image).unwrap_or(source).to_path_buf(),
+                self.name_path(&image).unwrap_or(&source).to_path_buf(),
                 image.image_type_name() == "ImageConcat",
             )
         };
@@ -669,33 +676,31 @@ impl AttachedImage {
                 "Exception: Specified output name is the same as the current image name.",
             ));
         }
-        if source == &target {
+        if source == target {
             if self
                 .image
                 .use_lock
                 .as_ref()
-                .is_some_and(|lease| !lease.matches_directory(source))
+                .is_some_and(|lease| !lease.matches_directory(&source))
             {
                 return Err(source_changed());
             }
             log_rename(&mut self.lock())?;
-            return Ok(Self {
-                image: Arc::clone(&self.image),
-                key: Some(source.clone()),
-                native_name: Some(target),
-                registered: self.registered,
-                beam_view: Mutex::new(self.beam_view().clone()),
-                retained_inputs: Vec::new(),
-                operand_paths: Vec::new(),
-                live_coordinates: self.live_coordinates.clone(),
-                advisory_lock: self.advisory_lock,
-                tempclose: self.tempclose,
-                read_only: self.read_only.clone(),
-            });
+            self.native_name = Some(target.clone());
+            self.retained_inputs.clear();
+            self.operand_paths.clear();
+            return Ok((
+                target.clone(),
+                vec![ToolLogLine::info(format!(
+                    "Renamed image {} to {}",
+                    old_name.display(),
+                    target.display()
+                ))],
+            ));
         }
-        check_path_relationship(source, &target, name)?;
+        check_path_relationship(&source, &target, name)?;
         if virtual_concat {
-            super::concatenate::virtual_image::check_relocation(source, &target)?;
+            super::concatenate::virtual_image::check_relocation(&source, &target)?;
         }
         let replaces_link = target_metadata
             .as_ref()
@@ -729,7 +734,7 @@ impl AttachedImage {
                 .map_err(|_| source_changed())?;
             image.unlock_storage()?;
         }
-        lock_table_tree(source, &mut locks)?;
+        lock_table_tree(&source, &mut locks)?;
         if target_metadata.as_ref().is_some_and(|entry| entry.is_dir()) {
             lock_table_tree(&target, &mut locks)?;
         } else if replaces_link {
@@ -758,7 +763,7 @@ impl AttachedImage {
         };
         let moved = move_attached_directory(
             virtual_concat,
-            source,
+            &source,
             &source_metadata,
             &target,
             target_metadata.as_ref(),
@@ -770,7 +775,7 @@ impl AttachedImage {
             },
         )?;
         let copied_lock = moved.use_lock();
-        locks.retain(|path, _| path == source || path == &target);
+        locks.retain(|path, _| path == &source || path == &target);
         let reopen = || -> ImageToolResult<ImageHandle> {
             moved.check_target(&target)?;
             let mut image = open(&target)?;
@@ -782,7 +787,7 @@ impl AttachedImage {
         };
         let handle = match reopen() {
             Ok(image) => image,
-            Err(error) => return moved.restore(source, &target, error),
+            Err(error) => return moved.restore(&source, &target, error),
         };
         moved.finish(&target)?;
         let beam_view = BeamView::from_image(&handle);
@@ -798,54 +803,82 @@ impl AttachedImage {
                 self.image.coordinates_replaced.load(Ordering::Relaxed),
             ),
         });
-        registry.remove(source);
+        registry.remove(&source);
         registry.insert(target.clone(), vec![Arc::downgrade(&image)]);
-        Ok(Self {
-            image,
-            key: Some(target.clone()),
-            native_name: Some(target),
-            registered: true,
-            beam_view: Mutex::new(beam_view),
-            retained_inputs: Vec::new(),
-            operand_paths: Vec::new(),
-            live_coordinates: self.live_coordinates.clone(),
-            advisory_lock: self.advisory_lock,
-            tempclose: self.tempclose,
-            read_only: self.read_only.clone(),
-        })
+        self.image = image;
+        self.key = Some(target.clone());
+        self.native_name = Some(target.clone());
+        self.registered = true;
+        *self.beam_view() = beam_view;
+        self.retained_inputs.clear();
+        self.operand_paths.clear();
+        Ok((
+            target.clone(),
+            vec![ToolLogLine::info(format!(
+                "Renamed image {} to {}",
+                old_name.display(),
+                target.display()
+            ))],
+        ))
     }
 
     fn rename_non_native(
-        mut self,
+        &mut self,
         name: &str,
         expand: impl FnOnce() -> ImageToolResult<String>,
         overwrite: bool,
         history: bool,
         is_external_open: ExternalPathCheck<'_>,
-    ) -> ImageToolResult<Self> {
+    ) -> ImageToolResult<(PathBuf, Vec<ToolLogLine>)> {
+        let old_path = self.lock().path().map(Path::to_path_buf);
         if let Some(directory) = &self.image.saved_expression_directory {
             let expanded = expand()?;
             let mut relocated =
-                directory.rename(&self, name, &expanded, overwrite, history, is_external_open)?;
+                directory.rename(self, name, &expanded, overwrite, history, is_external_open)?;
             relocated.retain_expression_inputs(
                 std::mem::take(&mut self.retained_inputs),
                 std::mem::take(&mut self.operand_paths),
             );
-            return Ok(relocated);
+            let target = relocated
+                .lock()
+                .path()
+                .map_or_else(|| PathBuf::from(&expanded), Path::to_path_buf);
+            *self = relocated;
+            let from = old_path.map_or_else(|| name.to_owned(), |p| p.display().to_string());
+            return Ok((
+                target.clone(),
+                vec![ToolLogLine::info(format!(
+                    "Renamed image {from} to {}",
+                    target.display()
+                ))],
+            ));
         }
         if let Some(directory) = &self.image.miriad_directory {
-            let old_name = self.lock().path().map(Path::to_path_buf).ok_or_else(|| {
+            let old_name = old_path.ok_or_else(|| {
                 ImageToolError::new("Exception: The image to be renamed no longer exists.")
             })?;
             let expanded = expand()?;
-            return directory.rename(
+            let relocated = directory.rename(
                 &old_name,
                 name,
                 &expanded,
                 overwrite,
                 history,
                 is_external_open,
-            );
+            )?;
+            let target = relocated
+                .lock()
+                .path()
+                .map_or_else(|| PathBuf::from(&expanded), Path::to_path_buf);
+            *self = relocated;
+            return Ok((
+                target.clone(),
+                vec![ToolLogLine::info(format!(
+                    "Renamed image {} to {}",
+                    old_name.display(),
+                    target.display()
+                ))],
+            ));
         }
         let fits_path = {
             let image = self.lock();
@@ -856,7 +889,27 @@ impl AttachedImage {
         };
         if let Some(old_name) = fits_path {
             let expanded = expand()?;
-            return FitsDirectory::rename(&old_name, name, &expanded, overwrite, history);
+            let relocated = FitsDirectory::rename(
+                &old_name,
+                name,
+                &expanded,
+                overwrite,
+                history,
+                is_external_open,
+            )?;
+            let target = relocated
+                .lock()
+                .path()
+                .map_or_else(|| PathBuf::from(&expanded), Path::to_path_buf);
+            *self = relocated;
+            return Ok((
+                target.clone(),
+                vec![ToolLogLine::info(format!(
+                    "Renamed image {} to {}",
+                    old_name.display(),
+                    target.display()
+                ))],
+            ));
         }
         Err(ImageToolError::new(
             "Exception: This image tool is not associated with a persistent disk file. It cannot be renamed.",
@@ -865,37 +918,18 @@ impl AttachedImage {
 
     /// Re-attaching convenience wrapper for in-place `ia.rename(newname, overwrite)`.
     pub fn rename(
-        &self,
+        &mut self,
         newname: &str,
         overwrite: bool,
         is_external_open: ExternalPathCheck<'_>,
     ) -> ImageToolResult<(PathBuf, Vec<ToolLogLine>)> {
-        let current = self
-            .lock()
-            .path()
-            .ok_or_else(|| {
-                ImageToolError::new("Exception: Cannot rename an unattached or temporary image.")
-            })?
-            .to_path_buf();
-        let target = PathBuf::from(newname);
-        let cloned = Self::open(&current)?;
-        let renamed = cloned.rename_with(
+        self.rename_impl(
             newname,
             || Ok(newname.to_owned()),
             overwrite,
             false,
             is_external_open,
-        )?;
-        let mut guard = self.lock();
-        *guard = std::mem::replace(&mut *renamed.lock(), ImageHandle::open(&target)?);
-        Ok((
-            target.clone(),
-            vec![ToolLogLine::info(format!(
-                "Renamed image {} to {}",
-                current.display(),
-                target.display()
-            ))],
-        ))
+        )
     }
 
     /// Removes the persistent backing image from disk (`ia.remove` / `ia.done(remove=True)`),
@@ -950,31 +984,6 @@ impl AttachedImage {
         remove_native_table(entry, key, self.image.use_lock.as_deref(), is_external_open)?;
         registry.remove(key);
         Ok(name.to_string_lossy().into_owned())
-    }
-
-    /// Removes the backing image file/directory on disk (`remove_disk_file` compatibility helper).
-    pub fn remove_disk_file(
-        &self,
-        force: bool,
-        is_external_open: ExternalPathCheck<'_>,
-    ) -> ImageToolResult<Vec<ToolLogLine>> {
-        let mut image = self.lock();
-        let path = image
-            .path()
-            .ok_or_else(|| ImageToolError::new("Image has no backing disk file."))?
-            .to_path_buf();
-        if !force && is_external_open(&path) {
-            return Err(ImageToolError::new(format!(
-                "Cannot remove {}: image is in use.",
-                path.display()
-            )));
-        }
-        let _ = image.unlock_storage();
-        remove_image_path(&path)?;
-        Ok(vec![ToolLogLine::info(format!(
-            "Removed image {}",
-            path.display()
-        ))])
     }
 }
 

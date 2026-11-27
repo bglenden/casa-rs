@@ -4,32 +4,18 @@
 
 use std::path::Path;
 
-use casa_coordinates::CoordinateSystem;
 use casa_core::RecordValue;
-use casa_images::{
-    ImageHistoryRow, ImageInterface, ImagePixel, PagedImage, TempImage, fits_read::FitsToolImport,
-};
+use casa_images::{ImageHistoryRow, ImageInterface, ImagePixel};
 use ndarray::ArrayD;
 
 use crate::analysis::SubimageRegion;
 use crate::analysis::imsubimage::ensure_artifacts_do_not_overlap;
 
-use super::attachment::{AttachedImage, ExternalPathCheck, ensure_outfile_does_not_alias_input};
+use super::attachment::{AttachedImage, ensure_outfile_does_not_alias_input};
 use super::beam_view::BeamView;
 use super::beams::subset_beam_record;
 use super::error::{ImageToolError, ImageToolResult};
 use super::handle::{ImageHandle, Storage, with_storage};
-use super::publish::publish_image;
-
-/// Checks that non-empty `outfile` does not alias `attached` or any concatenation operand.
-pub fn check_output_aliasing(attached: &AttachedImage, outfile: &str) -> ImageToolResult<()> {
-    if outfile.is_empty() {
-        return Ok(());
-    }
-    let out = Path::new(outfile);
-    let image = attached.lock();
-    check_handle_aliasing(&image, attached, out, None)
-}
 
 /// Validates output path overwrite precondition before staging work.
 pub fn check_output_overwrite(outfile: &str, overwrite: bool) -> ImageToolResult<()> {
@@ -178,89 +164,4 @@ pub fn with_float_image_view<R>(
             "Operation requires a single-precision real (float) image.",
         )),
     }
-}
-
-/// Materializes an existing [`TempImage<T>`] product into a paged or temporary [`ImageHandle`]
-/// using [`publish_image`], copying metadata and history cleanly.
-#[allow(clippy::too_many_arguments)]
-pub fn publish_temp_product<T: ImagePixel>(
-    source: &TempImage<T>,
-    outfile: &str,
-    overwrite: bool,
-    coord_record: Option<casa_core::RecordValue>,
-    history_entries: &[ImageHistoryRow],
-    record_history: Option<(&str, String)>,
-    wrap: fn(Storage<T>) -> ImageHandle,
-    is_external_open: ExternalPathCheck<'_>,
-) -> ImageToolResult<ImageHandle> {
-    publish_image(outfile, overwrite, is_external_open, |dest| {
-        let mut storage = match dest {
-            Some(path) => {
-                let mut paged = PagedImage::create(
-                    source.shape().to_vec(),
-                    source.coordinates().clone(),
-                    path,
-                )?;
-                super::create::copy_typed_storage(source, &mut paged)?;
-                paged.set_units(source.units())?;
-                paged.set_misc_info(source.misc_info())?;
-                if let Some(info_rec) = source.image_info_record() {
-                    paged.set_image_info_record(info_rec.clone())?;
-                }
-                Storage::Paged(Box::new(paged))
-            }
-            None => {
-                let rec = coord_record
-                    .clone()
-                    .unwrap_or_else(|| source.coordinates().to_record());
-                let mut temp = TempImage::new(
-                    source.shape().to_vec(),
-                    source.coordinates().clone(),
-                    casa_images::TempStoragePolicy::Memory,
-                )?;
-                super::create::copy_typed_storage(source, &mut temp)?;
-                temp.set_units(source.units())?;
-                temp.set_misc_info(source.misc_info())?;
-                if let Some(info_rec) = source.image_info_record() {
-                    temp.set_image_info_record(info_rec.clone())?;
-                }
-                Storage::Temp {
-                    image: Box::new(temp),
-                    record: rec,
-                    fits: None,
-                }
-            }
-        };
-        if let Some(rec) = &coord_record {
-            match &mut storage {
-                Storage::Paged(p) => p.set_coordinate_record(rec.clone())?,
-                Storage::Temp { record, .. } => *record = rec.clone(),
-            }
-        }
-        let mut handle = wrap(storage);
-        if !history_entries.is_empty() {
-            handle.append_history_entries(history_entries)?;
-        }
-        if let Some((method, cmd)) = &record_history {
-            handle.record_history(method, cmd.clone())?;
-        }
-        handle.save()?;
-        Ok(handle)
-    })
-}
-
-/// Validates and opens an auxiliary FITS/native image path as an [`ImageHandle`] for read.
-pub fn open_aux_image(path: &Path) -> ImageToolResult<ImageHandle> {
-    if path.is_file() {
-        return Ok(ImageHandle::open_fits(
-            path,
-            FitsToolImport::open_attachment(path)?,
-        )?);
-    }
-    Ok(ImageHandle::open_read(path)?)
-}
-
-/// Returns the default pixel coordinate system for an attached image.
-pub fn image_coordinates(attached: &AttachedImage) -> CoordinateSystem {
-    attached.lock().coordinates().clone()
 }

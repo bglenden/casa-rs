@@ -2,8 +2,6 @@
 
 //! Image record serialization and deserialization (`ia.torecord`, `ia.fromrecord`).
 
-use std::path::Path;
-
 use casa_coordinates::{CoordinateError, CoordinateSystem, ObsInfo};
 use casa_core::measures::{EpochRef, MEpoch};
 use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
@@ -183,24 +181,24 @@ fn record_pixels(value: &Value) -> ImageToolResult<ArrayValue> {
     Ok(array)
 }
 
-/// Reconstructs an [`ImageHandle`] from a casacore [`RecordValue`] produced by `torecord`.
+/// Reconstructs an [`AttachedImage`] from a casacore [`RecordValue`] produced by `torecord`.
 pub fn image_from_record(
     record: &RecordValue,
     outfile: &str,
     overwrite: bool,
     is_external_open: ExternalPathCheck<'_>,
-) -> ImageToolResult<ImageHandle> {
+) -> ImageToolResult<AttachedImage> {
     image_from_record_with_history(record, outfile, overwrite, false, is_external_open)
 }
 
-/// Reconstructs an [`ImageHandle`] from a casacore [`RecordValue`], optionally recording `ia.fromrecord` history.
+/// Reconstructs an [`AttachedImage`] from a casacore [`RecordValue`], optionally recording `ia.fromrecord` history.
 pub fn image_from_record_with_history(
     record: &RecordValue,
     outfile: &str,
     overwrite: bool,
     record_history: bool,
     is_external_open: ExternalPathCheck<'_>,
-) -> ImageToolResult<ImageHandle> {
+) -> ImageToolResult<AttachedImage> {
     let pixel_value = field(record, "imagearray")?;
     let shape = record_shape(field(record, "shape")?)?;
     let coordinate_record =
@@ -237,7 +235,6 @@ pub fn image_from_record_with_history(
     let info = expect_record(record, "imageinfo")?;
     let info = record_info(ImageInfo::from_record(info)?, Some(info));
     let pixels = record_pixels(pixel_value)?;
-    let _ = Path::new(outfile);
     publish_image(outfile, overwrite, is_external_open, |path| {
         let mut image = match pixels {
             ArrayValue::Float32(data) => {

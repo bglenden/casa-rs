@@ -6,15 +6,15 @@ use std::path::{Path, PathBuf};
 
 use casa_core::RecordValue;
 use casa_images::fits_read::FitsToolImport;
-use casa_images::{ImageHistoryEntry, image_history_entries};
+use casa_images::image_history_entries;
 
 use crate::analysis::{
-    ExportFitsRequest, FitsExportSummary, ImageFitsExportOptions, export_attached_fits,
-    image_fits_header_with_beams, validate_attached_fits_target,
+    ExportFitsRequest, ImageFitsExportOptions, export_attached_fits, image_fits_header_with_beams,
+    validate_attached_fits_target,
 };
 
 use super::attachment::{AttachedImage, ExternalPathCheck};
-use super::error::{ImageToolError, ImageToolResult, ToolLogLine};
+use super::error::{ImageToolError, ImageToolResult};
 use super::handle::{ImageHandle, Storage, with_storage};
 use super::publish::publish_image;
 
@@ -25,64 +25,6 @@ pub enum FitsHeaderOutput {
     CardString(String),
     /// Parsed header key-value record (`retstr=False`).
     Record(RecordValue),
-}
-
-/// Exports `attached` to a FITS file (`ia.tofits`).
-pub fn export_fits_from_attached(
-    attached: &AttachedImage,
-    request: &ExportFitsRequest,
-    options: ImageFitsExportOptions<'_>,
-) -> ImageToolResult<(FitsExportSummary, Vec<ToolLogLine>)> {
-    let mut image = attached.lock();
-    attached.require_pixel_read_lock(&mut image)?;
-    let beam_rec = attached.beam_view().record().clone();
-    let operand_paths = attached.operand_paths().to_vec();
-    let opts = ImageFitsExportOptions {
-        beam_record: options.beam_record.or(Some(&beam_rec)),
-        operand_paths: if options.operand_paths.is_empty() {
-            &operand_paths
-        } else {
-            options.operand_paths
-        },
-        ..options
-    };
-
-    let coord_rec = image.coordinate_record();
-    let history = image.history_entries()?;
-    let hist_entries: Vec<ImageHistoryEntry> = history.into_iter().map(|row| row.entry).collect();
-
-    let summary = match &*image {
-        ImageHandle::Float(storage) => {
-            if let Some(fits) = image.fits() {
-                let metadata = match storage {
-                    Storage::Temp { image: t, .. } => t.as_ref(),
-                    Storage::Paged(_) => unreachable!(),
-                };
-                let view = fits.image_view(metadata);
-                export_attached_fits(request, &view, coord_rec, &hist_entries, opts)?
-            } else {
-                with_storage!(storage, img => {
-                    export_attached_fits(request, img.as_ref(), coord_rec, &hist_entries, opts)?
-                })
-            }
-        }
-        ImageHandle::Double(_) => {
-            return Err(ImageToolError::new(
-                "Exception: tofits currently requires single-precision real images.",
-            ));
-        }
-        ImageHandle::Complex(_) | ImageHandle::DComplex(_) => {
-            return Err(ImageToolError::new(
-                "Exception: tofits does not support complex images.",
-            ));
-        }
-    };
-
-    let logs = vec![ToolLogLine::info(format!(
-        "Exported FITS image {}",
-        request.fitsimage.display()
-    ))];
-    Ok((summary, logs))
 }
 
 /// Exports `attached` to a FITS file matching CASA's `ia.tofits`.
@@ -161,7 +103,7 @@ pub fn export_attached_to_fits(
         Vec::new()
     };
     let coordinates = handle.coordinate_record();
-    match storage {
+    let result = match storage {
         Storage::Paged(image) => {
             export_attached_fits(&request, image.as_ref(), coordinates, &entries, options)
         }
@@ -176,7 +118,10 @@ pub fn export_attached_to_fits(
         Storage::Temp { image, .. } => {
             export_attached_fits(&request, image.as_ref(), coordinates, &entries, options)
         }
-    }?;
+    };
+    let release = attached.release_requested_lock(&mut handle);
+    result?;
+    release?;
     Ok(true)
 }
 
@@ -273,7 +218,7 @@ pub fn import_fits(
             "Cannot overwrite an output that contains the source FITS file",
         ));
     }
-    let handle = publish_image(
+    publish_image(
         request.outfile,
         request.overwrite,
         is_external_open,
@@ -297,6 +242,5 @@ pub fn import_fits(
             image.save()?;
             Ok(image)
         },
-    )?;
-    Ok(AttachedImage::from_handle(handle))
+    )
 }

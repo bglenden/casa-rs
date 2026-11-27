@@ -147,7 +147,7 @@ pub fn collapse_image(
 ) -> ImageToolResult<AttachedImage> {
     let mut live_coordinates = None;
     let outfile = request.outfile.trim();
-    let product = publish_image(outfile, request.overwrite, is_external_open, |dest| {
+    let mut out = publish_image(outfile, request.overwrite, is_external_open, |dest| {
         read_locked(attached, |image| {
             image.check_single_precision("collapse")?;
             if !outfile.is_empty() {
@@ -186,7 +186,6 @@ pub fn collapse_image(
             Ok(output)
         })
     })?;
-    let mut out = AttachedImage::from_handle(product);
     if let Some((record, system)) = live_coordinates.take() {
         out.keep_live_coordinates(record, system);
     }
@@ -343,6 +342,31 @@ fn continuum_history_lines(summary: &ContinuumSummary) -> [String; 5] {
     ]
 }
 
+/// Parses the 2-element `grid` spacing parameter for `ia.deviation`.
+pub fn parse_deviation_grid(grid: &[i64]) -> ImageToolResult<[usize; 2]> {
+    let arr: [i64; 2] = grid
+        .try_into()
+        .map_err(|_| ImageToolError::new("grid must have exactly two positive integer values"))?;
+    if arr.iter().any(|&entry| entry <= 0) {
+        return Err(ImageToolError::new("Both grid value(s) must be positive"));
+    }
+    Ok(arr.map(|entry| entry as usize))
+}
+
+/// Parses the `interp` resampling method string for `ia.deviation`.
+pub fn parse_deviation_interpolation(
+    interp: &str,
+) -> ImageToolResult<casa_images::resample::RegridMethod> {
+    match interp.to_ascii_lowercase().as_bytes().first() {
+        Some(b'c') => Ok(casa_images::resample::RegridMethod::Cubic),
+        Some(b'l') => Ok(casa_images::resample::RegridMethod::Linear),
+        Some(b'n') => Ok(casa_images::resample::RegridMethod::Nearest),
+        _ => Err(ImageToolError::new(format!(
+            "Interpolation algorithm {interp} is not supported."
+        ))),
+    }
+}
+
 /// Local deviation image along direction plane (`ia.deviation`).
 pub fn deviation_image(
     attached: &AttachedImage,
@@ -353,7 +377,7 @@ pub fn deviation_image(
     is_external_open: ExternalPathCheck<'_>,
 ) -> ImageToolResult<AttachedImage> {
     let mut live_coordinates = None;
-    let handle = publish_image(outfile, overwrite, is_external_open, |path| {
+    let mut product = publish_image(outfile, overwrite, is_external_open, |path| {
         read_locked(attached, |source| {
             let ImageHandle::Float(storage) = source else {
                 return Err(ImageToolError::new(
@@ -391,7 +415,6 @@ pub fn deviation_image(
             Ok(output)
         })
     })?;
-    let mut product = AttachedImage::from_handle(handle);
     if let Some((record, system)) = live_coordinates {
         product.keep_live_coordinates(record, system);
     }
@@ -527,7 +550,7 @@ pub fn regrid_attached(
 ) -> ImageToolResult<AttachedImage> {
     let destination = options.outfile;
     let region = options.region;
-    let handle = publish_image(outfile, overwrite, is_external_open, |stage| {
+    publish_image(outfile, overwrite, is_external_open, |stage| {
         read_locked(attached, |handle| {
             if let Some(destination) = destination {
                 check_handle_aliasing(handle, attached, destination, None)?;
@@ -565,8 +588,7 @@ pub fn regrid_attached(
             }
             Ok(output)
         })
-    })?;
-    Ok(AttachedImage::from_handle(handle))
+    })
 }
 
 fn regrid_typed<T: casa_images::resample::RegridPixel>(
@@ -619,7 +641,7 @@ pub fn two_point_correlation(
     options: TwoPointOptions<'_>,
     history_command: Option<String>,
     is_external_open: ExternalPathCheck<'_>,
-) -> ImageToolResult<ImageHandle> {
+) -> ImageToolResult<AttachedImage> {
     let destination = options.destination;
     let region = options.region;
     publish_image(outfile, overwrite, is_external_open, |stage| {

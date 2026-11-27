@@ -74,6 +74,7 @@ mod two_point;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
+use casa_imageanalysis::tool::ImageToolState;
 use pyo3::prelude::*;
 
 use crate::tools::not_yet_implemented_in;
@@ -90,29 +91,17 @@ fn stub(method: &str) -> PyResult<Py<PyAny>> {
 /// CASA's `image` tool.
 #[pyclass(name = "image", module = "casars.tools", frozen)]
 pub(crate) struct PyImageTool {
-    state: Mutex<ImageState>,
-}
-
-struct ImageState {
-    image: Option<AttachedImage>,
-    history: bool,
+    state: Mutex<ImageToolState>,
 }
 
 impl PyImageTool {
     fn attached(image: AttachedImage) -> Self {
         Self {
-            state: Mutex::new(ImageState {
-                image: Some(image),
-                history: true,
-            }),
+            state: Mutex::new(ImageToolState::attached(image)),
         }
     }
 
-    fn attached_handle(handle: handle::ImageHandle) -> Self {
-        Self::attached(AttachedImage::from_handle(handle))
-    }
-
-    fn state(&self) -> MutexGuard<'_, ImageState> {
+    fn state(&self) -> MutexGuard<'_, ImageToolState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
@@ -132,10 +121,7 @@ impl PyImageTool {
     #[new]
     fn new() -> Self {
         Self {
-            state: Mutex::new(ImageState {
-                image: None,
-                history: true,
-            }),
+            state: Mutex::new(ImageToolState::new()),
         }
     }
 }

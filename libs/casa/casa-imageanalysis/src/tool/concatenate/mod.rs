@@ -2,188 +2,28 @@
 
 //! Image concatenation (`ia.imageconcat`): virtual and materialized paged modes.
 
-pub mod inputs;
-pub mod owned_members;
-pub mod relocation;
-pub mod virtual_image;
+pub(crate) mod inputs;
+pub(crate) mod owned_members;
+pub(crate) mod relocation;
+pub(crate) mod virtual_image;
 
 use std::path::{Path, PathBuf};
 
 use casa_core::RecordValue;
 use casa_images::{
-    ConcatInput, ConcatManifest, ConcatenationPlan, ImageError, ImageInfo, ImagePixel,
-    ImagePixelType, MutableImageInterface, copy_concatenated_input,
+    ConcatenationPlan, ImageError, ImagePixel, ImagePixelType, copy_concatenated_input,
 };
-use casa_tables::lexical_absolute;
-use num_complex::{Complex32, Complex64};
 
 use inputs::{
     ConcatInputEntry, beam_records, coordinate_record, merge_misc, protect_expression_sources,
 };
-use owned_members::ConcatMode;
 
-use super::attachment::{ExternalPathCheck, ensure_outfile_does_not_alias_input};
+use super::attachment::{
+    self, AttachedImage, ExternalPathCheck, ensure_outfile_does_not_alias_input,
+};
 use super::error::{ImageToolError, ImageToolResult, ToolLogLine};
 use super::handle::{ImageHandle, Storage, with_pixels, with_storage};
-use super::publish::{publish_directory, publish_image};
-
-/// Request parameters for `ia.imageconcat`.
-#[derive(Debug, Clone)]
-pub struct ImageConcatRequest {
-    /// Destination path (empty string creates an in-memory temporary image when `mode='paged'`/`relax=false`).
-    pub outfile: String,
-    /// Ordered list of input image paths.
-    pub infiles: Vec<PathBuf>,
-    /// Axis index (`-1` auto-detects the differing/spectral/stokes axis).
-    pub axis: i64,
-    /// Allow non-monotonic/non-contiguous coordinate concatenation.
-    pub relax: bool,
-    /// Temporarily close members after reads in virtual mode.
-    pub tempclose: bool,
-    /// Overwrite existing `outfile`.
-    pub overwrite: bool,
-    /// Concatenation storage policy (`"nomovevirtual"`, `"movevirtual"`, `"copyvirtual"`, `"paged"`).
-    pub mode: String,
-    /// Sort inputs along the concatenation axis if `true`.
-    pub reorder: bool,
-}
-
-/// Concatenates `request.infiles` into a virtual or materialized image handle.
-pub fn concatenate_images(
-    request: &ImageConcatRequest,
-    record_history: bool,
-    is_external_open: ExternalPathCheck<'_>,
-) -> ImageToolResult<(ImageHandle, Vec<ToolLogLine>)> {
-    if request.infiles.is_empty() {
-        return Err(ImageToolError::new(
-            "imageconcat requires at least one input image.",
-        ));
-    }
-    let mode = ConcatMode::parse(&request.mode)?;
-    if !request.outfile.is_empty() {
-        let out_path = Path::new(&request.outfile);
-        for infile in &request.infiles {
-            ensure_outfile_does_not_alias_input(out_path, infile)?;
-        }
-    } else if !matches!(mode, ConcatMode::PagedCopy) {
-        return Err(ImageToolError::new(
-            "Virtual imageconcat requires a non-empty outfile path.",
-        ));
-    }
-
-    let mut opened = Vec::with_capacity(request.infiles.len());
-    for path in &request.infiles {
-        opened.push(ImageHandle::open_for_concatenation(path)?);
-    }
-
-    let pixel_type = opened[0].kind();
-    for handle in &opened[1..] {
-        if handle.kind() != pixel_type {
-            return Err(ImageToolError::new(format!(
-                "All concatenated images must have matching pixel types (expected {:?}, found {:?}).",
-                pixel_type,
-                handle.kind()
-            )));
-        }
-    }
-
-    let infos: Vec<ImageInfo> = opened
-        .iter()
-        .map(super::beams::image_info)
-        .collect::<Result<_, _>>()?;
-    let inputs: Vec<ConcatInput<'_>> = opened
-        .iter()
-        .zip(request.infiles.iter())
-        .zip(infos.iter())
-        .map(|((handle, path), info)| ConcatInput {
-            path: path.as_path(),
-            shape: handle.shape(),
-            coordinates: handle.coordinates(),
-            image_info: info,
-            brightness_unit: handle.units(),
-        })
-        .collect();
-    let plan = ConcatenationPlan::new(&inputs, request.axis, request.relax, request.reorder)?;
-    let mut logs: Vec<ToolLogLine> = plan
-        .warnings
-        .iter()
-        .cloned()
-        .map(ToolLogLine::warning)
-        .collect();
-
-    if matches!(mode, ConcatMode::PagedCopy) {
-        let history_cmd = format!(
-            "ia.imageconcat(outfile={:?}, infiles={:?}, axis={}, relax={}, reorder={})",
-            request.outfile, request.infiles, request.axis, request.relax, request.reorder
-        );
-        let handle = publish_image(
-            &request.outfile,
-            request.overwrite,
-            is_external_open,
-            |dest| {
-                materialize_concat(
-                    &plan,
-                    &opened,
-                    pixel_type,
-                    dest,
-                    record_history,
-                    history_cmd,
-                )
-            },
-        )?;
-        logs.push(ToolLogLine::info(format!(
-            "Concatenated {} images into shape {:?}",
-            request.infiles.len(),
-            plan.shape
-        )));
-        return Ok((handle, logs));
-    }
-
-    let outfile = PathBuf::from(&request.outfile);
-    let abs_out = lexical_absolute(&outfile);
-    let ordered_infiles: Vec<PathBuf> = plan
-        .order
-        .iter()
-        .map(|&idx| request.infiles[idx].clone())
-        .collect();
-    let misc = opened[0].misc_info();
-    drop(opened);
-
-    publish_directory(&outfile, request.overwrite, is_external_open, |stage| {
-        let moving = matches!(mode, ConcatMode::MoveVirtual);
-        let members = owned_members::OwnedOperands::inspect(&ordered_infiles, &abs_out, moving)?;
-        let entries: Vec<PathBuf> = match mode {
-            ConcatMode::NoMoveVirtual | ConcatMode::PagedCopy => ordered_infiles.clone(),
-            ConcatMode::CopyVirtual | ConcatMode::MoveVirtual => (0..ordered_infiles.len())
-                .map(|index| members.destination(&abs_out, index))
-                .collect(),
-        };
-        if !matches!(mode, ConcatMode::NoMoveVirtual | ConcatMode::PagedCopy) {
-            let mut moved = owned_members::MemberMoves::default();
-            let registry = super::attachment::registry();
-            members.stage(&abs_out, stage, &registry, &mut moved, is_external_open)?;
-            let _ = moved.finish(&abs_out);
-        }
-        let manifest = ConcatManifest::new(
-            &abs_out,
-            pixel_type,
-            plan.axis,
-            request.tempclose,
-            entries,
-            &misc,
-        )?;
-        manifest.write(stage)?;
-        Ok(())
-    })?;
-
-    logs.push(ToolLogLine::info(format!(
-        "Created virtual concatenation {} of shape {:?}",
-        outfile.display(),
-        plan.shape
-    )));
-    let handle = ImageHandle::open(&outfile)?;
-    Ok((handle, logs))
-}
+use super::publish::{publish_image, publish_owned_virtual_concat, publish_virtual_concat};
 
 /// Materializes a paged or temporary concatenation image with full metadata, beams, and mask merging.
 pub fn build_paged_concat(
@@ -295,134 +135,132 @@ fn copy_native<T: ImagePixel>(
     ))
 }
 
-fn materialize_concat(
-    plan: &ConcatenationPlan,
-    opened: &[ImageHandle],
-    pixel_type: ImagePixelType,
-    destination: Option<&Path>,
-    record_history: bool,
-    history_command: String,
-) -> ImageToolResult<ImageHandle> {
-    let mut handle = match pixel_type {
-        ImagePixelType::Float32 => materialize_float(plan, opened, destination)?,
-        ImagePixelType::Float64 => {
-            materialize_typed::<f64>(plan, opened, destination, ImageHandle::Double)?
+/// Concatenates input images in paged or virtual (`nomovevirtual`, `copyvirtual`, `movevirtual`)
+/// mode, returning the registered [`AttachedImage`] and tool logs (`ia.imageconcat`).
+#[allow(clippy::too_many_arguments)]
+pub fn concatenate_casa_images(
+    outfile: &str,
+    expanded: &str,
+    paths: &[PathBuf],
+    files_history: &str,
+    axis: i64,
+    relax: bool,
+    tempclose: bool,
+    overwrite: bool,
+    reorder: bool,
+    mode: &str,
+    history: bool,
+    is_external_open: ExternalPathCheck<'_>,
+) -> ImageToolResult<(AttachedImage, Vec<ToolLogLine>)> {
+    if paths.len() < 2 {
+        return Err(ImageToolError::new(
+            "Exception: You must provide at least two images to concatentate.",
+        ));
+    }
+    if !outfile.is_empty() && Path::new(outfile).exists() && !overwrite {
+        return Err(ImageToolError::new(format!(
+            "Exception: {outfile} exists and overwrite is false."
+        )));
+    }
+    let mode_letter = mode.as_bytes().first().map(u8::to_ascii_lowercase);
+    match mode_letter {
+        Some(b'p') => {}
+        Some(b'n' | b'c' | b'm') if outfile.is_empty() => {
+            return Err(ImageToolError::new(
+                "Exception: An empty outname can be used only if mode == PAGED.",
+            ));
         }
-        ImagePixelType::Complex32 => {
-            materialize_typed::<Complex32>(plan, opened, destination, ImageHandle::Complex)?
+        Some(b'n' | b'c' | b'm') => {}
+        _ => return Err(ImageToolError::new(format!("Unsupported mode {mode}"))),
+    }
+    if !expanded.is_empty() {
+        let destination = Path::new(expanded);
+        let existing = destination
+            .exists()
+            .then(|| attachment::key(destination))
+            .transpose()?;
+        for path in paths {
+            if let Some(existing) = &existing
+                && &attachment::key(path)? == existing
+            {
+                return Err(ImageToolError::new(format!(
+                    "Invalid Table operation: SetupNewTable {} is already opened (is in the table cache)",
+                    existing.display()
+                )));
+            }
+            ensure_outfile_does_not_alias_input(destination, path)?;
         }
-        ImagePixelType::Complex64 => {
-            materialize_typed::<Complex64>(plan, opened, destination, ImageHandle::DComplex)?
-        }
+    }
+
+    let mut logs = Vec::new();
+    let options = virtual_image::VirtualConcatOptions {
+        axis,
+        relax,
+        tempclose,
+        reorder,
     };
-    let info_record = plan.image_info.to_record();
-    handle.set_image_info_record(info_record)?;
-    if let Some(first) = opened.first() {
-        handle.set_units(first.units())?;
-        handle.set_misc_info(first.misc_info())?;
-    }
-    if record_history {
-        handle.record_history("imageconcat", history_command)?;
-    }
-    handle.save()?;
-    Ok(handle)
-}
-
-fn materialize_float(
-    plan: &ConcatenationPlan,
-    opened: &[ImageHandle],
-    destination: Option<&Path>,
-) -> ImageToolResult<ImageHandle> {
-    let mut output = Storage::<f32>::create(
-        plan.shape.clone(),
-        plan.coordinates.clone(),
-        destination,
-        None,
-    )?;
-    let mut offset = 0usize;
-    for &idx in &plan.order {
-        let member = &opened[idx];
-        let slice_len = member.shape()[plan.axis];
-        let dest_iface: &mut dyn MutableImageInterface<f32> = match &mut output {
-            Storage::Paged(paged) => paged.as_mut(),
-            Storage::Temp { image, .. } => image.as_mut(),
+    let record_history = |output: &mut ImageHandle| -> ImageToolResult<()> {
+        let name = if outfile.is_empty() {
+            "Temporary_Image".into()
+        } else {
+            std::path::absolute(outfile)?.display().to_string()
         };
-        match member {
-            ImageHandle::Float(storage) => {
-                if let Some(fits) = member.fits() {
-                    let meta = match storage {
-                        Storage::Temp { image, .. } => image.as_ref(),
-                        Storage::Paged(_) => unreachable!(),
-                    };
-                    copy_concatenated_input(
-                        &fits.image_view(meta),
-                        dest_iface,
-                        plan.axis,
-                        offset,
-                        None,
-                    )?;
-                } else {
-                    with_storage!(storage, src => {
-                        copy_concatenated_input(src.as_ref(), dest_iface, plan.axis, offset, None)?;
-                    });
-                }
-            }
-            _ => return Err(ImageToolError::new("Mismatched concatenation pixel type")),
-        }
-        offset += slice_len;
-    }
-    Ok(ImageHandle::Float(output))
-}
+        output
+            .append_history_at(
+                "::image::imageconcat",
+                &[
+                    format!("Ran ia.imageconcat on {name}"),
+                    format!(
+                        "ia.imageconcat(outfile='{outfile}', infiles={files_history}, axis={axis}, relax={relax}, tempclose={tempclose}, overwrite={overwrite}, reorder={reorder}, mode='{mode}')"
+                    ),
+                ],
+            )
+    };
 
-fn materialize_typed<T: ImagePixel>(
-    plan: &ConcatenationPlan,
-    opened: &[ImageHandle],
-    destination: Option<&Path>,
-    wrap: fn(Storage<T>) -> ImageHandle,
-) -> ImageToolResult<ImageHandle> {
-    let mut output = Storage::<T>::create(
-        plan.shape.clone(),
-        plan.coordinates.clone(),
-        destination,
-        None,
-    )?;
-    let mut offset = 0usize;
-    for &idx in &plan.order {
-        let member = &opened[idx];
-        let slice_len = member.shape()[plan.axis];
-        match &mut output {
-            Storage::Paged(paged) => {
-                copy_from_handle::<T>(member, paged.as_mut(), plan.axis, offset)?;
-            }
-            Storage::Temp { image, .. } => {
-                copy_from_handle::<T>(member, image.as_mut(), plan.axis, offset)?;
-            }
+    let attached = if mode_letter != Some(b'p') {
+        let attached = if mode_letter == Some(b'n') {
+            publish_virtual_concat(
+                outfile,
+                expanded,
+                overwrite,
+                is_external_open,
+                |final_path, stage| {
+                    virtual_image::stage_nomove(&options, paths, final_path, stage, &mut logs)
+                },
+            )?
+        } else {
+            let (attached, cleanup_warnings) = publish_owned_virtual_concat(
+                outfile,
+                expanded,
+                overwrite,
+                is_external_open,
+                |final_path, stage| {
+                    virtual_image::stage_owned(
+                        &options,
+                        paths,
+                        final_path,
+                        stage,
+                        mode_letter == Some(b'm'),
+                        &mut logs,
+                    )
+                },
+            )?;
+            logs.extend(cleanup_warnings.into_iter().map(ToolLogLine::warning));
+            attached
+        };
+        if history {
+            record_history(&mut attached.lock())?;
         }
-        offset += slice_len;
-    }
-    Ok(wrap(output))
-}
-
-fn copy_from_handle<T: ImagePixel>(
-    source: &ImageHandle,
-    dest: &mut dyn MutableImageInterface<T>,
-    axis: usize,
-    offset: usize,
-) -> ImageToolResult<()> {
-    with_pixels!(source, storage => {
-        with_storage!(storage, src => {
-            let src_any: &dyn std::any::Any = src.as_ref();
-            let src_typed = src_any
-                .downcast_ref::<casa_images::PagedImage<T>>()
-                .map(|p| p as &dyn casa_images::ImageInterface<T>)
-                .or_else(|| {
-                    src_any
-                        .downcast_ref::<casa_images::TempImage<T>>()
-                        .map(|t| t as &dyn casa_images::ImageInterface<T>)
-                })
-                .ok_or_else(|| ImageToolError::new("Mismatched concatenation pixel type"))?;
-            copy_concatenated_input(src_typed, dest, axis, offset, None)?;
-            Ok(())
-        })
-    })
+        attached
+    } else {
+        publish_image(outfile, overwrite, is_external_open, |path| {
+            let mut output = build_paged_concat(paths, outfile, &options, path, &mut logs)?;
+            if history {
+                record_history(&mut output)?;
+            }
+            output.save()?;
+            Ok(output)
+        })?
+    };
+    Ok((attached, logs))
 }

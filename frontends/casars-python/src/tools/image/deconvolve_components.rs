@@ -4,9 +4,10 @@
 
 use casa_components::ShapeType;
 use casa_core::RecordValue;
-use casa_imageanalysis::tool::beam_ops::{deconvolve_beam_context, deconvolve_gaussian_source};
-use casa_imageanalysis::tool::beam_view::BeamView;
-use casa_imageanalysis::tool::handle::ImageHandle;
+use casa_imageanalysis::tool::attachment::AttachedImage;
+use casa_imageanalysis::tool::beam_ops::{
+    deconvolve_attached_beam_context, deconvolve_gaussian_source,
+};
 use casa_images::GaussianBeam;
 use pyo3::exceptions::{PySystemError, PyTypeError};
 use pyo3::prelude::*;
@@ -80,14 +81,14 @@ fn replace_shape(output: &mut CasaValue, fit: GaussianBeam) -> PyResult<()> {
 }
 
 fn deconvolved_record(
-    image: &ImageHandle,
-    beam_view: &BeamView,
+    attachment: &AttachedImage,
     input: &RecordValue,
     channel: i64,
     polarization: i64,
     logs: &mut Vec<LogLine>,
 ) -> PyResult<CasaValue> {
-    let beam = deconvolve_beam_context(image, beam_view, channel, polarization).map_err(raised)?;
+    let beam =
+        deconvolve_attached_beam_context(attachment, channel, polarization).map_err(raised)?;
     let components = image_component_records(input, logs)?;
     let mut fields = vec![("nelements".into(), CasaValue::Int(components.len() as i64))];
     for (index, component) in components.enumerate() {
@@ -137,14 +138,7 @@ impl PyImageTool {
             let Some(attachment) = &state.image else {
                 return Ok(CasaValue::empty_record());
             };
-            deconvolved_record(
-                &attachment.lock(),
-                &attachment.beam_view(),
-                &record,
-                channel,
-                polarization,
-                &mut logs,
-            )
+            deconvolved_record(attachment, &record, channel, polarization, &mut logs)
         });
         emit(py, "casars.tools.image", &logs)?;
         let result = result?;

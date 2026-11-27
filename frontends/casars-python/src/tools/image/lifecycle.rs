@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! PyO3 image lifecycle wrappers delegating to `casa_imageanalysis::tool::attachment`.
+//! Thin PyO3 image lifecycle wrappers delegating to [`casa_imageanalysis::tool::lifecycle`].
 
 use std::borrow::Cow;
 use std::path::Path;
 
-use casa_images::ImagePixelType;
-use casa_tables::lexical_absolute;
+use casa_imageanalysis::tool::attachment::{AttachedImage, remove_file};
+use casa_imageanalysis::tool::lifecycle::ImageToolState;
 use numpy::{IntoPyArray, PyArray1};
 use pyo3::prelude::*;
 
@@ -14,7 +14,6 @@ use crate::tools::casacore_path::expand_path;
 use crate::tools::{LogLine, emit};
 
 use super::PyImageTool;
-use super::attachment::{self, AttachedImage, rename_attached};
 use super::handle::{external_open_check, raised};
 
 pub(super) fn resolve_image_path_result<'a>(
@@ -42,25 +41,11 @@ pub(super) fn resolve_image_path<'a>(py: Python<'_>, name: &'a str) -> PyResult<
 }
 
 pub(super) fn open_image(infile: &str, expanded: &str) -> PyResult<AttachedImage> {
-    open_image_with_cache(infile, expanded, true)
-}
-
-fn open_image_with_cache(
-    infile: &str,
-    expanded: &str,
-    component_cache: bool,
-) -> PyResult<AttachedImage> {
-    if infile.is_empty() {
-        return Err(raised("Exception: File name is empty."));
-    }
-    let path = Path::new(expanded);
-    if !path.exists() {
-        return Err(raised(format!("Exception: File {infile} does not exist..")));
-    }
-    let path = std::path::absolute(path).map_err(raised)?;
-    let absolute = lexical_absolute(&path);
-    AttachedImage::open_resolved_with_cache(&absolute, &path, Path::new(infile), component_cache)
-        .map_err(raised)
+    let mut state = ImageToolState::new();
+    state
+        .open_expanded(infile, expanded, true)
+        .map_err(raised)?;
+    Ok(state.detach().expect("opened image"))
 }
 
 #[pymethods]
@@ -71,7 +56,9 @@ impl PyImageTool {
         py.detach(|| {
             let mut state = self.state();
             state.image = None;
-            state.image = Some(open_image_with_cache(&infile, expanded?.as_ref(), cache)?);
+            state
+                .open_expanded(&infile, expanded?.as_ref(), cache)
+                .map_err(raised)?;
             Ok(true)
         })
     }
@@ -87,22 +74,18 @@ impl PyImageTool {
     }
 
     fn close(&self, py: Python<'_>) -> bool {
-        py.detach(|| self.state().image = None);
+        py.detach(|| {
+            let _ = self.state().detach();
+        });
         true
     }
 
     #[pyo3(signature = (remove = false, verbose = true), text_signature = "($self, remove=False, verbose=True)")]
     fn done(&self, py: Python<'_>, remove: bool, verbose: bool) -> PyResult<bool> {
         let removed = py.detach(|| {
-            let image = self.state().image.take();
-            if remove && let Some(image) = image {
-                image
-                    .remove_registered(external_open_check())
-                    .map(Some)
-                    .map_err(raised)
-            } else {
-                Ok(None)
-            }
+            self.state()
+                .done_casa(remove, external_open_check())
+                .map_err(raised)
         })?;
         if let Some(name) = removed {
             report_removed(py, &name, verbose)?;
@@ -112,18 +95,11 @@ impl PyImageTool {
 
     #[pyo3(signature = (done = false, verbose = true), text_signature = "($self, done=False, verbose=True)")]
     fn remove(&self, py: Python<'_>, done: bool, verbose: bool) -> PyResult<bool> {
-        // Both CASA forms detach the tool before attempting the deletion.
         let _ = done;
         let removed = py.detach(|| {
             self.state()
-                .image
-                .take()
-                .map(|image| {
-                    image
-                        .remove_registered(external_open_check())
-                        .map_err(raised)
-                })
-                .transpose()
+                .remove_casa(external_open_check())
+                .map_err(raised)
         })?;
         if let Some(name) = removed {
             report_removed(py, &name, verbose)?;
@@ -134,7 +110,7 @@ impl PyImageTool {
     }
 
     fn removefile(&self, py: Python<'_>, file: &str) -> PyResult<bool> {
-        let removed = py.detach(|| attachment::remove_file(Path::new(file)));
+        let removed = py.detach(|| remove_file(Path::new(file), external_open_check()));
         match removed {
             Ok(true) => Ok(true),
             Ok(false) => {
@@ -159,95 +135,38 @@ impl PyImageTool {
 
     #[pyo3(signature = (name, overwrite=false), text_signature = "($self, name, overwrite=False)")]
     fn rename(&self, py: Python<'_>, name: &str, overwrite: bool) -> PyResult<bool> {
-        let expanded = resolve_image_path_result(py, name);
+        let expanded = resolve_image_path_result(py, name).map(|cow| cow.into_owned());
         py.detach(|| {
-            let mut state = self.state();
-            let Some(current) = state.image.as_ref() else {
-                return Ok(false);
-            };
-            current
-                .lock()
-                .check_single_precision("rename")
-                .map_err(raised)?;
-            let current = state.image.take().expect("an attached image");
-            state.image = Some(rename_attached(
-                current,
-                name,
-                expanded,
-                overwrite,
-                state.history,
-            )?);
-            Ok(true)
+            self.state()
+                .rename_casa(
+                    name,
+                    expanded.map_err(casa_imageanalysis::tool::ImageToolError::new),
+                    overwrite,
+                    external_open_check(),
+                )
+                .map_err(raised)
         })
     }
 
     fn isopen(&self, py: Python<'_>) -> bool {
-        py.detach(|| self.state().image.is_some())
+        py.detach(|| self.state().is_open())
     }
 
     fn ispersistent(&self, py: Python<'_>) -> PyResult<bool> {
-        py.detach(|| {
-            self.state()
-                .image
-                .as_ref()
-                .map_or(Ok(false), |img| img.is_persistent().map_err(raised))
-        })
+        py.detach(|| self.state().is_persistent().map_err(raised))
     }
 
     #[pyo3(signature = (strippath = false), text_signature = "($self, strippath=False)")]
     fn name(&self, py: Python<'_>, strippath: bool) -> PyResult<String> {
-        py.detach(|| {
-            let state = self.state();
-            let Some(attachment) = state.image.as_ref() else {
-                return Ok("none".into());
-            };
-            let image = attachment.lock();
-            image.check_single_precision("name").map_err(raised)?;
-            let Some(path) = attachment.name_path(&image) else {
-                let name = match image.image_type_name() {
-                    "ImageExpr" => "",
-                    "ComponentListImage" => "Temporary ComponentListImage",
-                    _ => "Temporary_Image",
-                };
-                return Ok(name.into());
-            };
-            if strippath {
-                Ok(path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into_owned())
-            } else {
-                let path = std::path::absolute(path).map_err(raised)?;
-                Ok(path.to_string_lossy().into_owned())
-            }
-        })
+        py.detach(|| self.state().casa_name(strippath).map_err(raised))
     }
 
     fn shape<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<i64>> {
-        py.detach(|| {
-            self.state().image.as_ref().map_or_else(Vec::new, |image| {
-                image
-                    .lock()
-                    .shape()
-                    .iter()
-                    .map(|&size| size as i64)
-                    .collect()
-            })
-        })
-        .into_pyarray(py)
+        py.detach(|| self.state().shape_i64()).into_pyarray(py)
     }
 
     fn pixeltype(&self, py: Python<'_>) -> &'static str {
-        py.detach(
-            || match self.state().image.as_ref().map(|image| image.lock().kind()) {
-                Some(ImagePixelType::Float32) => "float",
-                Some(ImagePixelType::Float64) => "double",
-                Some(ImagePixelType::Complex32) => "complex",
-                Some(ImagePixelType::Complex64) => "dcomplex",
-                None => "",
-            },
-        )
+        py.detach(|| self.state().pixel_type_casa())
     }
 
     fn r#type(&self) -> &'static str {

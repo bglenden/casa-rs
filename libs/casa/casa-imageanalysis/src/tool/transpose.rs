@@ -16,7 +16,7 @@ use crate::analysis::{
 
 use super::attachment::{AttachedImage, ExternalPathCheck};
 use super::beam_view::BeamView;
-use super::error::{ImageToolError, ImageToolResult, ToolLogLine};
+use super::error::{ImageToolError, ImageToolResult};
 use super::handle::{ImageHandle, Storage, with_storage};
 use super::publish::publish_image;
 
@@ -504,7 +504,7 @@ pub fn transpose_attached(
         )));
     }
     let mut live_coordinates = None;
-    let handle = publish_image(outfile, overwrite, is_external_open, |path| {
+    let mut product = publish_image(outfile, overwrite, is_external_open, |path| {
         let mut handle = attached.lock();
         if !outfile.is_empty() {
             for input in handle
@@ -558,79 +558,8 @@ pub fn transpose_attached(
         let release = attached.release_requested_lock(&mut handle);
         result.and_then(|output| release.map(|()| output))
     })?;
-    let mut product = AttachedImage::from_handle(handle);
     if let Some((record, coordinates)) = live_coordinates {
         product.keep_live_coordinates(record, coordinates);
     }
     Ok(product)
-}
-
-/// Transposes `attached` according to `order`, returning the output [`ImageHandle`] and logs.
-pub fn transpose_image(
-    attached: &AttachedImage,
-    outfile: &str,
-    order: &TransposeOrder,
-    overwrite: bool,
-    record_history: bool,
-    is_external_open: ExternalPathCheck<'_>,
-) -> ImageToolResult<(ImageHandle, Vec<ToolLogLine>)> {
-    if !outfile.is_empty() && !overwrite && Path::new(outfile).symlink_metadata().is_ok() {
-        return Err(ImageToolError::new(format!(
-            "File {outfile} exists but overwrite is false so it cannot be overwritten"
-        )));
-    }
-    let handle = publish_image(outfile, overwrite, is_external_open, |path| {
-        let mut handle = attached.lock();
-        if !outfile.is_empty() {
-            for input in handle
-                .path()
-                .into_iter()
-                .chain(attached.operand_paths().iter().map(PathBuf::as_path))
-            {
-                ensure_outfile_does_not_alias_input(Path::new(outfile), input)?;
-            }
-        }
-        if !matches!(&*handle, ImageHandle::Float(_)) {
-            return Err(ImageToolError::new(
-                "This method only supports Float valued images",
-            ));
-        }
-        attached.require_pixel_read_lock(&mut handle)?;
-        let make = || -> ImageToolResult<ImageHandle> {
-            let (active, record) = attached.coordinate_view(&handle);
-            let beams = attached.beam_view().clone();
-            let ImageHandle::Float(storage) = &*handle else {
-                unreachable!("pixel type was checked");
-            };
-            let axes = order.axes(active, handle.shape().len())?;
-            let (result, _, _) = storage
-                .with_float_view(|image| make_output(image, active, record, &beams, &axes, path))?;
-            let original_history = match storage {
-                Storage::Paged(image) => image_history_rows(
-                    image
-                        .name()
-                        .ok_or_else(|| ImageToolError::new("Missing persistent image path"))?,
-                )?,
-                Storage::Temp { image, .. } => image.history_rows()?.into_owned(),
-            };
-            let mut output = ImageHandle::Float(result);
-            let ImageHandle::Float(storage) = &mut output else {
-                unreachable!();
-            };
-            with_storage!(storage, image => image.append_history_entries(&original_history))?;
-            if record_history {
-                let order = order.history();
-                output.record_history(
-                    "transpose",
-                    format!("ia.transpose(outfile={outfile:?}, order={order})"),
-                )?;
-            }
-            output.save()?;
-            Ok(output)
-        };
-        let result = make();
-        let release = attached.release_requested_lock(&mut handle);
-        result.and_then(|output| release.map(|()| output))
-    })?;
-    Ok((handle, Vec::new()))
 }
