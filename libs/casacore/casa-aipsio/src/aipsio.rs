@@ -499,6 +499,15 @@ impl AipsIo {
         Self::with_access(Box::new(inner), false, true, true, ByteOrder::BigEndian)
     }
 
+    /// Construct a buffered writer over an already opened file.
+    ///
+    /// The caller keeps control of how the file is opened and published.
+    /// Finish the objects before publishing so their length updates flush
+    /// through the buffer.
+    pub fn new_buffered_write_only_file(file: File) -> Self {
+        Self::new_write_only(WriteBufferedFile(BufWriter::new(file)))
+    }
+
     /// Construct with read-only access and explicit byte order.
     pub fn new_read_only_with_order<S: Read + Write + Seek + Any>(
         inner: S,
