@@ -201,7 +201,7 @@ mod tests {
         let schema = TableSchema::new(
             ["id", "first", "second"]
                 .into_iter()
-                .map(|name| ColumnSchema::scalar(name, PrimitiveType::Int32))
+                .map(|name| ColumnSchema::scalar(name, PrimitiveType::Int64))
                 .collect(),
         )
         .unwrap();
@@ -212,7 +212,7 @@ mod tests {
                     [("id", id), ("first", 0), ("second", 0)]
                         .into_iter()
                         .map(|(name, value)| {
-                            RecordField::new(name, Value::Scalar(ScalarValue::Int32(value)))
+                            RecordField::new(name, Value::Scalar(ScalarValue::Int64(value)))
                         })
                         .collect(),
                 ))
@@ -231,7 +231,7 @@ mod tests {
             for (name, value) in [("first", first), ("second", second)] {
                 assert_eq!(
                     copied.cell(row, name).unwrap(),
-                    Some(&Value::Scalar(ScalarValue::Int32(value)))
+                    Some(&Value::Scalar(ScalarValue::Int64(value)))
                 );
             }
         }
