@@ -13,7 +13,7 @@ use super::{
 };
 use crate::storage::TABLE_CONTROL_FILE;
 use crate::storage::table_control::{
-    ColumnSetStorage, TableDatResult, read_table_dat_dispatch, write_table_dat,
+    ColumnSetStorage, StagedTableDat, TableDatResult, read_table_dat_dispatch,
 };
 
 struct Member {
@@ -50,6 +50,7 @@ pub(crate) fn pack_staged_manager_files(
         .filter(|manager| supports_multifile(&manager.type_name))
         .map(|manager| manager.seq_nr)
         .collect::<BTreeSet<_>>();
+    let control = StagedTableDat::for_existing_table(root)?;
     if !managers.is_empty() {
         pack_members(
             root,
@@ -64,7 +65,7 @@ pub(crate) fn pack_staged_manager_files(
         kind: ColumnSetStorage::MULTI_FILE,
         block_size: block_size as i32,
     });
-    write_table_dat(&control, &descriptor)
+    control.publish(&descriptor)
 }
 
 pub(super) fn pack_members(

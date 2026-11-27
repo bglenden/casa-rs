@@ -10,7 +10,7 @@ impl CompositeStorage {
     )]
     pub(crate) fn save_borrowed(
         &self,
-        table_path: &Path,
+        control: StagedTableDat<'_>,
         rows: &[RecordValue],
         undefined_cells: &[HashSet<String>],
         keywords: &RecordValue,
@@ -28,6 +28,8 @@ impl CompositeStorage {
     ) -> Result<(), StorageError> {
         use crate::table::DataManagerKind;
 
+        let table_path = control.table_path();
+
         if table_path.is_dir()
             && let Ok(entries) = fs::read_dir(table_path)
         {
@@ -39,8 +41,6 @@ impl CompositeStorage {
                 }
             }
         }
-
-        fs::create_dir_all(table_path)?;
 
         let schema = schema.ok_or_else(|| {
             StorageError::FormatMismatch("cannot save without schema".to_string())
@@ -112,8 +112,7 @@ impl CompositeStorage {
                     dm_group_name.unwrap_or(&dm_type_name),
                     virtual_columns,
                 );
-                let control_path = table_path.join(TABLE_CONTROL_FILE);
-                write_table_dat(&control_path, &table_dat)?;
+                control.publish(&table_dat)?;
                 let stored_col_descs: Vec<_> = table_dat
                     .table_desc
                     .columns
@@ -206,8 +205,7 @@ impl CompositeStorage {
                     dm_group_name.unwrap_or(&dm_type_name),
                     virtual_columns,
                 );
-                let control_path = table_path.join(TABLE_CONTROL_FILE);
-                write_table_dat(&control_path, &table_dat)?;
+                control.publish(&table_dat)?;
             }
             DataManagerKind::IncrementalStMan => {
                 dm_type_name = "IncrementalStMan".to_string();
@@ -241,8 +239,7 @@ impl CompositeStorage {
                     dm_group_name.unwrap_or(&dm_type_name),
                     virtual_columns,
                 );
-                let control_path = table_path.join(TABLE_CONTROL_FILE);
-                write_table_dat(&control_path, &table_dat)?;
+                control.publish(&table_dat)?;
             }
             DataManagerKind::TiledColumnStMan
             | DataManagerKind::TiledShapeStMan
@@ -277,8 +274,7 @@ impl CompositeStorage {
                     desc.data_manager_type = dm_type_name.clone();
                     desc.data_manager_group = dm_group_name.to_string();
                 }
-                let control_path = table_path.join(TABLE_CONTROL_FILE);
-                write_table_dat(&control_path, &table_dat)?;
+                control.publish(&table_dat)?;
                 let first_col_name = table_dat
                     .table_desc
                     .columns
@@ -312,16 +308,11 @@ impl CompositeStorage {
     /// file's row counts are raised to (#880); its rows are not written.
     pub(crate) fn save_metadata_only(
         &self,
-        table_path: &Path,
+        control: StagedTableDat<'_>,
         snapshot: &StorageSnapshot,
     ) -> Result<(), StorageError> {
+        let table_path = control.table_path();
         let control_path = table_path.join(TABLE_CONTROL_FILE);
-        if !table_path.exists() {
-            return Err(StorageError::MissingPath(table_path.to_path_buf()));
-        }
-        if !control_path.exists() {
-            return Err(StorageError::MissingControlFile(control_path));
-        }
 
         match read_table_dat_dispatch(&control_path)? {
             TableDatResult::Plain(mut table_dat) => {
@@ -334,7 +325,7 @@ impl CompositeStorage {
                         .cloned()
                         .unwrap_or_default();
                 }
-                write_table_dat(&control_path, &table_dat)?;
+                control.publish(&table_dat)?;
                 let info_path = table_path.join(TABLE_INFO_FILE);
                 fs::write(&info_path, snapshot.table_info.to_string())?;
                 Ok(())
@@ -357,7 +348,7 @@ impl CompositeStorage {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn save_with_bindings_borrowed(
         &self,
-        table_path: &Path,
+        control: StagedTableDat<'_>,
         rows: &[RecordValue],
         undefined_cells: &[HashSet<String>],
         keywords: &RecordValue,
@@ -374,7 +365,7 @@ impl CompositeStorage {
     ) -> Result<(), StorageError> {
         let column_overrides = ColumnOverrides::new();
         self.save_with_bindings_and_column_overrides_borrowed(
-            table_path,
+            control,
             rows,
             undefined_cells,
             keywords,
@@ -399,7 +390,7 @@ impl CompositeStorage {
     )]
     pub(crate) fn save_with_bindings_and_column_overrides_borrowed(
         &self,
-        table_path: &Path,
+        control: StagedTableDat<'_>,
         rows: &[RecordValue],
         undefined_cells: &[HashSet<String>],
         keywords: &RecordValue,
@@ -417,12 +408,12 @@ impl CompositeStorage {
     ) -> Result<(), StorageError> {
         use crate::table::DataManagerKind;
 
+        let table_path = control.table_path();
+
         let mut profiler = StorageProfiler::start(format!(
             "CompositeStorage::save_with_bindings path={}",
             table_path.display()
         ));
-
-        fs::create_dir_all(table_path)?;
 
         let schema = schema.ok_or_else(|| {
             StorageError::FormatMismatch("cannot save without schema".to_string())
@@ -979,8 +970,7 @@ impl CompositeStorage {
             }
         }
 
-        let control_path = table_path.join(TABLE_CONTROL_FILE);
-        write_table_dat(&control_path, &table_dat)?;
+        control.publish(&table_dat)?;
         let info_path = table_path.join(TABLE_INFO_FILE);
         fs::write(&info_path, table_info.to_string())?;
         if let Some(profiler) = profiler.as_mut() {
@@ -1002,7 +992,7 @@ impl CompositeStorage {
         bindings: &std::collections::HashMap<String, crate::table::ColumnBinding>,
     ) -> Result<(), StorageError> {
         self.save_with_bindings_borrowed(
-            table_path,
+            StagedTableDat::for_full_save(table_path)?,
             &snapshot.rows,
             &snapshot.undefined_cells,
             &snapshot.keywords,

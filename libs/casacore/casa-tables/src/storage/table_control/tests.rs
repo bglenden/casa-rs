@@ -2,6 +2,7 @@
 
 use super::*;
 use std::path::PathBuf;
+use std::{fs, io};
 
 #[test]
 fn path_reader_finishes_its_descriptor_during_repeated_saves() {
@@ -141,6 +142,25 @@ fn descriptor_replacement_respects_existing_modes_and_links() {
     assert!(write_table_dat(&path, &plain_descriptor(2)).is_err());
     assert_eq!(fs::read(&referent).unwrap(), previous);
     assert_eq!(fs::read(&path).unwrap(), previous);
+    assert_eq!(directory.path().read_dir().unwrap().count(), 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn prepared_descriptor_rechecks_its_live_destination_before_publication() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("table.dat");
+    write_table_dat(&path, &plain_descriptor(1)).unwrap();
+    let staged = StagedTableDat::for_existing_table(directory.path()).unwrap();
+    let original = directory.path().join("original.dat");
+    fs::rename(&path, &original).unwrap();
+    symlink(&original, &path).unwrap();
+
+    assert!(staged.publish(&plain_descriptor(2)).is_err());
+    assert_eq!(fs::read_link(&path).unwrap(), original);
+    assert_eq!(read_table_dat(&path).unwrap().nrrow, 1);
     assert_eq!(directory.path().read_dir().unwrap().count(), 2);
 }
 

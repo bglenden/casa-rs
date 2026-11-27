@@ -304,6 +304,10 @@ impl Table {
         let storage_path = packed_edit
             .as_ref()
             .map_or(source_path.as_path(), |edit| edit.path());
+        let control = packed_edit
+            .is_none()
+            .then(|| StagedTableDat::for_existing_table(source_path))
+            .transpose()?;
 
         let mut profiler = StorageProfiler::start(format!(
             "Table::save_selected_columns_in_place path={}",
@@ -322,7 +326,7 @@ impl Table {
             );
         }
 
-        if packed_edit.is_none() {
+        if control.is_some() {
             self.note_persisted_write(source_path);
         }
         for group in affected_groups {
@@ -698,11 +702,12 @@ impl Table {
             }
         }
 
-        if let Some(edit) = packed_edit {
+        if let Some(control) = control {
+            control.publish(&table_dat)?;
+        } else {
+            let edit = packed_edit.expect("in-place saves use a plain descriptor or a packed edit");
             edit.publish(&table_dat)?;
             self.note_persisted_write(source_path);
-        } else {
-            crate::storage::table_control::write_table_dat(&control_path, &table_dat)?;
         }
         if let Some(profiler) = profiler.as_mut() {
             profiler.mark("publish");
@@ -876,6 +881,7 @@ impl Table {
                 .map(|dm| dm.seq_nr)
                 .max()
                 .map_or(0, |seq| seq + 1);
+            let control = StagedTableDat::for_existing_table(&source_path)?;
             self.note_persisted_write(&source_path);
             crate::storage::tiled_stman::clone_tiled_manager_files(
                 &source_path,
@@ -907,7 +913,7 @@ impl Table {
                 .map(|dm| dm.seq_nr + 1)
                 .max()
                 .unwrap_or(1);
-            crate::storage::table_control::write_table_dat(&control_path, &table_dat)?;
+            control.publish(&table_dat)?;
             crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&source_path);
             self.dm_info.push(crate::storage::DataManagerInfo {
                 dm_type: source_dm.type_name,
@@ -1023,6 +1029,7 @@ impl Table {
                 .map(|dm| dm.seq_nr)
                 .max()
                 .map_or(0, |seq| seq + 1);
+            let control = StagedTableDat::for_existing_table(&source_path)?;
             self.note_persisted_write(&source_path);
             let pending_values = self.inner.pending_array_cells(column);
             if let Some(streamed) = streamed {
@@ -1099,7 +1106,7 @@ impl Table {
                 .map(|dm| dm.seq_nr + 1)
                 .max()
                 .unwrap_or(1);
-            crate::storage::table_control::write_table_dat(&control_path, &table_dat)?;
+            control.publish(&table_dat)?;
             crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&source_path);
             self.dm_info.push(crate::storage::DataManagerInfo {
                 dm_type: "TiledShapeStMan".to_string(),

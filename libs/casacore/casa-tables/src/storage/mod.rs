@@ -90,7 +90,7 @@ pub(crate) use self::tiled_stman::TiledReadMetadata;
 use self::virtual_compress::{ComplexCompression, ComplexScale};
 use self::virtual_engine::{VirtualContext, is_virtual_engine, lookup_engine};
 
-use self::table_control::{write_concat_table_dat, write_ref_table_dat, write_table_dat};
+use self::table_control::{StagedTableDat, write_concat_table_dat, write_ref_table_dat};
 
 mod array_read;
 mod load_columns;
@@ -558,6 +558,8 @@ impl StorageManager for CompositeStorage {
     ) -> Result<(), StorageError> {
         use crate::table::DataManagerKind;
 
+        let control = StagedTableDat::for_full_save(table_path)?;
+
         // Clean up old data files before re-saving to prevent stale data
         // from a previous save with a different storage manager.
         if table_path.is_dir()
@@ -571,8 +573,6 @@ impl StorageManager for CompositeStorage {
                 }
             }
         }
-
-        fs::create_dir_all(table_path)?;
 
         let schema = snapshot.schema.as_ref().ok_or_else(|| {
             StorageError::FormatMismatch("cannot save without schema".to_string())
@@ -636,8 +636,7 @@ impl StorageManager for CompositeStorage {
                         big_endian,
                     )
                 };
-                let control_path = table_path.join(TABLE_CONTROL_FILE);
-                write_table_dat(&control_path, &table_dat)?;
+                control.publish(&table_dat)?;
                 // Filter col_descs to stored-only columns for the data file.
                 let stored_col_descs: Vec<_> = table_dat
                     .table_desc
@@ -714,8 +713,7 @@ impl StorageManager for CompositeStorage {
                         big_endian,
                     )
                 };
-                let control_path = table_path.join(TABLE_CONTROL_FILE);
-                write_table_dat(&control_path, &table_dat)?;
+                control.publish(&table_dat)?;
             }
             DataManagerKind::IncrementalStMan => {
                 dm_type_name = "IncrementalStMan".to_string();
@@ -745,8 +743,7 @@ impl StorageManager for CompositeStorage {
                     &dm_data,
                     big_endian,
                 );
-                let control_path = table_path.join(TABLE_CONTROL_FILE);
-                write_table_dat(&control_path, &table_dat)?;
+                control.publish(&table_dat)?;
             }
             DataManagerKind::TiledColumnStMan
             | DataManagerKind::TiledShapeStMan
@@ -780,8 +777,7 @@ impl StorageManager for CompositeStorage {
                     desc.data_manager_type = dm_type_name.clone();
                     desc.data_manager_group = dm_group_name.clone();
                 }
-                let control_path = table_path.join(TABLE_CONTROL_FILE);
-                write_table_dat(&control_path, &table_dat)?;
+                control.publish(&table_dat)?;
                 // Write tiled data to table.f0 header + table.f0_TSM* data files.
                 // Use the first column name as the hypercolumn/DM name.
                 let first_col_name = table_dat

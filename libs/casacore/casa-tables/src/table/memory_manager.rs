@@ -3,8 +3,8 @@
 
 use std::fs;
 
-use crate::storage::table_control::{TableDatContents, write_table_dat};
-use crate::storage::{DataManagerInfo, StorageError, TABLE_CONTROL_FILE, TABLE_INFO_FILE};
+use crate::storage::table_control::{StagedTableDat, TableDatContents};
+use crate::storage::{DataManagerInfo, StorageError, TABLE_INFO_FILE};
 
 use super::*;
 
@@ -68,7 +68,9 @@ impl Table {
             column.data_manager_type = MANAGER.into();
             column.data_manager_group = name.into();
         }
-        write_table_dat(&path.join(TABLE_CONTROL_FILE), &contents)?;
+        let control = StagedTableDat::in_table_directory(path)?;
+        self.note_persisted_write(path);
+        control.publish(&contents)?;
         fs::write(path.join(TABLE_INFO_FILE), self.table_info.to_string())
             .map_err(StorageError::Io)?;
         Ok(())
@@ -91,7 +93,6 @@ impl Table {
                     .dm_info
                     .first()
                     .map_or(MANAGER, |manager| manager.name.as_str());
-                self.note_persisted_write(path);
                 self.write_memory_layout(path, group)?;
             }
             self.mark_flushed();

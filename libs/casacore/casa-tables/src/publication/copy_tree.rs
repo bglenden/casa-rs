@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::ffi::OsStr;
-use std::fs::{self, Metadata};
+use std::fs::{self, FileType, Metadata};
 use std::io::{self, ErrorKind};
 use std::path::Path;
 
@@ -78,7 +78,7 @@ pub fn preserve_replacement_tree_entries(source: &Path, target: &Path) -> io::Re
             }
             Ok(_) => {}
             Err(error) if error.kind() == ErrorKind::NotFound => {
-                if !source_is_table || !managed_table_file(&name) {
+                if !source_is_table || !managed_table_file(&name, original_type) {
                     copy_entry(&original, &staged)?;
                 }
             }
@@ -88,12 +88,12 @@ pub fn preserve_replacement_tree_entries(source: &Path, target: &Path) -> io::Re
     fs::set_permissions(target, permissions)
 }
 
-fn managed_table_file(name: &OsStr) -> bool {
+fn managed_table_file(name: &OsStr, file_type: FileType) -> bool {
     name.to_str().is_some_and(|name| {
-        matches!(
-            name,
-            "table.dat" | "table.info" | "table.lock" | "table.dat_tmp"
-        ) || crate::storage::table_control::is_staged_table_dat(name)
+        matches!(name, "table.dat" | "table.info" | "table.lock")
+            || file_type.is_file()
+                && (name == "table.dat_tmp"
+                    || crate::storage::table_control::is_staged_table_dat(name))
     }) || table_manager_file_sequence(name).is_some()
 }
 
@@ -146,7 +146,7 @@ pub fn write_private_table_preserving_modes(
     for entry in fs::read_dir(table)? {
         let entry = entry?;
         let name = entry.file_name();
-        if !managed_table_file(&name) {
+        if !managed_table_file(&name, entry.file_type()?) {
             continue;
         }
         #[cfg(unix)]
@@ -428,6 +428,33 @@ mod tests {
         assert_eq!(
             fs::read(replacement.join("table.dat")).unwrap(),
             b"replacement"
+        );
+    }
+
+    #[test]
+    fn a_replacement_keeps_auxiliary_directories_and_links_with_staging_names() {
+        let scratch = tempfile::tempdir().unwrap();
+        let source = scratch.path().join("source");
+        let replacement = scratch.path().join("replacement");
+        let auxiliary = "table.dat_tmp.observations";
+        fs::create_dir_all(source.join(auxiliary)).unwrap();
+        fs::write(source.join(auxiliary).join("notes"), b"observation notes").unwrap();
+        fs::write(source.join("table.dat"), b"descriptor").unwrap();
+        fs::create_dir(&replacement).unwrap();
+        let link = "table.dat_tmp.AbC123dEf456";
+        let link_target = Path::new(auxiliary).join("notes");
+        std::os::unix::fs::symlink(&link_target, source.join(link)).unwrap();
+        std::os::unix::fs::symlink("missing", source.join("table.dat_tmp")).unwrap();
+
+        preserve_replacement_tree_entries(&source, &replacement).unwrap();
+        assert_eq!(
+            fs::read(replacement.join(&link_target)).unwrap(),
+            b"observation notes"
+        );
+        assert_eq!(fs::read_link(replacement.join(link)).unwrap(), link_target);
+        assert_eq!(
+            fs::read_link(replacement.join("table.dat_tmp")).unwrap(),
+            Path::new("missing")
         );
     }
 

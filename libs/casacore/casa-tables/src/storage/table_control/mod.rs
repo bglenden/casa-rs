@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![allow(dead_code)]
 
-use std::fs;
-use std::io::{self, Write};
 use std::mem::size_of;
 use std::path::Path;
 
@@ -18,7 +16,6 @@ use super::data_type::{
     parse_column_class_name, scalar_column_class_name,
 };
 use crate::casacore_order;
-use crate::table_path::stored_table_dat_keywords;
 
 // ---------------------------------------------------------------------------
 // Parsed structures
@@ -315,22 +312,10 @@ fn is_array_data_type(dt: CasacoreDataType) -> bool {
 // Write path
 // ---------------------------------------------------------------------------
 
-const STAGED_TABLE_DAT_PREFIX: &str = "table.dat_tmp.";
-const STAGED_TABLE_DAT_RANDOM_LEN: usize = 12;
+mod atomic_write;
+pub(crate) use atomic_write::{StagedTableDat, is_staged_table_dat};
 
-pub(crate) fn is_staged_table_dat(name: &str) -> bool {
-    name.strip_prefix(STAGED_TABLE_DAT_PREFIX)
-        .is_some_and(|suffix| {
-            suffix.len() == STAGED_TABLE_DAT_RANDOM_LEN
-                && suffix.bytes().all(|byte| byte.is_ascii_alphanumeric())
-        })
-}
-
-/// Writes `contents` to `path`, the `table.dat` inside a table's directory.
-///
-/// Absolute table keywords are stored relative to that table, as casacore
-/// stores them ([`stored_table_dat_keywords`]). Readers that have the old
-/// file open can finish reading it while new opens see the replacement.
+#[cfg(test)]
 pub(crate) fn write_table_dat(
     path: &Path,
     contents: &TableDatContents,
@@ -339,62 +324,7 @@ pub(crate) fn write_table_dat(
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let contents = stored_table_dat_keywords(contents, table);
-    // Backpatch object lengths in memory, avoiding seek-triggered file flushes.
-    let bytes = serialize_table_dat(&contents)?;
-    let previous = match fs::symlink_metadata(path) {
-        Ok(metadata) => {
-            // Replacing a link would silently detach it from the file that
-            // an in-place write would have updated.
-            if !metadata.is_file() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "expected a regular table.dat",
-                )
-                .into());
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::MetadataExt;
-                // A concurrent atomic replacement can unlink the inode
-                // during stat. Only additional links indicate an alias.
-                if metadata.nlink() > 1 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "cannot replace a hard-linked table.dat",
-                    )
-                    .into());
-                }
-            }
-            // Rename requires directory access but can overwrite a file
-            // that the caller could not open for writing.
-            crate::publication::check_write_access(path)?;
-            Some(metadata.permissions())
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error.into()),
-    };
-    let mut builder = tempfile::Builder::new();
-    builder
-        .prefix(STAGED_TABLE_DAT_PREFIX)
-        .rand_bytes(STAGED_TABLE_DAT_RANDOM_LEN);
-    #[cfg(unix)]
-    if previous.is_none() {
-        use std::os::unix::fs::PermissionsExt;
-        // Match the creation mode of fs::write, including the process umask.
-        builder.permissions(fs::Permissions::from_mode(0o666));
-    }
-    let mut staged = builder.tempfile_in(table)?;
-    staged.write_all(&bytes)?;
-    if let Some(permissions) = previous {
-        staged.as_file().set_permissions(permissions)?;
-        staged.persist(path).map_err(|error| error.error)?;
-    } else {
-        staged
-            .persist_noclobber(path)
-            .map_err(|error| error.error)?;
-    }
-    Ok(())
+    StagedTableDat::prepare(table, path.to_path_buf(), false)?.publish(contents)
 }
 
 /// Encode the same control file before a typed array's storage is admitted.
