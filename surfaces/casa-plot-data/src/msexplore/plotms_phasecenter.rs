@@ -16,6 +16,7 @@ use super::ComplexGrid;
 
 const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
 
+/// Geometry needed to apply a phase-center shift to the selected visibilities.
 pub struct PhaseCenterShift<'a> {
     target: &'a MDirection,
     time_reference: EpochRef,

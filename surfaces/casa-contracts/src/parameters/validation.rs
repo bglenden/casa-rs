@@ -5,11 +5,15 @@ use super::*;
 /// Stable structural validation failure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ContractValidationError {
+    /// Stable validation error code.
     pub code: String,
+    /// Explanation of the violated catalog or binding requirement.
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Stable surface identifier when the problem belongs to one task.
     pub surface: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Surface parameter name when the problem belongs to one binding.
     pub parameter: Option<String>,
 }
 

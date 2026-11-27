@@ -12,6 +12,7 @@ use casa_tables::TableWriteLock;
 
 use super::{image::ImageModel, invalid};
 
+/// Prepared virtual-model writes and owned image staging for a set of MeasurementSets.
 pub struct VirtualFtPublication {
     components: Vec<VirtualModelEntry>,
     incremental: bool,
@@ -33,12 +34,15 @@ struct Target {
 }
 
 impl VirtualFtPublication {
+    /// Reports whether any physical publication target can keep references to staged model images.
     pub fn may_reference_models(&self) -> bool {
         self.targets
             .iter()
             .any(|target| target.publication.may_reference_images())
     }
 
+    /// Plans publication to the underlying model tables and owns staged image paths. Returns an
+    /// error for invalid entries or incompatible target storage.
     pub fn new<'a>(
         tables: impl Iterator<Item = &'a MeasurementSet>,
         components: Vec<VirtualModelEntry>,

@@ -32,6 +32,8 @@ struct Solution {
     parameters: ArrayValue,
 }
 
+/// Rereferences complex calibration solutions to the requested reference antenna selection and
+/// writes the transformed calibration table.
 pub fn rereference_calibration_table(
     ms_path: &Path,
     input: &Path,

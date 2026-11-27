@@ -81,49 +81,87 @@ impl StatisticsGrid {
     }
 }
 
+/// Data-selection and diagnostic controls for a CASA bandpass plot. Paths and text are borrowed for
+/// the duration of preparation.
 pub struct PlotRequest<'a> {
+    /// Primary bandpass or delay calibration table.
     pub caltable: &'a Path,
+    /// Optional MeasurementSet supplying antenna, field, and spectral metadata.
     pub vis: Option<&'a Path>,
+    /// Up to two additional calibration tables to compare with the primary table.
     pub companion_tables: [Option<&'a Path>; 2],
+    /// CASA antenna, field, spectral-window, baseband, scan, and time selectors.
     pub selectors: Selectors,
+    /// Dimensions whose solutions should share a panel.
     pub overlay: Overlay,
+    /// Whether horizontal coordinates are frequencies in GHz or zero-based channel indices.
     pub frequency_axis: bool,
+    /// CASA ordinate request, such as amp, phase, both, or delay.
     pub y_axis: &'a str,
+    /// Receptor labels to include, for example XX and YY.
     pub polarizations: &'a [&'a str],
+    /// Time separation in seconds used to associate solutions across tables.
     pub threshold_seconds: f64,
+    /// Whether to include flagged calibration samples.
     pub show_flagged: bool,
+    /// Whether to label spectral windows with their receiver baseband number.
     pub show_baseband_number: bool,
+    /// Sigma threshold for diagnosing derivative outliers.
     pub derivative_sigma: f64,
+    /// Number of channels at each spectral edge to exclude from derivative statistics.
     pub edge: usize,
+    /// Resampling factor used when comparing neighboring-channel structure.
     pub resample: u32,
+    /// Threshold for detecting a step between adjacent bandpass platforms.
     pub platforming_threshold: f64,
+    /// Sigma threshold for detecting a step using the derivative statistics.
     pub platforming_sigma: f64,
+    /// Weather, observing geometry, and sideband settings for atmospheric overlays.
     pub atmosphere: AtmosphericOptions<'a>,
+    /// Whether to annotate the panel with frequency-division-mode windows.
     pub show_fdm: bool,
+    /// Whether to restrict the horizontal limits to the intersection of compared curves.
     pub zoom_intersect: bool,
 }
 
+/// Prepared bandpass curves, statistics, and task diagnostics.
 pub struct BandpassPlots {
+    /// Source calibration table path.
     pub caltable: PathBuf,
+    /// MeasurementSet used for window and observing metadata, if available.
     pub measurement_set: Option<PathBuf>,
     header: String,
+    /// Panels in plotting order.
     pub panels: Vec<BandpassPanel>,
+    /// Coordinates for the optional antenna, window, time, and receptor statistics.
     pub statistics: Option<StatisticsGrid>,
+    /// Whether the input calibration table stores polynomial bandpass solutions.
     pub polynomial: bool,
+    /// Whether the caller should return the CASA None result for this selection.
     pub returns_none: bool,
+    /// Diagnostic for selections that require a notice to the caller.
     pub selection_notice: Option<String>,
     immediate_combined_overlay: bool,
 }
 
+/// One ordinate panel and its overlaid solutions.
 pub struct BandpassPanel {
+    /// Quantity shown on the vertical axis.
     pub ordinate: Ordinate,
+    /// Panel title derived from the selection.
     pub title: String,
+    /// Horizontal axis label including unit where applicable.
     pub x_label: String,
+    /// Vertical axis label including unit where applicable.
     pub y_label: &'static str,
+    /// Curves sharing this panel's axes.
     pub series: Vec<BandpassSeries>,
+    /// Selection suffix used to name panel files.
     pub suffix: String,
     first_skipped_suffix: Option<String>,
+    /// Horizontal plot bounds in GHz or channel-index units.
     pub x_limits: [f64; 2],
+    /// Frequency coordinates of the panel's spectral channels, in GHz.
     pub frequency_channels: Vec<f64>,
     atmosphere: Vec<AtmosphericCurve>,
     fdm: Option<Vec<FdmWindow>>,
@@ -139,36 +177,56 @@ struct FdmWindow {
     frequencies: [f64; 2],
 }
 
+/// One antenna, window, time, and receptor curve in a panel.
 pub struct BandpassSeries {
+    /// MeasurementSet antenna name.
     pub antenna_name: String,
+    /// Zero-based MeasurementSet spectral-window ID.
     pub window: i32,
+    /// Index of the time group within this selection.
     pub time_index: usize,
+    /// Zero-based polarization receptor index in the solution cell.
     pub receptor: usize,
+    /// Display label for this series.
     pub label: String,
+    /// Paired horizontal and vertical sample values.
     pub curve: BandpassCurve,
+    /// Optional neighboring-channel derivative diagnostics.
     pub statistics: Option<DerivativeStatistics>,
     table_index: usize,
     polynomial: bool,
 }
 
+/// Paired samples of a bandpass or delay solution.
 pub struct BandpassCurve {
+    /// Horizontal coordinates in GHz or channel-index units, as selected for the panel.
     pub x: Vec<f64>,
+    /// Vertical ordinates in the panel's amplitude, decibel, degree, or nanosecond units.
     pub y: Vec<f64>,
 }
 
 #[derive(Clone, Copy)]
+/// Statistics of neighboring-channel changes for one series.
 pub struct DerivativeStatistics {
+    /// Median absolute deviation of the derivative in the ordinate's units.
     pub mad: f64,
+    /// Standard deviation of the derivative in the ordinate's units.
     pub stdev: f64,
+    /// Time identifying a possible step discontinuity, when detected.
     pub platforming: Option<PlatformingTime>,
 }
 
 #[derive(Clone, Copy)]
+/// Time coordinate used to identify a detected bandpass platform.
 pub enum PlatformingTime {
+    /// MeasurementSet epoch in seconds since MJD zero.
     Epoch(f64),
+    /// Zero-based time-group index when the diagnostic is keyed by selection order.
     Index(usize),
 }
 
+/// Reads the primary and companion tables, resolves selectors, and prepares curves and diagnostics
+/// up to the optional panel limit. Read and selection errors return a diagnostic.
 pub fn prepare_bandpass(
     request: &PlotRequest<'_>,
     panel_limit: Option<usize>,

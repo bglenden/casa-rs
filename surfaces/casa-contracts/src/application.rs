@@ -19,7 +19,9 @@ pub const APPLICATION_CATALOG_SCHEMA_VERSION: u32 = 3;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationLaunchDescriptor {
+    /// Installed CLI command name used for the task.
     pub executable: String,
+    /// Workspace package that builds the executable.
     pub cargo_package: String,
 }
 
@@ -30,6 +32,7 @@ pub struct ApplicationLaunchDescriptor {
 pub struct ApplicationDefinition {
     /// Stable application identity. Task identities reference a canonical surface with this ID.
     pub id: String,
+    /// Executable and build package selected for CLI distribution.
     pub launch: ApplicationLaunchDescriptor,
     /// The kinds of dataset the task reads, such as `measurement_set`.
     pub dataset_kinds: Vec<String>,
@@ -43,6 +46,7 @@ impl ApplicationDefinition {
         builtin_surface_bundle(&self.id)
     }
 
+    /// Read the protocol family declared by the canonical task surface.
     pub fn protocol_family(&self) -> Result<String, String> {
         Ok(self.surface_bundle()?.surface.provider_family().to_string())
     }
@@ -50,18 +54,23 @@ impl ApplicationDefinition {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+/// Checked inventory of task surfaces and their CLI hosts.
 pub struct ApplicationCatalog {
+    /// Format version of the application catalog.
     pub schema_version: u32,
+    /// The task application entries available to the suite and launchers.
     pub applications: Vec<ApplicationDefinition>,
 }
 
 impl ApplicationCatalog {
+    /// Look up an application by stable surface identifier.
     pub fn application(&self, id: &str) -> Option<&ApplicationDefinition> {
         self.applications
             .iter()
             .find(|application| application.id == id)
     }
 
+    /// Check version, unique identifiers, executable mappings, and exact task coverage.
     pub fn validate(&self) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
         if self.schema_version != APPLICATION_CATALOG_SCHEMA_VERSION {
@@ -128,6 +137,7 @@ impl ApplicationCatalog {
     }
 }
 
+/// Return the validated built-in inventory. Parsing and validation are cached.
 pub fn builtin_application_catalog() -> Result<&'static ApplicationCatalog, String> {
     static CATALOG: OnceLock<Result<ApplicationCatalog, String>> = OnceLock::new();
     CATALOG

@@ -210,10 +210,9 @@ supported options.
 
 ## Rust Libraries and Source Layout
 
-casa-rs is a fresh implementation in Rust of CASA and casacore functionality.
-The `casa-*` crates contain reusable domain libraries and shared contracts.
-The `casars-cli` and `casars-python` frontends expose them as command-line
-tasks and Python APIs.
+The workspace contains 38 crates in five source tiers. The 28 libraries
+under `libs/` are the Rust registry packages. Each has a short README and
+runnable API example.
 
 The Rust libraries use CFITSIO through `fitsio` for FITS image and visibility
 I/O, and `sofars`, a Rust port of IAU SOFA, for astrometry and time conversions.
@@ -221,17 +220,15 @@ FFTW provides general-purpose Fourier transforms. The project also includes a
 Rust port of the ATM atmospheric transmission model. The optional Python
 `plot` extra uses Astropy for celestial axes. See the [third-party notices](THIRD_PARTY_NOTICES.md).
 
-| Area | Crates or source |
+| Source | Crates and responsibilities |
 |---|---|
-| Values and foundations | `casa-core`, `casa-aipsio` |
-| Persistent data | `casa-tables`, `casa-ms`, `casa-observation`, `casa-lattices`, `casa-images` |
-| Coordinates and runtime catalogs | `casa-coordinates`, `casa-measures` |
-| Numerics and Fourier transforms | `casa-numerics`, `casa-fft` |
-| Calibration, simulation, import | `casa-calibration`, `casa-singledish`, `casa-simulation`, `casa-components`, `casa-atmosphere`, `casa-vla` |
-| Imaging | `casa-imaging`, `casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`, `casa-imaging-singledish` |
-| Task contracts and execution | `casa-contracts`, `casa-tasks`, `casars-cli` |
-| Python | `frontends/casars-python/`, with its PyO3 extension `casars._core` |
-| Comparison and test support | `dev/casa-test-support`, `dev/casa-dev-tools`, `suites/`, `tools/science/` |
+| `libs/casacore/` | Values, units, measures, tables, images, MeasurementSets, numerical primitives, and FFTW plans |
+| `libs/casa/` | Calibration, flagging, transforms, simulation, single-dish reduction, sky models, image analysis, atmosphere, and VLA import |
+| `libs/imaging/` | Imaging model, measurement operator, reconstruction, products, runtime, Metal, single-dish gridding, and the `casa-imaging` application |
+| `surfaces/` | `casa-contracts`, `casa-tasks`, and `casa-plot-data` |
+| `frontends/` | `casars-cli` task executables and `casars-python` with its in-process PyO3 module |
+| `dev/` | `casa-test-support` and `casa-dev-tools` |
+| `suites/` | Opt-in C++ interoperability, live CASA parity, and performance tests |
 
 The [application catalog](surfaces/casa-contracts/resources/application-catalog.json)
 and [parameter surfaces](surfaces/casa-contracts/resources/parameter-surfaces.json)
@@ -415,14 +412,10 @@ CARGO_INCREMENTAL=0 cargo run --example update_measures \
 export CASA_RS_MEASURESPATH=/path/to/measures-data
 ```
 
-Omitting `--data-dir` selects `~/.casa/data`. The corresponding source
-release contains `libs/casacore/casa-measures/data/casa-measures-runtime.tar.gz`.
-Pass that archive and a destination to
-`casa_measures::install_packaged_snapshot(archive, destination)`. It verifies
-the archive's size and SHA-256 before extracting the tables and recording their
-provenance. Python uses a prepared measures tree via `CASA_RS_MEASURESPATH`.
-
-To regenerate the archive and its verified manifest, run:
+Omitting `--data-dir` selects `~/.casa/data`. A packaged snapshot can also be
+installed explicitly with `casa_measures::install_packaged_snapshot`;
+scientific calls do not silently install it. Maintainers regenerate the
+packaged archive and provenance with:
 
 ```bash
 CARGO_INCREMENTAL=0 cargo run -p casa-dev-tools --bin package_snapshot \
@@ -466,7 +459,7 @@ applicable component, end-to-end, and CASA comparison tiers described in
 acceptance.
 
 Build local Rust API docs with
-`CARGO_INCREMENTAL=0 cargo doc --workspace --no-deps`.
+`CARGO_INCREMENTAL=0 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`.
 
 `git config core.hooksPath .githooks` enables the repository's hooks: an
 SPDX check on staged files, and daily housekeeping after commits that removes

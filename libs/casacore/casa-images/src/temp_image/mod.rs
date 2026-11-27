@@ -199,6 +199,8 @@ impl<T: ImagePixel> TempImage<T> {
             .and_then(|image| image.name.as_deref())
     }
 
+    /// Sets a pixel-cache budget in bytes, rounded down to whole pixels with a minimum of one. A
+    /// cache update failure returns an image error.
     pub fn set_pixel_cache_budget(&mut self, bytes: usize) -> Result<(), ImageError> {
         self.lattice
             .set_maximum_cache_size_pixels((bytes / std::mem::size_of::<T>()).max(1))?;

@@ -67,6 +67,7 @@
 //! ```
 //!
 //! </details>
+#![warn(missing_docs)]
 
 mod coordinate;
 mod coordinate_system;

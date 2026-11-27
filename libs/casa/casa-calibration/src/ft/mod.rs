@@ -63,6 +63,8 @@ pub(crate) fn spectral_with_runtime(
     }
 }
 
+/// Builds a virtual model entry for the selected rows and per-window zero-based channel spans.
+/// Persists each window's first channel, channel count, and stride.
 pub fn model_entry(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
@@ -100,6 +102,9 @@ pub fn model_entry(
     })
 }
 
+/// Predicts and writes selected model visibilities in the MAIN table's correlation and channel
+/// order. Uses the supplied lock during scratch-column updates. Incremental mode adds to existing
+/// predictions.
 pub fn write_model_scratch(
     ms: &mut MeasurementSet,
     selected: &ResolvedMsSelection,

@@ -1122,8 +1122,11 @@ impl VisibilityTimeBounds {
 }
 
 #[derive(Clone, Copy)]
+/// Data axes retained in the enumeration of plot points.
 pub struct PointDimensions {
+    /// Whether points vary across selected channels.
     pub channel: bool,
+    /// Whether points vary across baselines.
     pub baseline: bool,
 }
 

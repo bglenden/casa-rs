@@ -24,6 +24,7 @@ pub(super) struct SpectralChannel {
 pub struct MsScatterPlotMsAverageSpw {
     /// Spectral-window ID of the first input visibility buffer.
     pub spectral_window: i32,
+    /// Optional scan number and field ID restricting where this spectral metadata applies.
     pub scan_field: Option<(i32, i32)>,
     channels: Arc<[SpectralChannel]>,
 }
@@ -33,6 +34,7 @@ impl MsScatterPlotMsAverageSpw {
         &self.channels[ordinal]
     }
 
+    /// Looks up the frequency in hertz associated with a plotted channel index.
     pub fn frequency_hz(&self, display_channel: usize) -> Option<f64> {
         let index = self
             .channels

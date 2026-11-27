@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-11-02
+Last reality check: 2026-11-27
 Verification: just docs-check
 
 ## System purpose
@@ -12,7 +12,17 @@ coordinates, measures, and related workflows.
 
 ## Major modules / crates / packages
 
-The casacore foundation libraries live in `libs/casacore/`. CASA component models and image analysis live in `libs/casa/`. Both use versioned workspace dependencies.
+The workspace has 38 crates in five physical tiers. Production dependencies
+point inward from the frontends through the shared surfaces into the
+libraries. Developer utilities and opt-in suites sit outside that chain.
+
+| Tier | Crates | Role |
+|---|---:|---|
+| `libs/` | 28 | Publishable casacore, CASA science, and imaging libraries |
+| `surfaces/` | 3 | Provider contracts, task adapters and runtime, and renderer-neutral plot data |
+| `frontends/` | 2 | CLI hosts and the PyO3 package |
+| `dev/` | 2 | Developer utilities and oracle support |
+| `suites/` | 3 | Opt-in casacore interop, live CASA parity, and performance suites |
 
 | Module | Responsibility | May depend on |
 |---|---|---|
@@ -33,15 +43,18 @@ The casacore foundation libraries live in `libs/casacore/`. CASA component model
 | MeasurementSet operations (`casa-flagging`, `casa-mstransform`) | Flag agents and version storage, visibility materialization, concatenation and format conversion | `casa-ms` storage, `casa-numerics` row fits and domain primitives |
 | domain libraries (`casa-lattices`, `casa-coordinates`, `casa-calibration`, `casa-vla`, `casa-components`) | Astronomy data models and algorithms over table and image persistence | foundation crates, `casa-tables`, documented peer domain crates |
 | boundary contracts (`casa-contracts`) | Task-provider envelope, task surfaces, parameter catalog and CLI inventory | domain libraries and foundation crates; never a second source of truth |
-| parameter and task runtime (`casa-task-runtime`) | Parameter resolution, current sparse TOML profiles, Last/Last Successful, the shared task front end and its `--json-run` invocation | boundary contracts, `casa-core`, `casa-tables::log_table`; no provider science |
-| apps and runtimes (`casars-imager`, `casars-imexplore`, `casars-msconvert`, `casars-simulation`, `casars-python`) | Task executables that are not binaries of a domain crate, each on the shared task front end, and the Python package with its PyO3 extension `casars._core` | boundary contracts, domain libraries, foundation crates |
+| task adapters and runtime (`casa-tasks`) | Parameter resolution, managed profiles, native provider adapters, CLI protocol and in-process execution | provider contracts and the scientific libraries a task uses |
+| renderer-neutral plot data (`casa-plot-data`) | Typed plot specifications and derived data for frontends | selected domain libraries |
+| frontends (`casars-cli`, `casars-python`) | Individual task executables and the Python package with its PyO3 module `casars._core` | task and contract surfaces plus libraries needed by tools |
 | test support (`casa-test-support`) | Cross-language parity harnesses, fixtures, integration helpers | any workspace crate, for tests only |
 
 ## Dependency direction
 
 General direction:
 
-`core codecs -> foundations -> persistent storage / domain libraries -> boundary contracts -> parameter runtime -> apps/runtimes`
+The frontends use `casa-contracts`, `casa-tasks`, and `casa-plot-data`.
+These surfaces use the foundation, persistent storage, and scientific
+libraries that implement their operations.
 
 Imaging follows the stricter ADR-0016 layering:
 
@@ -90,17 +103,12 @@ decision 10). Adding a crate to that set is the owner's decision.
   cannot redefine a concept's meaning, normalization, units, role or
   persistence, and neither can a frontend. Saved profiles use the current task
   version (ADR-0006).
-- `casa-task-runtime` owns profile mechanics, managed state, the task
-  lifecycle from parsing through Last/Last Successful to completion,
-  provider discovery, diagnostics, exit classification and the common help
-  block. Providers keep typed science adapters; apps add no lifecycle maps,
-  writers, CLI hosts or launch fallbacks.
-- `casars-python` binds Rust to Python through PyO3 alone, in
-  `casars._core` (ADR-0017). It projects the parameter runtime,
-  task completion, the application catalog, the resolver and `casa-ms` plot
-  documents, and is never a second implementation of persistence, task
-  semantics or provider contracts. A task call starts the task's executable
-  as a child process; no crate spawns task executables on Python's behalf.
+- `casa-tasks` owns profile mechanics, managed Last state, provider discovery,
+  the common front end, and typed adapters that invoke the scientific
+  libraries.
+- `casars-python` binds Rust through `casars._core` (ADR-0017). Its tasks
+  enter the same provider adapters through `run_task_in_process`. Python
+  converts values, renders plot data, and projects native replies.
 - Frontends select a request and a `ResourcePolicy`; they do not inspect
   hosts or devices, select implementations, allocate work buffers or define
   scientific products.
@@ -141,9 +149,9 @@ decision 10). Adding a crate to that set is the owner's decision.
   never makes a route available.
 
 The workspace check also enforces physical crate tiers and registry dependency
-versions, tests and allocator isolation, UI-free libraries and surfaces, and
-in-process Python task execution. Its baseline of legacy dual module paths can
-only shrink.
+versions, test and allocator isolation, UI-free libraries and surfaces,
+in-process Python task execution, and directory entry points for Rust modules
+with child files. `just arch-check` also enforces the 1,500-line file limit.
 
 ## Runtime model
 
@@ -152,18 +160,18 @@ Python package and test harnesses. There is no repo-wide async runtime or
 background service; long-running parity and packaging work runs from scripts,
 integration tests or subprocesses.
 
-Every task consumer shares one synchronous parameter lifecycle (ADR-0006),
-owned by `casa-task-runtime`: a task resolves sparse user intent, records its
-attempted state and applies the completion transition around one provider
-invocation. The task front end records Last and Last Successful for a
-command-line run; `--json-run`, which Python's task calls use, records none.
+Every task consumer uses the parameter resolution and provider logic in
+`casa-tasks`. A normal CLI run records Last and Last Successful at the
+appropriate lifecycle transitions. The CLI's `--json-run` route and the
+native Python route run without managed Last state.
 
-A Python task call is one child process. Python resolves the parameters,
-starts the executable the resolver names with `--json-run -`, writes the
-values the call set to its stdin, forwards its log lines to `sys.stderr` and
-classifies the typed reply on its stdout. A `KeyboardInterrupt` is forwarded
-as SIGINT; the task has ten seconds to stop before it is killed, and the
-interrupt is then re-raised.
+Python passes resolved values and an explicit workspace through
+`casars._core`. A worker thread runs the Rust provider in the interpreter's
+process. The binding forwards logs and returns them in the task completion
+alongside the typed value and products. Python interrupts signal native
+cancellation, and the binding joins the worker before raising the interrupt.
+The workspace travels with the invocation so relative task paths resolve
+without changing the interpreter's working directory.
 
 ### Imaging execution
 
@@ -348,8 +356,8 @@ the dependency checker. They are numbered so that code can cite them.
 - the task executables serving the catalog's tasks, each on the shared task
   front end (for example `msexplore`, `imexplore`, `calibrate`, `importvla`,
   `casars-imager`, `simobserve`)
-- the Python package `casars-python`, with its one native module
-  `casars._core`
+- the Python distribution `casa-rs-python`, imported as `casars`, with the
+  native module `casars._core`
 - persisted CASA-compatible table, image and related formats
 - versioned provider contract bundles and protocol schemas
 - versioned sparse TOML task parameter profiles

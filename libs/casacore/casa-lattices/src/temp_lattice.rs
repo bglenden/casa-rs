@@ -26,12 +26,18 @@ pub enum ScratchSpace {
 /// Explicit byte-aware storage policy for temporary lattices and images.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TempStoragePolicy {
+    /// Keep the temporary array in memory.
     Memory,
+    /// Keep the temporary array in a disposable scratch directory.
     Paged {
+        /// Root policy for the disposable scratch directory.
         scratch: ScratchSpace,
     },
+    /// Page to scratch when the checked array size exceeds the supplied memory budget.
     Auto {
+        /// Maximum array payload in bytes for the in-memory choice.
         memory_budget_bytes: usize,
+        /// Root policy for the disposable scratch directory.
         scratch: ScratchSpace,
     },
 }
@@ -44,16 +50,22 @@ pub struct TempStoragePlan {
 }
 
 impl TempStoragePlan {
+    /// Return the checked element payload size in bytes.
     pub fn shape_bytes(self) -> usize {
         self.shape_bytes
     }
 
+    /// Whether the plan places the temporary lattice in scratch storage.
     pub fn is_paged(self) -> bool {
         self.paged
     }
 }
 
 impl TempStoragePolicy {
+    /// Choose storage for this shape without allocating the array.
+    ///
+    /// Returns an error for an empty or zero axis, unknown element width, or overflow
+    /// in the element or byte count.
     pub fn plan<T: LatticeElement>(
         &self,
         shape: &[usize],

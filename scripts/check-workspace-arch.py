@@ -929,6 +929,20 @@ def dual_modules(source_paths: list[Path]) -> list[Path]:
     return sorted(path for path in source_paths if path.with_suffix("").is_dir())
 
 
+def has_missing_docs_lint(source: str) -> bool:
+    """Read inner crate attributes before reaching the first Rust item."""
+    position = 0
+    while match := re.match(r"\s*(//|/\*|#!\[)", source[position:]):
+        start = position + match.start(1)
+        if match[1] != "#![":
+            position = comment_end(source, start)
+            continue
+        position = attribute_end(source, start + 2)
+        if re.fullmatch(r"#!\[\s*warn\s*\(\s*missing_docs\s*\)\s*\]", source[start:position]):
+            return True
+    return False
+
+
 def check_workspace(policy: dict, metadata: dict) -> list[str]:
     packages = metadata["packages"]
     by_directory = {str(Path(p["manifest_path"]).parent): p for p in packages}
@@ -959,6 +973,9 @@ def check_workspace(policy: dict, metadata: dict) -> list[str]:
             for path in dual_modules(source_paths)
         )
         if tier in LIBRARY_TIERS | {"surfaces"}:
+            library = root / "src/lib.rs"
+            if not library.is_file() or not has_missing_docs_lint(library.read_text(encoding="utf-8")):
+                failures.append(f"{name} must enable #![warn(missing_docs)] at its library root")
             if any("bin" in target["kind"] for target in package["targets"]) or any(
                 (root / path).exists() for path in ("src/main.rs", "src/bin")
             ):
@@ -1007,6 +1024,11 @@ def check_workspace(policy: dict, metadata: dict) -> list[str]:
 
 
 def check_workspace_self_test() -> None:
+    assert has_missing_docs_lint('//! Library docs\n#![doc = "API"]\n#![warn(missing_docs)]')
+    assert not has_missing_docs_lint('/*\n#![warn(missing_docs)]\n*/\npub struct A;')
+    assert not has_missing_docs_lint('pub mod nested {\n#![warn(missing_docs)]\n}')
+    assert not has_missing_docs_lint('// #![warn(missing_docs)]\n#![allow(missing_docs)]')
+
     def package(name, manifest, **changes):
         return {"name": name, "manifest_path": str(REPO_ROOT / manifest),
                 "publish": None, "dependencies": [], "features": {}, **changes}

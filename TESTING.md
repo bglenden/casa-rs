@@ -1,16 +1,19 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-11-12
+Last reality check: 2026-11-27
 Verification: just docs-check (policy); applicable domain gates below (code)
 
 ## Test categories
 
-- Unit tests: pure value, parsing, math, and domain logic inside a single crate
-- Integration tests: cross-crate behavior, on-disk persistence, contract boundaries, and CLI surfaces
-- Interoperability tests: Rust/C++/CASA read/write matrices when on-disk bytes or metadata matter
-- Packaging/runtime tests: editable Python package checks, wheel-install smoke checks, installer validation, and suite layout checks
-- Performance tests: smoke benchmarks and parity timing when performance is part of the requirement
+1. Unit tests and doctests cover crate-local behavior and runnable API examples.
+2. Default integration tests cover crate boundaries, data persistence, and CLI hosts.
+3. Opt-in interoperability tests in `suites/casacore-interop` and
+   `suites/casa-parity` compare storage and scientific behavior with independent references.
+4. Packaging tests exercise editable Python, the installed wheel and sdist,
+   and suite installation and command discovery.
+5. Performance tests measure explicit workloads in `suites/perf` and
+   the documented benchmark harnesses.
 
 ## Required discipline
 
@@ -86,7 +89,7 @@ Verification: just docs-check (policy); applicable domain gates below (code)
   repeating its green results locally. `just quick` reproduces the broad
   local gate. Use `just verify` for an explicitly required milestone or
   release.
-- Imaging T1 end-to-end tier: `CARGO_INCREMENTAL=0 cargo test -p casars-imager --test t1`
+- Imaging T1 end-to-end tier: `CARGO_INCREMENTAL=0 cargo test -p casars-cli --test t1`
 - Performance and evidence tool tests (`suites/perf/imager`, pytest):
   `just perf-tools-test`. CI's `perf_tools` job enforces them; `just quick`
   runs them when the host's `python3` has pytest, numpy, scipy and
@@ -95,17 +98,20 @@ Verification: just docs-check (policy); applicable domain gates below (code)
 - Smoke/release gate: `just smoke`
 - Blocking C++ interop release gate: `just release-cpp-interop`
 - Informational release performance suite: `just release-perf`
-- Pinned reorganization baseline gates: `just arch-check`, `bash scripts/docs-check.sh`,
-  `python3 scripts/check-file-length.py`, `./scripts/check-spdx.sh`,
-  `python3 -B scripts/test-task-cli-hosts.py` (all 24 host executables), and
-  `CARGO_INCREMENTAL=0 cargo test -p casacore-interop --features cpp-interop-tests --test tables_locking_interop`
-  when `pkg-config casacore` is present.
+- `just arch-check` includes source lengths, module layout, and dependency
+  checks. Use `just docs-check` for documentation and generated references.
+  Run `CARGO_INCREMENTAL=0 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`
+  to build the Rust API documentation. For Linux docs.rs readiness, check
+  `DOCS_RS=1 cargo doc -p casa-fft -p casa-imaging --no-deps` with FFTW installed.
+- Use `cargo package --no-verify` with all libraries selected to package the
+  unpublished dependency graph together. Inspect each `.crate` for required
+  sources, its README, and registry size before publishing.
 - Suite install gate: `scripts/test-install-suite.sh [--hide-checkout]`
   builds the release executables and wheel, installs the suite into a
   temporary root, and checks its commands on `PATH`, a task run from its
-  command and from the suite's Python, and the executable Python chose.
-  `--hide-checkout` moves the checkout aside so nothing the installed suite
-  runs can reach it
+  command and from the suite's Python with the suite binaries hidden and
+  an empty `PATH`. The script's `--hide-checkout` option also moves the source
+  checkout aside during the installed checks.
 - CASA task inventory: `python3 scripts/check-casa-inventory.py`, a step of
   `just arch-check`, needs no CASA. It checks the CASA 6.7.6.14 fixtures in
   `resources/casa-compat/casa-6.7.6.14/` and that
@@ -413,7 +419,7 @@ does not stand in for a scientific comparison.
   `api::pass_laws`, the deconvolution solver laws), and the Metal-against-CPU
   laws (`cargo nextest run -p casa-imaging-metal`).
 - **T1, end to end** (under ten minutes each; CI):
-  `cargo test -p casars-imager --test t1` through the production route, one
+  `cargo test -p casars-cli --test t1` through the production route, one
   module per capability (standard MFS and masks, cube, mosaic, W and AW
   projection, MT-MFS, model column, Metal, routes, interrupt). The store
   law holds a run's batch geometry in its MeasurementSet equal to its batch

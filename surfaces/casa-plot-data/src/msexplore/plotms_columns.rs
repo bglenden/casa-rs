@@ -12,6 +12,8 @@ use casa_mstransform::{
 
 use super::{ChannelBin, FloatGrid, MsAxis, MsDataColumn, MsPlotSpec, PlotMsInput};
 
+/// Reports whether channel plots mix visibility and compatible row metadata ordinates, requiring
+/// separate masks.
 pub fn uses_channel_ordinate_masks(
     x_axis: MsAxis,
     mut ordinates: impl Iterator<Item = MsAxis> + Clone,
@@ -25,6 +27,7 @@ pub fn uses_channel_ordinate_masks(
         })
 }
 
+/// Reports whether the requested axes and options use complex averaging across baselines.
 pub fn uses_vector_baseline_average(spec: &MsPlotSpec) -> bool {
     spec.averaging.avgbaseline
         && !spec.averaging.avgscan
@@ -35,6 +38,7 @@ pub fn uses_vector_baseline_average(spec: &MsPlotSpec) -> bool {
         && supports_reduced_visibility_axes(spec)
 }
 
+/// Reports whether grouping by antenna is applicable to the requested visibility averages.
 pub fn uses_antenna_visibility_average(spec: &MsPlotSpec) -> bool {
     spec.averaging.avgantenna
         && !spec.averaging.avgbaseline
@@ -44,6 +48,8 @@ pub fn uses_antenna_visibility_average(spec: &MsPlotSpec) -> bool {
         && supports_reduced_visibility_axes(spec)
 }
 
+/// Reports whether the request uses time averaging within original scan, field, baseline, and
+/// spectral-window groups.
 pub fn uses_ordinary_time_averaging(spec: &MsPlotSpec) -> bool {
     uses_time_averaging(spec, false)
 }
@@ -69,6 +75,7 @@ pub(super) fn uses_time_statistics(spec: &MsPlotSpec) -> bool {
             .any(|axis| axis.is_weight_axis() && axis.uses_channel_bins())
 }
 
+/// Reports whether axes and iteration can be projected directly through ordinary time averaging.
 pub fn supports_ordinary_time_axes(spec: &MsPlotSpec) -> bool {
     spec.iteration
         .iteraxis
@@ -158,6 +165,8 @@ fn uses_unbinned_vector_time_averaging(spec: &MsPlotSpec) -> bool {
         && !spec.averaging.scalar
 }
 
+/// Reports whether the requested averaging reduces scalar visibility ordinates instead of the
+/// complex samples.
 pub fn uses_scalar_visibility_average(spec: &MsPlotSpec) -> bool {
     let model_x_with_metadata_y = uses_ordinary_time_averaging(spec)
         && spec.secondary_y_axis().is_none()
@@ -172,6 +181,7 @@ pub fn uses_scalar_visibility_average(spec: &MsPlotSpec) -> bool {
         && (supports_reduced_visibility_axes(spec) || model_x_with_metadata_y)
 }
 
+/// Reports whether the requested averaging includes spectral-window reduction for the chosen axes.
 pub fn uses_spectral_window_average(spec: &MsPlotSpec) -> bool {
     let averaging = &spec.averaging;
     let spans = averaging.avgscan || averaging.avgfield;
@@ -211,6 +221,7 @@ pub(super) fn baseline_weight(weight: f64) -> f64 {
     if weight < minimum { minimum } else { weight }
 }
 
+/// Reports whether channel averaging includes a residual or ratio formed from visibility columns.
 pub fn uses_channel_derived(spec: &MsPlotSpec, x: Option<MsDataColumn>) -> bool {
     spec.averaging.avgchannel.is_some_and(|width| width > 1)
         && [
@@ -222,6 +233,7 @@ pub fn uses_channel_derived(spec: &MsPlotSpec, x: Option<MsDataColumn>) -> bool 
 }
 
 #[derive(Clone, Copy)]
+/// Resolved weight sources for PlotMS projections, row statistics, and model averaging.
 pub struct PlotMsWeightKinds {
     pub(super) axes: [WeightKind; 3],
     pub(super) model: Option<WeightKind>,

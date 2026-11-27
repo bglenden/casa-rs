@@ -44,6 +44,7 @@ pub(super) fn selected_bool_values(
     })
 }
 
+/// Reads selected integer scalar values in the requested row order.
 pub fn selected_i32_values(
     table: &Table,
     column: &'static str,
@@ -58,6 +59,7 @@ pub fn selected_i32_values(
     })
 }
 
+/// Reads selected double-precision scalar values in the requested row order.
 pub fn selected_f64_values(
     table: &Table,
     column: &'static str,

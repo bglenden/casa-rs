@@ -20,8 +20,11 @@ pub use sources::source_direction;
 use fixed::{FixedScale, FixedSpectrum};
 
 #[derive(Clone, Copy)]
+/// A supported absolute calibrator flux-density standard.
 pub enum FluxScale {
+    /// Standard evaluated from coefficients in the measures runtime.
     Table(CatalogScale),
+    /// Standard with fixed spectrum coefficients compiled into the library.
     Fixed(FixedScale),
 }
 
@@ -50,6 +53,7 @@ pub fn canonical_tool_standard(name: &str) -> Option<&'static str> {
 }
 
 impl FluxScale {
+    /// Resolves the exact canonical CASA name of a supported non-Solar-System standard.
     pub fn named(name: &str) -> Option<Self> {
         Some(match name {
             "Perley-Butler 2017" => Self::Table(CatalogScale::PerleyButler2017),
@@ -65,15 +69,20 @@ impl FluxScale {
         })
     }
 
+    /// Reports whether this standard supports interpolation across coefficient epochs.
     pub fn time_interpolation(self) -> bool {
         matches!(self, Self::Table(scale) if scale.time_interpolation())
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+/// Flux standards whose coefficients come from a CASA reference table.
 pub enum CatalogScale {
+    /// Perley–Butler 2017 coefficient table.
     PerleyButler2017,
+    /// Perley–Butler 2013 coefficient table.
     PerleyButler2013,
+    /// Scaife–Heald 2012 low-frequency coefficient table.
     ScaifeHeald2012,
 }
 
@@ -91,6 +100,8 @@ impl CatalogScale {
     }
 }
 
+/// An open flux-density standard and any positional calibrator catalog available to identify
+/// sources.
 pub struct FluxCatalog {
     cone_table: Option<PathBuf>,
     coefficients: Coefficients,
@@ -107,17 +118,26 @@ struct TabulatedCoefficients {
     epochs: Vec<f64>,
 }
 
+/// Outcome of identifying a calibrator and resolving its spectrum for the selected standard.
 pub enum CatalogMatch<'a> {
+    /// Identified calibrator with an evaluable spectrum.
     Spectrum(CalibratorSpectrum<'a>),
+    /// Neither source name nor catalog position identifies a supported calibrator.
     UnknownSource,
+    /// Identified calibrator without coefficients in this standard, with the canonical source name.
     MissingCoefficients(&'static str),
 }
 
+/// Calibrator spectrum for a particular standard and observation epoch.
 pub enum CalibratorSpectrum<'a> {
+    /// Table-backed spectrum borrowing the coefficient epoch grid.
     Table(TabulatedSpectrum<'a>),
+    /// Spectrum evaluated from fixed coefficients.
     Fixed(FixedSpectrum),
 }
 
+/// Table-backed flux-density spectrum with coefficient interpolation at the requested Modified
+/// Julian Date.
 pub struct TabulatedSpectrum<'a> {
     scale: CatalogScale,
     coefficients: Vec<Vec<f32>>,
@@ -127,6 +147,8 @@ pub struct TabulatedSpectrum<'a> {
 }
 
 impl FluxCatalog {
+    /// Opens a standard using discovered measures roots. Missing or malformed required coefficient
+    /// tables return an error.
     pub fn open(scale: FluxScale) -> MsResult<Self> {
         let candidates = MeasuresRuntime::discover_candidates().map_err(invalid)?;
         let roots: Vec<_> = candidates
@@ -146,6 +168,7 @@ impl FluxCatalog {
         })
     }
 
+    /// Returns the canonical CASA name of the open flux standard.
     pub fn standard_name(&self) -> &'static str {
         match &self.coefficients {
             Coefficients::Table(table) => match table.scale {
@@ -164,6 +187,7 @@ impl FluxCatalog {
         }
     }
 
+    /// Builds the diagnostic for a known source absent from the current standard's coefficients.
     pub fn missing_coefficients(&self, source: &str) -> casa_ms::MsError {
         let table = match &self.coefficients {
             Coefficients::Table(coefficients) => coefficients.table.path().map_or_else(
@@ -175,6 +199,8 @@ impl FluxCatalog {
         invalid(format!("{source} does not appears to be in {table}"))
     }
 
+    /// Looks up a calibrator by field name or measured sky position, selecting coefficients for the
+    /// requested MJD in days and interpolation method.
     pub fn spectrum(
         &self,
         field: &str,
@@ -266,6 +292,7 @@ impl TabulatedCoefficients {
 }
 
 impl CalibratorSpectrum<'_> {
+    /// Evaluates flux density in janskys at the input frequency in hertz.
     pub fn flux(&self, frequency_hz: f64) -> f64 {
         match self {
             Self::Table(spectrum) => spectrum.flux(frequency_hz),

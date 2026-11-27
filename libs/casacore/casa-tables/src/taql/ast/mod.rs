@@ -35,8 +35,11 @@ pub enum IndexStyle {
     Python,
     /// Explicit combination of base, slice end inclusivity, and axis order.
     Custom {
+        /// Whether index expressions and row numbering start at one.
         one_based: bool,
+        /// Whether a slice's stop coordinate is included.
         end_inclusive: bool,
+        /// Whether subscripts follow first-axis-fastest Fortran order.
         fortran_order: bool,
     },
 }
@@ -252,15 +255,36 @@ pub struct AlterTableStatement {
 #[derive(Debug, Clone, PartialEq)]
 pub enum AlterOperation {
     /// `ADD COLUMN name type`
-    AddColumn { name: String, data_type: String },
+    AddColumn {
+        /// New column name.
+        name: String,
+        /// TaQL type name as written in the statement.
+        data_type: String,
+    },
     /// `DROP COLUMN name`
-    DropColumn { name: String },
+    DropColumn {
+        /// Name of the existing column to remove.
+        name: String,
+    },
     /// `RENAME COLUMN old TO new`
-    RenameColumn { old_name: String, new_name: String },
+    RenameColumn {
+        /// Existing column name.
+        old_name: String,
+        /// Replacement column name.
+        new_name: String,
+    },
     /// `ADD ROW [count]`
-    AddRow { count: Option<Expr> },
+    AddRow {
+        /// Expression yielding the row count, with one implied when omitted.
+        count: Option<Expr>,
+    },
     /// `SET KEYWORD name = expr`
-    SetKeyword { name: String, value: Expr },
+    SetKeyword {
+        /// Name of the table keyword.
+        name: String,
+        /// Expression furnishing the new keyword value.
+        value: Expr,
+    },
 }
 
 /// A SELECT statement.
@@ -432,20 +456,37 @@ pub enum Expr {
     /// A column reference, possibly qualified (`table.column`).
     ColumnRef(ColumnRef),
     /// A unary operation.
-    Unary { op: UnaryOp, operand: Box<Expr> },
+    Unary {
+        /// Prefix operator.
+        op: UnaryOp,
+        /// Expression to which the operator applies.
+        operand: Box<Expr>,
+    },
     /// A binary operation.
     Binary {
+        /// First operand.
         left: Box<Expr>,
+        /// Infix operator.
         op: BinaryOp,
+        /// Second operand.
         right: Box<Expr>,
     },
     /// A function call.
-    FunctionCall { name: String, args: Vec<Expr> },
+    FunctionCall {
+        /// TaQL function identifier.
+        name: String,
+        /// Arguments in call order.
+        args: Vec<Expr>,
+    },
     /// A zero-based row lookup bound to a metadata column when preparing a query.
     BoundRowLookup {
+        /// Original expression text retained for display.
         original: Arc<String>,
+        /// Expression yielding a zero-based metadata row index.
         index: Box<Expr>,
+        /// Prepared metadata values in row order, shared across query rows.
         values: Arc<[ExprValue]>,
+        /// Value returned for a missing lookup when supplied.
         missing: Option<ExprValue>,
     },
     /// A row computation with metadata prepared for this query.
@@ -454,49 +495,78 @@ pub enum Expr {
     ArrayLiteral(Vec<Expr>),
     /// `expr BETWEEN low AND high`
     Between {
+        /// Value tested against the bounds.
         expr: Box<Expr>,
+        /// Lower bound.
         low: Box<Expr>,
+        /// Upper bound.
         high: Box<Expr>,
+        /// Whether to invert the range test.
         negated: bool,
     },
     /// `expr [NOT] IN (val, ...)`
     In {
+        /// Value whose membership is tested.
         expr: Box<Expr>,
+        /// Candidate expressions tested for equality.
         values: Vec<Expr>,
+        /// Whether to invert the membership result.
         negated: bool,
     },
     /// `expr [NOT] LIKE pattern` or `expr [NOT] ILIKE pattern`
     Like {
+        /// Text value to test.
         expr: Box<Expr>,
+        /// SQL wildcard pattern expression.
         pattern: Box<Expr>,
+        /// Whether to invert the pattern test.
         negated: bool,
+        /// Whether to ignore case when matching.
         case_insensitive: bool,
     },
     /// `expr IS [NOT] NULL`
-    IsNull { expr: Box<Expr>, negated: bool },
+    IsNull {
+        /// Value to test for null.
+        expr: Box<Expr>,
+        /// Whether this is an IS NOT NULL test.
+        negated: bool,
+    },
     /// An aggregate function: COUNT, SUM, AVG, MIN, MAX.
-    Aggregate { func: AggregateFunc, arg: Box<Expr> },
+    Aggregate {
+        /// Requested group reduction.
+        func: AggregateFunc,
+        /// Expression evaluated over group rows.
+        arg: Box<Expr>,
+    },
     /// `expr =~ regex` or `expr !~ regex` — regex match.
     ///
     /// C++ reference: `TableExprNodeRegex`.
     RegexMatch {
+        /// Text value to test.
         expr: Box<Expr>,
+        /// Pattern expression, including any regular-expression flags.
         pattern: Box<Expr>,
+        /// Whether this is a negative match.
         negated: bool,
     },
     /// `expr IN [a, b, c]` or `expr IN [a:b]` — set/range membership with bracket syntax.
     ///
     /// C++ reference: `TaQLMultiNode` with set elements.
     InSet {
+        /// Value whose membership is tested.
         expr: Box<Expr>,
+        /// Discrete expressions and ranges in the set.
         elements: Vec<InSetElement>,
+        /// Whether to invert the membership result.
         negated: bool,
     },
     /// Array indexing: `expr[i]`, `expr[i,j]`, `expr[s:e]`, `expr[s:e:step]`.
     ///
     /// C++ reference: `TableExprNodeArrayPart`.
     ArrayIndex {
+        /// Expression producing the indexed array.
         array: Box<Expr>,
+        /// Subscripts or slices in the active indexing style's axis order.
         indices: Vec<IndexElement>,
     },
     /// `SELECT *` — all columns wildcard.
@@ -518,8 +588,11 @@ pub enum InSetElement {
     Value(Expr),
     /// A range `start:end` or `start:end:step`.
     Range {
+        /// Optional lower endpoint of the range.
         start: Option<Expr>,
+        /// Optional upper endpoint of the range.
         end: Option<Expr>,
+        /// Optional spacing of values in a discrete range.
         step: Option<Expr>,
     },
 }
@@ -531,8 +604,11 @@ pub enum IndexElement {
     Single(Expr),
     /// A slice `start:end` or `start:end:step`.
     Slice {
+        /// Optional initial subscript in the active indexing style.
         start: Option<Expr>,
+        /// Optional stop subscript, with inclusion determined by the active style.
         end: Option<Expr>,
+        /// Optional stride between successive array indices.
         step: Option<Expr>,
     },
 }
@@ -547,7 +623,12 @@ pub enum Literal {
     /// Quantity literal with a numeric value and unit string.
     ///
     /// Parsed from TaQL forms like `2rad`, `200km`, or `1 'km/s'`.
-    Quantity { value: f64, unit: String },
+    Quantity {
+        /// Numeric magnitude in the declared unit.
+        value: f64,
+        /// Unit expression, such as km/s.
+        unit: String,
+    },
     /// String value.
     String(String),
     /// Boolean value.
@@ -557,7 +638,12 @@ pub enum Literal {
     /// Regex pattern literal: `p/pattern/flags` or `m/pattern/flags`.
     ///
     /// C++ reference: `TaQLRegexNode`.
-    Regex { pattern: String, flags: String },
+    Regex {
+        /// Raw regular-expression text.
+        pattern: String,
+        /// Match flags attached to the pattern.
+        flags: String,
+    },
     /// SQL NULL value.
     Null,
 }
@@ -632,10 +718,15 @@ pub enum UnaryOp {
 /// C++ reference: `TableExprGroupFunc*.h`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AggregateFunc {
+    /// Count of group values or rows for a wildcard argument.
     Count,
+    /// Arithmetic total of the group values.
     Sum,
+    /// Arithmetic mean of the group values.
     Avg,
+    /// Smallest value in the group.
     Min,
+    /// Largest value in the group.
     Max,
     /// First non-NULL value in group.
     First,
@@ -1338,148 +1429,4 @@ impl fmt::Display for AggregateFunc {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn aggregate_from_name_basic() {
-        assert_eq!(aggregate_from_name("gcount"), Some(AggregateFunc::Count));
-        assert_eq!(aggregate_from_name("GMIN"), Some(AggregateFunc::Min));
-        assert_eq!(aggregate_from_name("gmax"), Some(AggregateFunc::Max));
-        assert_eq!(aggregate_from_name("gmean"), Some(AggregateFunc::Avg));
-        assert_eq!(aggregate_from_name("gfirst"), Some(AggregateFunc::First));
-        assert_eq!(aggregate_from_name("glast"), Some(AggregateFunc::Last));
-        assert_eq!(
-            aggregate_from_name("gproduct"),
-            Some(AggregateFunc::Product)
-        );
-        assert_eq!(aggregate_from_name("gsumsqr"), Some(AggregateFunc::SumSqr));
-        assert_eq!(aggregate_from_name("grms"), Some(AggregateFunc::Rms));
-        assert_eq!(aggregate_from_name("gany"), Some(AggregateFunc::Any));
-        assert_eq!(aggregate_from_name("gall"), Some(AggregateFunc::All));
-        assert_eq!(aggregate_from_name("gntrue"), Some(AggregateFunc::NTrue));
-        assert_eq!(aggregate_from_name("gnfalse"), Some(AggregateFunc::NFalse));
-        assert_eq!(aggregate_from_name("gmedian"), Some(AggregateFunc::Median));
-        assert_eq!(
-            aggregate_from_name("gfractile"),
-            Some(AggregateFunc::Fractile)
-        );
-    }
-
-    #[test]
-    fn aggregate_from_name_aliases() {
-        assert_eq!(aggregate_from_name("gavg"), Some(AggregateFunc::Avg));
-        assert_eq!(
-            aggregate_from_name("gvariance"),
-            Some(AggregateFunc::Variance)
-        );
-        assert_eq!(
-            aggregate_from_name("gsamplevariance"),
-            Some(AggregateFunc::SampleVariance)
-        );
-        assert_eq!(aggregate_from_name("gstddev"), Some(AggregateFunc::StdDev));
-        assert_eq!(
-            aggregate_from_name("gsamplestddev"),
-            Some(AggregateFunc::SampleStdDev)
-        );
-    }
-
-    #[test]
-    fn aggregate_from_name_rejects_non_aggregates() {
-        assert_eq!(aggregate_from_name("foo"), None);
-        assert_eq!(aggregate_from_name("g"), None);
-        assert_eq!(aggregate_from_name(""), None);
-        assert_eq!(aggregate_from_name("gfoo"), None);
-        assert_eq!(aggregate_from_name("gabcdef"), None);
-    }
-
-    #[test]
-    fn aggregate_from_name_accepts_unprefixed() {
-        // The original 5 aggregates are recognized without g-prefix
-        assert_eq!(aggregate_from_name("count"), Some(AggregateFunc::Count));
-        assert_eq!(aggregate_from_name("sum"), Some(AggregateFunc::Sum));
-        assert_eq!(aggregate_from_name("avg"), Some(AggregateFunc::Avg));
-        assert_eq!(aggregate_from_name("min"), Some(AggregateFunc::Min));
-        assert_eq!(aggregate_from_name("max"), Some(AggregateFunc::Max));
-    }
-
-    #[test]
-    fn aggregate_display_roundtrip() {
-        for func in [
-            AggregateFunc::Count,
-            AggregateFunc::Sum,
-            AggregateFunc::Avg,
-            AggregateFunc::Min,
-            AggregateFunc::Max,
-            AggregateFunc::First,
-            AggregateFunc::Last,
-            AggregateFunc::Product,
-            AggregateFunc::SumSqr,
-            AggregateFunc::Variance,
-            AggregateFunc::SampleVariance,
-            AggregateFunc::StdDev,
-            AggregateFunc::SampleStdDev,
-            AggregateFunc::Rms,
-            AggregateFunc::Any,
-            AggregateFunc::All,
-            AggregateFunc::NTrue,
-            AggregateFunc::NFalse,
-            AggregateFunc::Median,
-            AggregateFunc::Fractile,
-            AggregateFunc::Aggr,
-            AggregateFunc::RowId,
-            AggregateFunc::Hist,
-        ] {
-            let displayed = func.to_string();
-            let parsed = aggregate_from_name(&displayed);
-            assert_eq!(parsed, Some(func), "roundtrip failed for {displayed}");
-        }
-    }
-
-    #[test]
-    fn statement_display_covers_non_select_variants() {
-        let statements = [
-            "CALC meas.help('freq')",
-            "ALTER TABLE ADD COLUMN field STRING",
-            "ALTER TABLE DROP COLUMN field",
-            "ALTER TABLE RENAME COLUMN old TO new",
-            "ALTER TABLE ADD ROW 3",
-            "ALTER TABLE SET KEYWORD source = 'VLA'",
-            "UPDATE mytab SET flux = 2.0 WHERE id = 1 LIMIT 1",
-            "INSERT INTO mytab (id, flux) VALUES (1, 2.0), (2, 3.0)",
-            "DELETE FROM mytab WHERE id = 1 LIMIT 1",
-            "COUNT SELECT * WHERE id > 0",
-            "CREATE TABLE scratch (id INT32, name STRING)",
-            "DROP TABLE scratch",
-        ];
-
-        for sql in statements {
-            let statement = crate::taql::parse(sql).unwrap();
-            let displayed = statement.to_string();
-            assert!(
-                !displayed.is_empty(),
-                "display output should not be empty for {sql}"
-            );
-        }
-    }
-
-    #[test]
-    fn select_display_covers_clauses_and_aliases() {
-        let statement = crate::taql::parse(
-            "USING STYLE PYTHON SELECT DISTINCT t.id AS source_id, SUM(t.flux) \
-             FROM t AS t LEFT JOIN t AS t2 ON t.id = t2.id WHERE t.id > 0 \
-             GROUP BY t.id HAVING SUM(t.flux) > 1 ORDER BY source_id DESC \
-             LIMIT 2 OFFSET 1 GIVING output AS MEMORY",
-        )
-        .unwrap();
-        let displayed = statement.to_string();
-        assert!(displayed.contains("USING STYLE PYTHON SELECT DISTINCT"));
-        assert!(displayed.contains("LEFT JOIN"));
-        assert!(displayed.contains("GROUP BY"));
-        assert!(displayed.contains("HAVING"));
-        assert!(displayed.contains("ORDER BY"));
-        assert!(displayed.contains("LIMIT 2"));
-        assert!(displayed.contains("OFFSET 1"));
-        assert!(displayed.contains("GIVING output AS MEMORY"));
-    }
-}
+mod tests;

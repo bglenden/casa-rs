@@ -3,8 +3,11 @@
 use super::*;
 
 #[derive(Debug, Clone)]
+/// Group of native spectral channels represented by one plotted channel.
 pub struct ChannelBin {
+    /// First included zero-based native channel index.
     pub start: usize,
+    /// Exclusive upper bound in the native channel numbering.
     pub end: usize,
     pub(super) stride: usize,
     pub(super) ordinal: usize,
@@ -28,6 +31,7 @@ impl ChannelBin {
         })
     }
 
+    /// Returns the zero-based native channel for a singleton or bin ordinal for an averaged group.
     pub fn display_channel(&self) -> usize {
         if self.averaged {
             self.ordinal
@@ -82,6 +86,8 @@ pub(super) fn plot_channel_bins_for_window<'a>(
     Ok(Cow::Borrowed(bins))
 }
 
+/// Builds plot channel bins over the selected native channel ranges and the requested averaging
+/// width. A zero width returns an error.
 pub fn plot_selected_channel_bins(
     chan_count: usize,
     spec: &MsPlotSpec,

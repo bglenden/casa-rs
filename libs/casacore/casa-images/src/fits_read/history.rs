@@ -72,6 +72,8 @@ pub(super) fn history_from_cards(
     entries
 }
 
+/// Reads the primary FITS header card images in file order, including HISTORY cards. An unreadable or
+/// malformed header returns an image error.
 pub fn read_cards(path: &Path) -> Result<Vec<String>, ImageError> {
     let mut file = BufReader::new(
         std::fs::File::open(path).map_err(|error| ImageError::Io(error.to_string()))?,

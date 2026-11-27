@@ -717,6 +717,7 @@ fn document_lane_axis(id: &str, label: &str, lane_labels: Vec<String>) -> PlotDo
     }
 }
 
+/// Computes the lower and upper plotting bounds of a series' ordinate values.
 pub fn series_y_bounds(values: impl Iterator<Item = f64>) -> (f64, f64) {
     expanded_bounds(values.fold(None, bounds_accumulator).unwrap_or((0.0, 1.0)))
 }
@@ -930,6 +931,7 @@ fn axis_metadata(id: &str, label: &str) -> PlotAxisMetadata {
     }
 }
 
+/// Extracts the unit shown in a parenthesized axis-label suffix.
 pub fn label_unit(label: &str) -> String {
     label
         .rsplit_once('(')

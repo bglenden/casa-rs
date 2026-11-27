@@ -251,38 +251,48 @@ impl<'a> RefTable<'a> {
         })
     }
 
+    /// Returns the number of rows visible in this reference selection.
     pub fn row_count(&self) -> usize {
         self.layout.row_count()
     }
 
+    /// Borrows a parent row by zero-based position within the selection. An invalid position
+    /// returns a table error.
     pub fn row(&self, index: usize) -> Result<&RecordValue, TableError> {
         self.parent
             .row_accessor()
             .row(self.layout.translate_row(index)?)
     }
 
+    /// Borrows a cell by selection row and visible column. An absent value is returned as None.
     pub fn cell(&self, row: usize, column: &str) -> Result<Option<&Value>, TableError> {
         let parent_idx = self.layout.translate_row(row)?;
         let parent_col = self.layout.translate_column(column)?;
         self.parent.cell_accessor(parent_idx, parent_col)?.value()
     }
 
+    /// Borrows the zero-based parent row indices in view order.
     pub fn row_numbers(&self) -> &[usize] {
         self.layout.row_numbers()
     }
 
+    /// Borrows the visible column names in selection order.
     pub fn column_names(&self) -> &[String] {
         self.layout.column_names()
     }
 
+    /// Returns the parent schema projected to the selected columns, when the parent has a schema.
     pub fn schema(&self) -> Option<TableSchema> {
         self.layout.schema(self.parent)
     }
 
+    /// Borrows the parent table's saved path, if available.
     pub fn parent_path(&self) -> Option<&Path> {
         self.parent.path()
     }
 
+    /// Saves the selection as a casacore reference table, which requires a persisted parent.
+    /// Storage errors propagate.
     pub fn save(&self, opts: crate::table::TableOptions) -> Result<(), TableError> {
         self.layout.save(self.parent, &opts, opts.path())
     }
@@ -383,6 +393,7 @@ impl<'a> RefTableMut<'a> {
         Ok(Self { parent, layout })
     }
 
+    /// Borrows a read-only reference selection over the same parent rows and columns.
     pub fn as_ref(&self) -> RefTable<'_> {
         RefTable {
             parent: &*self.parent,
@@ -390,22 +401,28 @@ impl<'a> RefTableMut<'a> {
         }
     }
 
+    /// Returns the number of rows visible in this mutable selection.
     pub fn row_count(&self) -> usize {
         self.layout.row_count()
     }
 
+    /// Borrows a parent row by zero-based position within the selection. An invalid position
+    /// returns a table error.
     pub fn row(&self, index: usize) -> Result<&RecordValue, TableError> {
         self.parent
             .row_accessor()
             .row(self.layout.translate_row(index)?)
     }
 
+    /// Borrows a cell by selection row and visible column. An absent value is returned as None.
     pub fn cell(&self, row: usize, column: &str) -> Result<Option<&Value>, TableError> {
         let parent_idx = self.layout.translate_row(row)?;
         let parent_col = self.layout.translate_column(column)?;
         self.parent.cell_accessor(parent_idx, parent_col)?.value()
     }
 
+    /// Updates a selected cell in the parent table. Invalid rows, invisible columns, and
+    /// incompatible values return a table error.
     pub fn set_cell(&mut self, row: usize, column: &str, value: Value) -> Result<(), TableError> {
         let parent_idx = self.layout.translate_row(row)?;
         let parent_col = self.layout.translate_column(column)?.to_string();
@@ -414,22 +431,28 @@ impl<'a> RefTableMut<'a> {
             .set(value)
     }
 
+    /// Borrows the zero-based parent row indices in view order.
     pub fn row_numbers(&self) -> &[usize] {
         self.layout.row_numbers()
     }
 
+    /// Borrows the visible column names in selection order.
     pub fn column_names(&self) -> &[String] {
         self.layout.column_names()
     }
 
+    /// Returns the parent schema projected to the selected columns, when the parent has a schema.
     pub fn schema(&self) -> Option<TableSchema> {
         self.layout.schema(&*self.parent)
     }
 
+    /// Borrows the parent table's saved path, if available.
     pub fn parent_path(&self) -> Option<&Path> {
         self.parent.path()
     }
 
+    /// Saves the current selection as a casacore reference table without copying parent cells. A
+    /// persisted parent is required.
     pub fn save(&self, opts: crate::table::TableOptions) -> Result<(), TableError> {
         self.layout.save(&*self.parent, &opts, opts.path())
     }

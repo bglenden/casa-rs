@@ -78,6 +78,8 @@ impl VisibilityModels {
         Self::with_models(ms, rows, models, combine, None)
     }
 
+    /// Prepares visibility predictors from the model entries and selected visibility rows of this
+    /// MeasurementSet.
     pub fn from_entries(
         ms: &MeasurementSet,
         rows: &[ResolvedMsSelectionRow],
@@ -106,6 +108,7 @@ impl VisibilityModels {
         Ok(self)
     }
 
+    /// Sets the epoch anchoring the phase center, in seconds since MJD zero.
     pub fn with_phase_centre_time(mut self, time_mjd_seconds: f64) -> Self {
         for time in self.models.phase_times.values_mut() {
             *time = time_mjd_seconds;

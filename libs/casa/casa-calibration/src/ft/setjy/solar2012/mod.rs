@@ -27,12 +27,15 @@ use interpolate::window;
 const AU_METRES: f64 = 1.495_978_706_6e11;
 const LIGHT_SPEED: f64 = 299_792_458.;
 
+/// Butler-JPL-Horizons 2012 apparent disk model for a Solar System body at a specified epoch.
 pub struct Solar2012 {
     ephemeris: Ephemeris,
     brightness: Brightness,
 }
 
 impl Solar2012 {
+    /// Opens the body's ephemeris and samples it at the requested Modified Julian Date in days.
+    /// Missing models and uncovered epochs return an error.
     pub fn open(body: &str, mjd: f64) -> MsResult<Self> {
         let body = canonical_body(body).ok_or_else(|| {
             invalid(format!(
@@ -57,10 +60,12 @@ impl Solar2012 {
         })
     }
 
+    /// Borrows the apparent sky direction with its measure frame.
     pub fn direction(&self) -> &MDirection {
         &self.ephemeris.direction
     }
 
+    /// Produces a disk component whose flux density is averaged over the requested frequency bands.
     pub fn component(
         &self,
         direction: MDirection,
@@ -273,6 +278,9 @@ fn radii_km(table: &Table) -> MsResult<[f64; 3]> {
         .map_err(|_| invalid("expected three 2012 ephemeris radii"))
 }
 
+/// Returns edge pairs in hertz. A channel uses its center plus or minus half
+/// its absolute width. A combined multi-channel window spans the extreme
+/// channel centers.
 pub fn bands(centers: &[f64], widths: &[f64], by_channel: bool) -> Vec<[f64; 2]> {
     if by_channel || centers.len() == 1 {
         centers

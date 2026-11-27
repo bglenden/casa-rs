@@ -262,6 +262,8 @@ pub fn build_calibrated_plotms_payload(
     build_msexplore_payload_internal(ms, spec, true, Some(&input))
 }
 
+/// Builds the plot payload from selected uncalibrated MeasurementSet data using the requested axes,
+/// transforms, and averaging.
 pub fn build_uncalibrated_plotms_payload(
     ms: &MeasurementSet,
     spec: &MsExploreSpec,

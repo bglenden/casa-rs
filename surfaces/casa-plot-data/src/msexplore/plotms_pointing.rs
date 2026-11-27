@@ -11,18 +11,22 @@ use casa_ms::derived::engine::{MsCalEngine, resolve_direction_reference_selected
 use super::MsAxis;
 
 #[derive(Clone, Copy)]
+/// One antenna pointing ordinate with a direction frame, angular component, and interpolation mode.
 pub struct DirectionAxis {
     frame: DirectionRef,
     spline: bool,
     longitude: bool,
 }
 
+/// Pointing projections and ordinate-side choices in PlotMS series order.
 pub struct PointingAxes {
     pairs: Vec<[Option<DirectionAxis>; 2]>,
     right_ordinates: Vec<bool>,
 }
 
 impl PointingAxes {
+    /// Builds the pointing specifications for pairs of horizontal and vertical axes. Side choices
+    /// follow the same series order.
     pub fn new(pairs: Vec<[Option<DirectionAxis>; 2]>, right_ordinates: Vec<bool>) -> Self {
         Self {
             pairs,
@@ -30,18 +34,22 @@ impl PointingAxes {
         }
     }
 
+    /// Returns the number of configured axis pairs.
     pub fn len(&self) -> usize {
         self.pairs.len()
     }
 
+    /// Reports whether the configuration has no axis pairs.
     pub fn is_empty(&self) -> bool {
         self.pairs.is_empty()
     }
 
+    /// Borrows the flags for drawing each series on the right ordinate.
     pub fn right_ordinates(&self) -> &[bool] {
         &self.right_ordinates
     }
 
+    /// Combines distinct horizontal pointing labels, including frames and units.
     pub fn x_label(&self) -> Option<String> {
         let mut labels = Vec::new();
         for index in 0..self.len() {
@@ -54,6 +62,8 @@ impl PointingAxes {
         (!labels.is_empty()).then(|| labels.join(", "))
     }
 
+    /// Returns the pointing label in degrees for the indexed series and component. Indices must
+    /// name an existing pair and its x or y component.
     pub fn label(&self, index: usize, component: usize) -> Option<String> {
         let axis = self.pairs[index][component]?;
         let component = match (axis.frame, axis.longitude) {
@@ -68,6 +78,8 @@ impl PointingAxes {
     }
 }
 
+/// Parses the frame and interpolation for a pointing axis. Other axis kinds return None, and
+/// unsupported pointing settings are errors.
 pub fn parse_axis(
     axis: Option<MsAxis>,
     frame: &str,

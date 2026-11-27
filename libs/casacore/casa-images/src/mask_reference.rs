@@ -22,6 +22,7 @@ use casa_tables::{Table, TableOptions};
 /// The field of a mask region record that names its mask table.
 const MASK_TABLE_FIELD: &str = "mask";
 
+/// Reports whether a path has the on-disk signature of a paged Boolean mask table.
 pub fn is_paged_mask_table(path: &Path) -> bool {
     Table::open_metadata_only(TableOptions::new(path))
         .ok()

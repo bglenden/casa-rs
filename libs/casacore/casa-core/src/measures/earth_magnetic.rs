@@ -32,28 +32,47 @@ use super::position::MPosition;
 /// plus the special model code [`IGRF`](EarthMagneticRef::IGRF).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EarthMagneticRef {
+    /// Mean equatorial axes at J2000.
     J2000,
+    /// Mean equator and equinox of date using the Julian system.
     JMEAN,
+    /// True equator and equinox of date using the Julian system.
     JTRUE,
+    /// Apparent equatorial axes of date.
     APP,
+    /// Mean equatorial axes of the B1950 FK4 frame.
     B1950,
     /// Mean equator/equinox of date under FK4.
     BMEAN,
     /// True equator/equinox of date under FK4.
     BTRUE,
+    /// IAU Galactic axes.
     GALACTIC,
+    /// Local hour-angle and declination axes.
     HADEC,
+    /// Apparent horizon axes, with azimuth measured north through east.
     AZEL,
+    /// Apparent horizon axes, with azimuth measured south through west.
     AZELSW,
+    /// Geometric horizon axes, with azimuth measured north through east.
     AZELGEO,
+    /// Geometric horizon axes, with azimuth measured south through west.
     AZELSWGEO,
+    /// Natural geocentric axes in the Julian system.
     JNAT,
+    /// Mean ecliptic axes at J2000.
     ECLIPTIC,
+    /// Mean ecliptic axes of date.
     MECLIPTIC,
+    /// True ecliptic axes of date.
     TECLIPTIC,
+    /// Supergalactic axes.
     SUPERGAL,
+    /// Earth-fixed terrestrial Cartesian axes.
     ITRF,
+    /// Topocentric apparent axes at the observer.
     TOPO,
+    /// International Celestial Reference System axes.
     ICRS,
     /// International Geomagnetic Reference Field model identifier.
     IGRF,

@@ -5,6 +5,10 @@ use std::{env, fs, io, time::Duration};
 
 use ureq::tls::{PemItem, RootCerts, TlsConfig, parse_pem};
 
+/// Creates a client with the supplied global request timeout.
+///
+/// If `SSL_CERT_FILE` is set, returns an error when that bundle cannot be read,
+/// parsed, or found to contain certificates. Otherwise uses the default roots.
 pub fn agent(timeout: Duration) -> io::Result<ureq::Agent> {
     let mut config = ureq::Agent::config_builder().timeout_global(Some(timeout));
     // Honor an explicitly configured trust bundle used by institutional HTTP

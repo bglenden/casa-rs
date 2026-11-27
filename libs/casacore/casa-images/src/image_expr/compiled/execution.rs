@@ -20,6 +20,7 @@ impl<T: ImageExprValue> std::fmt::Debug for MaskExpression<T> {
 }
 
 impl<T: ImageExprValue> ImageExpression<T> {
+    /// Reports whether any branch can produce a non-trivial validity mask.
     pub fn may_have_mask(&self) -> bool {
         self.node.may_have_mask(&self.arena)
     }
@@ -58,6 +59,8 @@ impl<T: ImageExprValue> ImageExpression<T> {
         )
     }
 
+    /// Visits an image in bounded sections, passing each zero-based start and owned pixel block to
+    /// the callback. Stops on the first evaluation or callback error.
     pub fn visit_pixel_sections(
         &self,
         mut visit: impl FnMut(&[usize], ArrayD<T>) -> Result<(), ImageError>,
@@ -216,6 +219,9 @@ impl<T: ImageExprValue> ImageExpression<T> {
         Ok(image)
     }
 
+    /// Writes a paged image using the supplied WCS, brightness units, beam metadata, and optional
+    /// original coordinate record. Returns the open image and its valid-pixel count. Evaluation or
+    /// persistence failures return an image error.
     pub fn save_as_with_full_metadata(
         &self,
         path: impl AsRef<Path>,
@@ -348,10 +354,12 @@ impl<T: ImageExprValue> ImageExpression<T> {
         Ok((image, valid_pixels))
     }
 
+    /// Returns the full output extents in pixel-axis order.
     pub fn shape(&self) -> &[usize] {
         &self.meta.shape
     }
 
+    /// Returns the number of output lattice axes.
     pub fn ndim(&self) -> usize {
         self.meta.shape.len()
     }
@@ -382,6 +390,7 @@ impl<T: ImageExprValue> ImageExpression<T> {
         &self.meta.image_info
     }
 
+    /// Borrows the retained CASA coordinate keyword when the source exposed one.
     pub fn legacy_coords_ref(&self) -> Option<&RecordValue> {
         self.meta.legacy_coords.as_ref()
     }
@@ -390,6 +399,7 @@ impl<T: ImageExprValue> ImageExpression<T> {
         self.meta.raw_image_info.as_ref()
     }
 
+    /// Clones raw CASA image-info metadata, including beam records, when available.
     pub fn raw_image_info(&self) -> Option<RecordValue> {
         self.raw_image_info_ref().cloned()
     }
@@ -407,6 +417,8 @@ impl<T: ImageExprValue> ImageExpression<T> {
         self.node.may_have_mask(&self.arena)
     }
 
+    /// Evaluates the entire source validity mask. Returns None when the expression has no stored mask
+    /// or mask evaluation fails. Use get_mask_slice to retain errors.
     pub fn source_mask(&self) -> Option<ArrayD<bool>> {
         self.eval_full_mask()
             .ok()
@@ -481,10 +493,12 @@ impl<T: ImageExprValue> ImageExpression<T> {
 }
 
 impl<T: ImageExprValue> MaskExpression<T> {
+    /// Reports whether the mask can be evaluated with a lattice shape supplied later.
     pub fn is_shape_polymorphic(&self) -> bool {
         self.node.is_shape_polymorphic()
     }
 
+    /// Evaluates the entire mask in bounded read sections and assembles one Boolean array.
     pub fn get_in_sections(&self) -> Result<ArrayD<bool>, ImageError> {
         let cursor = bounded_read_cursor(self.shape.clone())?;
         self.get_slice_with_max_cursor_shape(&vec![0; self.ndim()], &self.shape, &cursor)
@@ -501,10 +515,13 @@ impl<T: ImageExprValue> MaskExpression<T> {
         self.execution_resources = resources;
     }
 
+    /// Returns the entire Boolean mask, propagating source and evaluation failures.
     pub fn get(&self) -> Result<ArrayD<bool>, ImageError> {
         self.get_slice(&vec![0; self.ndim()], &self.shape)
     }
 
+    /// Evaluates one Boolean element at a zero-based lattice position. Invalid positions and source
+    /// errors propagate.
     pub fn get_at(&self, position: &[usize]) -> Result<bool, ImageError> {
         validate_slice_request(
             &self.shape,
@@ -523,6 +540,8 @@ impl<T: ImageExprValue> MaskExpression<T> {
         Ok(one[IxDyn(&vec![0; self.ndim()])])
     }
 
+    /// Evaluates a rectangular Boolean section at a zero-based start and unit stride. Invalid
+    /// sections and source errors propagate.
     pub fn get_slice(&self, start: &[usize], shape: &[usize]) -> Result<ArrayD<bool>, ImageError> {
         self.get_slice_with_max_cursor_shape(start, shape, shape)
     }
@@ -593,10 +612,12 @@ impl<T: ImageExprValue> MaskExpression<T> {
         Ok(out)
     }
 
+    /// Returns the mask extents in pixel-axis order before any target broadcasting.
     pub fn shape(&self) -> &[usize] {
         &self.shape
     }
 
+    /// Returns the mask rank before any target broadcasting.
     pub fn ndim(&self) -> usize {
         self.shape.len()
     }
@@ -631,6 +652,8 @@ impl<T: ImageExprValue> MaskExpression<T> {
         })
     }
 
+    /// Evaluates a unit-stride mask window in the target lattice. Scalars and compatible singleton
+    /// axes broadcast to the requested window.
     pub fn eval_window_for_shape(
         &self,
         window_start: &[usize],
@@ -771,6 +794,8 @@ pub(super) fn compiled_map_strategy<T: ImageExprValue>(
     })
 }
 
+/// Chooses a bounded read tile for this lattice, budgeting each element at complex double precision.
+/// Invalid lattice shapes return a lattice error.
 pub fn bounded_read_cursor(shape: Vec<usize>) -> Result<Vec<usize>, LatticeError> {
     let element_bytes = std::mem::size_of::<casa_core::Complex64>();
     Ok(TiledShape::new(shape, element_bytes)?.tile_shape().to_vec())
@@ -1141,13 +1166,22 @@ impl StreamingMaskState {
     }
 }
 
+/// An immutable image snapshot with shared in-memory pixels and validity.
 pub struct MemorySnapshotImage<T: ImagePixel> {
+    /// Shared immutable lattice pixels in image axis order.
     pub data: Arc<ArrayD<T>>,
+    /// Optional shared validity lattice in the same shape as the pixels, with true for valid samples.
     pub mask: Option<Arc<ArrayD<bool>>>,
+    /// Pixel-to-world transform, including coordinate frames and units.
     pub coordinates: CoordinateSystem,
+    /// Brightness unit, such as Jy/beam.
     pub units: String,
+    /// Typed image classification and restoring beam metadata.
     pub image_info: ImageInfo,
+    /// Auxiliary image keywords.
     pub misc_info: RecordValue,
+    /// Optional original CASA coordinate record, including metadata that the typed WCS may not
+    /// represent.
     pub legacy_coords: Option<RecordValue>,
 }
 

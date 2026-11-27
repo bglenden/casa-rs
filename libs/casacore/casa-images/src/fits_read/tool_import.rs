@@ -397,6 +397,9 @@ impl FitsToolImport {
 
     // Destination axes in source order, with singleton axes appended beyond
     // the FITS rank before applying the same permutation to pixels and masks.
+    /// Streams FITS pixels and validity into a destination whose axes are indexed by the given source
+    /// permutation. Appended axes have extent one. Invalid permutations, mismatched extents, and read
+    /// or write failures return an image error.
     pub fn copy_pixels_with_axes(
         &mut self,
         image: &mut impl MutableImageInterface<f32>,
@@ -616,6 +619,8 @@ pub struct SharedFitsSectionReader {
 }
 
 impl SharedFitsSectionReader {
+    /// Starts a worker that lazily opens the requested zero-based HDU on its first read. The caller
+    /// supplies its axis extents. An error starting the worker is returned immediately.
     pub fn new(path: PathBuf, hdu: usize, shape: Vec<usize>) -> Result<Self, ImageError> {
         let (requests, receive) = mpsc::channel::<Option<SectionRequest>>();
         let worker = thread::Builder::new()
@@ -643,6 +648,8 @@ impl SharedFitsSectionReader {
         })
     }
 
+    /// Reads owned float pixels from a zero-based section with per-axis extents and strides. Failed
+    /// reads and a disconnected worker return an image error.
     pub fn read(
         &self,
         start: &[usize],

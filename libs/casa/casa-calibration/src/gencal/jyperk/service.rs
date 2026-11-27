@@ -13,14 +13,19 @@ use super::{JyperkError, metadata};
 pub(super) const DEFAULT_HOST: &str = "https://asa.alma.cl/science/jy-kelvins";
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+/// ALMA service endpoint used to obtain Jy-per-kelvin factors.
 pub enum Endpoint {
     #[default]
+    /// Look up factors directly by the ASDM observation identifier.
     Asdm,
+    /// Request factors interpolated from the service data.
     Interpolation,
+    /// Request factors from the fitted service model.
     ModelFit,
 }
 
 impl Endpoint {
+    /// Parses the exact CASA endpoint token, returning None for unknown values.
     pub fn parse(text: &str) -> Option<Self> {
         match text {
             "asdm" => Some(Self::Asdm),
@@ -39,10 +44,15 @@ impl Endpoint {
     }
 }
 
+/// Retry and timeout policy for ALMA Jy/K queries.
 pub struct ServiceOptions {
+    /// Selection of the service endpoint.
     pub endpoint: Endpoint,
+    /// Request timeout in seconds.
     pub timeout: i64,
+    /// Maximum number of attempts.
     pub attempts: i64,
+    /// Delay between attempts in seconds.
     pub delay: i64,
 }
 

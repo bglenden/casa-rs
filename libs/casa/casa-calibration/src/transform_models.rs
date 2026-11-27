@@ -37,6 +37,7 @@ pub fn visibility_model_input() -> impl TransformInputView {
     plotms_model_input(None)
 }
 
+/// Resolves the virtual or scratch visibility model needed for PlotMS selection and plotting.
 pub fn plotms_model_input(
     references: Option<PlotMsModelReferences<'_>>,
 ) -> impl TransformInputView + '_ {

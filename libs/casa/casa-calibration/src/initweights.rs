@@ -10,16 +10,24 @@ use crate::weight_spectra::{NewSpectra, SIGMA_SPECTRUM, WEIGHT_SPECTRUM, has_col
 use crate::{apply::ApplyCalibrationTableSpec, execute::tsys_weights::TsysPlan};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+/// CASA weight initialization or spectrum removal mode.
 pub enum Mode {
+    /// Initialize weights from integration time and effective bandwidth, and derive sigma.
     Nyquist,
+    /// Compute weights from existing sigma values.
     Sigma,
+    /// Initialize channel weights from existing row weights.
     Weight,
+    /// Set weight and sigma to one.
     Ones,
+    /// Remove the per-channel weight column.
     DeleteWeightSpectrum,
+    /// Remove the per-channel sigma column.
     DeleteSigmaSpectrum,
 }
 
 impl Mode {
+    /// Maps a CASA wtmode token to its initializer. Unknown modes return `None`.
     pub fn from_name(mode: &str) -> Option<Self> {
         Some(match mode {
             "nyq" => Self::Nyquist,
@@ -32,6 +40,7 @@ impl Mode {
         })
     }
 
+    /// Returns the spectrum column removed before updates in this mode.
     pub fn removed_column(self) -> &'static str {
         match self {
             Self::DeleteWeightSpectrum => WEIGHT_SPECTRUM,
@@ -53,6 +62,8 @@ impl Mode {
     }
 }
 
+/// Updates row weights and requested channel spectra under the MAIN-table lock. Invalid mode
+/// combinations, missing row metadata, and table failures propagate.
 pub fn initialize(
     ms: &mut MeasurementSet,
     mode: Mode,
@@ -101,6 +112,8 @@ pub fn initialize(
     spectra.publish(main, lock)
 }
 
+/// Derives weights and sigma from a system-temperature calibration table. The plan can scale by
+/// exposure and publish per-channel spectra under the same write lock.
 pub fn initialize_tsys(
     ms: &mut MeasurementSet,
     spec: ApplyCalibrationTableSpec,

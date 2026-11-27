@@ -99,6 +99,7 @@ pub enum GainFieldSelector {
 }
 
 impl GainFieldSelector {
+    /// Parses the CASA spelling of the supported calibration kind.
     pub fn parse_casa(value: &str) -> Option<Self> {
         match value {
             "" => None,

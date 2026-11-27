@@ -12,6 +12,8 @@ use ndarray::{Axis, Dimension, IxDyn, ShapeBuilder, Zip};
 use crate::error::ImageError;
 use crate::image_expr::ImageExprValue;
 
+/// Lists each pixel axis by coordinate kind, axis within that coordinate, and world-axis name for
+/// mask shape matching.
 pub fn mask_coordinate_axes(system: &CoordinateSystem) -> Vec<(CoordinateType, usize, String)> {
     (0..system.n_pixel_axes())
         .map(|axis| {
@@ -523,6 +525,8 @@ pub(crate) fn rebin_coordinates(
     Ok(())
 }
 
+/// Updates a CASA coordinate record in place after integer binning and decodes the new WCS. Factors
+/// follow pixel-axis order. Stokes axes retain their discrete labels.
 pub fn rebin_coordinate_record(
     record: &mut RecordValue,
     factors: &[usize],

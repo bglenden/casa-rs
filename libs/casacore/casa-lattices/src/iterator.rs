@@ -5,6 +5,7 @@ use crate::{Lattice, LatticeElement, TraversalIter, TraversalSpec};
 
 /// Adds [`TraversalSpec`]-driven traversal to every lattice.
 pub trait LatticeIterExt<T: LatticeElement>: Lattice<T> {
+    /// Iterate over borrowed tiles or cursor regions in the order specified by `spec`.
     fn traverse(&self, spec: TraversalSpec) -> TraversalIter<'_, T, Self>
     where
         Self: Sized,

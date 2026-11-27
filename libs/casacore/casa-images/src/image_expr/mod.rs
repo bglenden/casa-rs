@@ -100,33 +100,57 @@ pub trait ImageExprValue:
     + std::ops::Neg<Output = Self>
 {
     // Transcendental / elementary functions
+    /// Raises e to the pixel value.
     fn expr_exp(self) -> Self;
+    /// Returns the sine of the input, with real arguments in radians.
     fn expr_sin(self) -> Self;
+    /// Returns the cosine of the input, with real arguments in radians.
     fn expr_cos(self) -> Self;
+    /// Returns the tangent of the input, with real arguments in radians.
     fn expr_tan(self) -> Self;
+    /// Returns the principal arcsine, in radians for real values.
     fn expr_asin(self) -> Self;
+    /// Returns the principal arccosine, in radians for real values.
     fn expr_acos(self) -> Self;
+    /// Returns the principal arctangent, in radians for real values.
     fn expr_atan(self) -> Self;
+    /// Returns the hyperbolic sine of the input.
     fn expr_sinh(self) -> Self;
+    /// Returns the hyperbolic cosine of the input.
     fn expr_cosh(self) -> Self;
+    /// Returns the hyperbolic tangent of the input.
     fn expr_tanh(self) -> Self;
+    /// Returns the natural logarithm.
     fn expr_log(self) -> Self;
+    /// Returns the base-ten logarithm.
     fn expr_log10(self) -> Self;
+    /// Returns the principal square root.
     fn expr_sqrt(self) -> Self;
+    /// Returns the absolute value, or magnitude for a complex value.
     fn expr_abs(self) -> Self;
+    /// Returns the complex conjugate, equal to the input for real values.
     fn expr_conj(self) -> Self;
 
     // Rounding / sign (component-wise for complex)
+    /// Rounds each component toward positive infinity.
     fn expr_ceil(self) -> Self;
+    /// Rounds each component toward negative infinity.
     fn expr_floor(self) -> Self;
+    /// Rounds each component to the nearest integer, with ties away from zero.
     fn expr_round(self) -> Self;
+    /// Returns the sign for a real input or the unit phasor for a nonzero complex input.
     fn expr_sign(self) -> Self;
 
     // Binary math functions
+    /// Raises the left operand to the power of the right operand.
     fn expr_pow(self, rhs: Self) -> Self;
+    /// Computes the floating remainder componentwise using a quotient truncated toward zero.
     fn expr_fmod(self, rhs: Self) -> Self;
+    /// Computes the quadrant-aware angle in radians (x = rhs, y = self), componentwise for complex operands.
     fn expr_atan2(self, rhs: Self) -> Self;
+    /// Returns the smaller real value or the complex operand with the smaller magnitude.
     fn expr_min(self, rhs: Self) -> Self;
+    /// Returns the larger real value or the complex operand with the larger magnitude.
     fn expr_max(self, rhs: Self) -> Self;
 
     /// Returns `true` if this value is NaN.
@@ -704,6 +728,7 @@ pub enum ReductionOp {
 }
 
 #[derive(Clone)]
+/// Owned shape, WCS, brightness units, and auxiliary metadata for a lazy image expression source.
 pub struct ImageExprMeta {
     shape: Vec<usize>,
     coords: CoordinateSystem,
@@ -716,6 +741,8 @@ pub struct ImageExprMeta {
 }
 
 impl ImageExprMeta {
+    /// Copies image geometry and metadata without reading pixels. Preserves raw CASA coordinate and
+    /// beam records when the source exposes them.
     pub fn from_image<T: ImageExprValue>(
         image: &dyn ImageInterface<T>,
     ) -> Result<Self, ImageError> {
@@ -764,6 +791,8 @@ impl ImageExprMeta {
         })
     }
 
+    /// Copies geometry and units from a FITS import and decodes image and beam metadata. The path is
+    /// retained as the expression source name.
     pub fn from_fits(
         fits: &crate::fits_read::FitsToolImport,
         path: &Path,
@@ -794,6 +823,8 @@ type SliceEvalFn<'a, T> =
 
 type OwnedSliceReader<T> =
     Arc<dyn Fn(&[usize], &[usize], &[usize]) -> Result<ArrayD<T>, ImageError> + Send + Sync>;
+/// Shared thread-safe validity reader. The arguments are the zero-based start, extent, and positive
+/// stride of each axis. True pixels are valid.
 pub type OwnedMaskReader = Arc<
     dyn Fn(&[usize], &[usize], &[usize]) -> Result<Option<ArrayD<bool>>, ImageError> + Send + Sync,
 >;
@@ -1165,6 +1196,8 @@ impl<'a, T: ImageExprValue> MaskExprNode<'a, T> {
     }
 }
 
+/// Checks that a zero-based strided request has the same rank as the lattice and every nonempty
+/// extent lies within it. Zero strides and overflowing endpoints return an error.
 pub fn validate_slice_request(
     lattice_shape: &[usize],
     start: &[usize],
@@ -1346,6 +1379,7 @@ impl<'a, T: ImageExprValue + PartialOrd> MaskExprBuilder<'a, T> {
         &self.shape
     }
 
+    /// Borrows the mask's source WCS when its pixel-axis rank matches the resulting lattice.
     pub fn expression_coordinates(&self) -> Option<&CoordinateSystem> {
         self.metadata
             .as_ref()

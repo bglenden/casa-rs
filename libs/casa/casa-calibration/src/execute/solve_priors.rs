@@ -99,6 +99,8 @@ impl SolvePriorApply {
         })
     }
 
+    /// Prepares prior calibration for single-dish data using the input MeasurementSet's antenna and
+    /// spectral metadata.
     pub fn single_dish(ms: &MeasurementSet, plan: ApplyPlan) -> Result<Self, ApplyExecutionError> {
         let mut priors = Self::new(ms, plan, false, false, 1)?;
         priors.chain.single_dish_solve = true;

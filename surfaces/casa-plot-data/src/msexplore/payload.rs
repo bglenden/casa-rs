@@ -126,6 +126,8 @@ pub struct MsScatterPointRef {
 }
 
 impl MsScatterPointRef {
+    /// Returns the point ordering key: iterator slot (or MAIN row), first
+    /// selected channel, then correlation slot.
     pub fn plotms_order(&self, iterator_slot: Option<usize>) -> (usize, usize, usize) {
         (
             iterator_slot.unwrap_or(self.row),

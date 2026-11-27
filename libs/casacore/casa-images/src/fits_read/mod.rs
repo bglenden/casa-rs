@@ -120,15 +120,24 @@ pub fn brightness_unit(header: &FitsHeader) -> String {
 /// An open FITS file's primary HDU, with its shape, header and coordinates
 /// read.
 pub struct PrimaryHdu {
+    /// Open CFITSIO file handle that owns access to the image and its extensions.
     pub fits: FitsFile,
+    /// Descriptor for the primary image HDU within the open file.
     pub hdu: fitsio::hdu::FitsHdu,
+    /// FITS storage type before conversion to image pixels.
     pub image_type: FitsImageType,
+    /// Extents in FITS axis order, with axis one varying fastest in the file.
     pub shape: Vec<usize>,
+    /// Primary header keywords used for WCS and image metadata.
     pub header: FitsHeader,
+    /// Decoded pixel-to-world transform. An invalid FITS axis unit yields linear coordinates in pixel
+    /// space.
     pub coordinates: CoordinateSystem,
 }
 
 impl PrimaryHdu {
+    /// Opens the primary image HDU and decodes its axis lengths and WCS. I/O failures, non-image
+    /// HDUs, and malformed metadata return an image error.
     pub fn open(fitsimage: &Path) -> Result<Self, ImageError> {
         let mut fits =
             FitsFile::open(fitsimage).map_err(|error| ImageError::Io(error.to_string()))?;
@@ -198,6 +207,8 @@ impl PrimaryHdu {
         Ok((pixels, nulls.into_iter().map(|null| null == 0).collect()))
     }
 
+    /// Reads channel and polarization restoring beams and the original per-plane record when present.
+    /// Malformed beam metadata returns an image error.
     pub fn beam_set(
         &mut self,
     ) -> Result<Option<(ImageBeamSet, casa_core::RecordValue)>, ImageError> {
@@ -205,6 +216,8 @@ impl PrimaryHdu {
     }
 }
 
+/// Decodes the object name and any valid single restoring beam. FITS beam-axis lengths and position
+/// angle are expressed in degrees.
 pub fn image_info_from_fits_header(header: &FitsHeader) -> ImageInfo {
     let object_name = header.get_string("OBJECT").unwrap_or("").to_string();
     let beam_set = match (

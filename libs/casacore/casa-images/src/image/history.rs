@@ -282,6 +282,8 @@ impl<T: ImagePixel> PagedImage<T> {
         path.join(LOGTABLE_NAME)
     }
 
+    /// Resets a paged image's history table. Propagates failures to open or update its persisted
+    /// metadata.
     pub fn reset_logtable(path: &Path) -> Result<(), ImageError> {
         if path.exists() {
             std::fs::remove_dir_all(path).map_err(|e| ImageError::Io(e.to_string()))?;

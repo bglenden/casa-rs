@@ -81,7 +81,10 @@ pub enum ArrayShapeContract {
     /// Corresponds to `ArrayColumnDesc<T>` constructed with a fixed `IPosition`
     /// and the `ColumnDesc::Direct` flag in C++. The shape is recorded in the
     /// schema and enforced on every write.
-    Fixed { shape: Vec<usize> },
+    Fixed {
+        /// Required array extents in logical axis order.
+        shape: Vec<usize>,
+    },
 
     /// Each row may store an array with a different shape.
     ///
@@ -89,7 +92,10 @@ pub enum ArrayShapeContract {
     /// fixed shape). `ndim`, when `Some`, constrains the number of dimensions but
     /// not the extent along each axis; when `None` the dimensionality is also
     /// unconstrained.
-    Variable { ndim: Option<usize> },
+    Variable {
+        /// Required rank when known, or None to allow varying ranks.
+        ndim: Option<usize>,
+    },
 }
 
 /// The kind of data a column holds.

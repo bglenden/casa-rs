@@ -1,13 +1,13 @@
 # Documentation Index
 
 Truth class: current descriptive
-Last reality check: 2026-11-02
+Last reality check: 2026-11-27
 Verification: just docs-check
 
-casa-rs is used from the Python package `casars` and from the task
-executables of the application catalog (such as `calibrate gaincal ...`),
-which Python also starts for its task calls. Computation is in Rust, and
-the Python package is its interface ([ADR-0017](adr/0017-python-first-surface.md)).
+Use casa-rs from the Python package `casars` or the task executables in the
+application catalog, such as `calibrate gaincal ...`. Python calls the
+shared Rust task providers in process through `casars._core`.
+[Python-first surface](adr/0017-python-first-surface.md).
 
 ## User documentation
 

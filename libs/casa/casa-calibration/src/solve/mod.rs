@@ -443,12 +443,18 @@ pub enum GainSolveError {
     #[error("correlation-dependent flags are unsupported for an iterative leakage solve")]
     LeakageCorrelationFlagging,
     #[error("accumulated data entirely flagged")]
+    /// No selected unflagged visibility can constrain the parallactic-angle solution.
     NoUnflaggedParallacticData,
     #[error(
         "the cross-hand phase and Q/U solve requires at least {required} unflagged time segments"
     )]
-    InsufficientParallacticCoverage { required: usize },
+    /// Too few distinct parallactic-angle samples for the solve.
+    InsufficientParallacticCoverage {
+        /// Minimum number of independent samples required by the selected solve.
+        required: usize,
+    },
     #[error("GlinXphJones needs multiple SDBs")]
+    /// Too few usable gain-phase segments for the cross-hand solution.
     InsufficientGainPhaseSegments,
     /// Old GlinXph only accepts one accumulated field/window buffer.
     #[error("GlinXphJones can't process multi-vb vbga.")]

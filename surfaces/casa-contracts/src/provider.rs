@@ -64,14 +64,18 @@ pub struct TaskProviderContract {
 /// Typed request/result schemas for a one-shot task provider.
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskProviderSchemas {
+    /// JSON Schema for the typed values a provider accepts.
     pub request_schema: RootSchema,
+    /// JSON Schema for the provider's structured result.
     pub result_schema: RootSchema,
 }
 
 /// Stable validation failure for a task provider contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderContractValidationError {
+    /// Stable machine-readable category of the violation.
     pub code: &'static str,
+    /// Explanation of the violated envelope requirement.
     pub message: String,
 }
 

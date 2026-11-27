@@ -2,15 +2,23 @@
 //! Published fixed flux polynomials used by CASA's FluxStdsQS2.
 
 #[derive(Clone, Copy)]
+/// Absolute calibrator standards evaluated from fixed coefficients.
 pub enum FixedScale {
+    /// Baars et al. flux-density scale.
     Baars,
+    /// Perley 1990 flux-density scale.
     Perley90,
+    /// Perley–Taylor 1995 flux-density scale.
     PerleyTaylor95,
+    /// Perley–Taylor 1999 flux-density scale.
     PerleyTaylor99,
+    /// Perley–Butler 2010 flux-density scale.
     PerleyButler2010,
+    /// Stevens–Reynolds 2016 flux-density scale.
     StevensReynolds2016,
 }
 
+/// A fixed-coefficient frequency spectrum for one calibrator in the selected standard.
 pub struct FixedSpectrum {
     reference_hz: f64,
     coefficients: &'static [f32],

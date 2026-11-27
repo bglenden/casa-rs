@@ -365,6 +365,8 @@ fn tool_field_error(error: FluxScaleError, selectors: &[String]) -> String {
     format!("Field Expression: {reason}")
 }
 
+/// Transfers the flux scale from reference fields to transfer fields and writes solutions using the
+/// specified publication policy.
 pub fn fluxscale_with_output_mode(
     request: &FluxScaleRequest,
     mode: crate::output::CalibrationOutputMode,

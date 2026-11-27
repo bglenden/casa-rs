@@ -13,19 +13,42 @@ pub const DEFAULT_TILE_IO_BYTES: usize = 4 * 1024 * 1024;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TileLayoutError {
     #[error("tile layout requires at least one logical cell axis")]
+    /// The logical array has no cell axes.
     EmptyShape,
     #[error("tile layout element size must be positive")]
+    /// A physical element was declared to occupy zero bytes.
     ZeroElementBytes,
     #[error("tile layout I/O target must be positive")]
+    /// The requested I/O budget was zero.
     ZeroTargetBytes,
     #[error("storage axis order {order:?} is not a permutation of 0..{rank}")]
-    InvalidAxisOrder { order: Vec<usize>, rank: usize },
+    /// The supplied storage-axis permutation is invalid.
+    InvalidAxisOrder {
+        /// Indices in requested storage order.
+        order: Vec<usize>,
+        /// Number of logical cell axes.
+        rank: usize,
+    },
     #[error("explicit tile rank mismatch: expected {expected}, got {got}")]
-    ExplicitRank { expected: usize, got: usize },
+    /// The explicit tile shape has the wrong rank.
+    ExplicitRank {
+        /// Required tile rank including the row axis, if present.
+        expected: usize,
+        /// Number of supplied tile extents.
+        got: usize,
+    },
     #[error("explicit tile extent on axis {axis} must be positive")]
-    ZeroTileExtent { axis: usize },
+    /// An explicit tile extent was zero.
+    ZeroTileExtent {
+        /// Zero-based storage axis of the zero extent.
+        axis: usize,
+    },
     #[error("tile layout size overflow while computing {what}")]
-    Overflow { what: &'static str },
+    /// A tile size calculation overflowed the addressable integer range.
+    Overflow {
+        /// Name of the intermediate quantity that overflowed.
+        what: &'static str,
+    },
 }
 
 /// Deterministic physical layout chosen for one tiled cell or array.
@@ -40,26 +63,32 @@ pub struct TileLayoutPlan {
 }
 
 impl TileLayoutPlan {
+    /// Returns the physical extents of the cell dimensions, excluding the row axis.
     pub fn cell_tile_shape(&self) -> &[usize] {
         &self.cell_tile_shape
     }
 
+    /// Returns the number of rows spanned by a tile, when planning a column.
     pub fn row_extent(&self) -> Option<usize> {
         self.row_extent
     }
 
+    /// Returns physical tile extents in storage order with the row axis last, when present.
     pub fn tile_shape(&self) -> &[usize] {
         &self.tile_shape
     }
 
+    /// Returns the number of element slots in one physical tile.
     pub fn tile_elements(&self) -> usize {
         self.tile_elements
     }
 
+    /// Returns the occupied bytes for a complete physical tile.
     pub fn tile_bytes(&self) -> usize {
         self.tile_bytes
     }
 
+    /// Returns the target I/O size in bytes used to plan the layout.
     pub fn target_io_bytes(&self) -> usize {
         self.target_io_bytes
     }
@@ -72,6 +101,7 @@ pub struct TileLayoutPlanner {
 }
 
 impl TileLayoutPlanner {
+    /// Creates a planner with a positive target size in bytes. A zero target is an error.
     pub fn new(target_io_bytes: usize) -> Result<Self, TileLayoutError> {
         if target_io_bytes == 0 {
             return Err(TileLayoutError::ZeroTargetBytes);
@@ -79,16 +109,19 @@ impl TileLayoutPlanner {
         Ok(Self { target_io_bytes })
     }
 
+    /// Creates a planner using the same byte budget as new repository-managed tiled data.
     pub const fn repository_default() -> Self {
         Self {
             target_io_bytes: DEFAULT_TILE_IO_BYTES,
         }
     }
 
+    /// Returns the planner's I/O target in bytes.
     pub const fn target_io_bytes(self) -> usize {
         self.target_io_bytes
     }
 
+    /// Plans a standalone array in logical axis order for the supplied on-disk bytes per element.
     pub fn plan_array(
         self,
         logical_shape: &[usize],
@@ -98,6 +131,8 @@ impl TileLayoutPlanner {
         self.plan(logical_shape, None, element_bytes, &order, None)
     }
 
+    /// Validates an explicit array tile shape and computes its byte size. Rank and extent errors
+    /// propagate.
     pub fn plan_explicit_array(
         self,
         logical_shape: &[usize],
@@ -108,6 +143,8 @@ impl TileLayoutPlanner {
         self.plan(logical_shape, None, element_bytes, &order, Some(tile_shape))
     }
 
+    /// Plans a tiled column with an appended row axis, preserving a logical row count of zero for
+    /// an empty table.
     pub fn plan_column(
         self,
         logical_cell_shape: &[usize],

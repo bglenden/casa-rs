@@ -169,7 +169,12 @@ pub enum RobustStats {
     /// sample, as `hinges-fences`, `chauvenet` and `fit-half` report.
     Sample(RobustSampleStats),
     /// The biweight's location and scale.
-    Biweight { location: f64, scale: f64 },
+    Biweight {
+        /// Biweight location estimate in the sample units.
+        location: f64,
+        /// Biweight scale estimate in the sample units.
+        scale: f64,
+    },
 }
 
 /// Why a robust computation cannot proceed, with CASA's wording.

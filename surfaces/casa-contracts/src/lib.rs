@@ -4,6 +4,7 @@
 //! These structs intentionally stay small and transport-oriented so task
 //! providers can expose one machine-readable schema bundle while deriving
 //! presentation-specific views from those canonical contracts.
+#![warn(missing_docs)]
 
 mod application;
 mod build_catalog;

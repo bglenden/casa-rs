@@ -562,6 +562,7 @@ impl MsAxis {
         }
     }
 
+    /// Reports whether the axis is computed from a complex visibility or its weight and magnitude.
     pub fn is_visibility_math(self) -> bool {
         matches!(
             self,
@@ -569,6 +570,7 @@ impl MsAxis {
         )
     }
 
+    /// Reports whether the axis reads visibility weight or uncertainty.
     pub fn is_weight_axis(self) -> bool {
         matches!(
             self,
@@ -580,6 +582,7 @@ impl MsAxis {
         )
     }
 
+    /// Reports whether values are row numbers or categorical row identifiers.
     pub fn is_row_identifier(self) -> bool {
         matches!(
             self,
@@ -593,10 +596,12 @@ impl MsAxis {
         )
     }
 
+    /// Reports whether the axis is an angular component of antenna pointing.
     pub fn is_pointing(self) -> bool {
         matches!(self, Self::AntRa | Self::AntDec)
     }
 
+    /// Reports whether the axis uses field-dependent horizontal or parallactic geometry.
     pub fn uses_derived_geometry(self) -> bool {
         matches!(
             self,
@@ -604,6 +609,7 @@ impl MsAxis {
         )
     }
 
+    /// Reports whether the axis uses a specific antenna's horizontal or parallactic geometry.
     pub fn is_antenna_horizontal(self) -> bool {
         matches!(
             self,
@@ -611,6 +617,7 @@ impl MsAxis {
         )
     }
 
+    /// Reports whether the axis requires an object's ephemeris distance or radial velocity.
     pub fn is_ephemeris(self) -> bool {
         matches!(self, Self::RadialVelocity | Self::EphemerisDistance)
     }
@@ -653,18 +660,22 @@ impl MsAxis {
         matches!(self, Self::UvWave | Self::UWave | Self::VWave | Self::WWave)
     }
 
+    /// Reports whether the axis needs integration interval or UVW in observing wavelengths.
     pub fn is_interval_or_wavelength(self) -> bool {
         self == Self::Interval || self.uses_wavelengths()
     }
 
+    /// Reports whether the axis reads baseline UVW coordinates.
     pub fn uses_uvw(self) -> bool {
         self.uses_uvw_metres() || self.uses_wavelengths()
     }
 
+    /// Reports whether the axis represents a U or V coordinate in meters or wavelengths.
     pub fn is_uv_plane_axis(self) -> bool {
         matches!(self, Self::U | Self::V | Self::UWave | Self::VWave)
     }
 
+    /// Reports whether the axis uses UVW in meters.
     pub fn uses_uvw_metres(self) -> bool {
         matches!(self, Self::UvDistance | Self::U | Self::V | Self::W)
     }
@@ -711,6 +722,7 @@ impl MsDataColumn {
         self == Self::Model || self.is_derived()
     }
 
+    /// Reports whether the expression combines corrected visibilities with a model.
     pub fn is_corrected_model_expression(self) -> bool {
         matches!(
             self,
@@ -721,6 +733,7 @@ impl MsDataColumn {
         )
     }
 
+    /// Reports whether the expression represents a data-to-model ratio or residual.
     pub fn is_derived(self) -> bool {
         matches!(
             self,
@@ -735,6 +748,7 @@ impl MsDataColumn {
         )
     }
 
+    /// Reports whether the scalar model expression uses the unbounded phase projection.
     pub fn has_unbounded_phase(self) -> bool {
         matches!(
             self,

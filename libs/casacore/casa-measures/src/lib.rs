@@ -13,6 +13,7 @@
 //! directory.
 //!
 //! </details>
+#![warn(missing_docs)]
 
 use std::fmt;
 use std::mem::size_of;
@@ -75,6 +76,7 @@ pub const REQUIRED_RELATIVE_PATHS: &[&str] = &[
     "ephemerides/Sources/table.dat",
     "ephemerides/Lines/table.dat",
 ];
+/// Relative catalogue directories that must contain at least one entry.
 pub const REQUIRED_NONEMPTY_DIRS: &[&str] = &["ephemerides/JPL-Horizons"];
 /// Relative paths included when producing the packaged runtime snapshot.
 pub const PACKAGED_SNAPSHOT_PATHS: &[&str] = &[
@@ -123,7 +125,12 @@ pub enum MeasuresDataError {
     /// The packaged provenance metadata is invalid.
     Provenance(String),
     /// The caller's explicit freshness threshold was exceeded.
-    Stale { age_days: f64, maximum_days: f64 },
+    Stale {
+        /// Elapsed days since the installed snapshot was generated.
+        age_days: f64,
+        /// Maximum age in days allowed by the caller.
+        maximum_days: f64,
+    },
     /// The requested data is unavailable from the runtime tree.
     MissingData(String),
     /// A checked retained-residency projection overflowed the host byte domain.
@@ -491,8 +498,11 @@ pub struct RuntimePolicy {
 /// A non-mutating candidate returned by runtime discovery.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeCandidate {
+    /// Candidate runtime directory.
     pub path: PathBuf,
+    /// Discovery source, such as the configured environment variable.
     pub source: &'static str,
+    /// Whether the required files and nonempty directories are present.
     pub complete: bool,
 }
 
@@ -618,10 +628,12 @@ impl MeasuresRuntime {
         Self::open(candidate.path.clone(), policy)
     }
 
+    /// Directory backing this runtime and its lazily opened catalogues.
     pub fn root(&self) -> &Path {
         &self.root
     }
 
+    /// Provenance loaded when the runtime was opened, if the tree supplied it.
     pub fn provenance(&self) -> Option<&SnapshotProvenance> {
         self.provenance.as_ref()
     }
@@ -686,32 +698,54 @@ impl MeasuresRuntime {
         ))
     }
 
+    /// Borrow the cached Earth orientation table, loading it on first access.
+    ///
+    /// Returns a table-read error if the required measured or predicted data cannot be read.
     pub fn eop(&self) -> Result<&EopTable, MeasuresDataError> {
         cached(&self.eop, || load_eop_from(&self.root))
     }
 
+    /// Borrow the cached observatory catalogue, loading it on first access.
+    ///
+    /// Returns a table-read error if the Observatories table cannot be decoded.
     pub fn observatories(&self) -> Result<&ObservatoryCatalog, MeasuresDataError> {
         cached(&self.observatories, || load_observatories_from(&self.root))
     }
 
+    /// Borrow the cached source catalogue, loading it on first access.
+    ///
+    /// Returns a table-read error if the Sources table cannot be decoded.
     pub fn sources(&self) -> Result<&SourceCatalog, MeasuresDataError> {
         cached(&self.sources, || load_sources_from(&self.root))
     }
 
+    /// Borrow the cached spectral-line catalogue with frequencies in Hz.
+    ///
+    /// Returns a table-read error if the Lines table cannot be decoded.
     pub fn spectral_lines(&self) -> Result<&SpectralLineCatalog, MeasuresDataError> {
         cached(&self.spectral_lines, || {
             load_spectral_lines_from(&self.root)
         })
     }
 
+    /// Look up TAI minus UTC in seconds at the given UTC Modified Julian Date.
+    ///
+    /// Returns an error if the leap-second catalogue or the requested epoch is unavailable.
     pub fn tai_minus_utc_seconds(&self, utc_mjd: f64) -> Result<f64, MeasuresDataError> {
         self.tai_utc()?.tai_minus_utc_seconds(utc_mjd)
     }
 
+    /// Convert a TAI Modified Julian Date to UTC using the runtime's leap-second data.
+    ///
+    /// Returns an error if the table is unreadable or the epoch cannot be converted.
     pub fn utc_from_tai_mjd(&self, tai_mjd: f64) -> Result<f64, MeasuresDataError> {
         self.tai_utc()?.utc_mjd_from_tai_mjd(tai_mjd)
     }
 
+    /// Evaluate IGRF Gauss coefficients at a decimal year.
+    ///
+    /// Returns the coefficients and maximum spherical-harmonic degree, or an error
+    /// if the IGRF table or requested epoch is unavailable.
     pub fn igrf_coefficients(
         &self,
         decimal_year: f64,

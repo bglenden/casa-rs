@@ -115,6 +115,8 @@ fn collect_polygons(
     }
 }
 
+/// Borrows child records in CASA compound-region order. A missing, mistyped, or inconsistent regions
+/// subrecord returns an image error.
 pub fn compound_children<'a>(
     saved_name: &str,
     record: &'a RecordValue,
@@ -187,6 +189,8 @@ fn region_axes(coords: &CoordinateSystem) -> Vec<Option<RegionAxis>> {
         .collect()
 }
 
+/// Maps zero-based saved pixel axes to a target coordinate system. Celestial and spectral axes must
+/// have compatible frames. Other axes match by name. An unknown axis returns an image error.
 pub fn map_world_region_axes(
     name: &str,
     saved_coords: &CoordinateSystem,
@@ -331,6 +335,8 @@ fn quantum_vector_record(values: Vec<f64>, unit: &str) -> RecordValue {
     record
 }
 
+/// Returns the CASA world-region class name. Invalid records and unsupported pixel or array-slicer
+/// regions return an image error.
 pub fn native_region_kind<'a>(
     saved_name: &str,
     record: &'a RecordValue,
@@ -359,6 +365,8 @@ pub fn native_region_kind<'a>(
     }
 }
 
+/// Reads a CASA vector quantum as its values and declared unit, without converting units. Missing or
+/// mistyped fields return an image error.
 pub fn parse_quantum_vector_field(
     record: &RecordValue,
     field_name: &str,

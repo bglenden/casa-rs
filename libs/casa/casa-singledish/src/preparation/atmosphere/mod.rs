@@ -43,6 +43,16 @@ impl SingleDishSession {
         self.atmcor_prepared(&ms, rows, request)
     }
 
+    /// Correct spectra from an open MeasurementSet using the supplied MAIN rows.
+    ///
+    /// The rows must come from `ms`. The operation uses this session's selection
+    /// and averaging state and publishes to the requested output path. An empty
+    /// output path uses a temporary MeasurementSet.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid selection or configuration, overlapping input
+    /// and output, failed correction, or publication errors.
     pub fn atmcor_prepared(
         &self,
         ms: &MeasurementSet,

@@ -206,6 +206,7 @@ use crate::{
     ScalarValue, Value, ValueKind, primitive_codec,
 };
 
+/// Result of a framed AipsIO object operation.
 pub type AipsIoObjectResult<T> = Result<T, AipsIoObjectError>;
 
 /// A file wrapper for read-only AipsIO streams with buffered reads.
@@ -346,16 +347,28 @@ pub enum AipsIoObjectError {
     InvalidBoolean(u8),
     /// A framed in-memory object was shorter than the required header or payload.
     #[error("AipsIO frame is too short: need {needed} bytes, have {available}")]
-    FrameTooShort { needed: usize, available: usize },
+    FrameTooShort {
+        /// Minimum frame length in bytes.
+        needed: usize,
+        /// Bytes present in the input frame.
+        available: usize,
+    },
     /// An object length was smaller than its header or exceeded its containing buffer/frame.
     #[error("invalid AipsIO object length {declared}; {available} bytes are available")]
-    InvalidObjectLength { declared: u32, available: usize },
+    InvalidObjectLength {
+        /// Object length encoded in the frame header, in bytes.
+        declared: u32,
+        /// Bytes available in the containing frame.
+        available: usize,
+    },
     /// Both canonical and little-endian interpretations form valid complete frames.
     #[error(
         "ambiguous AipsIO byte order: big-endian length {big_endian_length}, little-endian length {little_endian_length}"
     )]
     AmbiguousByteOrder {
+        /// Frame length in bytes under the canonical byte-order interpretation.
         big_endian_length: u32,
+        /// Frame length in bytes under the little-endian interpretation.
         little_endian_length: u32,
     },
     /// Neither endian interpretation formed a structurally valid AipsIO frame.
@@ -390,7 +403,12 @@ pub enum AipsIoObjectError {
     /// [`AipsIo::getstart`] found a different object type than the caller
     /// expected.
     #[error("AipsIO::getstart: found object type {found}, expected {expected}")]
-    ObjectTypeMismatch { found: String, expected: String },
+    ObjectTypeMismatch {
+        /// Type name read from the stream.
+        found: String,
+        /// Object type name requested by the caller.
+        expected: String,
+    },
     /// [`AipsIo::getend`] detected that not all bytes of the object were
     /// consumed.
     #[error("AipsIO::getend: part of object not read")]
@@ -410,7 +428,10 @@ pub enum AipsIoObjectError {
     /// [`AipsIo::into_inner_typed`] was called with a concrete type that does
     /// not match the actual underlying stream type.
     #[error("AipsIO: underlying stream type mismatch (expected {expected})")]
-    StreamTypeMismatch { expected: &'static str },
+    StreamTypeMismatch {
+        /// Name of the concrete Rust stream type requested by the caller.
+        expected: &'static str,
+    },
     /// An object-length or count value overflowed a `u32`.
     #[error("AipsIO length overflow")]
     LengthOverflow,
@@ -431,7 +452,12 @@ pub enum AipsIoObjectError {
     /// The product of the array shape dimensions does not match the number of
     /// elements in the payload.
     #[error("invalid array shape {shape:?} for payload length {len}")]
-    InvalidArrayShape { shape: Vec<usize>, len: usize },
+    InvalidArrayShape {
+        /// Declared axis extents in elements.
+        shape: Vec<usize>,
+        /// Number of elements present in the payload.
+        len: usize,
+    },
 }
 
 /// Stateful AipsIO object reader/writer over an arbitrary seekable stream.

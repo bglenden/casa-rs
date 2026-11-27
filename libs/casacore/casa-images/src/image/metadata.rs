@@ -181,6 +181,7 @@ impl<T: ImagePixel> PagedImage<T> {
         Ok(true)
     }
 
+    /// Reports whether the raw image-info record explicitly contains a non-empty image-type string.
     pub fn has_image_type_record(&self) -> bool {
         matches!(self.table.keywords().get("imageinfo"), Some(Value::Record(record)) if matches!(record.get("imagetype"), Some(Value::Scalar(ScalarValue::String(value))) if !value.is_empty()))
     }
@@ -193,6 +194,8 @@ impl<T: ImagePixel> PagedImage<T> {
         ImageInfo::first_beam_record(info)
     }
 
+    /// Borrows the original CASA per-plane beam record, preserving its channel, polarization, and
+    /// unit metadata.
     pub fn per_plane_beam_record(&self) -> Option<&RecordValue> {
         let Value::Record(info) = self.table.keywords().get("imageinfo")? else {
             return None;
@@ -426,6 +429,8 @@ impl<T: ImagePixel> PagedImage<T> {
         })
     }
 
+    /// Edits a copy of the coordinate keyword and publishes the revised record and typed transform
+    /// together. A missing coordinate record or failed edit leaves the image unchanged.
     pub fn edit_coordinates<R>(
         &mut self,
         edit: impl FnOnce(

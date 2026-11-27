@@ -26,16 +26,24 @@ use format::{Line, Listing, Window};
 /// finishes the current integration when the reader chooses to quit.
 #[derive(Serialize)]
 pub struct ListingPart {
+    /// Rendered text in this page fragment.
     pub text: String,
+    /// Whether the interactive caller should pause after this fragment.
     pub prompt: bool,
+    /// Whether this fragment completes the current integration.
     pub last_in_integration: bool,
+    /// Number of antenna solutions represented by the fragment.
     pub solutions: usize,
 }
 
 #[derive(Serialize)]
+/// Paginated CASA calibration listing for terminal display or export.
 pub struct CalibrationListing {
+    /// Page fragments in display order.
     pub parts: Vec<ListingPart>,
+    /// Total number of antenna solutions included.
     pub solutions: usize,
+    /// Diagnostic to report after any partial listing text.
     pub error: Option<String>,
 }
 
@@ -43,10 +51,14 @@ pub struct CalibrationListing {
 /// page boundaries or the output file already published.
 #[derive(Serialize)]
 pub struct CalibrationListingReport {
+    /// Formatted listing for display when no output file was published.
     pub listing: Option<CalibrationListing>,
+    /// Path of the listing written by the task, when one was requested.
     pub listfile: Option<String>,
 }
 
+/// Publishes the prepared listing text via a staged file in the destination directory. An existing
+/// output is preserved and reported as an error.
 pub fn publish_listing(path: &Path, text: &str) -> Result<(), String> {
     let fail = |error: std::io::Error| {
         format!("could not create listing file {}: {error}", path.display(),)
@@ -64,6 +76,7 @@ pub fn publish_listing(path: &Path, text: &str) -> Result<(), String> {
 }
 
 impl CalibrationListing {
+    /// Concatenates the listing text and solution count without interactive prompts.
     pub fn lines(&self) -> String {
         let mut text = self
             .parts
@@ -78,6 +91,8 @@ impl CalibrationListing {
     }
 }
 
+/// Lists antenna solutions from a compatible calibration table using MeasurementSet field, antenna,
+/// and spectral-window selectors. Invalid selectors or table contents return a diagnostic.
 pub fn list_calibration(
     ms: &MeasurementSet,
     input: &Path,

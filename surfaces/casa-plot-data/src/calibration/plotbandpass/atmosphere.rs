@@ -18,15 +18,25 @@ use serde::Serialize;
 use super::spectrum::median;
 use super::table::{SolutionRow, SolutionWindow, Solutions, array, integers, numbers};
 
+/// Controls for atmospheric absorption and emission curves over a bandpass panel.
 pub struct AtmosphericOptions<'a> {
+    /// Whether to compute atmospheric transmission.
     pub transmission: bool,
+    /// Whether to compute atmospheric sky brightness temperature.
     pub sky_temperature: bool,
+    /// Precipitable water-vapor setting in millimeters, or the automatic CASA token.
     pub water: &'a str,
+    /// Field selector for determining the observing direction and airmass.
     pub reference_field: &'a str,
+    /// Whether to include the reflected image sideband.
     pub image_sideband: bool,
+    /// Optional local oscillator frequency in GHz.
     pub lo_ghz: Option<f64>,
+    /// Parent MeasurementSet to use for observing geometry and weather data.
     pub parent_ms: Option<&'a Path>,
+    /// Whether to draw overlay samples as individual points.
     pub show_points: bool,
+    /// Whether the plotted curves combine more than one solution time.
     pub time_overlay: bool,
 }
 

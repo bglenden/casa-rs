@@ -734,6 +734,7 @@ impl ImageBeamSet {
         rec
     }
 
+    /// Reads the number of channels and polarization planes in a CASA beam record.
     pub fn record_shape(rec: &RecordValue) -> Result<[usize; 2], ImageError> {
         let nchan = read_record_usize(rec, "nChannels")
             .ok_or_else(|| ImageError::InvalidMetadata("no valid nChannels field found".into()))?
