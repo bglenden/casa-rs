@@ -2,25 +2,25 @@
 //! Laws of MSv2/MSv4 conversion and format-equivalence across the boundary.
 
 #[cfg(unix)]
-#[path = "observation_io/convert.rs"]
+#[path = "convert.rs"]
 mod convert;
 #[cfg(unix)]
-#[path = "observation_io/creation.rs"]
+#[path = "creation.rs"]
 mod creation;
 #[cfg(unix)]
-#[path = "observation_io/ephemeris.rs"]
+#[path = "ephemeris.rs"]
 mod ephemeris;
 #[cfg(unix)]
-#[path = "observation_io/fields.rs"]
+#[path = "fields.rs"]
 mod fields;
 #[cfg(unix)]
-#[path = "observation_io/geometry_inputs.rs"]
+#[path = "geometry_inputs.rs"]
 mod geometry_inputs;
 #[cfg(unix)]
-#[path = "observation_io/namespace.rs"]
+#[path = "namespace.rs"]
 mod namespace;
 #[cfg(unix)]
-#[path = "observation_io/receptors.rs"]
+#[path = "receptors.rs"]
 mod receptors;
 
 use std::collections::BTreeMap;
