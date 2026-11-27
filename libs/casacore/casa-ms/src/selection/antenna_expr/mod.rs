@@ -115,9 +115,29 @@ pub struct AntennaRow<'a> {
     pub name: &'a str,
     /// The STATION column, compared exactly.
     pub station: &'a str,
-    /// The POSITION column: ITRF geocentric `[x, y, z]` in metres. Only
-    /// baseline-length terms (`<100m`, `1km~2km`) use it.
+    /// The stored POSITION components, ordinarily geocentric ITRF metres.
+    /// CASA's baseline-length selectors use the table's values directly.
     pub position_m: [f64; 3],
+}
+
+/// An owned casacore antenna row for selection in its own table's
+/// numbering. Position values retain the table's stored representation.
+pub struct StoredAntennaRow {
+    name: String,
+    station: String,
+    position: [f64; 3],
+}
+
+impl StoredAntennaRow {
+    /// The metadata view used by CASA's antenna selector.
+    #[must_use]
+    pub fn selection_row(&self) -> AntennaRow<'_> {
+        AntennaRow {
+            name: &self.name,
+            station: &self.station,
+            position_m: self.position,
+        }
+    }
 }
 
 /// A resolved antenna selection: which ordered (`ANTENNA1`, `ANTENNA2`)
@@ -496,57 +516,74 @@ impl MeasurementSet {
         if text.is_empty() {
             return Ok(Vec::new());
         }
-        self.with_antenna_rows(|rows| {
-            let mut seen = vec![false; rows.len()];
-            let mut antennas = Vec::new();
-            for clause in antenna_clauses(rows, text, true)? {
-                let ids = match clause.term {
-                    Term::Cross(ids) | Term::AutoOnly(ids) | Term::Pair { first: ids, .. } => ids,
-                    Term::Ordered(_) => continue,
-                };
-                for id in ids {
-                    if clause.negate && id != 0 {
-                        if reject_negative {
-                            return Err(MsError::InvalidInput(format!(
-                                "antenna selector {text:?} produces a negative calibration index for antenna {id}"
-                            )));
-                        }
-                        continue;
-                    }
-                    if !seen[id] {
-                        seen[id] = true;
-                        antennas.push(id);
-                    }
-                }
-            }
-            Ok(antennas)
-        })
+        self.with_antenna_rows(|rows| resolve_antenna1_indices(rows, text, reject_negative))
     }
 
     fn with_antenna_rows<T>(
         &self,
         resolve: impl FnOnce(&[AntennaRow<'_>]) -> MsResult<T>,
     ) -> MsResult<T> {
-        let antenna = self.antenna()?;
-        let count = antenna.row_count();
-        let mut columns = Vec::with_capacity(count);
-        for row in 0..count {
-            columns.push((
-                antenna.name(row)?,
-                antenna.station(row)?,
-                antenna.position(row)?,
-            ));
-        }
-        let rows: Vec<AntennaRow<'_>> = columns
-            .iter()
-            .map(|(name, station, position_m)| AntennaRow {
-                name,
-                station,
-                position_m: *position_m,
-            })
-            .collect();
+        let stored = self.stored_antenna_rows()?;
+        let rows: Vec<_> = stored.iter().map(StoredAntennaRow::selection_row).collect();
         resolve(&rows)
     }
+
+    pub(crate) fn stored_antenna_rows(&self) -> MsResult<Vec<StoredAntennaRow>> {
+        let antenna = self.antenna()?;
+        (0..antenna.row_count())
+            .map(|row| {
+                Ok(StoredAntennaRow {
+                    name: antenna.name(row)?,
+                    station: antenna.station(row)?,
+                    position: antenna.position(row)?,
+                })
+            })
+            .collect()
+    }
+}
+
+/// Resolve the ordered, nonnegative first-antenna indices of a CASA
+/// reference expression against antenna metadata. An empty expression
+/// selects no reference. This takes the same priority order as
+/// [`MeasurementSet::resolve_reference_antennas`].
+///
+/// # Errors
+/// When the antenna expression is invalid or a token matches no antenna.
+pub fn resolve_reference_antennas(antennas: &[AntennaRow<'_>], text: &str) -> MsResult<Vec<usize>> {
+    resolve_antenna1_indices(antennas, text, false)
+}
+
+fn resolve_antenna1_indices(
+    rows: &[AntennaRow<'_>],
+    text: &str,
+    reject_negative: bool,
+) -> MsResult<Vec<usize>> {
+    if text.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut seen = vec![false; rows.len()];
+    let mut antennas = Vec::new();
+    for clause in antenna_clauses(rows, text, true)? {
+        let ids = match clause.term {
+            Term::Cross(ids) | Term::AutoOnly(ids) | Term::Pair { first: ids, .. } => ids,
+            Term::Ordered(_) => continue,
+        };
+        for id in ids {
+            if clause.negate && id != 0 {
+                if reject_negative {
+                    return Err(MsError::InvalidInput(format!(
+                        "antenna selector {text:?} produces a negative calibration index for antenna {id}"
+                    )));
+                }
+                continue;
+            }
+            if !seen[id] {
+                seen[id] = true;
+                antennas.push(id);
+            }
+        }
+    }
+    Ok(antennas)
 }
 
 /// One term and whether `!` negates it.

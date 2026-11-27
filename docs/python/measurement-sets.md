@@ -10,8 +10,10 @@ in `.ps.zarr`.
 | --- | --- | --- | --- | --- |
 | `tasks.msconvert(vis=…)` | Read an existing MeasurementSet | Yes | Yes | [All four input/output pairings][format-tests] |
 | `tasks.msconvert(outputvis=…, outformat=…)` | Create a new MeasurementSet | `outformat="msv2"` | `outformat="msv4"` | [All four input/output pairings][format-tests] |
+| `tasks.rerefant(vis=…)` | Read antenna metadata for re-referencing a calibration table | Yes | Yes | [Read and verify the output calibration table][rerefant-tests] |
 
 [format-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_msconvert_formats.py
+[rerefant-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_rerefant_formats.py
 
 ## Choose the output format
 
@@ -54,3 +56,13 @@ the specific losses.
 - A feature outside the supported conversion profile can refuse the task.
   The error identifies the feature it could not carry. Inspect the reported
   losses before treating the converted store as a replacement for its input.
+
+
+## Re-reference a calibration table
+
+For `tasks.rerefant` with an MSv4 input, `refant` selects antennas by
+name or row number in `tablein`'s `ANTENNA` subtable. The task matches them
+to the measurement set by station and position and checks that the names
+agree. The task refuses an ambiguous identity before publishing the
+output. With MSv2, `refant` selects from the MeasurementSet's `ANTENNA`
+subtable using its stored row numbers and position values.

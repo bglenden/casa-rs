@@ -2,7 +2,9 @@
 //! CASA `rerefant` input and return contract.
 
 use crate::{TaskFailure, TaskInvocation, TaskSuccess};
+use casa_calibration::rerefant::{RereferenceError, rereference_calibration_table};
 use casa_contracts::CasaValue;
+use casa_observation::ObservationError;
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let vis = task.input_path("vis")?;
@@ -21,13 +23,18 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         }
     };
     let selector = task.text("refant")?.unwrap_or_default();
-    casa_calibration::rerefant::rereference_calibration_table(
+    rereference_calibration_table(
         &vis,
         &input,
         destination.as_deref().unwrap_or(&input),
         flexible,
         &selector,
     )
-    .map_err(TaskFailure::execution)?;
+    .map_err(|error| match error {
+        RereferenceError::Observation(ObservationError::Unsupported { .. }) => {
+            TaskFailure::validation(error.to_string()).at("vis")
+        }
+        _ => TaskFailure::execution(error.to_string()),
+    })?;
     TaskSuccess::new(CasaValue::None, &())
 }

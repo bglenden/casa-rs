@@ -31,6 +31,7 @@ use super::msv2::catalogue::{measure_reference, phase_frames, require_units};
 use super::update::storage;
 use super::{Msv2Observation, OpenOptions};
 use crate::columns::direction_columns::DirectionColumn;
+use crate::selection::antenna_expr::StoredAntennaRow;
 use crate::{MeasurementSet, MsError, SubtableId};
 
 /// One `ANTENNA` row, as content.
@@ -212,7 +213,61 @@ fn msv4_subtables(
     })
 }
 
+/// The antenna namespace of one store.
+pub enum AntennaNamespace {
+    /// Casacore ANTENNA rows in MSv2 order, with the original position
+    /// values for selection in the table's own numbering.
+    Msv2(Vec<StoredAntennaRow>),
+    /// Antennas in MSv4 catalogue order, with positions in geocentric
+    /// ITRF metres for matching against a persisted namespace.
+    Msv4(Vec<NamespaceAntenna>),
+}
+
+/// Read the antenna part of a MeasurementSet's namespace. MSv2 uses the
+/// ANTENNA subtable's row order and MSv4 uses catalogue order. Neither
+/// opening reads or indexes visibility samples.
+///
+/// # Errors
+/// When the store or its antenna metadata is unreadable or outside the
+/// supported profile, or MSv4 support is disabled.
+pub fn antenna_namespace(source: &Path) -> Result<AntennaNamespace, ObservationError> {
+    if super::is_msv4_store(source) {
+        #[cfg(feature = "msv4")]
+        {
+            let antennas = super::msv4::antenna_catalogue(source)?
+                .into_iter()
+                .map(|antenna| NamespaceAntenna {
+                    name: antenna.name,
+                    station: antenna.station,
+                    position_m: antenna.position.as_itrf(),
+                })
+                .collect();
+            return Ok(AntennaNamespace::Msv4(antennas));
+        }
+        #[cfg(not(feature = "msv4"))]
+        return Err(ObservationError::Unsupported {
+            what: "an MSv4 antenna namespace without casa-ms's msv4 feature",
+        });
+    }
+    MeasurementSet::open(source)
+        .and_then(|ms| ms.stored_antenna_rows())
+        .map(AntennaNamespace::Msv2)
+        .map_err(storage)
+}
+
 impl NamespaceRows {
+    /// Read a persisted calibration table's antenna names and positions
+    /// in its own row order, without reading the other subtables.
+    ///
+    /// # Errors
+    /// When its ANTENNA subtable cannot be read or cannot represent its
+    /// positions in geocentric ITRF metres.
+    pub fn read_antennas(directory: &Path) -> Result<Vec<NamespaceAntenna>, ObservationError> {
+        let table = Table::open(TableOptions::new(directory.join("ANTENNA")))
+            .map_err(|error| storage(MsError::from(error)))?;
+        antennas(&table)
+    }
+
     /// The rows of the `ANTENNA`, `FIELD` and `SPECTRAL_WINDOW` subtables
     /// of the table at `directory`: a calibration table, or a
     /// MeasurementSet.

@@ -159,18 +159,7 @@ impl Msv4Observation {
     ) -> Result<Self, ObservationError> {
         let metadata = held::metadata_bytes(path.as_ref());
         grant(metadata)?;
-        let store = Arc::new(FilesystemStore::new(path.as_ref()).map_err(storage)?);
-        let root = Group::open(store.clone(), "/").map_err(storage)?;
-        if text(root.attributes(), "type", "the processing set")? != "processing_set" {
-            return Err(invalid("the root group is not a processing_set"));
-        }
-        let mut names = std::fs::read_dir(path.as_ref())
-            .map_err(storage)?
-            .filter_map(Result::ok)
-            .filter(|entry| entry.path().join("zarr.json").is_file())
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        names.sort();
+        let (store, names) = open_processing_set(path.as_ref())?;
         let projections: Vec<opening::Projection> = names
             .iter()
             .map(|name| opening::project(&store, &format!("/{name}")))
@@ -198,9 +187,6 @@ impl Msv4Observation {
                 antennas,
                 receptors,
             )?;
-        }
-        if observation.datasets.is_empty() {
-            return Err(invalid("the processing set has no visibility datasets"));
         }
         let last_times: Vec<(Vec<FieldId>, f64)> = observation
             .datasets
@@ -959,6 +945,40 @@ fn open_group(
             stored_label: Some(effective),
         },
     })
+}
+
+fn open_processing_set(
+    path: &Path,
+) -> Result<(Arc<FilesystemStore>, Vec<String>), ObservationError> {
+    let store = Arc::new(FilesystemStore::new(path).map_err(storage)?);
+    let root = Group::open(store.clone(), "/").map_err(storage)?;
+    if text(root.attributes(), "type", "the processing set")? != "processing_set" {
+        return Err(invalid("the root group is not a processing_set"));
+    }
+    let mut names = std::fs::read_dir(path)
+        .map_err(storage)?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().join("zarr.json").is_file())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    names.sort();
+    if names.is_empty() {
+        return Err(invalid("the processing set has no visibility datasets"));
+    }
+    Ok((store, names))
+}
+
+/// The antennas of a processing set, in catalogue order, without opening
+/// its frequency, time, field or visibility arrays.
+pub(in crate::observation_io) fn antenna_catalogue(
+    path: &Path,
+) -> Result<Vec<AntennaEntry>, ObservationError> {
+    let (store, names) = open_processing_set(path)?;
+    for name in &names {
+        visibility_group(&store, &format!("/{name}"))?;
+    }
+    let (antennas, _, _) = dataset_antennas(&store, &names)?;
+    Ok(antennas)
 }
 
 /// The group at `path`, refused unless it is a visibility dataset of the
