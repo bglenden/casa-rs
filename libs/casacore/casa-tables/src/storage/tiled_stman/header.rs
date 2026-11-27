@@ -253,7 +253,7 @@ pub(super) fn is_tiled_manager(type_name: &str) -> bool {
 pub(super) fn read_tiled_header(
     path: &Path,
 ) -> Result<(TiledVariant, TiledStManHeader), StorageError> {
-    let mut io = AipsIo::open(path, AipsOpenOption::Old)?;
+    let mut io = DataFile::aips(path)?;
 
     // The outermost AipsIO object is the derived-class envelope.
     let outer_type = io.get_next_type()?;
@@ -407,7 +407,7 @@ pub(super) fn read_tiled_stman_base(io: &mut AipsIo) -> Result<TiledStManHeader,
 /// need not be the group its columns' descriptions declare. `None` when the
 /// file is missing or does not parse.
 pub(crate) fn name_from_file(path: &Path) -> Option<String> {
-    let mut io = AipsIo::open(path, AipsOpenOption::Old).ok()?;
+    let mut io = DataFile::aips(path).ok()?;
     let outer_type = io.get_next_type().ok()?;
     io.getstart(&outer_type).ok()?;
     match outer_type.as_str() {

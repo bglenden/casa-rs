@@ -293,7 +293,7 @@ pub(super) fn load_tiled_column_stman(
 
     // Read the TSM data file.
     let tsm_file_name = tsm_data_path(table_path, dm_seq_nr, cube.file_seq_nr as u32);
-    let file_data = std::fs::read(&tsm_file_name).map_err(|e| {
+    let file_data = DataFile::read_all(&tsm_file_name).map_err(|e| {
         StorageError::FormatMismatch(format!("cannot read {}: {e}", tsm_file_name.display()))
     })?;
 
@@ -462,7 +462,7 @@ pub(super) fn load_tiled_shape_stman(
         let fseq = cube.file_seq_nr as u32;
         if let std::collections::hash_map::Entry::Vacant(e) = file_cache.entry(fseq) {
             let path = tsm_data_path(table_path, dm_seq_nr, fseq);
-            let data = std::fs::read(&path).map_err(|err| {
+            let data = DataFile::read_all(&path).map_err(|err| {
                 StorageError::FormatMismatch(format!("cannot read {}: {err}", path.display()))
             })?;
             e.insert(data);
@@ -704,7 +704,7 @@ pub(super) fn load_tiled_data_stman(
         let fseq = cube.file_seq_nr as u32;
         if let std::collections::hash_map::Entry::Vacant(e) = file_cache.entry(fseq) {
             let path = tsm_data_path(table_path, dm_seq_nr, fseq);
-            let data = std::fs::read(&path).map_err(|err| {
+            let data = DataFile::read_all(&path).map_err(|err| {
                 StorageError::FormatMismatch(format!("cannot read {}: {err}", path.display()))
             })?;
             e.insert(data);
@@ -893,7 +893,7 @@ pub(super) fn load_tiled_cell_stman(
         let fseq = cube.file_seq_nr as u32;
         if let std::collections::hash_map::Entry::Vacant(e) = file_cache.entry(fseq) {
             let path = tsm_data_path(table_path, dm_seq_nr, fseq);
-            let data = std::fs::read(&path).map_err(|err| {
+            let data = DataFile::read_all(&path).map_err(|err| {
                 StorageError::FormatMismatch(format!("cannot read {}: {err}", path.display()))
             })?;
             e.insert(data);

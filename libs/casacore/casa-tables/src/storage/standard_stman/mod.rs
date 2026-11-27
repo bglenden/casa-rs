@@ -31,6 +31,7 @@ use super::canonical::{
     read_u32_slice_le, write_bool_bits, write_i32_be, write_i32_le, write_i64_be, write_i64_le,
 };
 use super::cell_elements::{cell_bools, encode_fixed_cell};
+use super::data_file::{DataFile, DataRead};
 use super::data_type::CasacoreDataType;
 use super::scalar_sources::SCALAR_BLOCK_CELLS;
 use super::stman_aipsio::{ColumnRawData, extract_row_value};
@@ -237,7 +238,7 @@ struct SsmIndex {
 // Header parsing
 // ---------------------------------------------------------------------------
 
-fn parse_ssm_header(file: &mut File) -> Result<SsmHeader, StorageError> {
+fn parse_ssm_header(file: &mut impl DataRead) -> Result<SsmHeader, StorageError> {
     file.seek(SeekFrom::Start(0))?;
     let mut header_buf = vec![0u8; SSM_HEADER_SIZE as usize];
     file.read_exact(&mut header_buf)?;
@@ -321,7 +322,7 @@ pub(crate) fn dm_name_from_blob(data: &[u8]) -> Option<String> {
 /// Whether an existing on-disk `StandardStMan` file uses smaller buckets than
 /// casa-rs's 32 KiB default (such as casacore's default 32-row layout).
 pub(crate) fn ssm_has_small_buckets(data_path: &Path) -> Result<bool, StorageError> {
-    let mut file = File::open(data_path)?;
+    let mut file = DataFile::open(data_path)?;
     let header = parse_ssm_header(&mut file)?;
     Ok(header.bucket_size < DEFAULT_SSM_BUCKET_SIZE)
 }
@@ -332,7 +333,7 @@ pub(crate) fn ssm_spec(
     dm_seq_nr: u32,
 ) -> Result<casa_core::RecordValue, StorageError> {
     let data_path = table_path.join(format!("{}{dm_seq_nr}", super::TABLE_DATA_FILE_PREFIX));
-    let mut file = File::open(&data_path)?;
+    let mut file = DataFile::open(&data_path)?;
     let header = parse_ssm_header(&mut file)?;
     let bucket_size = i32::try_from(header.bucket_size)
         .map_err(|_| StorageError::FormatMismatch("SSM bucket size exceeds i32".into()))?;
@@ -374,12 +375,12 @@ fn read_block_u32(io: &mut AipsIo) -> Result<Vec<u32>, StorageError> {
 // ---------------------------------------------------------------------------
 
 fn read_bucket(
-    file: &mut File,
+    file: &mut impl DataRead,
     header: &SsmHeader,
     bucket_nr: u32,
 ) -> Result<Vec<u8>, StorageError> {
     let offset = SSM_HEADER_SIZE + (bucket_nr as u64) * (header.bucket_size as u64);
-    let file_len = file.metadata()?.len();
+    let file_len = file.data_len()?;
     if offset + header.bucket_size as u64 > file_len {
         return Err(StorageError::FormatMismatch(format!(
             "SSM bucket {bucket_nr} out of range: offset={offset}, bucket_size={}, file_len={file_len}",
@@ -392,7 +393,10 @@ fn read_bucket(
     Ok(buf)
 }
 
-fn parse_ssm_indices(file: &mut File, header: &SsmHeader) -> Result<Vec<SsmIndex>, StorageError> {
+fn parse_ssm_indices(
+    file: &mut impl DataRead,
+    header: &SsmHeader,
+) -> Result<Vec<SsmIndex>, StorageError> {
     if header.nr_indices == 0 || header.first_idx_bucket < 0 {
         return Ok(Vec::new());
     }

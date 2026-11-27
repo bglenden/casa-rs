@@ -297,14 +297,22 @@ impl Table {
             return Ok(());
         }
         let control = target.join(crate::storage::TABLE_CONTROL_FILE);
-        let persisted_asdm = control.is_file()
-            && matches!(
-                crate::storage::read_table_dat_dispatch(&control)?,
-                crate::storage::TableDatResult::Plain(table)
-                    if table.column_set.data_managers.iter().any(|manager| {
-                        manager.type_name == crate::storage::asdm_stman::TYPE
-                    })
-            );
+        let mut persisted_asdm = false;
+        if control.is_file()
+            && let crate::storage::TableDatResult::Plain(table) =
+                crate::storage::read_table_dat_dispatch(&control)?
+        {
+            if table.uses_multifile() {
+                return Err(TableError::Storage(
+                    "rewriting a MultiFile table in place would replace its storage layout".into(),
+                ));
+            }
+            persisted_asdm = table
+                .column_set
+                .data_managers
+                .iter()
+                .any(|manager| manager.type_name == crate::storage::asdm_stman::TYPE);
+        }
         if persisted_asdm || self.has_asdm_manager() {
             return Err(TableError::Storage(
                 "AsdmStMan is read-only. Materialize the table at a new path.".into(),

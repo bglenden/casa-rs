@@ -19,7 +19,6 @@ use casa_tables::taql::IndexStyle;
 use casa_tables::taql::ast::{GivingClause, GivingOption};
 use casa_tables::taql::eval::{ExprValue, eval_constant};
 use casa_tables::{EndianFormat, Table, TableOptions, TableWriteLock};
-use pyo3::exceptions::PyNotImplementedError;
 use pyo3::prelude::*;
 
 use super::legacy_query_config::query_defaults;
@@ -33,6 +32,13 @@ pub(super) struct QueryOutputOptions {
     overwrite: bool,
     endian: Option<EndianFormat>,
     storage: Option<QueryStorage>,
+    block_size: i32,
+}
+
+#[derive(Clone, Copy, Default)]
+struct QueryDiskFormat {
+    endian: EndianFormat,
+    multifile_block_size: Option<usize>,
 }
 
 pub(super) struct StagedLegacyQuery {
@@ -65,6 +71,7 @@ impl QueryOutputOptions {
             overwrite: true,
             endian: None,
             storage: None,
+            block_size: -2,
         };
         if let Some(mode) = &giving.output_type {
             output.set_mode(mode)?;
@@ -148,26 +155,44 @@ impl QueryOutputOptions {
                 };
                 Ok(())
             }
-            ("blocksize", ExprValue::Int(_)) => Ok(()),
+            ("blocksize", ExprValue::Int(size)) => {
+                self.block_size = *size as i32;
+                Ok(())
+            }
             (_, ExprValue::Bool(true)) => self.set_mode(&key),
             _ => Err(runtime_error(format!("Invalid TaQL output option {name}"))),
         }
     }
 
-    fn copy_endian(&self) -> PyResult<EndianFormat> {
+    fn disk_format(&self) -> PyResult<QueryDiskFormat> {
         let defaults = query_defaults();
         let storage = self.storage.unwrap_or(match defaults.storage.as_deref() {
             Some("multifile") => QueryStorage::MultiFile,
             Some("multihdf5") => QueryStorage::MultiHdf5,
             _ => QueryStorage::Separate,
         });
-        match storage {
-            QueryStorage::Separate => Ok(self.endian.unwrap_or(defaults.endian)),
-            QueryStorage::MultiFile => Err(PyNotImplementedError::new_err(
-                "ms.selecttaqlold MultiFile output is not implemented in casa-rs (#1030)",
-            )),
-            QueryStorage::MultiHdf5 => Err(runtime_error("TaQL MultiHDF5 storage is unavailable")),
-        }
+        let multifile_block_size = match storage {
+            QueryStorage::Separate => None,
+            QueryStorage::MultiFile => {
+                let configured = if self.block_size <= -2 {
+                    defaults.block_size
+                } else {
+                    self.block_size
+                };
+                Some(if configured > 0 {
+                    configured as usize
+                } else {
+                    4 * 1024 * 1024
+                })
+            }
+            QueryStorage::MultiHdf5 => {
+                return Err(runtime_error("TaQL MultiHDF5 storage is unavailable"));
+            }
+        };
+        Ok(QueryDiskFormat {
+            endian: self.endian.unwrap_or(defaults.endian),
+            multifile_block_size,
+        })
     }
 }
 
@@ -218,11 +243,11 @@ impl AttachedMs {
         if name.is_empty() {
             return Ok(None);
         }
-        let endian = options
+        let format = options
             .independent
-            .then(|| options.copy_endian())
+            .then(|| options.disk_format())
             .transpose()?
-            .or_else(|| self.memory_ms.as_ref().map(|_| EndianFormat::default()));
+            .or_else(|| self.memory_ms.as_ref().map(|_| QueryDiskFormat::default()));
         let active = self.legacy_selection.query_parent(&self.path);
         if active.is_none() && self.memory_ms.is_some() && QuerySubtable::has_implicit_parent(name)?
         {
@@ -252,13 +277,13 @@ impl AttachedMs {
         }
         let stage = tempfile::Builder::new()
             .prefix(".taql-ms-")
-            .tempdir_in(if endian.is_some() {
+            .tempdir_in(if format.is_some() {
                 &copy_parent
             } else {
                 parent
             })
             .map_err(runtime_error)?;
-        let staged = if let Some(endian) = endian {
+        let staged = if let Some(format) = format {
             let staged = stage.path().join("selected.ms");
             let source_locks = self
                 .read_locks
@@ -269,11 +294,20 @@ impl AttachedMs {
             if let Some(memory) = &self.memory_ms {
                 memory
                     .to_memory_rows(rows)
-                    .and_then(|mut copy| copy.save_detached_in_stage(&staged, endian))
+                    .and_then(|mut copy| copy.save_detached_in_stage(&staged, format.endian))
                     .map_err(runtime_error)?;
             } else {
-                write_selected_measurement_set_rows(table, rows, &staged, endian, &source_locks)
-                    .map_err(runtime_error)?;
+                write_selected_measurement_set_rows(
+                    table,
+                    rows,
+                    &staged,
+                    format.endian,
+                    &source_locks,
+                )
+                .map_err(runtime_error)?;
+            }
+            if let Some(block_size) = format.multifile_block_size {
+                Table::pack_staged_multifile(&staged, block_size).map_err(runtime_error)?;
             }
             staged
         } else {
@@ -287,7 +321,7 @@ impl AttachedMs {
         self.working_metadata_link()
             .verify_directory()
             .map_err(runtime_error)?;
-        let stage_lock = endian
+        let stage_lock = format
             .is_some()
             .then(|| TableWriteLock::acquire_to_reread(&staged, 1))
             .transpose()

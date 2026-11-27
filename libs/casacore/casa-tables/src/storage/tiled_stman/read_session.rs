@@ -3,7 +3,7 @@
 use super::*;
 
 pub(super) struct TileReadSessionFile {
-    pub(super) file: std::fs::File,
+    pub(super) file: DataFile,
     pub(super) file_position: u64,
     pub(super) read_ahead_start: u64,
     pub(super) read_ahead: Vec<u8>,
@@ -39,7 +39,7 @@ impl TileReadSession {
             std::collections::hash_map::Entry::Occupied(entry) => Ok(entry.into_mut()),
             std::collections::hash_map::Entry::Vacant(entry) => {
                 let path = tsm_data_path(table_path, dm_seq_nr, file_seq_nr);
-                let file = OpenOptions::new().read(true).open(&path).map_err(|err| {
+                let file = DataFile::open(&path).map_err(|err| {
                     StorageError::FormatMismatch(format!("cannot read {}: {err}", path.display()))
                 })?;
                 Ok(entry.insert(TileReadSessionFile {

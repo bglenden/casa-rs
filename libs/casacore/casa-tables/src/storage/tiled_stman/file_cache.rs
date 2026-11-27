@@ -231,7 +231,7 @@ pub(crate) struct TiledFileIO {
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn read_tiled_file_tile(
-    file: &mut std::fs::File,
+    file: &mut (impl std::io::Read + Seek),
     file_pos: u64,
     dst: &mut [u8],
     file_tile_bytes: usize,

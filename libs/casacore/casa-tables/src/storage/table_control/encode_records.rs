@@ -230,9 +230,15 @@ pub(super) fn write_column_set(
 ) -> Result<(), StorageError> {
     let cs = &contents.column_set;
 
-    // Version -2 (nrrow as u32)
-    io.put_i32(-2)?;
-    io.put_u32(cs.nrrow as u32)?;
+    if let Some(storage) = cs.storage {
+        io.put_i32(-3)?;
+        io.put_u64(cs.nrrow)?;
+        io.put_i32(storage.kind)?;
+        io.put_i32(storage.block_size)?;
+    } else {
+        io.put_i32(-2)?;
+        io.put_u32(cs.nrrow as u32)?;
+    }
     io.put_u32(cs.seq_count)?;
 
     // Data managers

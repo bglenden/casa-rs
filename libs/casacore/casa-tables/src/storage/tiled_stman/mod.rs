@@ -255,6 +255,7 @@ impl TilePixel for Complex64 {
 }
 
 use super::canonical::*;
+use super::data_file::DataFile;
 use super::data_type::CasacoreDataType;
 use super::table_control::{
     ColumnDescContents, DataManagerEntry, PlainColumnEntry, TableDescContents, read_iposition,

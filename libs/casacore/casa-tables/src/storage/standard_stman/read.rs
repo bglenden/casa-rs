@@ -8,7 +8,7 @@ pub(crate) fn read_ssm_file_columns(
     col_descs: &[(usize, &ColumnDescContents)],
     nrrow: usize,
 ) -> Result<Vec<(String, SsmColumnResult)>, StorageError> {
-    let mut file = File::open(file_path)?;
+    let mut file = DataFile::open(file_path)?;
     let header = parse_ssm_header(&mut file)?;
     let dm_info = parse_ssm_dm_blob(dm_blob)?;
     let indices = parse_ssm_indices(&mut file, &header)?;
@@ -21,7 +21,7 @@ pub(crate) fn read_ssm_file_columns(
         let mut arr_path = file_path.as_os_str().to_os_string();
         arr_path.push("i");
         let arr_pathbuf = std::path::PathBuf::from(arr_path);
-        if arr_pathbuf.exists() {
+        if DataFile::is_file(&arr_pathbuf) {
             Some(StManArrayFileReader::open(&arr_pathbuf, header.big_endian)?)
         } else {
             None
@@ -227,7 +227,7 @@ pub(crate) fn read_ssm_scalar_column_rows(
         return Ok(Some(Vec::new()));
     }
 
-    let mut file = File::open(file_path)?;
+    let mut file = DataFile::open(file_path)?;
     let header = parse_ssm_header(&mut file)?;
     let dm_info = parse_ssm_dm_blob(dm_blob)?;
     let indices = parse_ssm_indices(&mut file, &header)?;
@@ -413,7 +413,7 @@ pub(crate) fn read_ssm_required_scalar_columns_rows_reusing(
         return Ok(());
     }
 
-    let mut file = File::open(file_path)?;
+    let mut file = DataFile::open(file_path)?;
     let header = parse_ssm_header(&mut file)?;
     let dm_info = parse_ssm_dm_blob(dm_blob)?;
     let indices = parse_ssm_indices(&mut file, &header)?;
@@ -670,7 +670,7 @@ pub(super) fn read_ssm_indirect_cell(
     reason = "predates the function-length limit; #705"
 )]
 pub(super) fn read_column_from_buckets(
-    file: &mut File,
+    file: &mut impl DataRead,
     header: &SsmHeader,
     index: &SsmIndex,
     column_offset: usize,
@@ -1039,7 +1039,7 @@ pub(super) fn read_column_from_buckets(
 /// Iterate over data buckets and process column data for non-Bool, non-String types.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn read_typed_column<F>(
-    file: &mut File,
+    file: &mut impl DataRead,
     header: &SsmHeader,
     index: &SsmIndex,
     column_offset: usize,

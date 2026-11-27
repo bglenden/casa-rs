@@ -129,7 +129,7 @@ fn invalid(message: &str) -> StorageError {
 }
 
 struct ArrayRows {
-    file: File,
+    file: DataFile,
     header: IsmHeader,
     index: IsmIndex,
     column_count: usize,
@@ -146,11 +146,11 @@ impl ArrayRows {
         column: usize,
         indirect: bool,
     ) -> Result<Self, StorageError> {
-        let mut file = File::open(path)?;
+        let mut file = DataFile::open(path)?;
         let header = parse_ism_header(&mut file)?;
         let index = parse_ism_index(&mut file, &header)?;
         let array_path = PathBuf::from(format!("{}i", path.display()));
-        let indirect = (indirect && array_path.is_file())
+        let indirect = (indirect && DataFile::is_file(&array_path))
             .then(|| StManArrayFileReader::open(&array_path, header.big_endian))
             .transpose()?;
         Ok(Self {

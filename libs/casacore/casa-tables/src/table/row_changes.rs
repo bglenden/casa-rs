@@ -423,6 +423,7 @@ impl Table {
         let dat = crate::storage::table_control::read_table_dat(
             &path.join(crate::storage::TABLE_CONTROL_FILE),
         )?;
+        dat.require_separate_storage_for_write()?;
         let old = self.require_persisted_rows(path, &dat)?;
         Ok((path, dat, old))
     }
@@ -587,6 +588,7 @@ impl Table {
             let dat = crate::storage::table_control::read_table_dat(
                 &path.join(crate::storage::TABLE_CONTROL_FILE),
             )?;
+            dat.require_separate_storage_for_write()?;
             let old = self.require_persisted_rows(&path, &dat)?;
             edit(self, &path, dat, old)
         })();

@@ -389,13 +389,13 @@ pub(super) fn read_column_set(
 ) -> Result<ColumnSetContents, StorageError> {
     let version = io.get_i32()?; // negative: -2 or -3
 
-    let nrrow = if version == -3 {
+    let (nrrow, storage) = if version == -3 {
         let nr = io.get_u64()?;
-        let _storage_opt = io.get_i32()?;
-        let _block_size = io.get_i32()?;
-        nr
+        let kind = io.get_i32()?;
+        let block_size = io.get_i32()?;
+        (nr, Some(ColumnSetStorage { kind, block_size }))
     } else {
-        io.get_u32()? as u64
+        (u64::from(io.get_u32()?), None)
     };
 
     let seq_count = io.get_u32()?;
@@ -430,6 +430,7 @@ pub(super) fn read_column_set(
 
     Ok(ColumnSetContents {
         nrrow,
+        storage,
         seq_count,
         data_managers,
         columns,

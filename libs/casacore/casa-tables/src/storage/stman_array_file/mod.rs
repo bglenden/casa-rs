@@ -44,6 +44,7 @@ pub(crate) use typed::CanonicalArrayElement;
 
 use super::StorageError;
 use super::canonical::is_fortran_contiguous;
+use super::data_file::DataFile;
 use super::data_type::CasacoreDataType;
 
 // ---------------------------------------------------------------------------
@@ -238,7 +239,7 @@ fn canonical_elem_bytes(dt: CasacoreDataType) -> f64 {
 ///
 /// Corresponds to C++ `casacore::StManArrayFile` in read mode.
 pub(crate) struct StManArrayFileReader {
-    file: BufReader<File>,
+    file: BufReader<DataFile>,
     bo: ArrayFileByteOrder,
     version: u32,
     #[allow(dead_code)]
@@ -263,7 +264,7 @@ fn stored_shape_ref(shape: &[usize]) -> &[usize] {
 impl StManArrayFileReader {
     /// Open an existing array file.
     pub(crate) fn open(path: &Path, big_endian: bool) -> Result<Self, StorageError> {
-        let mut file = BufReader::new(File::open(path)?);
+        let mut file = BufReader::new(DataFile::open(path)?);
         let bo = if big_endian {
             ArrayFileByteOrder::Big
         } else {

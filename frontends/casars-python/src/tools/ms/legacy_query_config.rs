@@ -9,6 +9,7 @@ use casa_tables::EndianFormat;
 pub(super) struct QueryDefaults {
     pub(super) endian: EndianFormat,
     pub(super) storage: Option<String>,
+    pub(super) block_size: i32,
 }
 
 pub(super) fn query_defaults() -> &'static QueryDefaults {
@@ -16,6 +17,7 @@ pub(super) fn query_defaults() -> &'static QueryDefaults {
     DEFAULTS.get_or_init(|| {
         let mut endian = None;
         let mut storage = None;
+        let mut block_size = None;
         for path in resource_paths() {
             let Ok(contents) = std::fs::read_to_string(path) else {
                 continue;
@@ -38,7 +40,10 @@ pub(super) fn query_defaults() -> &'static QueryDefaults {
                 if storage.is_none() && rc_key_matches(name, "table.storage.option") {
                     storage = Some(value.trim().to_ascii_lowercase());
                 }
-                if endian.is_some() && storage.is_some() {
+                if block_size.is_none() && rc_key_matches(name, "table.storage.blocksize") {
+                    block_size = Some(value.trim().parse().unwrap_or(0));
+                }
+                if endian.is_some() && storage.is_some() && block_size.is_some() {
                     break;
                 }
             }
@@ -46,6 +51,7 @@ pub(super) fn query_defaults() -> &'static QueryDefaults {
         QueryDefaults {
             endian: endian.unwrap_or_default(),
             storage,
+            block_size: block_size.unwrap_or(0),
         }
     })
 }

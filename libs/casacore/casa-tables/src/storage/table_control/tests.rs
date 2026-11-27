@@ -153,6 +153,7 @@ fn column_keywords_roundtrip_in_table_dat() {
         },
         column_set: ColumnSetContents {
             nrrow: 1,
+            storage: None,
             seq_count: 1,
             data_managers: vec![DataManagerEntry {
                 type_name: "StManAipsIO".to_string(),

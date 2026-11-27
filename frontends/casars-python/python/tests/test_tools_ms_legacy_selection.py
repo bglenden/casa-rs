@@ -313,13 +313,6 @@ def test_legacy_taql_output_options_record(native_dataset, tmp_path, blocksize):
             assert saved.open(str(target))
             assert saved.endianformat() == "big" and saved.nrows() == 3
             assert saved.close()
-    reader = tools.ms()
-    assert reader.open(str(native_dataset))
-    target = tmp_path / "blocked.ms"
-    with pytest.raises(NotImplementedError, match=r"MultiFile.*#1030"):
-        reader.selecttaqlold(f'True GIVING "{target}" AS [type="plain", storage="multifile"]')
-    assert not target.exists()
-    assert reader.done()
 
 
 @pytest.mark.parametrize("mode", ["multifile", "multihdf5"])

@@ -296,6 +296,14 @@ impl Table {
             };
         let persisted_rows = self.require_persisted_rows(source_path, &table_dat)?;
         table_dat.raise_row_count(persisted_rows);
+        let packed_edit = crate::storage::multifile::PackedManagerEdit::stage(
+            source_path,
+            &table_dat,
+            &affected_groups,
+        )?;
+        let storage_path = packed_edit
+            .as_ref()
+            .map_or(source_path.as_path(), |edit| edit.path());
 
         let mut profiler = StorageProfiler::start(format!(
             "Table::save_selected_columns_in_place path={}",
@@ -314,9 +322,11 @@ impl Table {
             );
         }
 
-        self.note_persisted_write(source_path);
+        if packed_edit.is_none() {
+            self.note_persisted_write(source_path);
+        }
         for group in affected_groups {
-            let data_path = source_path.join(format!(
+            let data_path = storage_path.join(format!(
                 "{}{}",
                 crate::storage::TABLE_DATA_FILE_PREFIX,
                 group.seq_nr
@@ -592,7 +602,7 @@ impl Table {
                             )?
                         {
                             crate::storage::tiled_stman::save_tiled_columns_sparse_rows_in_place(
-                                source_path,
+                                storage_path,
                                 group.seq_nr,
                                 &group.dm_type,
                                 &group_col_descs,
@@ -609,7 +619,7 @@ impl Table {
                             let value_refs: Vec<_> =
                                 values.iter().map(|value| value.as_ref()).collect();
                             crate::storage::tiled_stman::save_tiled_single_column_rows_in_place(
-                                source_path,
+                                storage_path,
                                 group.seq_nr,
                                 &group_col_descs[0],
                                 &value_refs,
@@ -637,7 +647,7 @@ impl Table {
                             let value_refs: Vec<_> =
                                 values.iter().map(|value| value.as_ref()).collect();
                             crate::storage::tiled_stman::save_tiled_single_column_values(
-                                source_path,
+                                storage_path,
                                 group.seq_nr,
                                 &group_col_descs[0],
                                 &value_refs,
@@ -655,7 +665,7 @@ impl Table {
                                 &group_col_descs,
                             )?;
                             crate::storage::tiled_stman::save_tiled_columns(
-                                source_path,
+                                storage_path,
                                 group.seq_nr,
                                 &group.dm_type,
                                 &group_col_descs,
@@ -688,9 +698,14 @@ impl Table {
             }
         }
 
-        crate::storage::table_control::write_table_dat(&control_path, &table_dat)?;
+        if let Some(edit) = packed_edit {
+            edit.publish(&table_dat)?;
+            self.note_persisted_write(source_path);
+        } else {
+            crate::storage::table_control::write_table_dat(&control_path, &table_dat)?;
+        }
         if let Some(profiler) = profiler.as_mut() {
-            profiler.mark("write_control_file");
+            profiler.mark("publish");
         }
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(source_path);
         self.inner.refresh_read_metadata(table_dat)?;
@@ -768,6 +783,7 @@ impl Table {
                         ));
                     }
                 };
+            table_dat.require_separate_storage_for_write()?;
             let persisted_rows = self.require_persisted_rows(&source_path, &table_dat)?;
             table_dat.raise_row_count(persisted_rows);
 
@@ -958,6 +974,7 @@ impl Table {
                         ));
                     }
                 };
+            table_dat.require_separate_storage_for_write()?;
             let persisted_rows = self.require_persisted_rows(&source_path, &table_dat)?;
             table_dat.raise_row_count(persisted_rows);
 

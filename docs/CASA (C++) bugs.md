@@ -12028,6 +12028,22 @@ through `AS MEMORY` and a later `AS PLAIN` copy. Moving the source then
 breaks those links. casa-rs captures the linked tables in the detached view
 and installs the links inside the persisted copy (#1030).
 
+## CASA can retain stale MultiFile data after reacquiring a lock
+
+In CASA 6.7.6.14, make a three-row MS with `selecttaqlold()` and
+`GIVING "output.ms" AS [type="plain",storage="multifile"]`. Open it in
+`table` with user locking, read `FLAG` and `FLAG_ROW`, and unlock it. After
+a second CASA process changes the flags with `putdataold()`, the first
+handle can still show the old flags after relocking. Reopening shows the
+saved values. The same probe with 64- and 4096-byte blocks refreshed the
+flags. The default block size is 4 MiB.
+
+casa-rs keeps the archive and physical member offsets in place for
+same-size updates so open CASA handles keep valid offsets. A write that
+needs to rebuild the block map fails before publication while another
+process has the table open. CASA's retained block cache can require a
+reopen to see updates at the default block size (#1030).
+
 ## Duplicate observations can interrupt a subtable-only concatenation
 
 With two identical OBSERVATION rows in the attached MeasurementSet and

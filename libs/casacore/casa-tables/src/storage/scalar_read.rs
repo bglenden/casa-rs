@@ -592,7 +592,7 @@ impl CompositeStorage {
             })?;
 
         if dm.type_name == "StManAipsIO" {
-            if !data_path.is_file() {
+            if !data_file::DataFile::is_file(&data_path) {
                 return Err(StorageError::MissingDataFile(data_path));
             }
             let dm_columns: Vec<_> = bound_cols
@@ -611,7 +611,7 @@ impl CompositeStorage {
             }
         }
         if dm.type_name == "IncrementalStMan" {
-            if !data_path.is_file() {
+            if !data_file::DataFile::is_file(&data_path) {
                 return Err(StorageError::MissingDataFile(data_path));
             }
             let group_col_descs: Vec<_> = bound_cols
@@ -705,7 +705,7 @@ impl CompositeStorage {
 
             match dm.type_name.as_str() {
                 "StManAipsIO" => {
-                    if !data_path.is_file() {
+                    if !data_file::DataFile::is_file(&data_path) {
                         return Err(StorageError::MissingDataFile(data_path));
                     }
                     collect_stman_scalar_columns(
@@ -719,7 +719,7 @@ impl CompositeStorage {
                     )?;
                 }
                 "StandardStMan" => {
-                    if !data_path.is_file() {
+                    if !data_file::DataFile::is_file(&data_path) {
                         return Err(StorageError::MissingDataFile(data_path));
                     }
                     collect_ssm_scalar_columns(
@@ -733,7 +733,7 @@ impl CompositeStorage {
                     )?;
                 }
                 "IncrementalStMan" => {
-                    if !data_path.is_file() {
+                    if !data_file::DataFile::is_file(&data_path) {
                         return Err(StorageError::MissingDataFile(data_path));
                     }
                     collect_ism_scalar_columns(
@@ -869,7 +869,7 @@ impl CompositeStorage {
                     let mut columns = HashMap::new();
                     match dm_type.as_str() {
                         "StManAipsIO" => {
-                            if !data_path.is_file() {
+                            if !data_file::DataFile::is_file(&data_path) {
                                 return Err(StorageError::MissingDataFile(data_path));
                             }
                             collect_stman_required_scalar_columns(
@@ -883,7 +883,7 @@ impl CompositeStorage {
                             )?;
                         }
                         "StandardStMan" => {
-                            if !data_path.is_file() {
+                            if !data_file::DataFile::is_file(&data_path) {
                                 return Err(StorageError::MissingDataFile(data_path));
                             }
                             collect_ssm_required_scalar_columns(
@@ -897,7 +897,7 @@ impl CompositeStorage {
                             )?;
                         }
                         "IncrementalStMan" => {
-                            if !data_path.is_file() {
+                            if !data_file::DataFile::is_file(&data_path) {
                                 return Err(StorageError::MissingDataFile(data_path));
                             }
                             collect_ism_required_scalar_columns(

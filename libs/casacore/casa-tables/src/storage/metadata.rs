@@ -314,7 +314,7 @@ impl CompositeStorage {
                     asdm_stman::fill_rows(table_dat, dm.seq_nr, &bound_cols, &mut rows)?
                 }
                 "StManAipsIO" => {
-                    if !data_path.is_file() {
+                    if !data_file::DataFile::is_file(&data_path) {
                         return Err(StorageError::MissingDataFile(data_path));
                     }
                     load_stman_aipsio_columns(
@@ -336,7 +336,7 @@ impl CompositeStorage {
                     })?;
                 }
                 "StandardStMan" => {
-                    if !data_path.is_file() {
+                    if !data_file::DataFile::is_file(&data_path) {
                         return Err(StorageError::MissingDataFile(data_path));
                     }
                     load_ssm_columns(
@@ -358,7 +358,7 @@ impl CompositeStorage {
                     })?;
                 }
                 "IncrementalStMan" => {
-                    if !data_path.is_file() {
+                    if !data_file::DataFile::is_file(&data_path) {
                         return Err(StorageError::MissingDataFile(data_path));
                     }
                     load_ism_columns(

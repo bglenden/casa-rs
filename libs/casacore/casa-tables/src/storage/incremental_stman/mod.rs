@@ -31,6 +31,7 @@ use super::canonical::{
     read_f32_be, read_f32_le, read_f64_be, read_f64_le, read_i16_be, read_i16_le, read_i32_be,
     read_i32_le, read_i64_be, read_i64_le, read_u16_be, read_u16_le, read_u32_be, read_u32_le,
 };
+use super::data_file::DataFile;
 use super::data_type::CasacoreDataType;
 use super::scalar_sources::{ColumnSource, RowFields, SCALAR_BLOCK_CELLS};
 use super::stman_aipsio::ColumnRawData;
@@ -222,7 +223,7 @@ pub(crate) fn ism_spec(
     dm_seq_nr: u32,
 ) -> Result<casa_core::RecordValue, StorageError> {
     let data_path = table_path.join(format!("{}{dm_seq_nr}", super::TABLE_DATA_FILE_PREFIX));
-    let mut file = File::open(&data_path)?;
+    let mut file = DataFile::open(&data_path)?;
     let header = parse_ism_header(&mut file)?;
     let bucket_size = i32::try_from(header.bucket_size)
         .map_err(|_| StorageError::FormatMismatch("ISM bucket size exceeds i32".into()))?;
@@ -248,7 +249,10 @@ pub(crate) fn ism_spec(
 // Index parsing (at end of file, after all buckets)
 // ---------------------------------------------------------------------------
 
-fn parse_ism_index(file: &mut File, header: &IsmHeader) -> Result<IsmIndex, StorageError> {
+fn parse_ism_index(
+    file: &mut (impl Read + Seek),
+    header: &IsmHeader,
+) -> Result<IsmIndex, StorageError> {
     let index_offset = ISM_HEADER_SIZE + (header.nr_buckets as u64) * (header.bucket_size as u64);
     file.seek(SeekFrom::Start(index_offset))?;
 
@@ -320,7 +324,7 @@ pub(super) fn appended_ism_index(
 // ---------------------------------------------------------------------------
 
 fn read_ism_bucket(
-    file: &mut File,
+    file: &mut (impl Read + Seek),
     header: &IsmHeader,
     bucket_nr: u32,
 ) -> Result<Vec<u8>, StorageError> {
@@ -611,7 +615,7 @@ pub(crate) fn write_ism_file(
 }
 
 pub(super) fn ism_layout(path: &Path) -> Result<(bool, u32, u32), StorageError> {
-    let header = parse_ism_header(&mut File::open(path)?)?;
+    let header = parse_ism_header(&mut DataFile::open(path)?)?;
     Ok((
         header.big_endian,
         header.bucket_size,

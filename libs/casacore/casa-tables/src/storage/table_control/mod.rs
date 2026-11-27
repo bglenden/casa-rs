@@ -23,6 +23,10 @@ use crate::table_path::stored_table_dat_keywords;
 
 /// Result of reading table.dat — dispatches on the table type marker.
 #[derive(Debug, Clone)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "keep the common plain-table descriptor inline to avoid an allocation on every open"
+)]
 pub(crate) enum TableDatResult {
     Plain(TableDatContents),
     Ref(RefTableDatContents),
@@ -107,6 +111,21 @@ pub(crate) struct TableDatContents {
 }
 
 impl TableDatContents {
+    pub(crate) fn uses_multifile(&self) -> bool {
+        self.column_set
+            .storage
+            .is_some_and(|storage| storage.kind == ColumnSetStorage::MULTI_FILE)
+    }
+
+    pub(crate) fn require_separate_storage_for_write(&self) -> Result<(), StorageError> {
+        if self.uses_multifile() {
+            return Err(StorageError::FormatMismatch(
+                "this write would change the MultiFile storage layout".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn asdm_column(
         &self,
         column: &ColumnDescContents,
@@ -187,9 +206,21 @@ impl ColumnDescContents {
 #[derive(Debug, Clone)]
 pub(crate) struct ColumnSetContents {
     pub nrrow: u64,
+    pub storage: Option<ColumnSetStorage>,
     pub seq_count: u32,
     pub data_managers: Vec<DataManagerEntry>,
     pub columns: Vec<PlainColumnEntry>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ColumnSetStorage {
+    pub kind: i32,
+    pub block_size: i32,
+}
+
+impl ColumnSetStorage {
+    pub const MULTI_FILE: i32 = 0;
+    pub const SEPARATE: i32 = 2;
 }
 
 #[derive(Debug, Clone)]
@@ -504,6 +535,7 @@ impl TableDatContents {
             table_desc: TableDescContents::from_schema_header(schema, keywords, columns),
             column_set: ColumnSetContents {
                 nrrow,
+                storage: None,
                 seq_count: 1,
                 data_managers: vec![DataManagerEntry {
                     type_name: dm_type_name.to_string(),
@@ -957,6 +989,7 @@ impl TableDatContents {
             table_desc: TableDescContents::from_schema_header(schema, keywords, columns),
             column_set: ColumnSetContents {
                 nrrow,
+                storage: None,
                 seq_count,
                 data_managers: dm_entries,
                 columns: plain_columns,

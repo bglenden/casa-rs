@@ -9,7 +9,7 @@ pub(crate) fn read_ism_file_columns(
     total_column_count: usize,
     nrrow: usize,
 ) -> Result<Vec<(String, IsmColumnResult)>, StorageError> {
-    let mut file = File::open(file_path)?;
+    let mut file = DataFile::open(file_path)?;
     let header = parse_ism_header(&mut file)?;
     let _dm_name = parse_ism_dm_blob(dm_blob)?;
     let index = parse_ism_index(&mut file, &header)?;
@@ -41,7 +41,7 @@ pub(crate) fn read_ism_file_columns(
         .any(|(_, col_desc)| is_ism_indirect_array(col_desc))
     {
         let array_path = PathBuf::from(format!("{}i", file_path.display()));
-        if !array_path.is_file() {
+        if !DataFile::is_file(&array_path) {
             return Err(StorageError::MissingDataFile(array_path));
         }
         Some(StManArrayFileReader::open(&array_path, be)?)
@@ -256,7 +256,7 @@ pub(crate) fn fill_ism_f64_array_rows(
         return Ok(axis0_count);
     }
     let _dm_name = parse_ism_dm_blob(dm_blob)?;
-    let mut file = File::open(file_path)?;
+    let mut file = DataFile::open(file_path)?;
     let header = parse_ism_header(&mut file)?;
     let index = parse_ism_index(&mut file, &header)?;
     let mut requests: Vec<_> = selected_rows.iter().copied().enumerate().collect();
@@ -376,7 +376,7 @@ pub(crate) fn read_ism_required_scalar_columns_rows_reusing(
         return Ok(());
     }
 
-    let mut file = File::open(file_path)?;
+    let mut file = DataFile::open(file_path)?;
     let header = parse_ism_header(&mut file)?;
     let index = parse_ism_index(&mut file, &header)?;
     let contiguous_rows = selected_rows
@@ -599,7 +599,7 @@ pub(crate) fn read_ism_scalar_column(
     }
 
     let _dm_name = parse_ism_dm_blob(dm_blob)?;
-    let mut file = File::open(file_path)?;
+    let mut file = DataFile::open(file_path)?;
     let header = parse_ism_header(&mut file)?;
     let index = parse_ism_index(&mut file, &header)?;
     let big_endian = header.big_endian;
@@ -648,7 +648,7 @@ pub(super) fn read_ism_scalar_columns_rows_uncached(
     preserve_defaults: bool,
 ) -> Result<Vec<Vec<Option<ScalarValue>>>, StorageError> {
     let _dm_name = parse_ism_dm_blob(dm_blob)?;
-    let mut file = File::open(file_path)?;
+    let mut file = DataFile::open(file_path)?;
     let header = parse_ism_header(&mut file)?;
     let index = parse_ism_index(&mut file, &header)?;
     let big_endian = header.big_endian;

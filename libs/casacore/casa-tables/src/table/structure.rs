@@ -109,6 +109,39 @@ fn edit_hypercolumns(private_keywords: &mut RecordValue, edit: impl Fn(&mut Vec<
 }
 
 impl Table {
+    /// Check access to the control file and its declared packed manager file
+    /// before reporting a writable attachment.
+    #[doc(hidden)]
+    pub fn check_storage_update_access(path: &Path) -> Result<(), TableError> {
+        let control = path.join(crate::storage::TABLE_CONTROL_FILE);
+        std::fs::File::options()
+            .write(true)
+            .open(&control)
+            .map_err(StorageError::from)?;
+        let archive = path.join("table.mf");
+        if archive.is_file()
+            && matches!(
+                crate::storage::table_control::read_table_dat_dispatch(&control)?,
+                TableDatResult::Plain(table) if table.uses_multifile()
+            )
+        {
+            std::fs::File::options()
+                .write(true)
+                .open(archive)
+                .map_err(StorageError::from)?;
+        }
+        Ok(())
+    }
+
+    /// Convert the manager files of a newly written, private plain table into
+    /// a casacore MultiFile container. If conversion fails, discard the private
+    /// table. Call this before publishing the table directory to other readers.
+    #[doc(hidden)]
+    pub fn pack_staged_multifile(path: &Path, block_size: usize) -> Result<(), TableError> {
+        crate::storage::multifile::pack_staged_manager_files(path, block_size)?;
+        Ok(())
+    }
+
     /// Reload persisted keyword records and table information after a metadata
     /// write announced in this process. Row and lock state stay in place.
     #[doc(hidden)]
@@ -308,6 +341,11 @@ impl Table {
                     "{operation} only supports plain tables"
                 )));
             };
+            if table_dat.uses_multifile() {
+                return Err(TableError::Storage(format!(
+                    "{operation} cannot change MultiFile storage-manager bindings"
+                )));
+            }
             let persisted_rows = self.require_persisted_rows(&path, &table_dat)?;
             table_dat.raise_row_count(persisted_rows);
             let removed_managers = edit(self, &mut table_dat, &path)?;
