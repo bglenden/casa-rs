@@ -486,7 +486,7 @@ fn spread(mut samples: Vec<Duration>) -> (Duration, Duration) {
 }
 
 /// Narrow matched timings for the evidence, in a release build:
-/// `cargo test --release -p casa-imaging --test ms_trial_imaging -- --ignored --nocapture`.
+/// `cargo test --release -p casa-imaging --test api ms_trial_imaging::narrow_timings -- --ignored --exact --nocapture`.
 /// The production imager's dirty-pass phase (its MSv2 source and the same
 /// pass) against the same pass reading v2 and v4 batches, 25 runs each.
 /// Diagnostics on a tiny fixture, not performance acceptance.

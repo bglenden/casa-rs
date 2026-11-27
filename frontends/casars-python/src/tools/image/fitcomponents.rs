@@ -7,7 +7,9 @@ use std::path::Path;
 use casa_core::RecordValue;
 use casa_core::quanta::Quantity;
 use casa_imageanalysis::analysis::ComponentFitQuantity;
-use casa_imageanalysis::tool::ops_fit::{FitComponentsRequest, fit_components};
+use casa_imageanalysis::tool::ops_fit::{
+    FitComponentsHistory, FitComponentsRequest, fit_components,
+};
 use pyo3::prelude::*;
 use pyo3::types::PyBool;
 
@@ -73,45 +75,10 @@ impl PyImageTool {
         let (rms, rms_history) = measure_argument(rms, "rms")?;
         let (noise, noise_history) = measure_argument(noisefwhm, "noisefwhm")?;
         let mask = mask_argument(mask)?;
-        let history_call = {
-            let range = |values: &[f64]| {
-                format!(
-                    "[{}]",
-                    values
-                        .iter()
-                        .map(|v| format!("{v:.6}"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            };
-            let region_hist = if region.selection().is_none() {
-                "[]".to_owned()
-            } else {
-                region.history()
-            };
-            format!(
-                "ia.fitcomponents(box={:?}, region={}, chans={}, stokes={:?}, mask={:?}, includepix={}, excludepix={}, residual={:?}, model={:?}, estimates={:?}, logfile={:?}, append={}, newestimates={:?}, complist={:?}, dooff={}, offset={:.6}, fixoffset={}, stretch={}, rms={}, noisefwhm={})",
-                r#box,
-                region_hist,
-                channels_history,
-                stokes,
-                mask,
-                range(&includepix.0),
-                range(&excludepix.0),
-                residual,
-                model,
-                estimates,
-                logfile,
-                append,
-                newestimates,
-                complist,
-                dooff,
-                offset,
-                fixoffset,
-                stretch,
-                rms_history,
-                noise_history,
-            )
+        let region_history = if region.selection().is_none() {
+            "[]".to_owned()
+        } else {
+            region.history()
         };
         let record = py.detach(|| -> PyResult<_> {
             let state = self.state();
@@ -136,10 +103,16 @@ impl PyImageTool {
                 complist,
                 summary,
                 overwrite,
-                zero_level: dooff.then_some((offset, fixoffset)),
+                fit_zero_level: dooff,
+                zero_level: (offset, fixoffset),
                 rms: rms.as_ref().map(MeasureArgument::value),
                 noise_fwhm: noise.as_ref().map(MeasureArgument::value),
-                history_call,
+                history: FitComponentsHistory {
+                    region: &region_history,
+                    channels: &channels_history,
+                    rms: &rms_history,
+                    noise_fwhm: &noise_history,
+                },
                 record_history: state.history,
             };
             fit_components(source, request, external_open_check()).map_err(raised)
