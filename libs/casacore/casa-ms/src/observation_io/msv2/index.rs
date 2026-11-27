@@ -146,10 +146,10 @@ impl KeyColumns {
 
 /// The original partition key of MAIN rows, shared by any adaptive subgrids.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct PartitionKey {
+pub(super) struct PartitionKey<'a> {
     pub(super) data_description: i32,
-    /// `STATE::OBS_MODE` of the rows' state; empty without a state.
-    pub(super) obs_mode: String,
+    /// Borrow the mode from `STATE` until catalogue entries are admitted.
+    pub(super) obs_mode: &'a str,
     pub(super) observation: i32,
     /// The rows' field's `EPHEMERIS_ID`, when the column exists.
     pub(super) ephemeris: Option<i32>,
@@ -161,7 +161,7 @@ pub(super) struct PartitionKey {
     pub(super) processor: i32,
 }
 
-impl PartitionKey {
+impl PartitionKey<'_> {
     /// Adaptive field and scan splits always share a weight probe. With
     /// `unsplit`, also share it across the explicit splits and processors
     /// of the original extent. Both kinds of group are contiguous.
@@ -202,7 +202,7 @@ struct Keys<'a> {
     /// Each `FIELD` row's `EPHEMERIS_ID`.
     field_ephemeris: &'a [Option<i32>],
     /// The distinct `OBS_MODE`s and the empty mode, ascending.
-    modes: Vec<String>,
+    modes: Vec<&'a str>,
     /// Each `STATE` row's mode, by its rank in `modes`.
     state_mode: Vec<usize>,
     /// The empty mode's rank: a row's without a state.
@@ -210,23 +210,22 @@ struct Keys<'a> {
 }
 
 impl<'a> Keys<'a> {
+    /// Bytes of the distinct mode pointers and each state's mode rank.
+    fn mode_bytes(states: usize) -> usize {
+        (states + 1) * size_of::<&str>() + states * size_of::<usize>()
+    }
+
     fn new(
         scheme: PartitionScheme,
-        state_modes: &[String],
+        state_modes: &'a [String],
         field_ephemeris: &'a [Option<i32>],
     ) -> Self {
-        let modes: Vec<String> = state_modes
-            .iter()
-            .cloned()
-            .chain([String::new()])
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        let rank = |mode: &str| {
-            modes
-                .binary_search_by(|known| known.as_str().cmp(mode))
-                .expect("every mode is collected")
-        };
+        let mut modes = Vec::with_capacity(state_modes.len() + 1);
+        modes.extend(state_modes.iter().map(String::as_str));
+        modes.push("");
+        modes.sort_unstable();
+        modes.dedup();
+        let rank = |mode: &str| modes.binary_search(&mode).expect("every mode is collected");
         let state_mode = state_modes.iter().map(|mode| rank(mode)).collect();
         let no_mode = rank("");
         Self {
@@ -283,10 +282,10 @@ impl<'a> Keys<'a> {
         Ok((key, FieldId(field.unsigned_abs())))
     }
 
-    fn partition_key(&self, key: RowKey) -> PartitionKey {
+    fn partition_key(&self, key: RowKey) -> PartitionKey<'a> {
         PartitionKey {
             data_description: key.data_description,
-            obs_mode: self.modes[key.obs_mode].clone(),
+            obs_mode: self.modes[key.obs_mode],
             observation: key.observation,
             ephemeris: key.ephemeris,
             feeds: key.feeds,
@@ -460,22 +459,26 @@ impl Survey {
     }
 }
 
-/// The bytes the scans and their tables hold: each entry with its name
-/// and intents, the scan identifiers by number, and the states MAIN holds.
-fn scans_bytes(scans: &[ScanEntry], numbers: usize, states: usize) -> usize {
-    let entries: usize = scans
-        .iter()
-        .map(|scan| {
-            size_of::<ScanEntry>()
-                + scan.name.capacity()
-                + scan.intents.capacity() * size_of::<String>()
-                + scan.intents.iter().map(String::capacity).sum::<usize>()
-        })
-        .sum();
-    let numbers =
-        node_bytes(size_of::<(i32, ScanId)>()) + numbers * entry_bytes(size_of::<(i32, ScanId)>());
-    let states = node_bytes(size_of::<i32>()) + states * entry_bytes(size_of::<i32>());
-    entries + numbers + states
+/// Bound the scans and their tables before building them. Up to 11
+/// decimal characters and 16 bytes of string capacity hold each name.
+/// Only one scan's borrowed intent set is live at a time.
+fn scans_bytes(states_by_number: &BTreeMap<i32, BTreeSet<i32>>, modes: &[String]) -> usize {
+    use casa_core::memory::btree_node_bytes;
+
+    let mut entries = 0;
+    let mut scratch = 0;
+    let mut states = 0;
+    for scan_states in states_by_number.values() {
+        let (owned, temporary) =
+            catalogue::intent_list_bytes(catalogue::scan_intents(scan_states, modes));
+        entries += size_of::<ScanEntry>() + 16 + owned;
+        scratch = scratch.max(temporary);
+        states += scan_states.len();
+    }
+    entries
+        + scratch
+        + btree_node_bytes::<i32, ScanId>(states_by_number.len())
+        + btree_node_bytes::<i32, ()>(states)
 }
 
 /// One partition's grid while the second pass places its rows.
@@ -594,9 +597,9 @@ impl Placing {
 
 /// The opening index of a MAIN table.
 #[derive(Debug, PartialEq)]
-pub(super) struct Index {
+pub(super) struct Index<'a> {
     /// Every grid and its original key, in refined key order.
-    pub(super) partitions: Vec<(PartitionKey, Grid)>,
+    pub(super) partitions: Vec<(PartitionKey<'a>, Grid)>,
     /// The scans, by ascending `SCAN_NUMBER`.
     pub(super) scans: Vec<ScanEntry>,
     /// The `STATE_ID`s MAIN's rows hold, -1 and those beyond `STATE`
@@ -604,7 +607,7 @@ pub(super) struct Index {
     pub(super) states: BTreeSet<i32>,
 }
 
-impl Index {
+impl<'a> Index<'a> {
     /// Partition `main`'s rows and place them on their grids, reading the
     /// key columns `rows_per_chunk` rows at a time.
     ///
@@ -626,7 +629,7 @@ impl Index {
     pub(super) fn build(
         main: &Table,
         scheme: PartitionScheme,
-        (state_modes, field_ephemeris): (&[String], &[Option<i32>]),
+        (state_modes, field_ephemeris): (&'a [String], &'a [Option<i32>]),
         rows_per_chunk: usize,
         grant: &mut OpeningGrant<'_>,
     ) -> Result<Self, ObservationError> {
@@ -638,7 +641,8 @@ impl Index {
             .step_by(rows_per_chunk)
             .map(|start| start..start.saturating_add(rows_per_chunk).min(rows))
             .collect();
-        let chunk_bytes = rows_per_chunk.min(rows) * CHUNK_ROW_BYTES;
+        let key_bytes =
+            rows_per_chunk.min(rows) * CHUNK_ROW_BYTES + Keys::mode_bytes(state_modes.len());
         let mut granted = 0;
         let mut ensure = |needed: usize| -> Result<(), ObservationError> {
             if needed > granted {
@@ -652,7 +656,7 @@ impl Index {
             }
             Ok(())
         };
-        ensure(chunk_bytes)?;
+        ensure(key_bytes)?;
         let mut keys = Keys::new(scheme, state_modes, field_ephemeris);
         let mut columns = KeyColumns::default();
         let mut split_bytes = 0;
@@ -665,7 +669,7 @@ impl Index {
                 survey.gather(
                     &keys,
                     (&columns, chunk.start),
-                    chunk_bytes + split_bytes,
+                    key_bytes + split_bytes,
                     &mut ensure,
                 )?;
             }
@@ -681,16 +685,19 @@ impl Index {
                 break survey;
             }
             split_bytes = count * size_of::<(RowKey, PartitionScheme)>();
-            ensure(chunk_bytes + survey.bytes + split_bytes)?;
+            ensure(key_bytes + survey.bytes + split_bytes)?;
             keys.splits = Vec::with_capacity(count);
             keys.splits
                 .extend(splits.map(|(&key, partition)| (key, partition.split)));
         };
-        let states: BTreeSet<i32> = survey.scan_states.values().flatten().copied().collect();
-        let (scans, scan_ids) = catalogue::scans(survey.scan_states, state_modes);
-        let scans_bytes = scans_bytes(&scans, scan_ids.len(), states.len());
+        let scans_bytes = scans_bytes(&survey.scan_states, state_modes);
         let grids: usize = survey.partitions.values().map(Gathered::grid_bytes).sum();
-        ensure(chunk_bytes + split_bytes + survey.bytes + scans_bytes + grids)?;
+        ensure(key_bytes + split_bytes + survey.bytes + scans_bytes + grids)?;
+        let mut states = BTreeSet::new();
+        for &state in survey.scan_states.values().flatten() {
+            states.insert(state);
+        }
+        let (scans, scan_ids) = catalogue::scans(survey.scan_states, state_modes);
         let order: Vec<RowKey> = survey.partitions.keys().copied().collect();
         let mut grids = survey
             .partitions

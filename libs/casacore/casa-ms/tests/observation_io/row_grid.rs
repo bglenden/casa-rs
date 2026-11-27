@@ -2,7 +2,7 @@
 
 use casa_core::measures::MjdHighPrec;
 use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
-use casa_ms::observation_io::Msv2Observation;
+use casa_ms::observation_io::{Msv2Observation, OpenOptions, PartitionScheme};
 use casa_ms::{MeasurementSet, OptionalMainColumn, SubtableId, VisibilityDataColumn};
 use casa_observation::{
     AccessRequest, BatchBuffers, ObservationError, PartitionId, ProcessorId, ReadEvent,
@@ -206,6 +206,16 @@ fn check_traversal(observation: &Msv2Observation, ms: &MeasurementSet) {
     assert!(padding > 0, "the affected grid has a hole");
 }
 
+fn add_weight_spectrum(main: &mut Table) {
+    let schema = casa_ms::build_table_schema(&[*OptionalMainColumn::WeightSpectrum.column_def()])
+        .expect("weight schema");
+    main.add_column(
+        schema.column("WEIGHT_SPECTRUM").expect("column").clone(),
+        None,
+    )
+    .expect("add spectral weights");
+}
+
 /// Automatic splits keep the original weight probe and leave a second,
 /// regular partition in the same store on its original grid.
 #[test]
@@ -225,13 +235,7 @@ fn only_the_conflicting_partition_splits_with_one_weight_extent() {
     let mut ms = MeasurementSet::open(&path).expect("fixture");
     let main = ms.main_table_mut();
     set_key(main, 1, "SCAN_NUMBER", 4);
-    let schema = casa_ms::build_table_schema(&[*OptionalMainColumn::WeightSpectrum.column_def()])
-        .expect("weight schema");
-    main.add_column(
-        schema.column("WEIGHT_SPECTRUM").expect("column").clone(),
-        None,
-    )
-    .expect("add spectral weights");
+    add_weight_spectrum(main);
     main.row_accessor_mut()
         .set_cell(
             1,
@@ -272,4 +276,111 @@ fn only_the_conflicting_partition_splits_with_one_weight_extent() {
             .iter()
             .all(|p| p.weights.as_ref().expect("weights").variable == "WEIGHT")
     );
+}
+
+/// Both rows have the same TIME. Processor 0 sorts first even though its
+/// row is physically second. Only that row has spectral weights.
+#[test]
+fn processor_weight_probes_follow_the_requested_extent() {
+    let root = tempfile::tempdir().expect("root");
+    let path = fixture(root.path(), "ms_trial.ms");
+    let mut ms = MeasurementSet::open(&path).expect("fixture");
+    add_processors(&mut ms);
+    let main = ms.main_table_mut();
+    main.remove_rows(&(2..main.row_count()).collect::<Vec<_>>())
+        .expect("keep the first two acquisitions");
+    set_key(main, 0, "PROCESSOR_ID", 1);
+    let scalar = [[2.0, 3.0, 4.0, 5.0], [6.0, 7.0, 8.0, 9.0]];
+    for (row, weights) in scalar.iter().enumerate() {
+        main.row_accessor_mut()
+            .set_cell(
+                row,
+                "WEIGHT",
+                Value::Array(ArrayValue::Float32(
+                    ndarray::Array1::from_vec(weights.to_vec()).into_dyn(),
+                )),
+            )
+            .expect("scalar weights");
+    }
+    add_weight_spectrum(main);
+    let spectral = ndarray::ArrayD::from_shape_fn(vec![4, 8], |i| 50.0 + (10 * i[1] + i[0]) as f32);
+    main.row_accessor_mut()
+        .set_cell(
+            1,
+            "WEIGHT_SPECTRUM",
+            Value::Array(ArrayValue::Float32(spectral)),
+        )
+        .expect("spectral weights for the physically second row");
+    ms.save().expect("save");
+    drop(ms);
+
+    let default = Msv2Observation::open(&path).expect("open with default weight scope");
+    let default_weights = processor_weights(&default);
+    assert_eq!(
+        default_weights,
+        [
+            [50.0, 51.0, 52.0, 53.0, 60.0, 61.0, 62.0, 63.0],
+            [2.0, 3.0, 4.0, 5.0, 2.0, 3.0, 4.0, 5.0],
+        ]
+    );
+    drop(default);
+
+    let imaging = Msv2Observation::open_with(
+        &path,
+        &OpenOptions {
+            partition_scheme: PartitionScheme {
+                fields: true,
+                ..PartitionScheme::default()
+            },
+            weight_spectrum_unsplit: true,
+            visibility_frequency_frame: true,
+            ..OpenOptions::default()
+        },
+    )
+    .expect("open with imaging weight scope");
+    let imaging_weights = processor_weights(&imaging);
+    assert_eq!(
+        imaging_weights,
+        [
+            [6.0, 7.0, 8.0, 9.0, 6.0, 7.0, 8.0, 9.0],
+            [2.0, 3.0, 4.0, 5.0, 2.0, 3.0, 4.0, 5.0],
+        ]
+    );
+    eprintln!("processor order [0, 1]: default {default_weights:?}, imaging {imaging_weights:?}");
+}
+
+fn processor_weights(observation: &Msv2Observation) -> Vec<Vec<f32>> {
+    let catalogue = observation.catalogue();
+    let ids = catalogue.partition_ids();
+    assert_eq!(ids, [PartitionId(0), PartitionId(1)]);
+    assert_eq!(observation.first_row(ids[0]), Some(1));
+    assert_eq!(observation.first_row(ids[1]), Some(0));
+    let times = |id| observation.grid(id, "base").expect("grid").times_s;
+    assert_eq!(times(ids[0]), times(ids[1]), "the probes tie on TIME");
+    let access = AccessRequest {
+        partitions: ids,
+        ..request(0..2, usize::MAX)
+    };
+    let mut traversal = observation.bind_read(&access).expect("bind");
+    let mut buffers = BatchBuffers::default();
+    let mut delivered = Vec::new();
+    while let Some(event) = traversal.next(&mut buffers).expect("read the weights") {
+        if let ReadEvent::Batch(batch) = event {
+            assert_eq!(
+                catalogue.partitions[batch.partition.0 as usize].processor,
+                Some(ProcessorId(delivered.len() as u32))
+            );
+            assert_eq!(batch.shape(), [1, 2, 4]);
+            delivered.push(
+                batch
+                    .group
+                    .weights
+                    .expect("weights")
+                    .iter()
+                    .copied()
+                    .collect(),
+            );
+        }
+    }
+    delivered
 }

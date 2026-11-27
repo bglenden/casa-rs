@@ -119,6 +119,7 @@ fn the_msv2_adapter_holds_at_most_its_bounds() {
     let root = tempfile::tempdir().expect("test root");
     opening_and_pointing_hold_at_most_their_bounds(&root.path().join("regular"));
     adaptive_grids_fit_the_opening_grant(&root.path().join("adaptive"));
+    long_observing_modes_fit_the_last_accepted_grant(root.path());
     an_opening_beyond_its_budget_is_refused_before_its_grids(&root.path().join("jittered"));
     partially_filled_tree_nodes_fit_their_bound();
     many_small_partitions_fit_the_retained_charge(&root.path().join("partitions"));
@@ -349,6 +350,101 @@ fn adaptive_grids_fit_the_opening_grant(root: &Path) {
         held <= asked as u64,
         "the split held {held} bytes, granted {asked}"
     );
+}
+
+/// A common long mode must fit the last accepted grant even if opening
+/// refuses its next increase as scan intents or partition metadata grow.
+fn long_observing_modes_fit_the_last_accepted_grant(root: &Path) {
+    let peaks = ["SCAN_NUMBER", "PROCESSOR_ID"].map(|column| {
+        let (peak, accepted) = refuse_long_observing_modes(root, column);
+        (column, peak, accepted)
+    });
+    for (column, peak, accepted) in peaks {
+        assert!(
+            peak <= accepted as u64,
+            "{column}: peak {peak} exceeded last accepted grant {accepted}"
+        );
+    }
+}
+
+fn refuse_long_observing_modes(root: &Path, split_column: &str) -> (u64, usize) {
+    const SPLITS: usize = 128;
+    const BUDGET: usize = 8 << 20;
+    let directory = root.join(split_column);
+    std::fs::create_dir(&directory).expect("fixture directory");
+    let path = pointed_track(&directory, 1);
+    let long_intent = "LONG_".repeat(26_214);
+    let mode = format!(" TARGET#ON_SOURCE, {long_intent},, TARGET#ON_SOURCE ");
+    let mut ms = MeasurementSet::open(&path).expect("edit fixture");
+    ms.subtable_mut(casa_ms::SubtableId::State)
+        .expect("STATE")
+        .row_accessor_mut()
+        .set_cell(
+            0,
+            "OBS_MODE",
+            Value::Scalar(ScalarValue::String(mode.clone())),
+        )
+        .expect("common observing mode");
+    let main = ms.main_table_mut();
+    for row in 0..main.row_count() {
+        main.row_accessor_mut()
+            .set_cell(row, "STATE_ID", Value::Scalar(ScalarValue::Int32(0)))
+            .expect("common state");
+        main.row_accessor_mut()
+            .set_cell(
+                row,
+                split_column,
+                Value::Scalar(ScalarValue::Int32((row % SPLITS) as i32)),
+            )
+            .expect("split key");
+    }
+    ms.save().expect("save");
+    drop(ms);
+
+    let warm = Msv2Observation::open(&path).expect("warm opening");
+    assert_eq!(warm.catalogue().partitions.len(), SPLITS);
+    for id in warm.catalogue().partition_ids() {
+        assert_eq!(warm.obs_mode(id), mode);
+    }
+    let scans = &warm.catalogue().scans;
+    assert_eq!(
+        scans.len(),
+        if split_column == "SCAN_NUMBER" {
+            SPLITS
+        } else {
+            1
+        }
+    );
+    assert!(
+        scans
+            .iter()
+            .all(|scan| scan.intents == [long_intent.as_str(), "TARGET#ON_SOURCE"])
+    );
+    drop(warm);
+
+    let mut accepted = 0;
+    let mut refused = None;
+    let (result, peak) = peak_of(|| {
+        Msv2Observation::open_granted(
+            &path,
+            &OpenOptions::default(),
+            &mut budget_grant(BUDGET, &mut accepted, &mut refused),
+        )
+    });
+    eprintln!(
+        "{split_column}: peak {peak}, accepted {accepted}, refused {refused:?}, budget {BUDGET}"
+    );
+    let Err(ObservationError::OverBudget {
+        required,
+        budget: BUDGET,
+        ..
+    }) = result
+    else {
+        panic!("{split_column}: expected bounded opening to refuse");
+    };
+    assert_eq!(refused, Some(required));
+    assert!(accepted > 0 && accepted <= BUDGET && required > BUDGET);
+    (peak, accepted)
 }
 
 /// A track whose times differ by baseline group (every 50 rows) fills each

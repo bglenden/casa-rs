@@ -23,7 +23,9 @@ fn add_processor(ms: &mut MeasurementSet, mode: i32) {
 /// per-hand weights 1 and 3 and fluxes 2 and 6 Jy. The dirty image must
 /// therefore have 5 Jy at the phase centre and a sum of weights of 8.
 /// A regular grid with the same visibilities, UVW and weights at distinct
-/// times supplies the full-plane comparison.
+/// times supplies the full-plane comparison. In the processor case
+/// only the second physical row has spectral weights, and its processor
+/// sorts first. The original weight extent uses scalar weights for both.
 #[test]
 fn simultaneous_acquisitions_contribute_their_own_flux_and_weight() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
@@ -33,7 +35,7 @@ fn simultaneous_acquisitions_contribute_their_own_flux_and_weight() {
         ("TIME", "regular", 0),
         ("FIELD_ID", "field", 1),
         ("SCAN_NUMBER", "scan", 2),
-        ("PROCESSOR_ID", "processor", 1),
+        ("PROCESSOR_ID", "processor", 0),
     ] {
         let path = unequal_linear_parallel_hand_measurement_set(
             root.path(),
@@ -46,13 +48,14 @@ fn simultaneous_acquisitions_contribute_their_own_flux_and_weight() {
             let field = fields.row_accessor().row(0).expect("first field").clone();
             fields.add_row(field).expect("second field");
         }
-        if column == "PROCESSOR_ID" {
+        let processor_case = column == "PROCESSOR_ID";
+        if processor_case {
             add_processor(&mut ms, 0);
             add_processor(&mut ms, 1);
         }
         let main = ms.main_table_mut();
         main.row_accessor_mut()
-            .set_cell(0, "PROCESSOR_ID", int(0))
+            .set_cell(0, "PROCESSOR_ID", int(i32::from(processor_case)))
             .expect("first processor");
         main.add_row(main.row_accessor().row(0).expect("first row").clone())
             .expect("second acquisition");
@@ -84,6 +87,23 @@ fn simultaneous_acquisitions_contribute_their_own_flux_and_weight() {
             main.row_accessor_mut()
                 .set_cell(1, column, int(moved))
                 .expect("second row's key");
+        }
+        if processor_case {
+            let schema =
+                casa_ms::build_table_schema(&[*OptionalMainColumn::WeightSpectrum.column_def()])
+                    .expect("weight schema");
+            main.add_column(
+                schema.column("WEIGHT_SPECTRUM").expect("column").clone(),
+                None,
+            )
+            .expect("spectral weight column");
+            main.row_accessor_mut()
+                .set_cell(
+                    1,
+                    "WEIGHT_SPECTRUM",
+                    Value::Array(ArrayValue::Float32(ArrayD::from_elem(vec![4, 1], 50.0))),
+                )
+                .expect("spectral weights for the physically second row");
         }
         ms.save().expect("save");
         drop(ms);
