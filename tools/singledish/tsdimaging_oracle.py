@@ -6,7 +6,7 @@ Run with CASA 6.7.6's Python (for example
 `/Applications/CASA.app/Contents/Frameworks/Python.framework/Versions/3.12/bin/python3.12 -I`):
 
     python3 -I tools/singledish/tsdimaging_oracle.py --work WORK \\
-        --out crates/casa-imaging-singledish/tests/data/tsdimaging_casa.json.gz
+        --out libs/imaging/casa-imaging-singledish/tests/data/tsdimaging_casa.json.gz
 
 It makes a total-power MeasurementSet with CASA's own `simobserve`:
 - a 230 GHz model of three channels with a few Gaussians;

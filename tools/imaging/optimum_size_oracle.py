@@ -7,7 +7,7 @@ Run with CASA 6.7.6's Python (for example
 `/Applications/CASA.app/Contents/Frameworks/Python.framework/Versions/3.12/bin/python3.12 -I`):
 
     python3 -I tools/imaging/optimum_size_oracle.py \\
-        --out crates/casa-imaging-model/tests/data/optimum_sizes_casa.json
+        --out libs/imaging/casa-imaging-model/tests/data/optimum_sizes_casa.json
 
 It records `synthesisutils.getOptimumSize(n)` (`SynthesisUtilMethods::getOptimumSize`,
 which `tclean` warns with and `simutil.imtclean` applies) for every `n` from 0

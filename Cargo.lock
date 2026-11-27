@@ -412,7 +412,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "casa-imaging-application"
+name = "casa-imaging"
 version = "0.27.0"
 dependencies = [
  "base64",
@@ -523,7 +523,6 @@ dependencies = [
  "casa-imaging-deconvolution",
  "casa-imaging-model",
  "casa-numerics",
- "casa-test-support",
  "libc",
  "ndarray",
  "num-complex",
@@ -700,12 +699,17 @@ dependencies = [
  "casa-core",
  "casa-imageanalysis",
  "casa-images",
+ "casa-imaging",
+ "casa-imaging-model",
  "casa-lattices",
+ "casa-ms",
  "casa-tables",
  "casa-test-support",
  "ndarray",
  "num-complex",
+ "serde",
  "serde_json",
+ "sha2",
  "tempfile",
 ]
 
@@ -769,7 +773,7 @@ dependencies = [
  "casa-flagging",
  "casa-imageanalysis",
  "casa-images",
- "casa-imaging-application",
+ "casa-imaging",
  "casa-imaging-model",
  "casa-imaging-operator",
  "casa-imaging-products",
@@ -829,7 +833,7 @@ dependencies = [
  "casa-flagging",
  "casa-imageanalysis",
  "casa-images",
- "casa-imaging-application",
+ "casa-imaging",
  "casa-imaging-deconvolution",
  "casa-lattices",
  "casa-measures",
@@ -904,6 +908,9 @@ dependencies = [
  "casa-coordinates",
  "casa-core",
  "casa-images",
+ "casa-imaging-deconvolution",
+ "casa-imaging-model",
+ "casa-imaging-products",
  "casa-lattices",
  "casa-measures",
  "casa-ms",
@@ -932,7 +939,7 @@ dependencies = [
  "casa-flagging",
  "casa-imageanalysis",
  "casa-images",
- "casa-imaging-application",
+ "casa-imaging",
  "casa-imaging-deconvolution",
  "casa-lattices",
  "casa-measures",
@@ -2734,6 +2741,16 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
+ "sha2-asm",
+]
+
+[[package]]
+name = "sha2-asm"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b845214d6175804686b2bd482bcffe96651bb2d1200742b712003504a2dac1ab"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

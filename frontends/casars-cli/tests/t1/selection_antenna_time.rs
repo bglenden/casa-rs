@@ -4,7 +4,7 @@
 //! semantics select, counted here from MAIN directly, and the selectors
 //! CASA refuses write no images. The grammars themselves are pinned against
 //! CASA in `casa-ms` (`antenna_expr`, `time_expr`); the row oracle
-//! (`casa-imaging-application/tests/selection_casa_oracle.rs`) checks
+//! (`libs/imaging/casa-imaging/src/store_law/selection_casa_oracle.rs`) checks
 //! CASA's own rows on a real MeasurementSet.
 
 use casa_core::ScalarValue;

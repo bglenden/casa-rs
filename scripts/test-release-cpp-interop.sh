@@ -58,7 +58,7 @@ run_timed_step \
     --test simulator_cpp_interop
 run_timed_step \
   "Running imaging product replacement C++ interop" \
-  cargo test -p casa-imaging-products --features cpp-interop-tests \
-    --test replacement_interop
+  cargo test -p casacore-interop --features cpp-interop-tests \
+    --test imaging_replacement_interop
 script_finished_at="$(date +%s)"
 echo "C++ interop release gate completed in $(format_elapsed $(( script_finished_at - script_started_at )))"

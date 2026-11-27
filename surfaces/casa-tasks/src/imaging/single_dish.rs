@@ -6,7 +6,7 @@ use casa_contracts::{
     ProviderProtocolDescriptor, ProviderSurfaceKind, TaskProviderContract, builtin_surface_bundle,
     merged_components,
 };
-use casa_imaging_application::{
+use casa_imaging::{
     Cancel, HostResources, ResourcePolicy, RunContext, single_dish::image_from_parameters,
 };
 use schemars::{JsonSchema, schema_for};

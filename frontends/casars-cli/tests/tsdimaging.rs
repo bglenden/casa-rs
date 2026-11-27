@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 fn fixture(root: &Path) -> PathBuf {
     let archive = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../crates/casa-imaging-application/tests/data/tsdimaging_task_inputs.tar.gz");
+        .join("../../libs/imaging/casa-imaging/tests/data/tsdimaging_task_inputs.tar.gz");
     let output = std::process::Command::new("tar")
         .args(["-xzf"])
         .arg(archive)
@@ -227,8 +227,8 @@ fn compare_coordinates(image: &casa_images::PagedImage<f32>, reference: &Value) 
 #[test]
 fn selected_channels_and_declared_unit_precedence_match_actual_casa() {
     let root = tempfile::tempdir().unwrap();
-    let data = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../crates/casa-imaging-application/tests/data");
+    let data =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../libs/imaging/casa-imaging/tests/data");
     assert!(
         std::process::Command::new("tar")
             .arg("-xzf")

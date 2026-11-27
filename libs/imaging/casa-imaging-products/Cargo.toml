@@ -1,0 +1,36 @@
+[package]
+name = "casa-imaging-products"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Normalization, restoration, Taylor and PB products, and their CASA image writer"
+repository.workspace = true
+publish = true
+autotests = false
+
+[lints]
+workspace = true
+
+[dependencies]
+tracing.workspace = true
+casa-coordinates.workspace = true
+casa-fft.workspace = true
+casa-images.workspace = true
+casa-imaging-deconvolution.workspace = true
+casa-imaging-model.workspace = true
+casa-numerics.workspace = true
+casa-core.workspace = true
+libc = "0.2"
+ndarray.workspace = true
+num-complex.workspace = true
+tempfile = "3"
+thiserror.workspace = true
+
+[[test]]
+name = "api"
+path = "tests/api.rs"
+
+[[test]]
+name = "writer_coordinate_memory"
+path = "tests/writer_coordinate_memory.rs"

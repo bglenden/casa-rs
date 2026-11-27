@@ -11,7 +11,7 @@ resolved case, the tclean refusals casa-rs would raise, from two sources:
   `applies_when` holds (`casa-task-runtime/src/unimplemented.rs`), one marked
   `unimplemented_forms` refuses the forms it names, and the value domains of
   `parameter-catalog.json` refuse values of the wrong shape;
-* `crates/casa-imaging-application/src/tclean.rs`: every
+* `libs/imaging/casa-imaging/src/tclean.rs`: every
   `TcleanRefusal::not_yet` and `TcleanRefusal::new` site, mirrored here
   condition by condition (this file names the function of each). A site whose
   message says CASA's tclean refuses the same value is a parity refusal, not
@@ -23,10 +23,10 @@ existing image to the same grid and family of products, refuses a new or
 automatic mask over an existing one when cleaning and outlier fields, and
 reads the PSF and residual (`calcpsf`, `calcres`) only with the standard and
 W-projection gridders on one facet and only where an earlier call left them
-(`casa-imaging-application/src/restart.rs`); the cfcache surface
+(`casa-imaging/src/restart.rs`); the cfcache surface
 note, by which awproject reads an existing CASA cache and never writes one,
 so a cache the test does not stage from casatestdata is missing; and the
-availability gate (`casa-imaging-application/src/availability.rs`, `check`)
+availability gate (`casa-imaging/src/availability.rs`, `check`)
 for what the parameters alone decide (a polarized Taylor basis, facets beyond
 single-term MFS with the standard gridder, AW projection of a non-square
 grid or of a list of MeasurementSets).
@@ -59,7 +59,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SURFACES = ROOT / "crates/casa-provider-contracts/resources/parameter-surfaces.json"
 CATALOG = ROOT / "crates/casa-provider-contracts/resources/parameter-catalog.json"
-TCLEAN_RS = ROOT / "crates/casa-imaging-application/src/tclean.rs"
+TCLEAN_RS = ROOT / "libs/imaging/casa-imaging/src/tclean.rs"
 
 NOT_YET = "tclean.rs not_yet"
 CASA_RS = "tclean.rs refusal (casa-rs only)"

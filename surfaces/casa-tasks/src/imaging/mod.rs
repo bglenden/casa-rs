@@ -20,9 +20,7 @@ use std::{path::PathBuf, time::Instant};
 
 use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess, resolve_plain_values};
 use casa_contracts::{ParameterValue, SurfaceContractBundle};
-use casa_imaging_application::{
-    Cancel, HostResources, ImagingRequest, RunContext, SummaryTarget, execute,
-};
+use casa_imaging::{Cancel, HostResources, ImagingRequest, RunContext, SummaryTarget, execute};
 use serde_json::{Map, Value};
 
 pub use casa_return::{RunReturn, tclean_record};
@@ -91,7 +89,7 @@ fn request_from(
     })?;
     // AWP2 reads the same physical dish data as CASA when the host has
     // the local data tree. The imaging library takes an explicit path.
-    if let casa_imaging_application::Gridder::Awp2 { evla_surface, .. } = &mut request.gridder
+    if let casa_imaging::Gridder::Awp2 { evla_surface, .. } = &mut request.gridder
         && evla_surface.is_none()
     {
         *evla_surface = evla_surface_fallback.cloned();
@@ -115,7 +113,7 @@ pub fn resolve_request(
 /// neither does a tclean run here (owner decision of 2026-11-02, #980); set
 /// to `1`, the binary also writes `<imagename>.summary.json`, the run's
 /// status, resolved parameters, backend and each phase's time and memory,
-/// for performance tooling ([`casa_imaging_application::RunSummary`]).
+/// for performance tooling ([`casa_imaging::RunSummary`]).
 pub const RUN_SUMMARY_VARIABLE: &str = "CASA_RS_IMAGER_RUN_SUMMARY";
 
 /// Whether this process was asked for run summaries
@@ -305,12 +303,12 @@ pub fn run_task_with_options(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use casa_imaging_application::{default_tclean_parameters, single_dish};
+    use casa_imaging::{default_tclean_parameters, single_dish};
     use serde_json::json;
 
     #[test]
     fn native_aw_paths_use_the_workspace() {
-        use casa_imaging_application::{AwCfSource, Gridder};
+        use casa_imaging::{AwCfSource, Gridder};
 
         let workspace = tempfile::tempdir().unwrap();
         let bundle = casa_contracts::builtin_surface_bundle("tclean").unwrap();

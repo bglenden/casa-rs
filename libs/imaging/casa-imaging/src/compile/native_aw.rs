@@ -1,0 +1,581 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+//! Resolve the native EVLA request from the already selected observation.
+
+use std::io::Read;
+
+use casa_core::quanta::Unit;
+use casa_imaging_model::{
+    EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequestInput, NativeAwTerms,
+    PolarizationCoordinate,
+};
+use casa_ms::observation_io::Msv2Observation;
+use casa_observation::{AntennaId, Catalogue, Receptors, WindowId};
+
+use super::spectral::PreparedSpectralAxis;
+use super::survey::{FirstCrossSample, Survey};
+use super::{PrepareError, Surveyed};
+use crate::{AwCfSource, AwProjection, ImagingRequest};
+
+/// Bounded metadata acquisition; pixel generation remains in the admitted phase.
+pub(super) fn resolve(
+    request: &ImagingRequest,
+    aw: &AwProjection,
+    surveyed: &Surveyed<'_>,
+    first_cross: FirstCrossSample,
+    context: &crate::RunContext,
+) -> Result<NativeAwRequestInput, PrepareError> {
+    let AwCfSource::NativeEvla {
+        evla_surface,
+        native_cf_working_size,
+        native_cf_oversampling,
+        native_cf_maximum_cells,
+        ..
+    } = &aw.cf_source
+    else {
+        unreachable!("native AW resolves only a native cache");
+    };
+    let surface = evla_dish(surveyed.catalogue, first_cross, evla_surface, aw.aterm)?;
+    let reference_frequency_hz = surveyed.spectral.reference_frequency_hz;
+    let frequencies = frequency_groups((surveyed.reference, surveyed.survey), surveyed.spectral);
+    let feed_angle = receptor_zero_angle(
+        surveyed.catalogue,
+        surveyed.msv2,
+        frequencies[0].spectral_window,
+    )? as f32;
+    let frequencies = if aw.wideband() {
+        frequencies
+    } else {
+        reference_group(frequencies, reference_frequency_hz)
+    };
+    // AW projection images square grids of square cells (the availability
+    // gate refuses others), so x stands for both axes.
+    let sky_cell = request.cell[0].to_radians() / 3600.0;
+    let planes = aw
+        .wprojplanes
+        .expect("a validated AW request names its W planes")
+        .get();
+    let (w_values, w_increment) = w_grid(planes, sky_cell);
+    let working_cell = sky_cell * *native_cf_oversampling as f64 * request.imsize[0] as f64
+        / *native_cf_working_size as f64;
+    let mueller_elements = mueller_elements(&request.stokes)?;
+    let pa_values = if aw.computepastep == 360.0 {
+        vec![f64::from(feed_pa(
+            surveyed,
+            first_cross.time_mjd_seconds,
+            first_cross.field_id,
+            feed_angle,
+        )?)]
+    } else {
+        let [window] = surveyed.survey.spectral_windows.as_slice() else {
+            return Err(PrepareError::NativeAwPaScope);
+        };
+        if surveyed.survey.fields.len() != 1 || request.specmode != crate::SpecMode::Mfs {
+            return Err(PrepareError::NativeAwPaScope);
+        }
+        let groups_per_pa = frequencies.len() * w_values.len();
+        let cell_limit = *native_cf_maximum_cells / (groups_per_pa * mueller_elements.len());
+        let key_limit = (usize::from(u16::MAX) + 1) / groups_per_pa;
+        let epochs = surveyed.survey.window_epochs(window.spw_id);
+        let limit = cell_limit.min(key_limit).min(epochs.len());
+        let _admission = casa_imaging_runtime::admit(
+            &context.host,
+            &context.policy,
+            &casa_imaging_runtime::Demand {
+                phase: "native AW PA centres",
+                memory: (2 * limit * size_of::<f64>()) as u64,
+            },
+        )?;
+        let angles = epochs
+            .iter()
+            .filter(|epoch| epoch.has_unflagged_cross)
+            .map(|epoch| feed_pa(surveyed, epoch.time_mjd_seconds, epoch.field_id, feed_angle));
+        planned_pa_centres(angles, aw.pa_tolerance_rad(), limit)?
+    };
+    Ok(NativeAwRequestInput {
+        surface,
+        antenna_diameter_m: 25.0,
+        frequencies,
+        w_values,
+        w_increment,
+        pa_values,
+        mueller_elements,
+        reference_frequency_hz,
+        grid: NativeAwGrid {
+            size: *native_cf_working_size,
+            sky_increment_rad: [-working_cell, working_cell],
+            oversampling: *native_cf_oversampling,
+        },
+        // `AWProjectFT::makeCFObject`: the W term only over more than one
+        // plane, wideband cells only with the aperture.
+        terms: NativeAwTerms {
+            aperture: aw.aterm,
+            w_term: planes > 1,
+            prolate_spheroidal: aw.psterm,
+            wideband: aw.wideband(),
+            conjugate_beams: aw.conjbeams,
+        },
+        maximum_cells: *native_cf_maximum_cells,
+    })
+}
+
+/// Antenna zero's Float physical PA plus feed zero's first receptor angle.
+pub(super) fn feed_pa(
+    surveyed: &Surveyed<'_>,
+    time_s: f64,
+    field: i32,
+    feed_rad: f32,
+) -> Result<f32, PrepareError> {
+    let field = usize::try_from(field).expect("a surveyed field is a FIELD row");
+    let angle = surveyed.engine.parallactic_angle(time_s, field, 0)? as f32;
+    Ok(angle + feed_rad)
+}
+
+/// Generate a centre at the first uncovered selected feed angle.
+/// `AWProjectFT::findConvFunction` fills a cache miss with that angle.
+/// Check the persisted Float-degree centres so native cold and warm
+/// lookups have the same coverage and first-candidate order.
+fn planned_pa_centres(
+    samples: impl IntoIterator<Item = Result<f32, PrepareError>>,
+    step_rad: f32,
+    limit: usize,
+) -> Result<Vec<f64>, PrepareError> {
+    use casa_imaging_model::NativeAwRequestError;
+    use casa_imaging_operator::{first_covered_pa, stored_pa_rad};
+
+    let import_tolerance = 1.0_f32.to_radians();
+    let mut centres_deg = Vec::with_capacity(limit);
+    for pa in samples {
+        let pa = pa?;
+        if !pa.is_finite() {
+            return Err(NativeAwRequestError::InvalidSampling.into());
+        }
+        if first_covered_pa(&centres_deg, pa, step_rad).is_some() {
+            continue;
+        }
+        let degrees = f64::from(pa).to_degrees();
+        let stored = stored_pa_rad(degrees);
+        if (stored - pa).abs() >= step_rad
+            || first_covered_pa(&centres_deg, stored, import_tolerance).is_some()
+        {
+            return Err(PrepareError::NativeAwPaSpacing);
+        }
+        if centres_deg.len() == limit {
+            return Err(NativeAwRequestError::InvalidCatalog.into());
+        }
+        let at = centres_deg.partition_point(|centre| *centre < degrees);
+        centres_deg.insert(at, degrees);
+    }
+    // The original Float radians generated each Double degree header.
+    // Converting back recovers the input Float used to build the aperture.
+    for centre in &mut centres_deg {
+        *centre = f64::from(centre.to_radians() as f32);
+    }
+    centres_deg.shrink_to_fit();
+    Ok(centres_deg)
+}
+
+/// The EVLA dish surface, after checking that the observation is EVLA with
+/// the homogeneous 25 m dishes the native model describes. CASA images a
+/// `VLA` observation through the same `EVLAAperture`
+/// (`AWProjectFT::createTelescopeATerm`) but with the old VLA's feeds,
+/// which the native model lacks; without the aperture (`aterm=False`) the
+/// cells hold no feed, so either name serves.
+fn evla_dish(
+    catalogue: &Catalogue,
+    first_cross: FirstCrossSample,
+    evla_surface: &std::path::Path,
+    aperture: bool,
+) -> Result<EvlaDishSurface, PrepareError> {
+    let telescope = catalogue
+        .observations
+        .get(usize::try_from(first_cross.observation_id).expect("an observation is a row"))
+        .map(|observation| observation.telescope.trim());
+    let modelled = match telescope {
+        Some("EVLA") => true,
+        Some("VLA") => !aperture,
+        _ => false,
+    };
+    if !modelled {
+        return Err(PrepareError::NativeAwTelescope);
+    }
+    if super::instrument::dish_diameters(catalogue)
+        .iter()
+        .any(|diameter| *diameter != 25.0)
+    {
+        return Err(PrepareError::NativeAwDishes);
+    }
+    read_dish_surface(evla_surface)
+}
+
+pub(super) fn read_dish_surface(
+    evla_surface: &std::path::Path,
+) -> Result<EvlaDishSurface, PrepareError> {
+    // Acquire the reference data through a bounded read.
+    let mut bytes = Vec::new();
+    std::fs::File::open(evla_surface)
+        .and_then(|file| file.take(1_048_577).read_to_end(&mut bytes))
+        .map_err(|source| PrepareError::EvlaSurface {
+            path: evla_surface.to_path_buf(),
+            source,
+        })?;
+    if bytes.len() > 1_048_576 {
+        return Err(PrepareError::NativeAwSurfaceSize);
+    }
+    let text = std::str::from_utf8(&bytes).map_err(|_| PrepareError::EvlaSurfaceText {
+        path: evla_surface.to_path_buf(),
+    })?;
+    Ok(EvlaDishSurface::from_surface_text(text)?)
+}
+
+/// One frequency group per selected SPW of the store `store` surveyed
+/// (`survey`), in increasing CF frequency.
+fn frequency_groups(
+    (store, survey): (usize, &Survey),
+    spectral: &PreparedSpectralAxis<'_>,
+) -> Vec<NativeAwFrequencyGroup> {
+    let mut frequencies = survey
+        .spectral_windows
+        .iter()
+        .map(|window| {
+            let channel_frequencies_hz = spectral
+                .window_channels(store, window.spw_id)
+                .iter()
+                .map(|index| {
+                    *window
+                        .frequencies_hz
+                        .get(*index)
+                        .expect("selected channels index their window's frequency axis")
+                })
+                .collect::<Vec<_>>();
+            // TransformMachines2::makeFreqValList selects each SPW's high endpoint.
+            let cf_frequency_hz = channel_frequencies_hz
+                .iter()
+                .copied()
+                .reduce(f64::max)
+                .expect("the spectral axis selects at least one channel of every window");
+            NativeAwFrequencyGroup {
+                spectral_window: u32::try_from(window.spw_id)
+                    .expect("SPW ids are nonnegative stored i32 values"),
+                channel_frequencies_hz,
+                cf_frequency_hz,
+            }
+        })
+        .collect::<Vec<_>>();
+    frequencies.sort_by(|left, right| left.cf_frequency_hz.total_cmp(&right.cf_frequency_hz));
+    frequencies
+}
+
+/// The one frequency group of a run without wideband cells:
+/// `AWConvFunc::makeFreqValList` samples the aperture at the image
+/// reference frequency alone, whatever the windows. The group names the
+/// lowest window id and holds every selected channel, which the cache's
+/// manifest records.
+fn reference_group(
+    groups: Vec<NativeAwFrequencyGroup>,
+    reference_frequency_hz: f64,
+) -> Vec<NativeAwFrequencyGroup> {
+    let spectral_window = groups
+        .iter()
+        .map(|group| group.spectral_window)
+        .min()
+        .expect("the spectral axis selects a window");
+    let mut channel_frequencies_hz = groups
+        .into_iter()
+        .flat_map(|group| group.channel_frequencies_hz)
+        .collect::<Vec<_>>();
+    channel_frequencies_hz.sort_by(f64::total_cmp);
+    vec![NativeAwFrequencyGroup {
+        spectral_window,
+        channel_frequencies_hz,
+        cf_frequency_hz: reference_frequency_hz,
+    }]
+}
+
+/// The W values of `planes` planes and their increment. CASA AWConvFunc
+/// derives its W grid from the requested field of view, not the observed W
+/// envelope: maxUVW=1/(4*sky_increment), w=i²/wScale. One plane is the
+/// co-planar w = 0 with no scale (`wScale` stays zero, `makeWValList`).
+fn w_grid(planes: usize, sky_cell: f64) -> (Vec<f64>, f64) {
+    if planes <= 1 {
+        return (vec![0.0], 0.0);
+    }
+    let max_w = 1.0 / (sky_cell * 4.0);
+    let w_increment = ((planes - 1) * (planes - 1)) as f32 as f64 / max_w;
+    let w_values = (0..planes)
+        .map(|index| (index * index) as f64 / w_increment)
+        .collect();
+    (w_values, w_increment)
+}
+
+/// The Mueller elements of the imaged polarization. The catalog routes
+/// each hand through its own element and, for the conjugate baseline, the
+/// opposite hand (`makeConjPolMap`), so a single-hand image still needs
+/// both diagonal elements.
+fn mueller_elements(stokes: &[PolarizationCoordinate]) -> Result<Vec<usize>, PrepareError> {
+    match stokes {
+        [PolarizationCoordinate::CircularRr]
+        | [PolarizationCoordinate::CircularLl]
+        | [PolarizationCoordinate::StokesI] => Ok(vec![0, 15]),
+        _ => Err(PrepareError::NativeAwPolarization),
+    }
+}
+
+/// Antenna 0's first receptor angle in window `spw`, radians: the feed
+/// angle CASA's AW projection adds to the parallactic angle. CASA reads it
+/// as casacore's `MSIter` states feed 0's (`feed_pa`:
+/// `receptorAngles().xyPlane(0)`), whatever feeds MAIN's rows name and
+/// whether or not antenna 0 has a selected baseline; on an MSv2 the adapter
+/// states that `FEED` row ([`Msv2Observation::feed_receptors`]). An MSv4
+/// numbers no feeds: each partition's `antenna_xds` states the receptors of
+/// its antennas, so there the angle is antenna 0's as the window's
+/// partitions, selected or not, state it, which must agree.
+pub(super) fn receptor_zero_angle(
+    catalogue: &Catalogue,
+    msv2: Option<&Msv2Observation>,
+    spw: u32,
+) -> Result<f64, PrepareError> {
+    let radians = Unit::new("rad").expect("radians are a unit");
+    let first_angle = |receptors: &Receptors| {
+        receptors
+            .angles
+            .first()
+            .and_then(|angle| angle.get_value_in(&radians).ok())
+            .filter(|value| value.is_finite())
+            .ok_or(PrepareError::FeedAngleNotFinite)
+    };
+    if let Some(ms) = msv2 {
+        return ms
+            .feed_receptors(AntennaId(0), 0, WindowId(spw))
+            .ok_or(PrepareError::NoApplicableFeed)
+            .and_then(first_angle);
+    }
+    let mut angle = None;
+    for entry in catalogue
+        .partitions
+        .iter()
+        .filter(|entry| entry.window == WindowId(spw))
+    {
+        let Some(receptors) = entry.receptors.get(&AntennaId(0)) else {
+            continue;
+        };
+        let value = first_angle(receptors)?;
+        if angle.is_some_and(|previous: f64| previous.to_bits() != value.to_bits()) {
+            return Err(PrepareError::FeedAngleAmbiguous);
+        }
+        angle = Some(value);
+    }
+    angle.ok_or(PrepareError::NoApplicableFeed)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use casa_core::{ArrayValue, ScalarValue, Value};
+    use casa_ms::observation_io::Msv4Observation;
+    use casa_ms::{MeasurementSet, SubtableId};
+    use casa_mstransform::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
+
+    use super::*;
+
+    #[test]
+    fn generated_pa_centres_cover_strict_endpoints_and_revisits() {
+        let step = 5.0_f32.to_radians();
+        let angles = [0.0, step.next_down(), step, -step, step / 2.0, -step / 2.0];
+        let centres = planned_pa_centres(angles.into_iter().map(Ok), step, 4).expect("plan");
+        assert_eq!(centres, [-f64::from(step), 0.0, f64::from(step)]);
+    }
+
+    #[test]
+    fn generated_pa_centres_respect_the_cell_bound_and_casa_reload_spacing() {
+        assert!(matches!(
+            planned_pa_centres([Ok(0.0), Ok(0.25)], 0.125, 1),
+            Err(PrepareError::NativeAwRequest(
+                casa_imaging_model::NativeAwRequestError::InvalidCatalog
+            ))
+        ));
+        assert!(matches!(
+            planned_pa_centres([Ok(0.0), Ok(0.5_f32.to_radians())], 0.1_f32.to_radians(), 2),
+            Err(PrepareError::NativeAwPaSpacing)
+        ));
+    }
+
+    #[test]
+    fn generated_pa_centre_must_cover_its_original_float_angle_after_reload() {
+        let original = f32::from_bits(0x3f0e_faa2);
+        // The cache's Float degrees round this angle up by one Float radian ULP.
+        let gap = original.next_up() - original;
+        assert!(matches!(
+            planned_pa_centres([Ok(original)], gap, 1),
+            Err(PrepareError::NativeAwPaSpacing)
+        ));
+        assert_eq!(
+            planned_pa_centres([Ok(original)], gap.next_up(), 1).expect("covered"),
+            [f64::from(original)]
+        );
+    }
+
+    /// `AWConvFunc::makeConvFunction`: `wScale = (n−1)²/maxUVW` over more
+    /// than one plane, `w = i²/wScale`; one plane is w = 0 with no scale.
+    #[test]
+    fn the_w_grid_is_casas_and_one_plane_is_co_planar() {
+        assert_eq!(w_grid(1, 1.0e-4), (vec![0.0], 0.0));
+        let (values, increment) = w_grid(3, 1.0e-4);
+        let max_w = 1.0 / (4.0e-4);
+        assert_eq!(increment, 4.0 / max_w);
+        assert_eq!(values, [0.0, 1.0 / increment, 4.0 / increment]);
+    }
+
+    /// Without wideband cells, one group at the image reference frequency
+    /// holds every selected channel and names the lowest window.
+    #[test]
+    fn a_narrowband_request_samples_the_reference_frequency_alone() {
+        let group = |spectral_window, channels: &[f64]| NativeAwFrequencyGroup {
+            spectral_window,
+            channel_frequencies_hz: channels.to_vec(),
+            cf_frequency_hz: channels[channels.len() - 1],
+        };
+        let groups = vec![group(3, &[1.1e9, 1.2e9]), group(1, &[1.6e9, 1.7e9])];
+        let [only] = reference_group(groups, 1.4e9)
+            .try_into()
+            .expect("one group");
+        assert_eq!(only.spectral_window, 1);
+        assert_eq!(only.cf_frequency_hz, 1.4e9);
+        assert_eq!(only.channel_frequencies_hz, [1.1e9, 1.2e9, 1.6e9, 1.7e9]);
+    }
+
+    /// `ms_trial.ms`, unpacked into `root`, with antenna 0's feed 0 at
+    /// `angle` on both receptors.
+    fn trial(root: &Path, angle: f64) -> (PathBuf, MeasurementSet) {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../libs/casacore/casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
+        tar::Archive::new(flate2::read::GzDecoder::new(
+            std::fs::File::open(fixture).expect("the fixture"),
+        ))
+        .unpack(root)
+        .expect("unpacked");
+        let path = root.join("ms_trial.ms");
+        let mut ms = MeasurementSet::open(&path).expect("an editable MeasurementSet");
+        let rows: Vec<usize> = {
+            let feed = ms.feed().expect("FEED");
+            (0..feed.row_count())
+                .filter(|row| {
+                    feed.i32(*row, "ANTENNA_ID").expect("ANTENNA_ID") == 0
+                        && feed.i32(*row, "FEED_ID").expect("FEED_ID") == 0
+                })
+                .collect()
+        };
+        assert!(!rows.is_empty(), "antenna 0 has a feed 0");
+        let feed = ms.subtable_mut(SubtableId::Feed).expect("FEED");
+        for row in rows {
+            feed.cell_accessor_mut(row, "RECEPTOR_ANGLE")
+                .expect("RECEPTOR_ANGLE")
+                .set(Value::Array(ArrayValue::Float64(
+                    ndarray::arr1(&[angle, angle]).into_dyn(),
+                )))
+                .expect("set");
+        }
+        (path, ms)
+    }
+
+    fn msv2_angle(path: &Path) -> Result<f64, PrepareError> {
+        let observation = Msv2Observation::open(path).expect("the MeasurementSet opens");
+        let window = observation.catalogue().partitions[0].window;
+        receptor_zero_angle(observation.catalogue(), Some(&observation), window.0)
+    }
+
+    /// CASA reads feed 0's angle whatever feeds MAIN's rows name (Astra's
+    /// review of #1013): with MAIN on feed 1 at 0.2 rad, the angle is
+    /// still feed 0's.
+    #[test]
+    fn native_aw_reads_feed_zero_whatever_feeds_main_names() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let (path, mut ms) = trial(root.path(), 0.0);
+        let feed = ms.subtable_mut(SubtableId::Feed).expect("FEED");
+        for row in 0..feed.row_count() {
+            let mut copy = feed.row_accessor().row(row).expect("a FEED row").clone();
+            copy.upsert("FEED_ID", Value::Scalar(ScalarValue::Int32(1)));
+            copy.upsert(
+                "RECEPTOR_ANGLE",
+                Value::Array(ArrayValue::Float64(ndarray::arr1(&[0.2, 0.2]).into_dyn())),
+            );
+            feed.add_row(copy).expect("feed 1");
+        }
+        let rows = ms.row_count();
+        for column in ["FEED1", "FEED2"] {
+            ms.main_table_mut()
+                .fill_column_range(
+                    column,
+                    casa_tables::RowRange::new(0, rows),
+                    Value::Scalar(ScalarValue::Int32(1)),
+                )
+                .expect("MAIN on feed 1");
+        }
+        ms.save().expect("saved");
+        drop(ms);
+        assert_eq!(msv2_angle(&path).expect("an angle"), 0.0);
+    }
+
+    /// CASA reads antenna 0's feed whether or not antenna 0 has a selected
+    /// baseline (Astra's review of #1013).
+    #[test]
+    fn native_aw_reads_antenna_zero_without_its_baselines() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let (path, mut ms) = trial(root.path(), 0.3);
+        let antenna = |ms: &MeasurementSet, column: &str, row: usize| match ms
+            .main_table()
+            .column_accessor(column)
+            .expect("an antenna column")
+            .get(row)
+            .expect("a row")
+        {
+            Some(Value::Scalar(ScalarValue::Int32(id))) => *id,
+            other => panic!("{column} is {other:?}"),
+        };
+        let rows: Vec<usize> = (0..ms.row_count())
+            .filter(|row| {
+                antenna(&ms, "ANTENNA1", *row) == 0 || antenna(&ms, "ANTENNA2", *row) == 0
+            })
+            .collect();
+        assert!(rows.len() < ms.row_count(), "other baselines remain");
+        ms.main_table_mut()
+            .remove_rows(&rows)
+            .expect("antenna 0's rows removed");
+        ms.save().expect("saved");
+        drop(ms);
+        assert_eq!(msv2_angle(&path).expect("an angle"), 0.3);
+    }
+
+    /// An MSv4 states the angle its MeasurementSet's feed 0 does.
+    #[test]
+    fn an_msv4_states_the_feed_angle_of_its_measurement_set() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let (path, mut ms) = trial(root.path(), 0.3);
+        ms.save().expect("saved");
+        drop(ms);
+        let v4 = root.path().join("ms_trial.ps.zarr");
+        to_msv4(
+            &path,
+            &v4,
+            &ConversionOptions {
+                data_groups: None,
+                accept: vec![LossKind::Sigma, LossKind::Tables],
+                batch_bytes: 1 << 20,
+                workers: 1,
+                chunks: [0, 0, 0, 0],
+                codec: casa_ms::observation_io::Msv4Codec::BloscLz4,
+                padding: PaddingRows::Flagged,
+                creator: "feed angle law".into(),
+                creation_date: "2026-10-30T00:00:00+00:00".into(),
+            },
+        )
+        .expect("converted");
+        let converted = Msv4Observation::open(&v4).expect("the processing set opens");
+        let window = converted.catalogue().partitions[0].window;
+        assert_eq!(
+            receptor_zero_angle(converted.catalogue(), None, window.0).expect("an angle"),
+            msv2_angle(&path).expect("an angle")
+        );
+    }
+}

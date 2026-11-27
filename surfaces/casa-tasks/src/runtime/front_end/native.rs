@@ -16,7 +16,7 @@ use crate::runtime::invocation::task_override_values;
 use crate::{BaseSource, OpenSessionRequest, ResolutionPatch};
 
 #[cfg(feature = "imaging")]
-pub use casa_imaging_application::Cancel as TaskCancellation;
+pub use casa_imaging::Cancel as TaskCancellation;
 
 /// Writes a task-formatted diagnostic line to the caller's log stream.
 pub type TaskLogLineSink = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
