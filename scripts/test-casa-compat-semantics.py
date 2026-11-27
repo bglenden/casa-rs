@@ -4,6 +4,7 @@
 
 import copy
 import importlib.util
+import runpy
 import subprocess
 import tempfile
 import unittest
@@ -30,6 +31,16 @@ class SemanticReferenceTests(unittest.TestCase):
         del self.data["parameters"]["mask"]
         with self.assertRaisesRegex(ValueError, "coverage"):
             semantics.validate(self.data, self.record, self.surface)
+
+    def test_tclean_case_classifier_uses_the_revision_named_by_each_binding(self):
+        classifier = runpy.run_path(str(ROOT / "tools/casa-compat/classify_tclean_test_cases.py"))
+        surface = classifier["Surface"]()
+        refusals = classifier["Refusals"](surface, {"spw": "0:1~3"}, ["a.ms", "b.ms"], "out")
+        refusals.catalog()
+        self.assertEqual(refusals.bad_shape, set())
+        refusals = classifier["Refusals"](surface, {"spw": [False]}, "a.ms", "out")
+        refusals.catalog()
+        self.assertEqual(refusals.bad_shape, {"spw"})
 
     def test_runtime_default_only_cannot_be_promoted_by_an_annotation(self):
         binding = next(b for b in self.surface["bindings"] if b["name"] == "interactive")

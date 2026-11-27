@@ -1,7 +1,8 @@
 """Independent CASA 6.7.6.14 geometry-tool acceptance."""
 import json
 import os
-import tarfile
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -86,14 +87,15 @@ def snapshot(tmp_path_factory):
         provenance = configured / provenance_name
         if provenance.is_file() and json.loads(provenance.read_text()) == ORACLE["measures_snapshot"]:
             return configured
-    archive = Path(__file__).resolve().parents[4] / "libs/casacore/casa-measures/data"
-    expected = json.loads((archive / "casa-measures-runtime.provenance.json").read_text())
-    del expected["archive_size_bytes"], expected["archive_sha256"]
-    assert expected == ORACLE["measures_snapshot"], "regenerate the fixture for the bundled measures snapshot"
-    root = tmp_path_factory.mktemp("geometry-measures")
-    with tarfile.open(archive / "casa-measures-runtime.tar.gz") as bundled:
-        bundled.extractall(root, filter="data")
-    (root / provenance_name).write_text(json.dumps(expected))
+    repo = Path(__file__).resolve().parents[4]
+    root = tmp_path_factory.mktemp("geometry-measures") / "snapshot"
+    subprocess.run(
+        [sys.executable, str(repo / "scripts/install-measures-snapshot.py"), str(root)],
+        check=True,
+    )
+    assert json.loads((root / provenance_name).read_text()) == ORACLE["measures_snapshot"], (
+        "regenerate the fixture for the bundled measures snapshot"
+    )
     return root
 
 

@@ -75,14 +75,7 @@ fi
 
 # Measures runtime, as CI installs it for the integration tests.
 measures_root="$HOME/.cache/casa-rs/casa-measures"
-measures_provenance="libs/casacore/casa-measures/data/casa-measures-runtime.provenance.json"
-if ! cmp -s "$measures_provenance" "$measures_root/.casa-rs-measures-provenance.json"; then
-  log "unpacking the bundled measures runtime"
-  rm -rf "$measures_root"
-  mkdir -p "$measures_root"
-  tar --warning=no-unknown-keyword -xzf libs/casacore/casa-measures/data/casa-measures-runtime.tar.gz -C "$measures_root"
-  cp "$measures_provenance" "$measures_root/.casa-rs-measures-provenance.json"
-fi
+python3 scripts/install-measures-snapshot.py "$measures_root" --reuse
 
 export_var CASA_RS_MEASURESPATH "$measures_root"
 export_var CARGO_INCREMENTAL 0

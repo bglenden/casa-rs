@@ -719,7 +719,9 @@ impl MeasuresRuntime {
         cached(&self.sources, || load_sources_from(&self.root))
     }
 
-    /// Borrow the cached spectral-line catalogue with frequencies in Hz.
+    /// Borrow the cached spectral-line catalogue, whose stored frequencies are in GHz.
+    ///
+    /// Use [`SpectralLineEntry::frequency_hz`] for the casacore rest frequency in Hz.
     ///
     /// Returns a table-read error if the Lines table cannot be decoded.
     pub fn spectral_lines(&self) -> Result<&SpectralLineCatalog, MeasuresDataError> {

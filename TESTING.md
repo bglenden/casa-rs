@@ -105,7 +105,10 @@ Verification: just docs-check (policy); applicable domain gates below (code)
   `DOCS_RS=1 cargo doc -p casa-fft -p casa-imaging --no-deps` with FFTW installed.
 - Use `cargo package --no-verify` with all libraries selected to package the
   unpublished dependency graph together. Inspect each `.crate` for required
-  sources, its README, and registry size before publishing.
+  sources, its README, and registry size before publishing. Run
+  `python3 scripts/test-rust-packages.py target/package` to build a standalone
+  consumer from the archived manifests and sources. Pass crate names after
+  the archive directory to split the build across hosts.
 - Suite install gate: `scripts/test-install-suite.sh [--hide-checkout]`
   builds the release executables and wheel, installs the suite into a
   temporary root, and checks its commands on `PATH`, a task run from its

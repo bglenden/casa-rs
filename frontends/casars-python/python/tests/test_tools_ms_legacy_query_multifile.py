@@ -1,6 +1,7 @@
 """Exercise casacore MultiFile output through the legacy MS selector."""
 
 from contextlib import closing
+from importlib.util import find_spec
 from pathlib import Path
 import os
 import struct
@@ -73,29 +74,37 @@ def test_legacy_taql_multifile_outputs_cross_read_and_preserve_edits(
         np.testing.assert_array_equal(source.getcol("FLAG"), initial_flags, strict=True)
 
 
-def test_legacy_taql_multifile_uses_resource_default_block_size(native_dataset, tmp_path):
+@pytest.mark.parametrize("module", ["casars.tools", "casatools"])
+def test_legacy_taql_multifile_uses_resource_default_block_size(native_dataset, tmp_path, module):
+    interpreter = sys.executable
+    if module == "casatools":
+        oracle = os.environ.get("CASA_RS_CASA_PYTHON")
+        if oracle:
+            interpreter = oracle
+        elif find_spec("casatools") is None:
+            pytest.skip("CASA oracle is unavailable")
     resources = tmp_path / "casarc"
     resources.write_text("table.storage.option: multifile\ntable.storage.blocksize: 8192\n")
     runner = """
 from contextlib import closing
 from importlib import import_module
 import sys
-with closing(import_module(sys.argv[1]).ms()) as selector:
+
+module = import_module(sys.argv[1])
+if sys.argv[1] == "casatools":
+    assert module.version_string().replace("-", ".") == "6.7.6.14"
+with closing(module.ms()) as selector:
     assert selector.open(sys.argv[2])
     assert selector.selecttaqlold(f'True LIMIT 2 GIVING "{sys.argv[3]}" AS PLAIN')
 """
-    for module in ("casatools", "casars.tools"):
-        output = tmp_path / f"{module}.ms"
-        interpreter = sys.executable
-        if module == "casatools":
-            interpreter = os.environ.get("CASA_RS_CASA_PYTHON", interpreter)
-        subprocess.run(
-            [interpreter, "-c", runner, module, str(native_dataset), str(output)],
-            env=dict(os.environ, CASARCFILES=str(resources)),
-            check=True,
-        )
-        with (output / "table.mf").open("rb") as stream:
-            assert struct.unpack_from(">Q", stream.read(64), 40)[0] == 8192
+    output = tmp_path / f"{module}.ms"
+    subprocess.run(
+        [interpreter, "-c", runner, module, str(native_dataset), str(output)],
+        env=dict(os.environ, CASARCFILES=str(resources)),
+        check=True,
+    )
+    with (output / "table.mf").open("rb") as stream:
+        assert struct.unpack_from(">Q", stream.read(64), 40)[0] == 8192
 
 
 def test_legacy_taql_memory_to_multifile_and_failed_hdf5_preserve_selection(
