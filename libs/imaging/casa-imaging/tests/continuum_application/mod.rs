@@ -132,6 +132,8 @@ mod facets;
 
 mod run_summary;
 
+mod row_grid;
+
 mod metal;
 
 mod t55_cube_pipeline;

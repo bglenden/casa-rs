@@ -118,6 +118,7 @@ fn pointed_track(root: &Path, integrations: usize) -> PathBuf {
 fn the_msv2_adapter_holds_at_most_its_bounds() {
     let root = tempfile::tempdir().expect("test root");
     opening_and_pointing_hold_at_most_their_bounds(&root.path().join("regular"));
+    adaptive_grids_fit_the_opening_grant(&root.path().join("adaptive"));
     an_opening_beyond_its_budget_is_refused_before_its_grids(&root.path().join("jittered"));
     partially_filled_tree_nodes_fit_their_bound();
     many_small_partitions_fit_the_retained_charge(&root.path().join("partitions"));
@@ -307,6 +308,47 @@ fn opening_and_pointing_hold_at_most_their_bounds(root: &Path) {
         "the query held {query} bytes, beyond {budget}"
     );
     assert!(series.held_bytes() <= budget);
+}
+
+/// A second scan holds one baseline at every other time. It creates
+/// padding in the original scan and a second grid without changing TIME.
+fn adaptive_grids_fit_the_opening_grant(root: &Path) {
+    std::fs::create_dir(root).expect("fixture directory");
+    let path = pointed_track(root, 120);
+    let mut ms = MeasurementSet::open(&path).expect("edit fixture");
+    let rows = ms.row_count();
+    let main = ms.main_table_mut();
+    main.fill_column_range(
+        "SCAN_NUMBER",
+        casa_tables::RowRange::new(0, rows),
+        Value::Scalar(ScalarValue::Int32(1)),
+    )
+    .expect("one initial scan");
+    for row in (1..rows).step_by(2 * 351) {
+        main.row_accessor_mut()
+            .set_cell(row, "SCAN_NUMBER", Value::Scalar(ScalarValue::Int32(2)))
+            .expect("scan");
+    }
+    ms.save().expect("save");
+    drop(ms);
+    drop(Msv2Observation::open(&path).expect("warm opening"));
+
+    let mut asked = 0;
+    let mut refused = None;
+    let (opened, held) = peak_of(|| {
+        Msv2Observation::open_granted(
+            &path,
+            &OpenOptions::default(),
+            &mut budget_grant(usize::MAX, &mut asked, &mut refused),
+        )
+        .expect("admitted opening")
+    });
+    assert_eq!(opened.catalogue().partitions.len(), 2);
+    eprintln!("opening with an adaptive split: peak {held} bytes, grant {asked}");
+    assert!(
+        held <= asked as u64,
+        "the split held {held} bytes, granted {asked}"
+    );
 }
 
 /// A track whose times differ by baseline group (every 50 rows) fills each

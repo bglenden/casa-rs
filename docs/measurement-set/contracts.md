@@ -48,6 +48,23 @@ wrapper still leaks physical rows or `DATA_DESC_ID` into its algorithm.
   quanta types directly, with no observation-specific measure vocabulary,
   and the Measures APIs may be reworked for bulk use (below).
 
+## MSv2 row grids
+
+The adapter separates MAIN rows by `PROCESSOR_ID` so each grid carries one
+processor. If one time within a partition holds more than one field or scan,
+the adapter splits that partition by the conflicting key before allocating
+its grids. Other partitions keep their requested scheme. The field and scan
+splits required to fit the grid share the original partition's spectral-weight
+probe. Imaging keeps its original weight extent across processor and
+field/scan splits.
+
+Two MAIN rows that still claim the same exact `TIME` and ordered baseline in
+one partition produce `ObservationError::InvalidStore` with both row numbers.
+The grid has one cell per time and baseline and no acquisition axis to hold
+both rows. Keeping one or combining the two would discard information.
+Baseline-dependent times retain their exact values. Unoccupied cells are
+padding and are charged at admission.
+
 ## Capabilities not yet offered
 
 Each is refused today with a typed error, or offered only in part. It is
