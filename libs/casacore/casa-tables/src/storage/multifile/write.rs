@@ -17,7 +17,7 @@ use crate::storage::table_control::{
 };
 
 struct Member {
-    path: PathBuf,
+    path: Option<PathBuf>,
     name: String,
     size: u64,
     first_block: u64,
@@ -51,7 +51,14 @@ pub(crate) fn pack_staged_manager_files(
         .map(|manager| manager.seq_nr)
         .collect::<BTreeSet<_>>();
     if !managers.is_empty() {
-        pack_members(root, block_size, member_paths(root, &managers)?)?;
+        pack_members(
+            root,
+            block_size,
+            1,
+            member_paths(root, &managers)?
+                .into_iter()
+                .map(|(path, name)| (Some(path), name)),
+        )?;
     }
     descriptor.column_set.storage = Some(ColumnSetStorage {
         kind: ColumnSetStorage::MULTI_FILE,
@@ -63,12 +70,17 @@ pub(crate) fn pack_staged_manager_files(
 pub(super) fn pack_members(
     root: &Path,
     block_size: usize,
-    paths: Vec<(PathBuf, String)>,
+    counter: u64,
+    paths: impl IntoIterator<Item = (Option<PathBuf>, String)>,
 ) -> Result<(), StorageError> {
     let mut next_block = 1u64;
     let mut members = Vec::new();
     for (path, name) in paths {
-        let size = fs::metadata(&path)?.len();
+        let size = path
+            .as_deref()
+            .map(fs::metadata)
+            .transpose()?
+            .map_or(0, |meta| meta.len());
         let first_block = next_block;
         next_block = next_block
             .checked_add(size.div_ceil(block_size as u64))
@@ -80,7 +92,7 @@ pub(super) fn pack_members(
             first_block,
         });
     }
-    let (header, block_count) = header(&members, block_size, next_block)?;
+    let (header, block_count) = header(&members, block_size, counter, next_block)?;
     let extent = block_count
         .checked_mul(block_size as u64)
         .ok_or_else(|| format_error("MultiFile output extent overflow"))?;
@@ -88,7 +100,10 @@ pub(super) fn pack_members(
     let mut output = OpenOptions::new().write(true).create_new(true).open(path)?;
     output.set_len(extent)?;
     for member in &members {
-        let mut source = File::open(&member.path)?;
+        let Some(path) = &member.path else {
+            continue;
+        };
+        let mut source = File::open(path)?;
         output.seek(SeekFrom::Start(member.first_block * block_size as u64))?;
         let written = io::copy(&mut source, &mut output)?;
         if written != member.size {
@@ -99,8 +114,8 @@ pub(super) fn pack_members(
     }
     write_header(&mut output, &header, block_size, next_block, block_count)?;
     output.sync_all()?;
-    for member in members {
-        fs::remove_file(member.path)?;
+    for path in members.into_iter().filter_map(|member| member.path) {
+        fs::remove_file(path)?;
     }
     Ok(())
 }
@@ -127,6 +142,7 @@ pub(super) fn member_paths(
 fn header(
     members: &[Member],
     block_size: usize,
+    counter: u64,
     next_block: u64,
 ) -> Result<(Vec<u8>, u64), StorageError> {
     let count =
@@ -187,7 +203,7 @@ fn header(
     if continuations > 0 {
         bytes[8..16].copy_from_slice(&next_block.to_be_bytes());
     }
-    bytes[16..24].copy_from_slice(&1u64.to_be_bytes());
+    bytes[16..24].copy_from_slice(&counter.to_be_bytes());
     bytes[24..28].copy_from_slice(&2u32.to_be_bytes());
     let length = bytes.len() as u64;
     bytes[32..40].copy_from_slice(&length.to_be_bytes());

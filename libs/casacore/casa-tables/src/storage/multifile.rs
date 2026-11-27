@@ -47,7 +47,9 @@ pub(super) fn manager_sequence(name: &str) -> Option<u32> {
 pub(super) struct MultiFile {
     file: Arc<PositionedFile>,
     block_size: u64,
+    header_counter: u64,
     entries: BTreeMap<String, Arc<Entry>>,
+    slots: Vec<String>,
     checksums: Option<Arc<[u32]>>,
 }
 
@@ -67,6 +69,7 @@ struct Header {
     bytes: Vec<u8>,
     block_size: u64,
     block_count: u64,
+    counter: u64,
     continuation: Vec<u64>,
     use_checksum: bool,
 }
@@ -76,15 +79,7 @@ impl MultiFile {
         let file = File::open(path)?;
         let file_len = file.metadata()?.len();
         let file = Arc::new(PositionedFile::new(file));
-        let header = Header::read(&file, file_len)?;
-        let block_size = header.block_size;
-        let (entries, checksums) = header.parse()?;
-        Ok(Self {
-            file,
-            block_size,
-            entries,
-            checksums,
-        })
+        Header::read(&file, file_len)?.parse(file)
     }
 
     pub(super) fn entry(&self, name: &str) -> Option<MultiFileEntry> {
@@ -163,16 +158,18 @@ impl Header {
             bytes,
             block_size,
             block_count,
+            counter: u64_at(&lead, 16),
             continuation,
             use_checksum,
         })
     }
 
-    fn parse(self) -> Result<(BTreeMap<String, Arc<Entry>>, Option<Arc<[u32]>>), StorageError> {
+    fn parse(self, file: Arc<PositionedFile>) -> Result<MultiFile, StorageError> {
         let (names, offset) = read_directory(&self.bytes)?;
         let mut tail = Cursor::new(self.bytes.as_slice());
         tail.set_position(offset as u64);
         let mut entries = BTreeMap::new();
+        let mut slots = Vec::with_capacity(names.len());
         let mut extents = Vec::new();
         for (name, byte_count) in names {
             let packed = read_vector(&mut tail, read_i64, 8)?;
@@ -186,11 +183,12 @@ impl Header {
             extents.extend(runs.iter().map(|run| (run.first, run.first + run.count)));
             if !name.is_empty()
                 && entries
-                    .insert(name, Arc::new(Entry { byte_count, runs }))
+                    .insert(name.clone(), Arc::new(Entry { byte_count, runs }))
                     .is_some()
             {
                 return Err(format_error("duplicate MultiFile entry name"));
             }
+            slots.push(name);
         }
         let free = read_vector(&mut tail, read_i64, 8)?;
         let checksums = read_vector(&mut tail, read_u32, 4)?;
@@ -214,7 +212,14 @@ impl Header {
         if extents.windows(2).any(|pair| pair[0].1 > pair[1].0) {
             return Err(format_error("overlapping MultiFile block extents"));
         }
-        Ok((entries, self.use_checksum.then(|| checksums.into())))
+        Ok(MultiFile {
+            file,
+            block_size: self.block_size,
+            header_counter: self.counter,
+            entries,
+            slots,
+            checksums: self.use_checksum.then(|| checksums.into()),
+        })
     }
 
     fn read_continuations(

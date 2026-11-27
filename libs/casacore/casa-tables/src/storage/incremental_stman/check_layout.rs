@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Validate the sparse row indexes in IncrementalStMan buckets.
 
-use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use super::{ISM_HEADER_SIZE, StorageError, parse_ism_header, parse_ism_index};
+use crate::storage::data_file::DataFile;
 
 /// Location of a non-ascending row number in an incremental storage bucket.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,12 +101,12 @@ pub(crate) fn check_incremental_layout(
     path: &Path,
     ncols: usize,
 ) -> Result<Option<IncrementalCorruption>, StorageError> {
-    let mut file = File::open(path)?;
+    let mut file = DataFile::open(path)?;
     let header = parse_ism_header(&mut file)?;
     let bucket_end = ISM_HEADER_SIZE
         .checked_add(u64::from(header.nr_buckets) * u64::from(header.bucket_size))
         .ok_or_else(|| format_error("ISM file size overflow"))?;
-    if bucket_end > file.metadata()?.len() {
+    if bucket_end > file.len()? {
         return Err(format_error("ISM buckets exceed file"));
     }
     let index = parse_ism_index(&mut file, &header)?;

@@ -49,6 +49,12 @@ fn table_reads_packed_cells_and_ignores_shadow_manager_files() {
         fs::write(path.join("table.f0"), b"stale manager").unwrap();
         fs::write(path.join("table.f0i"), b"stale array file").unwrap();
         let table = Table::open(TableOptions::new(&path)).unwrap();
+        if manager == DataManagerKind::IncrementalStMan {
+            assert_eq!(
+                table.check_incremental_layout("ID").unwrap(),
+                crate::IncrementalLayoutCheck::Valid
+            );
+        }
         let selected = table
             .get_array_cells_owned_uncached("SAMPLES", &[2, 0, 2])
             .unwrap();

@@ -127,3 +127,75 @@ def test_legacy_taql_memory_to_multifile_and_failed_hdf5_preserve_selection(
             with closing(reader.table()) as table:
                 assert table.open(str(output))
                 np.testing.assert_array_equal(table.getcol("DATA"), expected, strict=True)
+
+
+def test_legacy_taql_multifile_relocks_existing_casa_reader(native_dataset, tmp_path):
+    casa = pinned_casa()
+    output = tmp_path / "packed.ms"
+    with closing(casa.ms()) as writer:
+        assert writer.open(str(native_dataset))
+        assert writer.selecttaqlold(
+            f'True LIMIT 3 GIVING "{output}" AS [type="plain",storage="multifile",blocksize=64]'
+        )
+    editor = """
+from contextlib import closing
+import sys
+import numpy as np
+from casars import tools
+with closing(tools.ms()) as selector:
+    assert selector.open(sys.argv[1], nomodify=False)
+    data = selector.getdataold(['flag', 'flag_row'])
+    assert selector.putdataold({name: np.logical_not(value) for name, value in data.items()})
+"""
+    with closing(casa.table()) as retained:
+        assert retained.open(str(output), nomodify=False, lockoptions={"option": "user"})
+        assert retained.lock(write=False, nattempts=1)
+        data = retained.getcol("DATA")
+        flags = retained.getcol("FLAG")
+        saved_rows = retained.getcol("FLAG_ROW")
+        retained.unlock()
+        subprocess.run([sys.executable, "-c", editor, str(output)], check=True, timeout=30)
+        assert retained.lock(write=True, nattempts=1)
+        np.testing.assert_array_equal(retained.getcol("DATA"), data, strict=True)
+        np.testing.assert_array_equal(retained.getcol("FLAG"), np.logical_not(flags), strict=True)
+        np.testing.assert_array_equal(
+            retained.getcol("FLAG_ROW"), np.logical_not(saved_rows), strict=True,
+        )
+        retained.putcell("FLAG_ROW", 1, bool(saved_rows[1]))
+        retained.unlock()
+    with closing(tools.table()) as reader:
+        assert reader.open(str(output))
+        expected = np.logical_not(saved_rows)
+        expected[1] = saved_rows[1]
+        np.testing.assert_array_equal(reader.getcol("FLAG_ROW"), expected, strict=True)
+
+
+def test_legacy_taql_multifile_respects_read_only_archive(native_dataset, tmp_path):
+    casa = pinned_casa()
+    output = tmp_path / "packed.ms"
+    with closing(tools.ms()) as writer:
+        assert writer.open(str(native_dataset))
+        assert writer.selecttaqlold(
+            f'True LIMIT 3 GIVING "{output}" AS [type="plain",storage="multifile",blocksize=64]'
+        )
+    archive = output / "table.mf"
+    contents = archive.read_bytes()
+    mode = archive.stat().st_mode
+    with closing(tools.ms()) as held:
+        assert held.open(str(output), nomodify=False)
+        archive.chmod(0o444)
+        try:
+            if os.access(archive, os.W_OK):
+                pytest.skip("the effective user can write a mode-0444 file")
+            for engine in (casa, tools):
+                with closing(engine.ms()) as reader:
+                    assert reader.open(str(output))
+                    assert reader.nrow() == 3
+                    reader.close()
+                    with pytest.raises(RuntimeError, match="(?i)permission denied"):
+                        reader.open(str(output), nomodify=False)
+            with pytest.raises(RuntimeError, match="(?i)permission denied"):
+                held.putdataold({"flag_row": np.ones(3, dtype=bool)})
+            assert archive.read_bytes() == contents
+        finally:
+            archive.chmod(mode)

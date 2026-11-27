@@ -109,6 +109,30 @@ fn edit_hypercolumns(private_keywords: &mut RecordValue, edit: impl Fn(&mut Vec<
 }
 
 impl Table {
+    /// Check access to the control file and its declared packed manager file
+    /// before reporting a writable attachment.
+    #[doc(hidden)]
+    pub fn check_storage_update_access(path: &Path) -> Result<(), TableError> {
+        let control = path.join(crate::storage::TABLE_CONTROL_FILE);
+        std::fs::File::options()
+            .write(true)
+            .open(&control)
+            .map_err(StorageError::from)?;
+        let archive = path.join("table.mf");
+        if archive.is_file()
+            && matches!(
+                crate::storage::table_control::read_table_dat_dispatch(&control)?,
+                TableDatResult::Plain(table) if table.uses_multifile()
+            )
+        {
+            std::fs::File::options()
+                .write(true)
+                .open(archive)
+                .map_err(StorageError::from)?;
+        }
+        Ok(())
+    }
+
     /// Convert the manager files of a newly written, private plain table into
     /// a casacore MultiFile container. If conversion fails, discard the private
     /// table. Call this before publishing the table directory to other readers.

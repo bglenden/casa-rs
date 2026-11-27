@@ -176,10 +176,7 @@ impl AttachedMs {
         if writable {
             for source in attached.sources.iter().chain(&physical_parts) {
                 // CASA opens MAIN for update before reporting a writable attachment.
-                std::fs::OpenOptions::new()
-                    .write(true)
-                    .open(source.join("table.dat"))
-                    .map_err(runtime_error)?;
+                Table::check_storage_update_access(source).map_err(runtime_error)?;
             }
         }
         if lock {

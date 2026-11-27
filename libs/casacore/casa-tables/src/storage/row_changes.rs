@@ -138,6 +138,12 @@ impl<'a> StagedEdit<'a> {
         })
     }
 
+    pub(super) fn for_shared_manager_files(table: &'a Path) -> Result<Self, StorageError> {
+        let mut edit = Self::new(table)?;
+        edit.preserve_file_identity = true;
+        Ok(edit)
+    }
+
     pub(super) fn stage_control(&self, dat: &TableDatContents) -> Result<(), StorageError> {
         let dat = crate::table_path::stored_table_dat_keywords(dat, self.table);
         fs::write(
