@@ -23,45 +23,89 @@ pub enum CasaValue {
     #[default]
     None,
     /// A `bool`.
-    Bool { value: bool },
+    Bool {
+        /// Boolean returned by the provider.
+        value: bool,
+    },
     /// An `int`.
-    Int { value: i64 },
+    Int {
+        /// Signed 64-bit integer returned by the provider.
+        value: i64,
+    },
     /// A `float`.
-    Float { value: CasaFloat },
+    Float {
+        /// Double-precision real value, including tagged non-finite values.
+        value: CasaFloat,
+    },
     /// A Python `complex`, represented by real and imaginary components.
-    Complex { real: CasaFloat, imag: CasaFloat },
+    Complex {
+        /// Real component of the complex scalar.
+        real: CasaFloat,
+        /// Imaginary component of the complex scalar.
+        imag: CasaFloat,
+    },
     /// A `str`.
-    String { value: String },
+    String {
+        /// UTF-8 text returned by the provider.
+        value: String,
+    },
     /// A `list`.
-    List { items: Vec<CasaValue> },
+    List {
+        /// List elements in Python order.
+        items: Vec<CasaValue>,
+    },
     /// A `dict`, its entries in order.
-    Dict { entries: Vec<CasaEntry> },
+    Dict {
+        /// Dictionary entries in their original insertion order.
+        entries: Vec<CasaEntry>,
+    },
     /// A NumPy array of `bool`.
-    BoolArray { shape: Vec<usize>, data: Vec<bool> },
+    BoolArray {
+        /// Array axis lengths.
+        shape: Vec<usize>,
+        /// Boolean pixels with the first axis varying fastest.
+        data: Vec<bool>,
+    },
     /// A NumPy array of integers.
     IntArray {
+        /// Dtype used to reconstruct the NumPy array.
         dtype: IntDtype,
+        /// Array axis lengths.
         shape: Vec<usize>,
+        /// Integer elements with the first axis varying fastest.
         data: Vec<i64>,
     },
     /// A NumPy array of unsigned 64-bit integers.
     #[serde(rename = "uint64_array")]
-    UInt64Array { shape: Vec<usize>, data: Vec<u64> },
+    UInt64Array {
+        /// Array axis lengths.
+        shape: Vec<usize>,
+        /// Unsigned 64-bit values with the first axis varying fastest.
+        data: Vec<u64>,
+    },
     /// A NumPy array of floats.
     FloatArray {
+        /// Dtype used to reconstruct the NumPy array.
         dtype: FloatDtype,
+        /// Array axis lengths.
         shape: Vec<usize>,
+        /// Real elements with the first axis varying fastest.
         data: Vec<CasaFloat>,
     },
     /// A NumPy array of complex numbers, each `[real, imaginary]`.
     ComplexArray {
+        /// Dtype used to reconstruct the NumPy array.
         dtype: ComplexDtype,
+        /// Array axis lengths.
         shape: Vec<usize>,
+        /// Pairs of real and imaginary elements with the first axis varying fastest.
         data: Vec<[CasaFloat; 2]>,
     },
     /// A NumPy array of `str`.
     StrArray {
+        /// Array axis lengths.
         shape: Vec<usize>,
+        /// Text elements with the first axis varying fastest.
         data: Vec<String>,
     },
 }
@@ -69,7 +113,9 @@ pub enum CasaValue {
 /// One dictionary entry.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CasaEntry {
+    /// Python dictionary key, preserving integer or text identity.
     pub key: CasaKey,
+    /// Typed value associated with this key.
     pub value: CasaValue,
 }
 
@@ -77,7 +123,9 @@ pub struct CasaEntry {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum CasaKey {
+    /// Signed integer key, used for identifiers such as a field ID.
     Int(i64),
+    /// Text key, used for named record fields.
     String(String),
 }
 
@@ -85,7 +133,9 @@ pub enum CasaKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum IntDtype {
+    /// Signed 32-bit elements.
     Int32,
+    /// Signed 64-bit elements.
     Int64,
 }
 
@@ -93,7 +143,9 @@ pub enum IntDtype {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FloatDtype {
+    /// Single-precision real elements.
     Float32,
+    /// Double-precision real elements.
     Float64,
 }
 
@@ -101,7 +153,9 @@ pub enum FloatDtype {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ComplexDtype {
+    /// Two single-precision components per element.
     Complex64,
+    /// Two double-precision components per element.
     Complex128,
 }
 
