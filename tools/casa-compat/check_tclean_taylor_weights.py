@@ -15,7 +15,8 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "perf" / "imager"))
+PERF_HARNESS = Path(__file__).resolve().parents[2] / "suites" / "perf" / "imager" / "perf_harness"
+sys.path.insert(0, str(PERF_HARNESS.parent))
 from perf_harness.taylor_moment_comparison import MAX_CHUNK_CELLS, TaylorMomentAccumulator
 from perf_harness.taylor_weight_gate import RULE, apply_to_run, evaluate, reference_pblimit
 
@@ -153,8 +154,8 @@ def main():
     raw = json.loads(raw_bytes)
     if version_string() != raw["casa_tools"]:
         raise ValueError("CASA tools version differs from the pinned receipt")
-    files = [Path(__file__), Path(__file__).resolve().parents[1] / "perf/imager/perf_harness/taylor_weight_gate.py",
-             Path(__file__).resolve().parents[1] / "perf/imager/perf_harness/taylor_moment_comparison.py"]
+    files = [Path(__file__), PERF_HARNESS / "taylor_weight_gate.py",
+             PERF_HARNESS / "taylor_moment_comparison.py"]
     output = dict(rule=RULE, raw_receipt=str(args.receipt.resolve()),
                   raw_receipt_sha256=hashlib.sha256(raw_bytes).hexdigest(),
                   source_sha256={str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in files},
