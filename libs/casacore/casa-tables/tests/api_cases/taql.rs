@@ -736,3 +736,36 @@ fn insert_partial_columns_populates_defaults_and_leaves_var_arrays_undefined() {
     }
     assert!(!table.is_cell_defined(1, "va").unwrap());
 }
+
+fn check_unsaved_array_order(array: ndarray::Array2<i32>) {
+    let schema = TableSchema::new(vec![ColumnSchema::array_variable(
+        "DATA",
+        PrimitiveType::Int32,
+        Some(2),
+    )])
+    .unwrap();
+    let mut table = Table::with_schema(schema);
+    table.add_row(RecordValue::default()).unwrap();
+    table
+        .row_accessor_mut()
+        .set_cell(0, "DATA", Value::Array(ArrayValue::Int32(array.into_dyn())))
+        .unwrap();
+
+    let selected = table
+        .query("USING STYLE BASE0, FORTRANORDER SELECT DATA WHERE DATA[1,0] = 4 AND DATA[0,2] = 3")
+        .unwrap();
+    assert_eq!(selected.row_numbers(), &[0]);
+    let cell = selected.cell(0, "DATA").unwrap().unwrap();
+    assert_eq!(taql::format::format_value(cell), "[1, 4, 2, 5, 3, 6]");
+}
+
+#[test]
+fn unsaved_array_order_c_contiguous() {
+    check_unsaved_array_order(ndarray::array![[1, 2, 3], [4, 5, 6]]);
+}
+
+#[test]
+fn unsaved_array_order_strided() {
+    let padded = ndarray::array![[1, 0, 2, 0, 3], [4, 0, 5, 0, 6]];
+    check_unsaved_array_order(padded.slice_move(ndarray::s![.., ..;2]));
+}

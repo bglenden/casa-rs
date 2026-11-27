@@ -15,6 +15,7 @@ use super::data_type::{
     CasacoreDataType, ColumnClassInfo, RECORD_COLUMN_CLASS_NAME, array_column_class_name,
     parse_column_class_name, scalar_column_class_name,
 };
+use crate::casacore_order;
 use crate::table_path::stored_table_dat_keywords;
 
 // ---------------------------------------------------------------------------
@@ -370,13 +371,6 @@ fn put_each<T: Copy>(
         put(io, value)?;
     }
     Ok(())
-}
-
-/// `array`'s elements in casacore's (Fortran) order, the first axis
-/// fastest: its reversed axes in logical order, which is a contiguous walk
-/// of memory for an array in Fortran layout.
-fn casacore_order<T>(array: &ArrayD<T>) -> impl Iterator<Item = &T> {
-    array.t().into_iter()
 }
 
 fn value_to_casacore_data_type(value: &Value) -> Result<CasacoreDataType, StorageError> {

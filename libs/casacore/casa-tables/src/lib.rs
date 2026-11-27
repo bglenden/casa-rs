@@ -325,6 +325,13 @@ pub use table::{
 };
 pub use table_path::{add_directory, lexical_absolute, strip_directory};
 
+/// `array`'s elements in casacore's (Fortran) order, the first axis
+/// fastest: its reversed axes in logical order, which is a contiguous walk
+/// of memory for an array in Fortran layout.
+fn casacore_order<T>(array: &ndarray::ArrayD<T>) -> impl Iterator<Item = &T> {
+    array.t().into_iter()
+}
+
 /// Read the outer object type tag from a table directory's `table.dat`.
 ///
 /// A casacore table has the tag `"Table"` regardless of its storage manager
