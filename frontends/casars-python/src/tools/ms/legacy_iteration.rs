@@ -91,7 +91,7 @@ impl AttachedMs {
         defaults: bool,
     ) -> PyResult<bool> {
         let initialized = self
-            .legacy_view_mut()
+            .legacy_view_for_filter()
             .initialize_legacy_iteration(columns, interval, max_rows, defaults)?;
         if initialized {
             self.legacy_selection.inactive_iterator = None;
@@ -106,18 +106,10 @@ impl AttachedMs {
         if self.legacy_view().legacy_selection.iteration.is_some() {
             return self.legacy_view_mut().position_legacy_iteration(movement);
         }
-        let axes = self
-            .legacy_view()
-            .legacy_selection
-            .axes
-            .without_baseline_read();
-        let baselines = self.legacy_view().legacy_selection.baselines.clone();
         if let Some(mut source) = self.legacy_selection.inactive_iterator.take() {
             let result = source.position_legacy_iteration(movement);
             if result.is_ok() {
-                source.legacy_selection.axes = axes;
-                source.legacy_selection.baselines = baselines;
-                self.replace_legacy_output(Some(source));
+                self.restore_legacy_iterator_view(source);
             } else {
                 self.legacy_selection.inactive_iterator = Some(source);
             }
@@ -126,8 +118,6 @@ impl AttachedMs {
         if self.legacy_selection.iteration.is_some() {
             let result = self.position_legacy_iteration(movement);
             if result.is_ok() {
-                self.legacy_selection.axes = axes;
-                self.legacy_selection.baselines = baselines;
                 self.replace_legacy_output(None);
             }
             return result;

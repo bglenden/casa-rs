@@ -41,7 +41,7 @@ impl PyMsTool {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
             match attached
                 .as_mut()
-                .map(AttachedMs::legacy_view_mut)
+                .map(AttachedMs::legacy_view_for_filter)
                 .filter(|ms| ms.writable)
             {
                 Some(ms) => ms.put_legacy_data_rows(items),

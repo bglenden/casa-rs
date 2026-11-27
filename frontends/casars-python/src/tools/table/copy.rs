@@ -161,7 +161,7 @@ pub(super) fn same_directory(a: &Path, b: &Path) -> bool {
 /// directory into itself or remove the table it copies. The places are
 /// compared with their symbolic links resolved, so that a link to the table
 /// (or to a directory it lies in) cannot hide the nesting.
-pub(super) fn refuse_nested(target: &Path, source: &Path) -> Result<(), Fail> {
+pub(in crate::tools) fn refuse_nested(target: &Path, source: &Path) -> Result<(), Fail> {
     let (real_target, real_source) = (resolved(target)?, resolved(source)?);
     if real_target.starts_with(&real_source) || real_source.starts_with(&real_target) {
         return Err(Fail::Runtime(format!(
@@ -177,7 +177,7 @@ pub(super) fn refuse_nested(target: &Path, source: &Path) -> Result<(), Fail> {
 /// table (a directory with a `table.dat`) or an empty directory. casacore
 /// removes any directory there; casa-rs refuses anything else, so that a slip
 /// of the name does not delete a directory of other files.
-pub(super) fn check_target(target: &Path) -> Result<(), Fail> {
+pub(in crate::tools) fn check_target(target: &Path) -> Result<(), Fail> {
     let refusal = || {
         Fail::Runtime(format!(
             "Table {} already exists (and is not a true table directory)",

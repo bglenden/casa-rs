@@ -114,7 +114,7 @@ impl PyMsTool {
             let Some(ms) = attached.as_mut() else {
                 return Ok(CasaValue::empty_record());
             };
-            ms.legacy_view_mut()
+            ms.legacy_view_for_filter()
                 .read_legacy_visibility(&items, increment, options)
         })?;
         result.into_python(py)
@@ -135,7 +135,7 @@ impl PyMsTool {
             let Some(ms) = attached.as_mut() else {
                 return Ok(false);
             };
-            let ms = ms.legacy_view_mut();
+            let ms = ms.legacy_view_for_filter();
             if !ms.prepare_legacy_filter()? {
                 return Ok(false);
             }

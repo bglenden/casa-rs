@@ -314,28 +314,22 @@ impl<'src> Parser<'src> {
             return Ok(clause);
         }
         let mut fields = Vec::new();
-        if self.lexer.peek() != Some(&Token::RBracket) {
-            loop {
-                let name = self.parse_ident_string()?;
-                let value = if self.lexer.eat_if(&Token::Eq).is_some() {
-                    let position = self
-                        .lexer
-                        .peek_with_span()
-                        .map_or(0, |(_, span)| span.start);
-                    let Expr::Literal(value) = self.parse_expr()? else {
-                        return Err(TaqlError::parse(
-                            self.lexer.position(position),
-                            "expected a constant TaQL output option",
-                        ));
-                    };
-                    value
-                } else {
-                    Literal::Bool(true)
-                };
-                fields.push((name, value));
-                if self.lexer.eat_if(&Token::Comma).is_none() {
-                    break;
-                }
+        loop {
+            let name = self.parse_ident_string()?;
+            self.lexer.expect(&Token::Eq)?;
+            let value = self.parse_expr()?;
+            let data_type = self
+                .lexer
+                .eat_if(&Token::As)
+                .map(|_| self.parse_ident_string())
+                .transpose()?;
+            fields.push(GivingOption {
+                name,
+                value,
+                data_type,
+            });
+            if self.lexer.eat_if(&Token::Comma).is_none() {
+                break;
             }
         }
         self.lexer.expect(&Token::RBracket)?;

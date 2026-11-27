@@ -81,6 +81,7 @@ pub fn write_selected_measurement_set_rows(
     let view_path = scratch.join("ordered.ref");
     projection.save(TableOptions::new(&view_path))?;
     let mut ordered = Table::open(TableOptions::new(&view_path))?;
+    ordered.set_info(main.info().clone());
     // These optional iterator caches refer to the input's row order.
     let mut keywords = main.keywords().clone();
     keywords.remove("SORTED_TABLE");

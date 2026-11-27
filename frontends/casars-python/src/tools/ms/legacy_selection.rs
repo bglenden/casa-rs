@@ -165,7 +165,7 @@ impl PyMsTool {
         py.detach(|| {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
             match attached.as_mut() {
-                Some(ms) => ms.legacy_view_mut().select_legacy_record(record),
+                Some(ms) => ms.select_legacy_record(record),
                 None => Ok(false),
             }
         })
@@ -184,14 +184,42 @@ impl AttachedMs {
         self
     }
 
+    pub(super) fn legacy_view_for_filter(&mut self) -> &mut Self {
+        if self
+            .legacy_selection
+            .output
+            .as_ref()
+            .is_some_and(|view| view.legacy_selection.initial.is_none())
+        {
+            self.replace_legacy_output(None);
+        }
+        self.legacy_view_mut()
+    }
+
     pub(super) fn replace_legacy_output(&mut self, output: Option<Box<Self>>) {
         let previous = std::mem::replace(&mut self.legacy_selection.output, output);
+        if self.legacy_selection.output.is_none()
+            && let Some(view) = previous.as_ref()
+        {
+            self.legacy_selection.axes = view.legacy_selection.axes.without_baseline_read();
+            self.legacy_selection.baselines = view.legacy_selection.baselines.clone();
+        }
         if previous
             .as_ref()
             .is_some_and(|view| view.legacy_selection.iteration.is_some())
         {
             self.legacy_selection.inactive_iterator = previous;
         }
+    }
+
+    pub(super) fn restore_legacy_iterator_view(&mut self, mut source: Box<Self>) {
+        let current = &self.legacy_view().legacy_selection;
+        source.legacy_selection.axes = current.axes.without_baseline_read();
+        source.legacy_selection.baselines = current.baselines.clone();
+        if self.legacy_selection.initial.is_none() {
+            source.legacy_selection.initial = None;
+        }
+        self.replace_legacy_output(Some(source));
     }
 
     pub(super) fn initialize_legacy_selection(&mut self, requested: Option<i32>) -> PyResult<bool> {
@@ -327,7 +355,7 @@ impl AttachedMs {
 
     fn select_legacy_taql(&mut self, text: String) -> PyResult<bool> {
         let original_path = self.path.clone();
-        let view = self.legacy_view_mut();
+        let view = self.legacy_view_for_filter();
         if !view.prepare_legacy_filter()? || text.bytes().all(|character| character == b' ') {
             return Ok(false);
         }
@@ -370,9 +398,9 @@ impl AttachedMs {
             let target = std::path::absolute(giving.table_name).map_err(runtime_error)?;
             let output = compose_rows(outer.as_deref(), Some(&selected)).expect("row projection");
             working.verify_directory().map_err(runtime_error)?;
-            if options.independent {
-                let mut saved =
-                    self.save_typed_legacy_query(table, &output, &target, options, original_path)?;
+            if let Some(mut saved) =
+                self.save_legacy_query(table, &output, &target, options, original_path)?
+            {
                 saved.legacy_selection.initial =
                     self.legacy_selection.initial.clone().map(|mut s| {
                         s.rows = None;
@@ -380,21 +408,13 @@ impl AttachedMs {
                     });
                 saved.legacy_selection.axes = self.legacy_selection.axes.without_baseline_read();
                 saved.legacy_selection.baselines = self.legacy_selection.baselines.clone();
+                if !nonempty {
+                    saved
+                        .legacy_selection
+                        .set_iterator_rows(Some(Arc::from([])), false);
+                }
                 return Ok((nonempty, Some(saved)));
             }
-            let protected = self
-                .sources
-                .iter()
-                .cloned()
-                .chain(std::iter::once(original_path.to_owned()))
-                .collect::<Vec<_>>();
-            super::super::table::save_ms_query_selection(
-                table,
-                &protected,
-                &output,
-                &target,
-                options.overwrite,
-            )?;
         }
         self.legacy_selection
             .set_iterator_rows(Some(selected), false);
@@ -402,19 +422,50 @@ impl AttachedMs {
     }
 
     fn select_legacy_record(&mut self, record: RecordValue) -> PyResult<bool> {
-        if !self.prepare_legacy_filter()? {
+        if !self.legacy_view_for_filter().prepare_legacy_filter()? {
             return Ok(false);
         }
         let mut fields = record.into_fields();
         fields.sort_unstable_by(|left, right| left.name.cmp(&right.name));
         for field in fields {
-            self.apply_legacy_record_field(field)?;
+            if field.name == "rows" {
+                self.select_explicit_legacy_rows(&field)?;
+            } else {
+                self.legacy_view_mut().apply_legacy_record_field(field)?;
+            }
         }
         Ok(self
+            .legacy_view()
             .legacy_selection
             .rows
             .as_ref()
             .is_none_or(|rows| !rows.is_empty()))
+    }
+
+    fn select_explicit_legacy_rows(&mut self, field: &RecordField) -> PyResult<()> {
+        let rows = integer_items_as(field, |value| value)?;
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let available = self
+            .working_metadata_link()
+            .row_count()
+            .map_err(runtime_error)?;
+        let selected = rows
+            .into_iter()
+            .map(|row| {
+                usize::try_from(row)
+                    .ok()
+                    .filter(|&row| row < available)
+                    .ok_or_else(|| {
+                        runtime_error(format!("row {row} is outside the working MeasurementSet"))
+                    })
+            })
+            .collect::<PyResult<Arc<[usize]>>>()?;
+        self.replace_legacy_output(None);
+        self.legacy_selection
+            .set_iterator_rows(Some(selected), false);
+        Ok(())
     }
 
     fn apply_legacy_record_field(&mut self, field: RecordField) -> PyResult<()> {
@@ -426,32 +477,7 @@ impl AttachedMs {
         let label = field.name.to_ascii_uppercase();
         let selector = RecordSelector::from_label(&label).expect("converted selection field");
         let predicate = match selector {
-            RecordSelector::Rows => {
-                let rows = integer_items_as(&field, |value| value)?;
-                if !rows.is_empty() {
-                    let available = self
-                        .working_metadata_link()
-                        .row_count()
-                        .map_err(runtime_error)?;
-                    let mut selected = Vec::with_capacity(rows.len());
-                    for row in rows {
-                        let index = usize::try_from(row)
-                            .ok()
-                            .filter(|&row| row < available)
-                            .ok_or_else(|| {
-                                runtime_error(format!(
-                                    "row {row} is outside the working MeasurementSet"
-                                ))
-                            })?;
-                        selected.push(index);
-                    }
-                    // The legacy selector interprets explicit rows relative to
-                    // its base table and preserves user order and duplicates.
-                    self.legacy_selection
-                        .set_iterator_rows(Some(selected.into()), false);
-                }
-                return Ok(());
-            }
+            RecordSelector::Rows => return Ok(()),
             RecordSelector::ScalarIds => {
                 let ids = integer_items(&field)?;
                 (!ids.is_empty()).then(|| format!("{label} IN [{ids}]", ids = int_list(&ids)))
