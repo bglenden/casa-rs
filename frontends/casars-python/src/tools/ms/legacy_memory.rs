@@ -3,6 +3,7 @@
 
 use std::cell::Ref;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use casa_ms::{MeasurementSet, MsError, MsResult, SubtableId};
@@ -41,12 +42,30 @@ impl<'a> LegacySubtables<'a> {
 }
 
 impl AttachedMs {
-    pub(super) fn new_legacy_memory(&self, rows: &[usize]) -> PyResult<Self> {
+    pub(super) fn new_legacy_memory(&self, rows: &[usize], original: &Path) -> PyResult<Self> {
         let (source, _) = self
             .working_metadata_link()
             .source_and_rows()
             .map_err(runtime_error)?;
-        let memory = source.ms.to_memory_rows(rows).map_err(runtime_error)?;
+        let held = self
+            .read_locks
+            .keys()
+            .chain(self.write_locks.keys())
+            .cloned()
+            .collect();
+        let memory = source
+            .ms
+            .to_memory_rows_with_read_locks(rows, &held)
+            .map_err(runtime_error)?;
+        let mut memory_source_paths =
+            casa_mstransform::tool_sort::capture_named_output_inputs(&self.path)
+                .map_err(runtime_error)?;
+        if original != self.path {
+            memory_source_paths.extend(
+                casa_mstransform::tool_sort::capture_named_output_inputs(original)
+                    .map_err(runtime_error)?,
+            );
+        }
         self.working_metadata_link()
             .verify_directory()
             .map_err(runtime_error)?;
@@ -59,6 +78,7 @@ impl AttachedMs {
             main_stamp: None,
             asdm_index: None,
             memory_ms: Some(memory),
+            memory_source_paths,
             #[cfg(unix)]
             history_snapshot: None,
             subtables: Default::default(),

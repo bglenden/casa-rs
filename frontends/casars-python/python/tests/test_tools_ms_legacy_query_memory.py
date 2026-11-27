@@ -1,8 +1,11 @@
 """Exercise the independent in-memory MSSelector view against pinned CASA."""
 
 from contextlib import closing
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from pathlib import Path
 from shutil import copytree
+import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -153,3 +156,133 @@ def test_legacy_taql_memory_detaches_table_and_column_keyword_tables(native_data
             assert table.open(str(target / "AUXILIARY"))
             assert table.getcell("NAME", 0) == original_name
             assert table.getkeyword("CHILD") == f"Table: {target / 'AUXILIARY' / 'SPECTRAL_WINDOW'}"
+
+
+@pytest.mark.parametrize("parent", [".", "::ANTENNA", ".DATA::AUX"])
+def test_legacy_taql_memory_resolves_implicit_parents_in_the_detached_view(native_dataset, parent):
+    casa = pinned_casa()
+    antenna = native_dataset / "ANTENNA"
+    with closing(casa.table()) as source:
+        assert source.open(str(native_dataset), nomodify=False)
+        source.putcolkeyword("DATA", "AUX", f"Table: {antenna}")
+    for api in (casa, tools):
+        with closing(api.ms()) as selector:
+            assert selector.open(str(native_dataset))
+            assert selector.selecttaqlold("True LIMIT 4 GIVING AS MEMORY")
+            query = f'True LIMIT 2 GIVING "{parent}::RESULT"'
+            with pytest.raises(RuntimeError):
+                selector.selecttaqlold(query + " AS PLAIN")
+            assert selector.nrowold(True) == 4
+            assert selector.selecttaqlold(query + " AS MEMORY")
+            np.testing.assert_array_equal(selector.rangeold("rows")["rows"], [0, 1])
+    for path in (native_dataset, antenna):
+        assert not (path / "RESULT").exists()
+        with closing(casa.table()) as source:
+            assert source.open(str(path))
+            assert "RESULT" not in source.getkeywords()
+
+
+def test_legacy_taql_memory_protects_external_subtables_and_can_write_after_source_moves(native_dataset, tmp_path):
+    casa = pinned_casa()
+    source = tmp_path / "source.ms"
+    copytree(native_dataset, source)
+    antenna = (source / "ANTENNA").rename(tmp_path / "external-antenna")
+    with closing(casa.table()) as reader:
+        assert reader.open(str(antenna))
+        names = reader.getcol("NAME")
+        assert reader.open(str(source), nomodify=False)
+        reader.putkeyword("ANTENNA", f"Table: {antenna}")
+        expected = reader.getcol("DATA", 0, 2)
+    target = tmp_path / "independent.ms"
+    with closing(tools.ms()) as selector:
+        assert selector.open(str(source))
+        assert selector.selecttaqlold("True LIMIT 4 GIVING AS MEMORY")
+        with pytest.raises(RuntimeError, match="overlaps a source table"):
+            selector.selecttaqlold(f'True LIMIT 2 GIVING "{antenna}"')
+        assert selector.nrowold(True) == 4
+        source.rename(tmp_path / "moved.ms")
+        assert selector.selecttaqlold(f'True LIMIT 2 GIVING "{target}" AS PLAIN')
+    with closing(casa.table()) as reader:
+        assert reader.open(str(target))
+        np.testing.assert_array_equal(reader.getcol("DATA"), expected, strict=True)
+        assert reader.open(str(antenna))
+        np.testing.assert_array_equal(reader.getcol("NAME"), names)
+
+
+@pytest.mark.parametrize("mode", ["", " AS PLAIN"])
+def test_legacy_taql_memory_preserves_main_metadata_when_saved(native_dataset, tmp_path, mode):
+    casa = pinned_casa()
+    with closing(casa.table()) as writer:
+        assert writer.open(str(native_dataset), nomodify=False)
+        writer.putcolkeyword("TIME", "QuantumUnits", ["min"])
+        writer.putkeyword("TRACE", {"note": "keep independently"})
+        units = writer.getcolkeyword("TIME", "QuantumUnits")
+    target = tmp_path / "selected.ms"
+    with closing(tools.ms()) as selector:
+        assert selector.open(str(native_dataset))
+        assert selector.selecttaqlold("True LIMIT 4 GIVING AS MEMORY")
+        assert selector.selecttaqlold(f'True LIMIT 2 GIVING "{target}"{mode}')
+    with closing(casa.table()) as reader:
+        assert reader.open(str(target))
+        assert reader.getkeyword("TRACE") == {"note": "keep independently"}
+        np.testing.assert_array_equal(reader.getcolkeyword("TIME", "QuantumUnits"), units, strict=True)
+
+
+def test_legacy_taql_memory_reopens_nested_table_and_column_keyword_links(native_dataset, tmp_path):
+    casa = pinned_casa()
+    source = tmp_path / "source.ms"
+    copytree(native_dataset, source)
+    extra = source / "AUXILIARY"
+    copytree(source / "ANTENNA", extra)
+    with closing(casa.table()) as writer:
+        assert writer.open(str(source), nomodify=False)
+        writer.putkeyword("META.CAL", f"Table: {extra}", makesubrecord=True)
+        writer.putcolkeyword("DATA", "META", {"NOTE": "preserve"})
+        writer.putcolkeyword("DATA", "META.CAL", f"Table: {extra}")
+    target = tmp_path / "result.ms"
+    with closing(tools.ms()) as selector:
+        assert selector.open(str(source))
+        assert selector.selecttaqlold("True LIMIT 4 GIVING AS MEMORY")
+        source.rename(tmp_path / "moved.ms")
+        assert selector.selecttaqlold(f'True LIMIT 2 GIVING "{target}" AS PLAIN')
+    with closing(casa.table()) as reader, closing(casa.table()) as child:
+        assert reader.open(str(target))
+        for link in (reader.getkeyword("META.CAL"), reader.getcolkeyword("DATA", "META.CAL")):
+            assert Path(link.removeprefix("Table: ")) == target / "AUXILIARY"
+            assert child.open(link.removeprefix("Table: ")) and child.nrows() > 0
+
+
+def test_legacy_taql_memory_waits_for_the_subtable_writer(native_dataset, tmp_path):
+    casa = pinned_casa()
+    antenna = native_dataset / "ANTENNA"
+    runner = """
+from casatools import table
+from contextlib import closing
+import sys
+with closing(table()) as parent:
+    assert parent.open(sys.argv[1], nomodify=False, lockoptions='permanent')
+    parent.putcell('NAME', 0, 'FIRST')
+    print('HELD', flush=True)
+    sys.stdin.readline()
+    parent.putcell('NAME', 1, 'SECOND')
+"""
+    target = tmp_path / "saved.ms"
+    with subprocess.Popen(
+        [sys.executable, "-c", runner, str(antenna)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+    ) as writer, closing(tools.ms()) as selector, ThreadPoolExecutor(max_workers=1) as workers:
+        assert writer.stdout.readline().strip() == "HELD"
+        assert selector.open(str(native_dataset))
+        copied = workers.submit(selector.selecttaqlold, "True LIMIT 4 GIVING AS MEMORY")
+        try:
+            with pytest.raises(TimeoutError):
+                copied.result(timeout=0.2)
+        finally:
+            writer.stdin.write("release\n")
+            writer.stdin.flush()
+        assert writer.wait(timeout=10) == 0
+        assert copied.result(timeout=10)
+        assert selector.selecttaqlold(f'True LIMIT 2 GIVING "{target}" AS PLAIN')
+    with closing(casa.table()) as reader:
+        assert reader.open(str(target / "ANTENNA"))
+        assert [reader.getcell("NAME", i) for i in (0, 1)] == ["FIRST", "SECOND"]

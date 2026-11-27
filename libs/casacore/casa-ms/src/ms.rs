@@ -541,10 +541,6 @@ impl MeasurementSet {
         self.path = Some(target.staging_path().to_path_buf());
         self.rebase_subtable_paths(target.staging_path());
         self.save_using(save_main)?;
-        for (relative, table) in &self.detached_keyword_tables {
-            let output = target.staging_path().join(relative);
-            table.save(measurement_set_table_options(&output))?;
-        }
         target
             .commit()
             .map_err(|error| MsError::InvalidInput(error.to_string()))?;
