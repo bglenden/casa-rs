@@ -436,17 +436,14 @@ fn assert_regions_take_the_direction_plane(path: &Path, plane: [usize; 2]) {
         assert_eq!((stats.npts, stats.sum), (npts, sum), "{label} {region:?}");
         assert_eq!((&stats.blc, &stats.trc), (&blc, &trc), "{label} {region:?}");
     }
-    // casa-rs places a polygon's pix vertex at a pixel's corner where CASA
-    // places it at its centre (#1021), so these vertices hold the box's
-    // direction pixels.
     for polygon in [
-        "poly [[1pix,0pix],[3pix,0pix],[3pix,2pix],[1pix,2pix]]".to_string(),
+        "poly [[1pix,0pix],[2pix,0pix],[2pix,1pix],[1pix,1pix]]".to_string(),
         format!(
             "poly [[{}],[{}],[{}],[{}]]",
             sky(1.0, 0.0),
-            sky(3.0, 0.0),
-            sky(3.0, 2.0),
-            sky(1.0, 2.0)
+            sky(2.0, 0.0),
+            sky(2.0, 1.0),
+            sky(1.0, 1.0)
         ),
     ] {
         let stats = match casa_imageanalysis::imstat(&casa_imageanalysis::ImstatRequest {
@@ -460,6 +457,7 @@ fn assert_regions_take_the_direction_plane(path: &Path, plane: [usize; 2]) {
             other => panic!("expected global statistics: {other:?}"),
         };
         assert_eq!((stats.npts, stats.sum), (npts, sum), "{label} {polygon}");
+        assert_eq!((&stats.blc, &stats.trc), (&blc, &trc), "{label} {polygon}");
     }
 }
 
@@ -490,6 +488,106 @@ fn write_stokes_frequency_first(path: &Path) {
     });
     image.put_slice(&pixels, &[0, 0, 0, 0]).unwrap();
     image.save().unwrap();
+}
+
+const FRACTIONAL_TRIANGLE: &str = "poly [[0.75pix,0.75pix],[2.75pix,0.75pix],[0.75pix,2.75pix]]";
+
+#[test]
+fn crtf_polygons_match_casa_pixel_centre_selection() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let transposed = copy_image("transposed.image", scratch.path());
+    // CASA 6.7.6-14 imstat on this fixture recorded the count, sum, and
+    // bounds for both representations. World vertices come from CASA.
+    let cases = [
+        (
+            // The six centres x + y <= 2 include the three on the diagonal.
+            "poly [[0pix,0pix],[2pix,0pix],[0pix,2pix]]",
+            concat!(
+                "poly [[1.200016285635282rad,-0.400009999952436rad],",
+                "[1.199994571454906rad,-0.400009999994715rad],",
+                "[1.200016285497573rad,-0.399989999952436rad]]"
+            ),
+            (60.0, 124_460.0),
+            [0, 0, 0, 0],
+            [1, 2, 2, 4],
+        ),
+        (
+            // Fractional boundaries surround just (1, 1) and (2, 1).
+            "poly [[0.75pix,0.75pix],[2.75pix,0.75pix],[2.75pix,1.75pix],[0.75pix,1.75pix]]",
+            concat!(
+                "poly [[1.200008142791820rad,-0.400002499988109rad],",
+                "[1.199986428680300rad,-0.400002499966969rad],",
+                "[1.199986428737678rad,-0.399992499966969rad],",
+                "[1.200008142757393rad,-0.399992499988109rad]]"
+            ),
+            (20.0, 42_320.0),
+            [0, 1, 1, 0],
+            [1, 2, 1, 4],
+        ),
+        (
+            // Same bounds as a square, but (2, 2) is outside the triangle.
+            FRACTIONAL_TRIANGLE,
+            concat!(
+                "poly [[1.200008142791820rad,-0.400002499988109rad],",
+                "[1.199986428680300rad,-0.400002499966969rad],",
+                "[1.200008142722967rad,-0.399982499988108rad]]"
+            ),
+            (30.0, 64_430.0),
+            [0, 1, 1, 0],
+            [1, 2, 2, 4],
+        ),
+    ];
+    for (pixel, world, expected, blc, trc) in cases {
+        for polygon in [pixel, world] {
+            let stats = match casa_imageanalysis::imstat(&casa_imageanalysis::ImstatRequest {
+                imagename: transposed.clone(),
+                region: Some(polygon.to_string()),
+                ..casa_imageanalysis::ImstatRequest::default()
+            })
+            .unwrap()
+            {
+                casa_imageanalysis::ImstatOutcome::Global(stats) => stats,
+                other => panic!("expected global statistics: {other:?}"),
+            };
+            assert_eq!((stats.npts, stats.sum), expected, "{polygon}");
+            assert_eq!(stats.blc, blc, "{polygon}");
+            assert_eq!(stats.trc, trc, "{polygon}");
+        }
+    }
+}
+
+#[test]
+fn fractional_crtf_triangle_cuts_the_casa_mask() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let transposed = copy_image("transposed.image", scratch.path());
+    let math = scratch.path().join("math.image");
+    let subimage = scratch.path().join("subimage.image");
+    casa_imageanalysis::immath(&casa_imageanalysis::ImmathRequest {
+        imagename: vec![transposed.clone()],
+        outfile: math.clone(),
+        expr: "IM0".to_string(),
+        region: Some(FRACTIONAL_TRIANGLE.to_string()),
+        ..Default::default()
+    })
+    .unwrap();
+    imsubimage(&ImsubimageRequest {
+        imagename: transposed,
+        outfile: subimage.clone(),
+        region: Some(FRACTIONAL_TRIANGLE.to_string()),
+        ..Default::default()
+    })
+    .unwrap();
+
+    // CASA 6.7.6-14 immath and imsubimage both retained these three
+    // direction pixels in every Stokes and frequency plane.
+    for path in [math, subimage] {
+        let output = PagedImage::<f32>::open(&path).unwrap();
+        let mask = output.get_mask().unwrap().unwrap();
+        assert_eq!(mask.shape(), &[2, 2, 2, 5], "{}", path.display());
+        for (index, &selected) in mask.indexed_iter() {
+            assert_eq!(selected, index[1] + index[2] <= 1, "{}", path.display());
+        }
+    }
 }
 
 #[test]

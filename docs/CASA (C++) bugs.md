@@ -7244,7 +7244,17 @@ is −0.999999, stock CASA paints column zero at rows 6 through 10.
 Both native masks are empty and return stop code 7. The ordinary
 fractional, near-integer and partly clipped controls retain CASA's support.
 
-[Issue #823](https://github.com/bglenden/casa-rs/issues/823) and
+The same truncation can include a pixel outside a polygon wholly inside
+the image. For `poly [[0.25pix,0.25pix],[2.25pix,0.25pix],[0.25pix,2.25pix]]`,
+the right crossing on row 2 is at x = 0.5, or −0.5 relative to the
+polygon's first candidate column at x = 1. CASA 6.7.6.14 admits pixel
+(1, 2) by truncating −0.5 to 0. On the transposed image fixture it reports
+20 samples, including ten across the Stokes and frequency planes at
+(1, 2). Native `imstat` selects the ten samples at (1, 1), the only
+direction pixel centre within the polygon.
+
+[Issue #823](https://github.com/bglenden/casa-rs/issues/823),
+[Issue #1021](https://github.com/bglenden/casa-rs/issues/1021), and
 [casacore's upper crossing bound](https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/lattices/LRegions/LCPolygon.cc#L198-L208).
 
 ## PCO pixel to world returns NaN on the central meridian

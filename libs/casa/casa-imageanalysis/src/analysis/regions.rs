@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::sync::Arc;
+
+use casa_images::saved_region::{PolygonPixelPlane, polygon_pixel_plane};
+
 use super::*;
 
 #[derive(Debug, Clone)]
@@ -223,12 +227,15 @@ pub(super) fn parse_axes(axes: Option<&[i64]>, n_dim: usize) -> Result<AxisSelec
     Ok(AxisSelection::Collapsed(named))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub(crate) enum PixelRegion {
     /// One or more rectangular boxes: CASA's task `box` parameter takes
     /// comma-separated quadruplets, and CRTF strings name one box.
     Boxes(Vec<[usize; 4]>),
-    Polygon(Vec<[usize; 2]>),
+    Polygon {
+        bounds: [usize; 4],
+        plane: Arc<PolygonPixelPlane>,
+    },
 }
 
 impl PixelRegion {
@@ -241,21 +248,7 @@ impl PixelRegion {
                 let max_y = boxes.iter().map(|b| b[3]).max().unwrap_or(min_y);
                 [min_x, min_y, max_x, max_y]
             }
-            Self::Polygon(vertices) => {
-                let min_x = vertices.iter().map(|vertex| vertex[0]).min().unwrap_or(0);
-                let min_y = vertices.iter().map(|vertex| vertex[1]).min().unwrap_or(0);
-                let max_x = vertices
-                    .iter()
-                    .map(|vertex| vertex[0])
-                    .max()
-                    .unwrap_or(min_x);
-                let max_y = vertices
-                    .iter()
-                    .map(|vertex| vertex[1])
-                    .max()
-                    .unwrap_or(min_y);
-                [min_x, min_y, max_x, max_y]
-            }
+            Self::Polygon { bounds, .. } => *bounds,
         }
     }
 }
@@ -270,8 +263,8 @@ pub(crate) fn region_pixels<T: ImagePixel>(
     if let Some(parsed) = crtf_box_pixels(image, region)? {
         return Ok(Some(PixelRegion::Boxes(vec![parse_box(&parsed)?])));
     }
-    if let Some(parsed) = crtf_polygon_pixels(image, region)? {
-        return Ok(Some(PixelRegion::Polygon(parsed)));
+    if let Some(polygon) = crtf_polygon_region(image, region)? {
+        return Ok(Some(polygon));
     }
     if let Some(box_text) = region.strip_prefix("box:") {
         let parsed = parse_box(box_text.trim())?;
@@ -299,8 +292,8 @@ pub(crate) fn region_pixels<T: ImagePixel>(
     if let Some(box_pixels) = crtf_box_pixels(image, &contents)? {
         return Ok(Some(PixelRegion::Boxes(vec![parse_box(&box_pixels)?])));
     }
-    if let Some(polygon) = crtf_polygon_pixels(image, &contents)? {
-        return Ok(Some(PixelRegion::Polygon(polygon)));
+    if let Some(polygon) = crtf_polygon_region(image, &contents)? {
+        return Ok(Some(polygon));
     }
     let format = if contents.trim_start().starts_with('{') {
         "casa-rs JSON region files are not a persistent interchange format; use CASA CRTF"
@@ -335,17 +328,12 @@ pub(crate) fn region_pixel_mask(
                 })
             }
         }
-        PixelRegion::Polygon(vertices) => {
-            if vertices.len() < 3 {
-                return Err(ImageError::InvalidMetadata(
-                    "CRTF polygon regions require at least three vertices".to_string(),
-                ));
-            }
+        PixelRegion::Polygon { plane, .. } => {
             let [x_axis, y_axis] = selection.plane;
             ArrayD::from_shape_fn(IxDyn(&selection.shape).f(), |idx| {
                 let x = selection.start[x_axis] + idx[x_axis];
                 let y = selection.start[y_axis] + idx[y_axis];
-                point_in_polygon_or_boundary(x as f64 + 0.5, y as f64 + 0.5, vertices)
+                plane.contains(x, y)
             })
         }
     };
@@ -386,10 +374,10 @@ pub(super) fn crtf_box_pixels<T: ImagePixel>(
     )?))
 }
 
-pub(super) fn crtf_polygon_pixels<T: ImagePixel>(
+fn crtf_polygon_region<T: ImagePixel>(
     image: &impl ImageInterface<T>,
     text: &str,
-) -> Result<Option<Vec<[usize; 2]>>, ImageError> {
+) -> Result<Option<PixelRegion>, ImageError> {
     let Some(pairs) = crtf_polygon_parts(text)? else {
         return Ok(None);
     };
@@ -398,7 +386,24 @@ pub(super) fn crtf_polygon_pixels<T: ImagePixel>(
             "invalid CASA CRTF polygon region {text:?}: expected at least three vertices"
         )));
     }
-    crtf_coordinate_pairs_to_pixels(image, &pairs).map(Some)
+    // Keep fractional vertices through world-to-pixel conversion. The plane
+    // evaluates integer pixel centres and trims its bounds to the mask.
+    let vertices = crtf_coordinate_pairs_to_pixels(image, &pairs)?;
+    let [x, y] = direction_plane_axes(image)?;
+    let plane = polygon_pixel_plane(&[vertices], image.shape(), [x, y]).ok_or_else(|| {
+        ImageError::InvalidMetadata("CRTF polygon contains no pixel centres in the image".into())
+    })?;
+    let (start, shape) = plane.section(image.shape(), [x, y]);
+    let bounds = [
+        start[x],
+        start[y],
+        start[x] + shape[x] - 1,
+        start[y] + shape[y] - 1,
+    ];
+    Ok(Some(PixelRegion::Polygon {
+        bounds,
+        plane: Arc::new(plane),
+    }))
 }
 
 pub(super) fn crtf_polygon_parts(text: &str) -> Result<Option<Vec<[String; 2]>>, ImageError> {
@@ -443,16 +448,16 @@ pub(super) fn crtf_polygon_parts(text: &str) -> Result<Option<Vec<[String; 2]>>,
     Ok(Some(pairs))
 }
 
-pub(super) fn crtf_coordinate_pairs_to_pixels<T: ImagePixel>(
+fn crtf_coordinate_pairs_to_pixels<T: ImagePixel>(
     image: &impl ImageInterface<T>,
     pairs: &[[String; 2]],
-) -> Result<Vec<[usize; 2]>, ImageError> {
+) -> Result<Vec<[f64; 2]>, ImageError> {
     let pixel_pairs = pairs
         .iter()
         .map(|pair| {
             Ok([
-                parse_crtf_pixel_quantity(&pair[0])?,
-                parse_crtf_pixel_quantity(&pair[1])?,
+                parse_crtf_pixel_coordinate(&pair[0])?,
+                parse_crtf_pixel_coordinate(&pair[1])?,
             ])
         })
         .collect::<Result<Vec<_>, ImageError>>()?;
@@ -493,8 +498,8 @@ pub(super) fn crtf_coordinate_pairs_to_pixels<T: ImagePixel>(
             world[latitude] = parse_crtf_world_quantity(&pair[1])?;
             let pixel = coordinates.to_pixel(&world)?;
             Ok([
-                rounded_nonnegative_pixel_value(pixel[x], "CRTF polygon world x")?,
-                rounded_nonnegative_pixel_value(pixel[y], "CRTF polygon world y")?,
+                nonnegative_pixel_value(pixel[x], "CRTF polygon world x")?,
+                nonnegative_pixel_value(pixel[y], "CRTF polygon world y")?,
             ])
         })
         .collect()
@@ -555,13 +560,20 @@ pub(super) fn find_crtf_body<'a>(text: &'a str, keyword: &str, open: &str) -> Op
     None
 }
 
-pub(super) fn parse_crtf_pixel_quantity(text: &str) -> Result<Option<usize>, ImageError> {
+fn parse_crtf_pixel_quantity(text: &str) -> Result<Option<usize>, ImageError> {
+    Ok(parse_crtf_pixel_coordinate(text)?.map(|pixel| pixel.round() as usize))
+}
+
+fn parse_crtf_pixel_coordinate(text: &str) -> Result<Option<f64>, ImageError> {
     let text = text.trim();
     let lowercase = text.to_ascii_lowercase();
     let Some(value) = lowercase.strip_suffix("pix") else {
         return Ok(None);
     };
-    rounded_nonnegative_pixel(value.trim(), text).map(Some)
+    let value = value.trim().parse::<f64>().map_err(|error| {
+        ImageError::InvalidMetadata(format!("invalid CRTF pixel coordinate {text:?}: {error}"))
+    })?;
+    nonnegative_pixel_value(value, text).map(Some)
 }
 
 pub(super) fn parse_crtf_world_quantity(text: &str) -> Result<f64, ImageError> {
@@ -624,59 +636,20 @@ pub(super) fn crtf_world_box_pixels<T: ImagePixel>(
     ))
 }
 
-pub(super) fn rounded_nonnegative_pixel(text: &str, original: &str) -> Result<usize, ImageError> {
-    let value = text.parse::<f64>().map_err(|error| {
-        ImageError::InvalidMetadata(format!(
-            "invalid CRTF pixel coordinate {original:?}: {error}"
-        ))
-    })?;
-    rounded_nonnegative_pixel_value(value, original)
-}
-
 pub(super) fn rounded_nonnegative_pixel_value(
     value: f64,
     label: &str,
 ) -> Result<usize, ImageError> {
+    Ok(nonnegative_pixel_value(value, label)?.round() as usize)
+}
+
+fn nonnegative_pixel_value(value: f64, label: &str) -> Result<f64, ImageError> {
     if !value.is_finite() || value < -1.0e-6 {
         return Err(ImageError::InvalidMetadata(format!(
             "invalid CRTF pixel coordinate {label:?}: value is not a non-negative finite number"
         )));
     }
-    Ok(value.max(0.0).round() as usize)
-}
-
-pub(super) fn point_in_polygon_or_boundary(x: f64, y: f64, vertices: &[[usize; 2]]) -> bool {
-    let mut inside = false;
-    let mut previous = vertices[vertices.len() - 1];
-    for &current in vertices {
-        let x0 = previous[0] as f64;
-        let y0 = previous[1] as f64;
-        let x1 = current[0] as f64;
-        let y1 = current[1] as f64;
-        if point_on_segment(x, y, x0, y0, x1, y1) {
-            return true;
-        }
-        let crosses = (y0 > y) != (y1 > y);
-        if crosses {
-            let x_intersection = (x1 - x0) * (y - y0) / (y1 - y0) + x0;
-            if x <= x_intersection {
-                inside = !inside;
-            }
-        }
-        previous = current;
-    }
-    inside
-}
-
-pub(super) fn point_on_segment(x: f64, y: f64, x0: f64, y0: f64, x1: f64, y1: f64) -> bool {
-    let cross = (x - x0) * (y1 - y0) - (y - y0) * (x1 - x0);
-    if cross.abs() > 1.0e-9 {
-        return false;
-    }
-    x >= x0.min(x1) - 1.0e-9
-        && x <= x0.max(x1) + 1.0e-9
-        && y >= y0.min(y1) - 1.0e-9
-        && y <= y0.max(y1) + 1.0e-9
+    Ok(value.max(0.0))
 }
 
 pub(super) fn looks_like_box(text: &str) -> bool {
