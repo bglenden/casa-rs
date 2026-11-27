@@ -253,6 +253,29 @@ fn ms_full_manifest_matches_cpp_with_uvw2() {
     assert_eq!(rust_manifest, cpp_manifest);
 }
 
+fn populate_model_rows(ms: &mut MeasurementSet) {
+    populate_main_rows(ms, 6);
+    // The generic fixture uses one-element placeholders for these variable
+    // arrays. The traversal instead reads the full correlation/channel shape.
+    let flags = Value::Array(ArrayValue::Bool(ndarray::ArrayD::from_elem(
+        ndarray::IxDyn(&[common::NUM_CORR, common::NUM_CHAN]),
+        false,
+    )));
+    let weights = Value::Array(ArrayValue::from_f32_vec(vec![1.0; common::NUM_CORR]));
+    let main = ms.main_table_mut();
+    let row_count = main.row_count();
+    for (column, value) in [
+        ("FLAG", flags),
+        ("WEIGHT", weights.clone()),
+        ("SIGMA", weights),
+    ] {
+        main.column_accessor_mut(column)
+            .unwrap()
+            .put(std::iter::repeat_n(value, row_count))
+            .unwrap();
+    }
+}
+
 #[test]
 fn model_data_write_read_interoperability_matrix() {
     if !casacore_oracle_available() {
@@ -267,7 +290,7 @@ fn model_data_write_read_interoperability_matrix() {
     let builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
     let mut ms = MeasurementSet::create(&ms_path, builder).unwrap();
     populate_subtables(&mut ms);
-    populate_main_rows(&mut ms, 6);
+    populate_model_rows(&mut ms);
     ms.save().unwrap();
 
     let rust_written = casa_core::Complex32::new(4.5, -1.25);
@@ -313,7 +336,7 @@ fn model_data_write_read_interoperability_matrix() {
         .with_main_column(OptionalMainColumn::ModelData);
     let mut cpp_written_ms = MeasurementSet::create(&cpp_path, builder).unwrap();
     populate_subtables(&mut cpp_written_ms);
-    populate_main_rows(&mut cpp_written_ms, 6);
+    populate_model_rows(&mut cpp_written_ms);
     cpp_written_ms.save().unwrap();
     drop(cpp_written_ms);
     let cpp_written = casa_core::Complex32::new(-7.25, 3.5);
