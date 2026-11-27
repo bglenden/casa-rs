@@ -535,7 +535,7 @@ const METHODS: &[Method] = &[
         "selecttaqlold",
         &[param("msselect", K::Text, Text(""))],
         R::Bool,
-        Status::Partial,
+        Yes,
     ),
     method(
         "sort",
