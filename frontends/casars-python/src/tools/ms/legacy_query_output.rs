@@ -3,10 +3,13 @@
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::MutexGuard;
 
-use casa_mstransform::tool_sort::{check_named_output_path, write_selected_measurement_set_rows};
+use casa_mstransform::tool_sort::{
+    check_named_output_path, named_keyword_output_staging_parent,
+    write_selected_measurement_set_rows,
+};
 use casa_tables::publication::{
     check_write_access, exchange_directories, lock_table_tree_for_replacement,
     rename_without_replacing,
@@ -19,6 +22,7 @@ use pyo3::exceptions::PyNotImplementedError;
 use pyo3::prelude::*;
 
 use super::legacy_query_config::query_defaults;
+use super::legacy_query_subtable::QuerySubtable;
 use super::sort::SortedDestination;
 use super::{AttachedMs, runtime_error};
 
@@ -69,13 +73,8 @@ impl QueryOutputOptions {
                 output.set(name, &value)?;
             }
         }
-        if giving.table_name.is_empty() {
+        if output.independent && giving.table_name.is_empty() {
             return Err(runtime_error("TaQL output must name a MeasurementSet"));
-        }
-        if giving.table_name.contains("::") {
-            return Err(PyNotImplementedError::new_err(
-                "ms.selecttaqlold subtable GIVING is not implemented in casa-rs (#1030)",
-            ));
         }
         Ok(output)
     }
@@ -197,41 +196,32 @@ impl AttachedMs {
         &self,
         table: &Table,
         rows: &[usize],
-        output: &Path,
+        name: &str,
         options: QueryOutputOptions,
         original: &Path,
     ) -> PyResult<Option<Self>> {
+        if name.is_empty() {
+            return Ok(None);
+        }
         let endian = options
             .independent
             .then(|| options.copy_endian())
             .transpose()?;
-        let name = output
-            .file_name()
-            .ok_or_else(|| runtime_error("TaQL output must name a MeasurementSet"))?;
+        let subtable = QuerySubtable::resolve(name, &self.path)?;
+        let output = if let Some(subtable) = &subtable {
+            subtable.output.clone()
+        } else {
+            canonical_named_output(name)?
+        };
         let parent = output
             .parent()
-            .ok_or_else(|| runtime_error("TaQL output has no parent directory"))?
-            .canonicalize()
-            .map_err(runtime_error)?;
-        let output = parent.join(name);
-        let current = self.path.as_path();
-        if options.independent {
-            for input in std::iter::once(current).chain((original != current).then_some(original)) {
-                if input.starts_with(&output) {
-                    return Err(runtime_error(
-                        "cannot overwrite the attached MeasurementSet with a named copy",
-                    ));
-                }
-                check_named_output_path(input, &output).map_err(runtime_error)?;
-            }
-        } else {
-            for input in [original, current]
-                .into_iter()
-                .chain(self.sources.iter().map(|path| path.as_path()))
-            {
-                crate::tools::table::refuse_nested(&output, input).map_err(PyErr::from)?;
-            }
-        }
+            .ok_or_else(|| runtime_error("TaQL output has no parent directory"))?;
+        let copy_parent = self.check_query_destination(
+            &output,
+            original,
+            options.independent,
+            subtable.as_ref(),
+        )?;
         crate::tools::table::check_target(&output).map_err(PyErr::from)?;
         let destination = SortedDestination::inspect(&output, "TaQL selection")?;
         if !options.overwrite && !matches!(destination, SortedDestination::Absent) {
@@ -239,7 +229,11 @@ impl AttachedMs {
         }
         let stage = tempfile::Builder::new()
             .prefix(".taql-ms-")
-            .tempdir_in(&parent)
+            .tempdir_in(if options.independent {
+                &copy_parent
+            } else {
+                parent
+            })
             .map_err(runtime_error)?;
         let staged = if let Some(endian) = endian {
             let staged = stage.path().join("selected.ms");
@@ -256,7 +250,7 @@ impl AttachedMs {
             let staged = stage.path().to_owned();
             table
                 .select_rows(rows)
-                .and_then(|view| view.save(TableOptions::new(&staged)))
+                .and_then(|view| view.save_relative_to(TableOptions::new(&staged), &output))
                 .map_err(runtime_error)?;
             staged
         };
@@ -269,7 +263,7 @@ impl AttachedMs {
             .transpose()
             .map_err(runtime_error)?;
         publish_selection(&output, &staged, stage, destination, |publication| {
-            options
+            let attached = options
                 .independent
                 .then(|| {
                     Self::open_with_publication_guard(
@@ -280,9 +274,65 @@ impl AttachedMs {
                         publication,
                     )
                 })
-                .transpose()
+                .transpose()?;
+            if let Some(subtable) = subtable {
+                subtable.publish_link()?;
+            }
+            Ok(attached)
         })
     }
+
+    fn check_query_destination(
+        &self,
+        output: &Path,
+        original: &Path,
+        independent: bool,
+        subtable: Option<&QuerySubtable>,
+    ) -> PyResult<PathBuf> {
+        let current = self.path.as_path();
+        let inputs = std::iter::once(current).chain((original != current).then_some(original));
+        let mut parent = output
+            .parent()
+            .expect("validated output has a parent")
+            .to_owned();
+        if let Some(link) = subtable {
+            for input in inputs {
+                let outside =
+                    named_keyword_output_staging_parent(input, output, &link.owner, &link.keyword)
+                        .map_err(runtime_error)?;
+                if parent.starts_with(&outside) {
+                    parent = outside;
+                }
+            }
+        } else if independent {
+            for input in inputs {
+                if input.starts_with(output) {
+                    return Err(runtime_error(
+                        "cannot overwrite the attached MeasurementSet with a named copy",
+                    ));
+                }
+                check_named_output_path(input, output).map_err(runtime_error)?;
+            }
+        } else {
+            for input in inputs.chain(self.sources.iter().map(|path| path.as_path())) {
+                crate::tools::table::refuse_nested(output, input).map_err(PyErr::from)?;
+            }
+        }
+        Ok(parent)
+    }
+}
+
+fn canonical_named_output(name: &str) -> PyResult<PathBuf> {
+    let absolute = std::path::absolute(name).map_err(runtime_error)?;
+    let name = absolute
+        .file_name()
+        .ok_or_else(|| runtime_error("TaQL output must name a MeasurementSet"))?;
+    let parent = absolute
+        .parent()
+        .ok_or_else(|| runtime_error("TaQL output has no parent directory"))?
+        .canonicalize()
+        .map_err(runtime_error)?;
+    Ok(parent.join(name))
 }
 
 fn publish_selection<T>(

@@ -1431,6 +1431,7 @@ impl<'src> Parser<'src> {
                     | Token::Slash
                     | Token::Dot
                     | Token::Minus
+                    | Token::Colon
             ) || tok.is_keyword();
             if !is_path_part {
                 break;

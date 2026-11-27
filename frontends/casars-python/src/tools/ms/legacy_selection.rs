@@ -395,11 +395,10 @@ impl AttachedMs {
         let nonempty = !selected.is_empty();
         if let Some(giving) = selection.giving {
             let options = QueryOutputOptions::parse(&giving)?;
-            let target = std::path::absolute(giving.table_name).map_err(runtime_error)?;
             let output = compose_rows(outer.as_deref(), Some(&selected)).expect("row projection");
             working.verify_directory().map_err(runtime_error)?;
             if let Some(mut saved) =
-                self.save_legacy_query(table, &output, &target, options, original_path)?
+                self.save_legacy_query(table, &output, &giving.table_name, options, original_path)?
             {
                 saved.legacy_selection.initial =
                     self.legacy_selection.initial.clone().map(|mut s| {

@@ -13,6 +13,7 @@ mod iteration;
 mod legacy_iteration;
 mod legacy_query_config;
 mod legacy_query_output;
+mod legacy_query_subtable;
 mod legacy_selection;
 mod legacy_statwt;
 mod legacy_visibility;
