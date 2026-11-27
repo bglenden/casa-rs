@@ -38,6 +38,64 @@ Review each document in the repository and decide what to do with it.
 Ask the repository owner about any document that fits none of these categories.
 Include its path and what is unclear before changing its disposition.
 
-Run `just docs-check` after the cleanup. The
-[agent reference](agent-reference.md#release-and-installation) covers the
-release command.
+Run `just docs-check` after the cleanup.
+
+## Release scope and branch
+
+Before feature freeze, record the release's public Python and CLI interfaces,
+supported platforms and Python versions, MSv2 and MSv4 behavior, and saved
+parameter profile compatibility. Decide which channels will receive the
+release, including whether it includes Rust crates on crates.io. State the
+compatibility commitment for each published public API.
+
+At feature freeze, cut `release/<major>.<minor>` from validated `main`. Use it
+for all candidates, the final release, and patches in that series. For 1.0,
+use `release/1.0` for `v1.0.0-rc1`, any subsequent RCs, `v1.0.0`, and patches
+starting with `v1.0.1`. Continue development for the next release on `main`.
+During the RC phase, limit changes on the release branch to release blockers
+and release preparation.
+
+## Rehearse and qualify the candidate
+
+1. Prepare the first RC commit and local tag with the
+   [release command](agent-reference.md#release-and-installation).
+   Push the candidate commit to the release branch and manually run the Python
+   Release workflow there before pushing the tag. Verify the wheel and source
+   distribution smoke checks, suite and binary bundles on both supported
+   platforms, and packaging versions. Verify that the rehearsal skips
+   publication.
+2. Push the RC tag after the rehearsal passes. Verify the tag's release
+   checks and GitHub prerelease assets. Use the
+   [release gates](https://github.com/bglenden/casa-rs/blob/main/TESTING.md#releases-and-waivers)
+   for required evidence, including C++ interoperability and CASA parity.
+3. Install the downloadable RC suite and wheel in clean environments on
+   Linux x86_64 and macOS arm64. Check the stated Python versions and verify
+   that the [side-by-side RC install](install.md#install-a-release-candidate-side-by-side)
+   preserves the active stable install. Exercise named representative workflows
+   for MS conversion and round-trip, flagging and calibration, and CPU and
+   Metal imaging. Record the candidate tag, workflow run, and results in the
+   milestone issues or the release PR.
+4. Resolve any remaining release blockers before promoting the candidate.
+   If executable behavior or packaging changes, cut the next RC and rerun
+   its release gates and the affected acceptance workloads.
+
+## Publish and verify the final release
+
+Prepare the final tag on the same branch from the accepted RC, with the final
+version metadata and release notes. Include supported workflows, known
+limitations, upgrade and rollback instructions, and links to documentation
+at the release tag.
+
+Verify the final tag's gates, published assets, and installation from the
+intended channels. Confirm that the suite manifest and installed Python
+package agree with the final version. Close the milestone once its required
+issues and release verification are complete. Treat published tags and
+assets as immutable. Publish corrections under a new version.
+
+## Maintain the release series
+
+Land fixes on `main` and backport the relevant commits through pull requests
+to the release branch. Keep patches compatible with the series and record
+user-visible changes in the release notes. Run the release gates for each
+patch, and use a patch RC when a change carries material scientific,
+data-integrity, or packaging risk.
