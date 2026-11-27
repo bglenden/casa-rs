@@ -15,13 +15,16 @@ python_bin="$tmp_root/venv/bin/python"
 python -m venv "$tmp_root/venv"
 "$python_bin" -m pip install "$1"
 
+measures_root="$tmp_root/casa-measures"
+python "$repo_root/scripts/install-measures-snapshot.py" "$measures_root"
 mkdir "$tmp_root/work" "$tmp_root/no-commands"
 tar -xzf "$repo_root/libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz" -C "$tmp_root/work"
 cd "$tmp_root/work"
 
 # Run the packaged task from an empty workspace apart from the fixture, with
-# no CLI or Cargo commands available. The Python task binds to native code.
-PATH="$tmp_root/no-commands" CARGO_TARGET_DIR="$tmp_root/no-commands" "$python_bin" -I - "$2" <<'PY'
+# its own measures runtime and no CLI or Cargo commands available.
+PATH="$tmp_root/no-commands" CARGO_TARGET_DIR="$tmp_root/no-commands" \
+  CASA_RS_MEASURESPATH="$measures_root" "$python_bin" -I - "$2" <<'PY'
 import inspect
 from pathlib import Path
 import sys
