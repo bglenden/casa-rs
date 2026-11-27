@@ -591,7 +591,7 @@ fn agreement_never_passes_a_nan_or_a_mismatch() {
 /// The reusable consumer module sees only the shared interface.
 #[test]
 fn the_feed_imports_no_store_type() {
-    let feed = include_str!("batch_trial/feed.rs");
+    let feed = include_str!("feed.rs");
     for store in ["casa_ms", "Msv2", "Msv4", "MeasurementSet"] {
         assert!(!feed.contains(store), "feed.rs names {store}");
     }

@@ -24,18 +24,23 @@ fn spline_time_apply_matches_the_closed_form_natural_curve() {
     let rows = [(85., 1.), (95., 2.), (105., 0.5), (115., 1.25)]
         .into_iter()
         .flat_map(|(time_seconds, amplitude)| {
-            [0, 1].map(|antenna_id| common::SyntheticGainSolutionRow {
-                time_seconds,
-                field_id: 0,
-                spectral_window_id: 0,
-                antenna_id,
-                gains: vec![casa_core::Complex32::new(amplitude, 0.); 2],
-                flags: vec![false; 2],
-            })
+            [0, 1].map(
+                |antenna_id| common::synthetic_tables::SyntheticGainSolutionRow {
+                    time_seconds,
+                    field_id: 0,
+                    spectral_window_id: 0,
+                    antenna_id,
+                    gains: vec![casa_core::Complex32::new(amplitude, 0.); 2],
+                    flags: vec![false; 2],
+                },
+            )
         })
         .collect::<Vec<_>>();
-    let table =
-        common::create_apply_gain_caltable(&dir.path().join("spline.gcal"), &["CAL"], &rows);
+    let table = common::synthetic_tables::create_apply_gain_caltable(
+        &dir.path().join("spline.gcal"),
+        &["CAL"],
+        &rows,
+    );
     let mut spec = ApplyCalibrationTableSpec::new(table);
     spec.interp = casa_calibration::apply::ApplyInterpolationMode::Casa {
         time: casa_calibration::table::TimeInterpolation::Spline,
@@ -83,17 +88,19 @@ fn default_gainfield_interpolates_across_the_calibration_fields() {
     let rows = [(0, 90., 2.), (1, 110., 4.)]
         .into_iter()
         .flat_map(|(field_id, time_seconds, amplitude)| {
-            [0, 1].map(|antenna_id| common::SyntheticGainSolutionRow {
-                time_seconds,
-                field_id,
-                spectral_window_id: 0,
-                antenna_id,
-                gains: vec![casa_core::Complex32::new(amplitude, 0.); 2],
-                flags: vec![false; 2],
-            })
+            [0, 1].map(
+                |antenna_id| common::synthetic_tables::SyntheticGainSolutionRow {
+                    time_seconds,
+                    field_id,
+                    spectral_window_id: 0,
+                    antenna_id,
+                    gains: vec![casa_core::Complex32::new(amplitude, 0.); 2],
+                    flags: vec![false; 2],
+                },
+            )
         })
         .collect::<Vec<_>>();
-    let table = common::create_apply_gain_caltable(
+    let table = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("fields.gcal"),
         &["CAL0", "CAL1"],
         &rows,
@@ -132,11 +139,11 @@ fn default_gainfield_interpolates_across_the_calibration_fields() {
 fn execute_apply_trial_does_not_mutate_measurement_set() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path = common::create_apply_fixture_ms(dir.path(), false);
-    let caltable_path = common::create_apply_gain_caltable(
+    let caltable_path = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("phase.gcal"),
         &["TARGET0"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -147,7 +154,7 @@ fn execute_apply_trial_does_not_mutate_measurement_set() {
                 ],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -183,11 +190,11 @@ fn execute_apply_trial_does_not_mutate_measurement_set() {
 fn execute_apply_creates_corrected_data_and_writes_corrected_visibilities() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path = common::create_apply_fixture_ms(dir.path(), false);
-    let caltable_path = common::create_apply_gain_caltable(
+    let caltable_path = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("phase.gcal"),
         &["TARGET0"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -198,7 +205,7 @@ fn execute_apply_creates_corrected_data_and_writes_corrected_visibilities() {
                 ],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -246,11 +253,11 @@ fn execute_apply_creates_corrected_data_and_writes_corrected_visibilities() {
 fn export_corrected_data_writes_imaging_ready_data_column() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path = common::create_apply_fixture_ms(dir.path(), false);
-    let caltable_path = common::create_apply_gain_caltable(
+    let caltable_path = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("phase.gcal"),
         &["TARGET0"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -261,7 +268,7 @@ fn export_corrected_data_writes_imaging_ready_data_column() {
                 ],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -321,11 +328,11 @@ fn export_corrected_data_writes_imaging_ready_data_column() {
 fn export_corrected_data_applies_ms_selection_to_output_rows() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path = common::create_apply_fixture_ms(dir.path(), false);
-    let caltable_path = common::create_apply_gain_caltable(
+    let caltable_path = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("phase.gcal"),
         &["TARGET0", "TARGET1"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -336,7 +343,7 @@ fn export_corrected_data_applies_ms_selection_to_output_rows() {
                 ],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -347,7 +354,7 @@ fn export_corrected_data_applies_ms_selection_to_output_rows() {
                 ],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 200.0,
                 field_id: 1,
                 spectral_window_id: 1,
@@ -358,7 +365,7 @@ fn export_corrected_data_applies_ms_selection_to_output_rows() {
                 ],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 200.0,
                 field_id: 1,
                 spectral_window_id: 1,
@@ -411,11 +418,11 @@ fn export_corrected_data_applies_ms_selection_to_output_rows() {
 fn execute_apply_k_jones_delay_table_corrects_frequency_dependent_phase() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path = common::create_apply_fixture_ms(dir.path(), false);
-    let caltable_path = common::create_apply_delay_caltable(
+    let caltable_path = common::synthetic_tables::create_apply_delay_caltable(
         &dir.path().join("delay.kcal"),
         &["TARGET0"],
         &[
-            common::SyntheticDelaySolutionRow {
+            common::synthetic_tables::SyntheticDelaySolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -423,7 +430,7 @@ fn execute_apply_k_jones_delay_table_corrects_frequency_dependent_phase() {
                 delays_ns: vec![250.0, 250.0],
                 flags: vec![false, false],
             },
-            common::SyntheticDelaySolutionRow {
+            common::synthetic_tables::SyntheticDelaySolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -471,10 +478,10 @@ fn execute_apply_bpoly_table_expands_channelized_bandpass() {
     let ms_path = common::create_apply_fixture_ms(dir.path(), false);
     let amp_scale = (8.0_f32).sqrt();
     let amp_slope = 2.0_f64.ln() / 2.0;
-    let bpoly_path = common::create_apply_bpoly_caltable(
+    let bpoly_path = common::synthetic_tables::create_apply_bpoly_caltable(
         &dir.path().join("bandpass.bpoly"),
         &[
-            common::SyntheticBPolySolutionRow {
+            common::synthetic_tables::SyntheticBPolySolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -485,7 +492,7 @@ fn execute_apply_bpoly_table_expands_channelized_bandpass() {
                 phase_coefficients: vec![vec![0.0], vec![0.0]],
                 phase_units: "RADIANS",
             },
-            common::SyntheticBPolySolutionRow {
+            common::synthetic_tables::SyntheticBPolySolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -533,11 +540,11 @@ fn execute_apply_uses_nearest_gainfield_mapping() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path = common::create_apply_fixture_ms(dir.path(), false);
     common::set_ms_field_directions(&ms_path, &[(0, 1.19, 0.5), (1, 1.20, 0.6)]);
-    let caltable_path = common::create_apply_gain_caltable(
+    let caltable_path = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("nearest.gcal"),
         &["CAL0", "CAL1"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -548,7 +555,7 @@ fn execute_apply_uses_nearest_gainfield_mapping() {
                 ],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -559,7 +566,7 @@ fn execute_apply_uses_nearest_gainfield_mapping() {
                 ],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 1,
                 spectral_window_id: 0,
@@ -570,7 +577,7 @@ fn execute_apply_uses_nearest_gainfield_mapping() {
                 ],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 1,
                 spectral_window_id: 0,
@@ -625,10 +632,10 @@ fn execute_apply_uses_nearest_gainfield_mapping() {
 fn execute_apply_calflag_marks_samples_when_solution_is_missing() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path = common::create_apply_fixture_ms(dir.path(), true);
-    let caltable_path = common::create_apply_gain_caltable(
+    let caltable_path = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("phase.gcal"),
         &["TARGET0"],
-        &[common::SyntheticGainSolutionRow {
+        &[common::synthetic_tables::SyntheticGainSolutionRow {
             time_seconds: 100.0,
             field_id: 0,
             spectral_window_id: 0,
@@ -669,10 +676,10 @@ fn execute_apply_calflag_marks_samples_when_solution_is_missing() {
 fn execute_apply_calflag_marks_samples_when_solution_is_missing_without_seeded_corrected_data() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path = common::create_apply_fixture_ms(dir.path(), false);
-    let caltable_path = common::create_apply_gain_caltable(
+    let caltable_path = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("phase.gcal"),
         &["TARGET0"],
-        &[common::SyntheticGainSolutionRow {
+        &[common::synthetic_tables::SyntheticGainSolutionRow {
             time_seconds: 100.0,
             field_id: 0,
             spectral_window_id: 0,
@@ -740,11 +747,11 @@ fn execute_apply_calflag_does_not_rewrite_unchanged_flags_or_flag_row() {
             .save_selected_rows(&["FLAG", "FLAG_ROW"], &[0])
             .expect("save seeded flags");
     }
-    let caltable_path = common::create_apply_gain_caltable(
+    let caltable_path = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("phase.gcal"),
         &["TARGET0"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -755,7 +762,7 @@ fn execute_apply_calflag_does_not_rewrite_unchanged_flags_or_flag_row() {
                 ],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -797,11 +804,11 @@ fn execute_apply_calflag_does_not_rewrite_unchanged_flags_or_flag_row() {
 fn execute_apply_calwt_updates_weight_column_for_gain_tables() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path = common::create_apply_fixture_ms(dir.path(), true);
-    let caltable_path = common::create_apply_gain_caltable(
+    let caltable_path = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("phase.gcal"),
         &["TARGET0"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -812,7 +819,7 @@ fn execute_apply_calwt_updates_weight_column_for_gain_tables() {
                 ],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -857,11 +864,11 @@ fn execute_apply_calwt_updates_weight_column_for_gain_tables() {
 fn execute_apply_calwt_updates_weight_paths_without_seeded_corrected_data() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path = common::create_apply_fixture_ms_with_options(dir.path(), false, true);
-    let caltable_path = common::create_apply_gain_caltable(
+    let caltable_path = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("phase.gcal"),
         &["TARGET0"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -872,7 +879,7 @@ fn execute_apply_calwt_updates_weight_paths_without_seeded_corrected_data() {
                 ],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -946,11 +953,11 @@ fn execute_apply_calwt_updates_weight_paths_without_seeded_corrected_data() {
 fn execute_apply_calwt_updates_weight_spectrum_and_reduces_weight() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path = common::create_apply_fixture_ms_with_options(dir.path(), true, true);
-    let caltable_path = common::create_apply_gain_caltable(
+    let caltable_path = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("phase.gcal"),
         &["TARGET0"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -961,7 +968,7 @@ fn execute_apply_calwt_updates_weight_spectrum_and_reduces_weight() {
                 ],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -1022,11 +1029,11 @@ fn execute_apply_calwt_updates_weight_spectrum_and_reduces_weight() {
 fn execute_apply_respects_per_table_applicability_selection() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path = common::create_apply_fixture_ms(dir.path(), false);
-    let field0_table = common::create_apply_gain_caltable(
+    let field0_table = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("field0.gcal"),
         &["TARGET0"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -1037,7 +1044,7 @@ fn execute_apply_respects_per_table_applicability_selection() {
                 ],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -1050,11 +1057,11 @@ fn execute_apply_respects_per_table_applicability_selection() {
             },
         ],
     );
-    let field1_table = common::create_apply_gain_caltable(
+    let field1_table = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("field1.gcal"),
         &["TARGET1"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 200.0,
                 field_id: 1,
                 spectral_window_id: 1,
@@ -1065,7 +1072,7 @@ fn execute_apply_respects_per_table_applicability_selection() {
                 ],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 200.0,
                 field_id: 1,
                 spectral_window_id: 1,
@@ -1151,10 +1158,10 @@ fn execute_apply_creating_corrected_data_clears_casa_s_sort_keywords() {
         keywords.upsert("model_0", Value::Record(casa_core::RecordValue::default()));
         ms.save().expect("save");
     }
-    let caltable_path = common::create_apply_gain_caltable(
+    let caltable_path = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("phase.gcal"),
         &["TARGET0"],
-        &[common::SyntheticGainSolutionRow {
+        &[common::synthetic_tables::SyntheticGainSolutionRow {
             time_seconds: 100.0,
             field_id: 0,
             spectral_window_id: 0,

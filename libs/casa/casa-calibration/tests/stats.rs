@@ -157,11 +157,11 @@ fn calibration_stats_axis_parse_and_display_names_cover_aliases() {
 #[test]
 fn calibration_stats_reports_global_and_grouped_amplitude_values() {
     let dir = TempDir::new().expect("tempdir");
-    let table_path = common::create_apply_gain_caltable(
+    let table_path = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("stats.gcal"),
         &["FIELD0", "FIELD1"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 10.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -169,7 +169,7 @@ fn calibration_stats_reports_global_and_grouped_amplitude_values() {
                 gains: vec![Complex32::new(1.0, 0.0), Complex32::new(2.0, 0.0)],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 20.0,
                 field_id: 1,
                 spectral_window_id: 1,
@@ -215,10 +215,10 @@ fn calibration_stats_reports_global_and_grouped_amplitude_values() {
 #[test]
 fn calibration_stats_can_exclude_flagged_values() {
     let dir = TempDir::new().expect("tempdir");
-    let table_path = common::create_apply_gain_caltable(
+    let table_path = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("stats-flags.gcal"),
         &["FIELD0"],
-        &[common::SyntheticGainSolutionRow {
+        &[common::synthetic_tables::SyntheticGainSolutionRow {
             time_seconds: 10.0,
             field_id: 0,
             spectral_window_id: 0,
@@ -247,10 +247,10 @@ fn calibration_stats_can_exclude_flagged_values() {
 #[test]
 fn calibration_stats_supports_phase_real_imaginary_and_scalar_axes() {
     let dir = TempDir::new().expect("tempdir");
-    let table_path = common::create_apply_gain_caltable(
+    let table_path = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("axes.gcal"),
         &["FIELD0"],
-        &[common::SyntheticGainSolutionRow {
+        &[common::synthetic_tables::SyntheticGainSolutionRow {
             time_seconds: 12.5,
             field_id: 3,
             spectral_window_id: 4,
@@ -316,10 +316,10 @@ fn calibration_stats_supports_phase_real_imaginary_and_scalar_axes() {
 fn calibration_stats_supports_real_array_and_scalar_columns() {
     let dir = TempDir::new().expect("tempdir");
     let misc_path = create_misc_stats_table(&dir.path().join("misc-stats.tbl"));
-    let gain_path = common::create_apply_gain_caltable(
+    let gain_path = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("real-arrays.gcal"),
         &["FIELD0"],
-        &[common::SyntheticGainSolutionRow {
+        &[common::synthetic_tables::SyntheticGainSolutionRow {
             time_seconds: 25.0,
             field_id: 0,
             spectral_window_id: 0,
@@ -434,10 +434,10 @@ fn calibration_stats_supports_real_array_and_scalar_columns() {
 #[test]
 fn calibration_stats_reports_missing_unsupported_and_empty_value_errors() {
     let dir = TempDir::new().expect("tempdir");
-    let gain_path = common::create_apply_gain_caltable(
+    let gain_path = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("errors.gcal"),
         &["FIELD0"],
-        &[common::SyntheticGainSolutionRow {
+        &[common::synthetic_tables::SyntheticGainSolutionRow {
             time_seconds: 10.0,
             field_id: 0,
             spectral_window_id: 0,
@@ -446,10 +446,10 @@ fn calibration_stats_reports_missing_unsupported_and_empty_value_errors() {
             flags: vec![true, true],
         }],
     );
-    let delay_path = common::create_apply_delay_caltable(
+    let delay_path = common::synthetic_tables::create_apply_delay_caltable(
         &dir.path().join("errors.kcal"),
         &["FIELD0"],
-        &[common::SyntheticDelaySolutionRow {
+        &[common::synthetic_tables::SyntheticDelaySolutionRow {
             time_seconds: 10.0,
             field_id: 0,
             spectral_window_id: 0,

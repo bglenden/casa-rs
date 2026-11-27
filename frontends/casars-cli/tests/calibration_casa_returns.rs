@@ -217,7 +217,10 @@ fn strs(value: &CasaValue) -> Vec<String> {
 #[test]
 fn gaincal_returns_its_tables_and_selected_data() {
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     let ms = ms.to_str().unwrap();
     let solve = |caltable: &str, gaintable: Value| {
         returned(
@@ -277,7 +280,10 @@ fn solvestats_counts_the_reference_antenna_flex_hands_on_to() {
     // integrations. CASA's flex mode refers that interval to an alternate
     // and keeps it while antenna 0 lacks a solution in the interval before.
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     for row in [0, 1] {
         common::make_row_flag_only_outlier(&ms, row, Complex32::new(1.0, 0.0));
     }
@@ -311,7 +317,7 @@ fn solvestats_counts_the_reference_antenna_flex_hands_on_to() {
 #[test]
 fn combined_fields_keep_casas_interval_boundaries() {
     let dir = TempDir::new().unwrap();
-    let cluster = |time_seconds, scan_number| common::SyntheticGainTimeCluster {
+    let cluster = |time_seconds, scan_number| common::synthetic_tables::SyntheticGainTimeCluster {
         time_seconds,
         scan_number,
         gains: [[Complex32::new(1.0, 0.0); 2]; 3],
@@ -343,8 +349,10 @@ fn combined_fields_keep_casas_interval_boundaries() {
 fn gaincal_and_bandpass_accept_data_descriptions_sharing_a_window() {
     for cross_hands in [false, true] {
         let dir = TempDir::new().unwrap();
-        let ms =
-            common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+        let ms = common::create_gain_solve_fixture_ms(
+            dir.path(),
+            common::synthetic_tables::SyntheticGainFixtureKind::G,
+        );
         share_window_zero(&ms, cross_hands);
         let parameters = |caltable| {
             json!({"vis": ms.to_str().unwrap(), "caltable": caltable, "refant": "0",
@@ -414,12 +422,14 @@ fn bandpass_returns_its_tables_and_selected_data() {
     let unit = [Complex32::new(1.0, 0.0); 2];
     let ms = common::create_bandpass_solve_fixture_ms(
         dir.path(),
-        &[100.0, 101.0].map(|time_seconds| common::SyntheticBandpassTimeCluster {
-            field_id: 0,
-            time_seconds,
-            scan_number: 1,
-            prior_gains: [unit; 3],
-            bandpass_gains: [[unit; 2]; 3],
+        &[100.0, 101.0].map(|time_seconds| {
+            common::synthetic_tables::SyntheticBandpassTimeCluster {
+                field_id: 0,
+                time_seconds,
+                scan_number: 1,
+                prior_gains: [unit; 3],
+                bandpass_gains: [[unit; 2]; 3],
+            }
         }),
     );
     // The fixture's three antennas have two baselines each, which CASA's
@@ -468,7 +478,7 @@ fn bandpass_returns_its_tables_and_selected_data() {
 fn fluxscale_returns_flux_densities_per_field_and_window() {
     let dir = TempDir::new().unwrap();
     let ms = fluxscale_ms(dir.path());
-    let row = |time_seconds, field_id, gain| common::SyntheticGainSolutionRow {
+    let row = |time_seconds, field_id, gain| common::synthetic_tables::SyntheticGainSolutionRow {
         time_seconds,
         field_id,
         spectral_window_id: 0,
@@ -476,7 +486,7 @@ fn fluxscale_returns_flux_densities_per_field_and_window() {
         gains: vec![Complex32::new(gain, 0.0); 2],
         flags: vec![false, false],
     };
-    let gains = common::create_apply_gain_caltable(
+    let gains = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("gain.gcal"),
         &["REF0", "TARGET0"],
         &[row(10.0, 0, 1.0), row(20.0, 1, 2.0)],
@@ -516,7 +526,7 @@ fn fluxscale_fits_the_spectrum_across_windows() {
             // positive and this tests a determined, weighted spectral fit.
             let transfer_gain = transfer * scatter * (1.0 + 0.01 * (antenna_id as f32 - 1.0));
             for (time_seconds, field_id, gain) in [(10.0, 0, scatter), (20.0, 1, transfer_gain)] {
-                rows.push(common::SyntheticGainSolutionRow {
+                rows.push(common::synthetic_tables::SyntheticGainSolutionRow {
                     time_seconds,
                     field_id,
                     spectral_window_id,
@@ -527,7 +537,7 @@ fn fluxscale_fits_the_spectrum_across_windows() {
             }
         }
     }
-    let gains = common::create_apply_gain_caltable(
+    let gains = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("gain.gcal"),
         &["REF0", "TARGET0"],
         &rows,
@@ -607,17 +617,17 @@ fn implemented_fluxscale_options_select_samples_and_set_the_fit_order() {
         (21., 1, 10., 2),
         (30., 1, 12., 1),
     ];
-    let rows = samples.map(
-        |(time_seconds, field_id, gain, _)| common::SyntheticGainSolutionRow {
+    let rows = samples.map(|(time_seconds, field_id, gain, _)| {
+        common::synthetic_tables::SyntheticGainSolutionRow {
             time_seconds,
             field_id,
             spectral_window_id: 0,
             antenna_id: 0,
             gains: vec![Complex32::new(gain, 0.); 2],
             flags: vec![false; 2],
-        },
-    );
-    let gain = common::create_apply_gain_caltable(
+        }
+    });
+    let gain = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("gain.gcal"),
         &["REF0", "TARGET0"],
         &rows,
@@ -660,7 +670,10 @@ fn implemented_fluxscale_options_select_samples_and_set_the_fit_order() {
 #[test]
 fn applycal_and_gencal_return_none() {
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     let ms = ms.to_str().unwrap();
     returned(
         dir.path(),
@@ -684,7 +697,10 @@ fn applycal_and_gencal_return_none() {
 #[test]
 fn gencal_refuses_a_missing_tec_image_without_publishing_a_table() {
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     // TEC calibration is implemented; an absent input is still a refusal,
     // naming the input parameter before any calibration table is published.
     let (output, reply) = json_run(
@@ -714,7 +730,10 @@ fn gencal_refuses_a_missing_tec_image_without_publishing_a_table() {
 #[test]
 fn a_sub_parameter_casa_ignores_takes_any_value() {
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     let ms = ms.to_str().unwrap();
     for (surface, values) in [
         (
@@ -746,7 +765,10 @@ fn a_sub_parameter_casa_ignores_takes_any_value() {
 #[test]
 fn gaincal_and_bandpass_use_the_unit_model_for_an_empty_virtual_record() {
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     {
         let mut opened = casa_ms::MeasurementSet::open(&ms).expect("open");
         let keywords = opened.main_table_mut().keywords_mut();

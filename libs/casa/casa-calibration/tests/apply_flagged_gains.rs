@@ -32,7 +32,7 @@ fn flagged_antenna_keeps_valid_partner_correction_and_weight_scale() {
             drop(ms);
             let rows =
                 [(0, [2., 4.], false), (1, [99., 88.], true)].map(|(antenna, gains, flag)| {
-                    common::SyntheticGainSolutionRow {
+                    common::synthetic_tables::SyntheticGainSolutionRow {
                         time_seconds: 100.,
                         field_id: 0,
                         spectral_window_id: 0,
@@ -44,7 +44,7 @@ fn flagged_antenna_keeps_valid_partner_correction_and_weight_scale() {
                         flags: vec![flag; 2],
                     }
                 });
-            let gain = common::create_apply_gain_caltable(
+            let gain = common::synthetic_tables::create_apply_gain_caltable(
                 &dir.path().join("flagged.gcal"),
                 &["TARGET0"],
                 &rows,

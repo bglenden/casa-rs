@@ -1,11 +1,8 @@
 {
   "limit": 1500,
   "files": [
-    "libs/casa/casa-calibration/src/execute.rs",
     "suites/casa-parity/tests/cases/calibration/casa_calibration_parity.rs",
-    "libs/casa/casa-calibration/tests/common/mod.rs",
     "libs/casa/casa-imageanalysis/src/analysis.rs",
-    "libs/casa/casa-flagging/src/flagging.rs",
     "libs/casa/casa-mstransform/src/transform.rs",
     "libs/casa/casa-vla/src/importer.rs",
     "libs/casa/casa-vla/src/record.rs",

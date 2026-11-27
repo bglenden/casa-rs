@@ -66,14 +66,14 @@ fn solve_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
     let ms_path = common::create_bandpass_solve_fixture_ms(
         dir.path(),
         &[
-            common::SyntheticBandpassTimeCluster {
+            common::synthetic_tables::SyntheticBandpassTimeCluster {
                 field_id: 0,
                 time_seconds: 100.0,
                 scan_number: 1,
                 prior_gains,
                 bandpass_gains,
             },
-            common::SyntheticBandpassTimeCluster {
+            common::synthetic_tables::SyntheticBandpassTimeCluster {
                 field_id: 0,
                 time_seconds: 101.0,
                 scan_number: 1,
@@ -83,11 +83,11 @@ fn solve_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
         ],
     );
 
-    let prior_table = common::create_apply_gain_caltable(
+    let prior_table = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("prior.gcal"),
         &["TARGET0"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -95,7 +95,7 @@ fn solve_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
                 gains: vec![prior_gains[0][0], prior_gains[0][1]],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -103,7 +103,7 @@ fn solve_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
                 gains: vec![prior_gains[1][0], prior_gains[1][1]],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -216,13 +216,16 @@ fn solve_bandpass_excludes_a_row_whose_flag_row_is_set_and_flag_clear() {
             [Complex32::new(1.05, 0.12), Complex32::new(0.88, -0.14)],
         ],
     ];
-    let clusters = [100.0, 101.0].map(|time_seconds| common::SyntheticBandpassTimeCluster {
-        field_id: 0,
-        time_seconds,
-        scan_number: 1,
-        prior_gains: unit_gains,
-        bandpass_gains,
-    });
+    let clusters =
+        [100.0, 101.0].map(
+            |time_seconds| common::synthetic_tables::SyntheticBandpassTimeCluster {
+                field_id: 0,
+                time_seconds,
+                scan_number: 1,
+                prior_gains: unit_gains,
+                bandpass_gains,
+            },
+        );
     let ms_path = common::create_bandpass_solve_fixture_ms(dir.path(), &clusters);
     common::make_row_flag_only_outlier(&ms_path, 0, Complex32::from_polar(3.0, 0.6));
     let bandpass_table = dir.path().join("row-flagged.bcal");
@@ -293,21 +296,23 @@ fn solve_bandpass_with_prior_gain_corrects_dense_synthetic_ms_downstream() {
         ],
     ];
     let clusters = (0..128)
-        .map(|index| common::SyntheticBandpassTimeCluster {
-            field_id: 0,
-            time_seconds: 100.0 + index as f64,
-            scan_number: 1,
-            prior_gains,
-            bandpass_gains,
-        })
+        .map(
+            |index| common::synthetic_tables::SyntheticBandpassTimeCluster {
+                field_id: 0,
+                time_seconds: 100.0 + index as f64,
+                scan_number: 1,
+                prior_gains,
+                bandpass_gains,
+            },
+        )
         .collect::<Vec<_>>();
     let ms_path = common::create_bandpass_solve_fixture_ms(dir.path(), &clusters);
 
-    let prior_table = common::create_apply_gain_caltable(
+    let prior_table = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("prior_dense.gcal"),
         &["TARGET0"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -315,7 +320,7 @@ fn solve_bandpass_with_prior_gain_corrects_dense_synthetic_ms_downstream() {
                 gains: vec![prior_gains[0][0], prior_gains[0][1]],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -323,7 +328,7 @@ fn solve_bandpass_with_prior_gain_corrects_dense_synthetic_ms_downstream() {
                 gains: vec![prior_gains[1][0], prior_gains[1][1]],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -454,14 +459,14 @@ fn solve_bandpass_with_combine_scan_writes_one_solution_group_across_scans() {
     let ms_path = common::create_bandpass_solve_fixture_ms(
         dir.path(),
         &[
-            common::SyntheticBandpassTimeCluster {
+            common::synthetic_tables::SyntheticBandpassTimeCluster {
                 field_id: 0,
                 time_seconds: 100.0,
                 scan_number: 1,
                 prior_gains,
                 bandpass_gains,
             },
-            common::SyntheticBandpassTimeCluster {
+            common::synthetic_tables::SyntheticBandpassTimeCluster {
                 field_id: 0,
                 time_seconds: 200.0,
                 scan_number: 2,
@@ -470,11 +475,11 @@ fn solve_bandpass_with_combine_scan_writes_one_solution_group_across_scans() {
             },
         ],
     );
-    let prior_table = common::create_apply_gain_caltable(
+    let prior_table = common::synthetic_tables::create_apply_gain_caltable(
         dir.path(),
         &["TARGET0"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 150.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -482,7 +487,7 @@ fn solve_bandpass_with_combine_scan_writes_one_solution_group_across_scans() {
                 gains: vec![prior_gains[0][0], prior_gains[0][1]],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 150.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -490,7 +495,7 @@ fn solve_bandpass_with_combine_scan_writes_one_solution_group_across_scans() {
                 gains: vec![prior_gains[1][0], prior_gains[1][1]],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 150.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -577,14 +582,14 @@ fn solve_bandpass_with_combine_field_writes_one_solution_group_across_fields() {
     let ms_path = common::create_bandpass_solve_fixture_ms(
         dir.path(),
         &[
-            common::SyntheticBandpassTimeCluster {
+            common::synthetic_tables::SyntheticBandpassTimeCluster {
                 field_id: 0,
                 time_seconds: 100.0,
                 scan_number: 1,
                 prior_gains,
                 bandpass_gains,
             },
-            common::SyntheticBandpassTimeCluster {
+            common::synthetic_tables::SyntheticBandpassTimeCluster {
                 field_id: 1,
                 time_seconds: 101.0,
                 scan_number: 1,
@@ -593,11 +598,11 @@ fn solve_bandpass_with_combine_field_writes_one_solution_group_across_fields() {
             },
         ],
     );
-    let prior_table = common::create_apply_gain_caltable(
+    let prior_table = common::synthetic_tables::create_apply_gain_caltable(
         dir.path(),
         &["TARGET0", "TARGET1"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.5,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -605,7 +610,7 @@ fn solve_bandpass_with_combine_field_writes_one_solution_group_across_fields() {
                 gains: vec![prior_gains[0][0], prior_gains[0][1]],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.5,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -613,7 +618,7 @@ fn solve_bandpass_with_combine_field_writes_one_solution_group_across_fields() {
                 gains: vec![prior_gains[1][0], prior_gains[1][1]],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.5,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -621,7 +626,7 @@ fn solve_bandpass_with_combine_field_writes_one_solution_group_across_fields() {
                 gains: vec![prior_gains[2][0], prior_gains[2][1]],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.5,
                 field_id: 1,
                 spectral_window_id: 0,
@@ -629,7 +634,7 @@ fn solve_bandpass_with_combine_field_writes_one_solution_group_across_fields() {
                 gains: vec![prior_gains[0][0], prior_gains[0][1]],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.5,
                 field_id: 1,
                 spectral_window_id: 0,
@@ -637,7 +642,7 @@ fn solve_bandpass_with_combine_field_writes_one_solution_group_across_fields() {
                 gains: vec![prior_gains[1][0], prior_gains[1][1]],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.5,
                 field_id: 1,
                 spectral_window_id: 0,
@@ -723,7 +728,7 @@ fn solve_bandpass_with_solnorm_normalizes_per_receptor_average_amplitude() {
     ];
     let ms_path = common::create_bandpass_solve_fixture_ms(
         dir.path(),
-        &[common::SyntheticBandpassTimeCluster {
+        &[common::synthetic_tables::SyntheticBandpassTimeCluster {
             field_id: 0,
             time_seconds: 100.0,
             scan_number: 1,
@@ -731,11 +736,11 @@ fn solve_bandpass_with_solnorm_normalizes_per_receptor_average_amplitude() {
             bandpass_gains,
         }],
     );
-    let prior_table = common::create_apply_gain_caltable(
+    let prior_table = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("prior-solnorm.gcal"),
         &["TARGET0"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -743,7 +748,7 @@ fn solve_bandpass_with_solnorm_normalizes_per_receptor_average_amplitude() {
                 gains: vec![prior_gains[0][0], prior_gains[0][1]],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -751,7 +756,7 @@ fn solve_bandpass_with_solnorm_normalizes_per_receptor_average_amplitude() {
                 gains: vec![prior_gains[1][0], prior_gains[1][1]],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -849,7 +854,7 @@ fn solve_bpoly_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
     ];
     let ms_path = common::create_bandpass_solve_fixture_ms(
         dir.path(),
-        &[common::SyntheticBandpassTimeCluster {
+        &[common::synthetic_tables::SyntheticBandpassTimeCluster {
             field_id: 0,
             time_seconds: 100.0,
             scan_number: 1,
@@ -858,11 +863,11 @@ fn solve_bpoly_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
         }],
     );
 
-    let prior_table = common::create_apply_gain_caltable(
+    let prior_table = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("prior-bpoly.gcal"),
         &["TARGET0"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -870,7 +875,7 @@ fn solve_bpoly_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
                 gains: vec![prior_gains[0][0], prior_gains[0][1]],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -878,7 +883,7 @@ fn solve_bpoly_bandpass_with_prior_gain_corrects_synthetic_ms_downstream() {
                 gains: vec![prior_gains[1][0], prior_gains[1][1]],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,

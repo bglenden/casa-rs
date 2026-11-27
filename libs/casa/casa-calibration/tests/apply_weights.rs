@@ -35,15 +35,18 @@ fn reapplying_calwt_uses_sigma_and_preserves_sigma_and_disabled_weights() {
                 });
                 ms.save().unwrap();
                 drop(ms);
-                let rows = [0, 1].map(|antenna| common::SyntheticGainSolutionRow {
-                    time_seconds: 100.,
-                    field_id: 0,
-                    spectral_window_id: 0,
-                    antenna_id: antenna,
-                    gains: vec![Complex32::new(2., 0.); 2],
-                    flags: vec![false; 2],
-                });
-                let gain = common::create_apply_gain_caltable(
+                let rows =
+                    [0, 1].map(
+                        |antenna| common::synthetic_tables::SyntheticGainSolutionRow {
+                            time_seconds: 100.,
+                            field_id: 0,
+                            spectral_window_id: 0,
+                            antenna_id: antenna,
+                            gains: vec![Complex32::new(2., 0.); 2],
+                            flags: vec![false; 2],
+                        },
+                    );
+                let gain = common::synthetic_tables::create_apply_gain_caltable(
                     &dir.path().join("gain.gcal"),
                     &["TARGET0"],
                     &rows,

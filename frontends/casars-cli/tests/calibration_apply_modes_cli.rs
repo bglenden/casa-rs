@@ -11,16 +11,21 @@ use casa_tables::{Table, TableOptions};
 fn public_applycal_records_all_parameters_including_trial_history() {
     let dir = tempfile::tempdir().unwrap();
     let path = common::create_apply_fixture_ms(dir.path(), false);
-    let rows = [0, 1].map(|antenna| common::SyntheticGainSolutionRow {
-        time_seconds: 100.,
-        field_id: 0,
-        spectral_window_id: 0,
-        antenna_id: antenna,
-        gains: vec![Complex32::new(2., 0.); 2],
-        flags: vec![false; 2],
-    });
-    let gain =
-        common::create_apply_gain_caltable(&dir.path().join("gain.gcal"), &["TARGET0"], &rows);
+    let rows = [0, 1].map(
+        |antenna| common::synthetic_tables::SyntheticGainSolutionRow {
+            time_seconds: 100.,
+            field_id: 0,
+            spectral_window_id: 0,
+            antenna_id: antenna,
+            gains: vec![Complex32::new(2., 0.); 2],
+            flags: vec![false; 2],
+        },
+    );
+    let gain = common::synthetic_tables::create_apply_gain_caltable(
+        &dir.path().join("gain.gcal"),
+        &["TARGET0"],
+        &rows,
+    );
     for (index, mode) in ["calflag", "trial"].into_iter().enumerate() {
         let request = dir.path().join("request.json");
         std::fs::write(

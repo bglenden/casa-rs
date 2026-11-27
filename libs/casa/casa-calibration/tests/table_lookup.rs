@@ -6,7 +6,9 @@ use crate::common;
 
 use casa_calibration::{apply::ApplyInterpolationMode, table::CalibrationTableLookup};
 use casa_core::Complex32;
-use common::{SyntheticDelaySolutionRow, SyntheticGainSolutionRow};
+use common::{
+    synthetic_tables::SyntheticDelaySolutionRow, synthetic_tables::SyntheticGainSolutionRow,
+};
 use tempfile::TempDir;
 
 fn row(
@@ -27,7 +29,7 @@ fn row(
 
 /// Antenna 0 at 10 s and 30 s, antenna 1 at 10 s; one field.
 fn table(dir: &TempDir) -> std::path::PathBuf {
-    common::create_apply_gain_caltable(
+    common::synthetic_tables::create_apply_gain_caltable(
         dir.path(),
         &["target"],
         &[
@@ -119,7 +121,7 @@ fn a_sole_field_serves_every_field_and_absent_keys_have_none() {
 #[test]
 fn a_delay_table_is_refused() {
     let dir = TempDir::new().expect("tempdir");
-    let delays = common::create_apply_delay_caltable(
+    let delays = common::synthetic_tables::create_apply_delay_caltable(
         dir.path(),
         &["target"],
         &[SyntheticDelaySolutionRow {

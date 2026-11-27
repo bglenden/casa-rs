@@ -26,7 +26,10 @@ use casa_core::{ArrayValue, Complex32, ScalarValue, Value};
 use casa_ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_tables::{Table, TableOptions};
-use common::{SyntheticGainFixtureKind, SyntheticGainSolutionRow, SyntheticGainTimeCluster};
+use common::{
+    synthetic_tables::SyntheticGainFixtureKind, synthetic_tables::SyntheticGainSolutionRow,
+    synthetic_tables::SyntheticGainTimeCluster,
+};
 use ndarray::ArrayD;
 use tempfile::TempDir;
 
@@ -119,7 +122,7 @@ fn bandpass_request(
 /// A prior gain table pre-applied the way CASA's gaincal and bandpass tasks
 /// pre-apply `gaintable`, with `calwt=True`.
 fn calwt_prior(path: &Path, rows: &[SyntheticGainSolutionRow]) -> ApplyCalibrationTableSpec {
-    let table = common::create_apply_gain_caltable(path, &["TARGET0"], rows);
+    let table = common::synthetic_tables::create_apply_gain_caltable(path, &["TARGET0"], rows);
     let mut spec = ApplyCalibrationTableSpec::new(table);
     spec.calwt = true;
     spec
@@ -415,13 +418,16 @@ fn solutions_flagged_by_minsnr_keep_their_interval() {
 #[test]
 fn bandpass_with_no_unflagged_data_writes_no_table() {
     let dir = TempDir::new().expect("tempdir");
-    let clusters = [100.0, 101.0].map(|time_seconds| common::SyntheticBandpassTimeCluster {
-        field_id: 0,
-        time_seconds,
-        scan_number: 1,
-        prior_gains: [[Complex32::new(1.0, 0.0); 2]; 3],
-        bandpass_gains: [[[Complex32::new(1.0, 0.0); 2]; 2]; 3],
-    });
+    let clusters =
+        [100.0, 101.0].map(
+            |time_seconds| common::synthetic_tables::SyntheticBandpassTimeCluster {
+                field_id: 0,
+                time_seconds,
+                scan_number: 1,
+                prior_gains: [[Complex32::new(1.0, 0.0); 2]; 3],
+                bandpass_gains: [[[Complex32::new(1.0, 0.0); 2]; 2]; 3],
+            },
+        );
     let ms_path = common::create_bandpass_solve_fixture_ms(dir.path(), &clusters);
     set_main_cells(&ms_path, "FLAG", &[0, 1, 2, 3, 4, 5], |_| flag_cells(true));
     let caltable = dir.path().join("empty.bcal");
@@ -780,13 +786,16 @@ fn flag_row_outlier_is_excluded_from_bandpass_with_a_prior_table() {
             [Complex32::new(1.05, 0.12), Complex32::new(0.88, -0.14)],
         ],
     ];
-    let clusters = [100.0, 101.0].map(|time_seconds| common::SyntheticBandpassTimeCluster {
-        field_id: 0,
-        time_seconds,
-        scan_number: 1,
-        prior_gains: prior_gains.map(|gain| [gain; 2]),
-        bandpass_gains,
-    });
+    let clusters =
+        [100.0, 101.0].map(
+            |time_seconds| common::synthetic_tables::SyntheticBandpassTimeCluster {
+                field_id: 0,
+                time_seconds,
+                scan_number: 1,
+                prior_gains: prior_gains.map(|gain| [gain; 2]),
+                bandpass_gains,
+            },
+        );
     let ms_path = common::create_bandpass_solve_fixture_ms(dir.path(), &clusters);
     common::make_row_flag_only_outlier(&ms_path, 0, Complex32::from_polar(3.0, 0.6));
     let prior_rows = (0..3)

@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use crate::common;
+use common::synthetic_tables::{
+    SyntheticBPolySolutionRow, SyntheticGainFixtureKind, SyntheticGainSolutionRow,
+    SyntheticGainTimeCluster, create_apply_bpoly_caltable, create_apply_gain_caltable,
+};
 
 use tempfile::TempDir;
 
@@ -77,7 +81,7 @@ fn phase_gain_request(output_table: std::path::PathBuf) -> GainSolveRequest {
 #[test]
 fn measurement_set_unit_fallback_ignores_the_point_source_request() {
     let dir = TempDir::new().expect("tempdir");
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = common::create_gain_solve_fixture_ms(dir.path(), SyntheticGainFixtureKind::G);
     let mut request = phase_gain_request(dir.path().join("unit.gcal"));
     request.solve_mode = GainSolveMode::AmplitudePhase;
     run_gain_solve(&ms, &request).unwrap();
@@ -94,8 +98,7 @@ fn measurement_set_unit_fallback_ignores_the_point_source_request() {
 #[test]
 fn unavailable_prior_spectral_window_excludes_data_from_solving() {
     let dir = TempDir::new().expect("tempdir");
-    let ms_path =
-        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms_path = common::create_gain_solve_fixture_ms(dir.path(), SyntheticGainFixtureKind::G);
     let baseline = phase_gain_request(dir.path().join("baseline.gcal"));
     assert!(
         run_gain_solve(&ms_path, &baseline)
@@ -105,7 +108,7 @@ fn unavailable_prior_spectral_window_excludes_data_from_solving() {
     );
 
     let rows = (0..3)
-        .map(|antenna_id| common::SyntheticGainSolutionRow {
+        .map(|antenna_id| SyntheticGainSolutionRow {
             time_seconds: 100.0,
             field_id: 0,
             spectral_window_id: 1,
@@ -114,13 +117,10 @@ fn unavailable_prior_spectral_window_excludes_data_from_solving() {
             flags: vec![false; 2],
         })
         .collect::<Vec<_>>();
-    let prior = common::create_apply_gain_caltable(
-        &dir.path().join("unavailable.gcal"),
-        &["TARGET0"],
-        &rows,
-    );
+    let prior =
+        create_apply_gain_caltable(&dir.path().join("unavailable.gcal"), &["TARGET0"], &rows);
     let rows = (0..3)
-        .map(|antenna_id| common::SyntheticBPolySolutionRow {
+        .map(|antenna_id| SyntheticBPolySolutionRow {
             time_seconds: 100.,
             field_id: 0,
             spectral_window_id: 1,
@@ -132,7 +132,7 @@ fn unavailable_prior_spectral_window_excludes_data_from_solving() {
             phase_units: "rad",
         })
         .collect::<Vec<_>>();
-    let bpoly = common::create_apply_bpoly_caltable(&dir.path().join("unavailable.bpoly"), &rows);
+    let bpoly = create_apply_bpoly_caltable(&dir.path().join("unavailable.bpoly"), &rows);
     for (index, prior) in [prior, bpoly].iter().enumerate() {
         for calwt in [false, true] {
             let output = dir.path().join(format!("residual-{index}-{calwt}.gcal"));
@@ -150,8 +150,7 @@ fn unavailable_prior_spectral_window_excludes_data_from_solving() {
 #[test]
 fn shared_solve_setup_reports_invalid_empty_missing_prior_and_refant_errors() {
     let dir = TempDir::new().expect("tempdir");
-    let ms_path =
-        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms_path = common::create_gain_solve_fixture_ms(dir.path(), SyntheticGainFixtureKind::G);
 
     let mut invalid = phase_gain_request(dir.path().join("invalid.gcal"));
     invalid.selection.field = Some("[".to_string());
@@ -198,8 +197,7 @@ fn shared_solve_setup_reports_invalid_empty_missing_prior_and_refant_errors() {
 #[test]
 fn solve_gain_phase_g_corrects_synthetic_ms_downstream() {
     let dir = TempDir::new().expect("tempdir");
-    let ms_path =
-        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms_path = common::create_gain_solve_fixture_ms(dir.path(), SyntheticGainFixtureKind::G);
     let caltable_path = dir.path().join("solved.gcal");
 
     let report = run_gain_solve(
@@ -365,7 +363,7 @@ fn solve_gain_phase_t_uses_per_correlation_model_data_column_downstream() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path = common::create_gain_solve_model_column_fixture_ms_for_kind(
         dir.path(),
-        common::SyntheticGainFixtureKind::T,
+        SyntheticGainFixtureKind::T,
         [
             casa_core::Complex32::new(1.0, 0.0),
             casa_core::Complex32::new(0.0, 2.0),
@@ -423,8 +421,7 @@ fn solve_gain_phase_t_uses_per_correlation_model_data_column_downstream() {
 #[test]
 fn solve_gain_g_uses_casa_correlation_independent_flags() {
     let dir = TempDir::new().expect("tempdir");
-    let ms_path =
-        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms_path = common::create_gain_solve_fixture_ms(dir.path(), SyntheticGainFixtureKind::G);
     {
         let mut ms = MeasurementSet::open(&ms_path).expect("open synthetic MS");
         for row in 0..ms.row_count() {
@@ -487,8 +484,7 @@ fn solve_gain_g_uses_casa_correlation_independent_flags() {
 #[test]
 fn solve_gain_t_uses_casa_correlation_independent_flags() {
     let dir = TempDir::new().expect("tempdir");
-    let ms_path =
-        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::T);
+    let ms_path = common::create_gain_solve_fixture_ms(dir.path(), SyntheticGainFixtureKind::T);
     {
         let mut ms = MeasurementSet::open(&ms_path).expect("open synthetic MS");
         for row in 0..ms.row_count() {
@@ -546,8 +542,7 @@ fn solve_gain_t_uses_casa_correlation_independent_flags() {
 #[test]
 fn solve_gain_min_snr_flags_low_snr_solutions_and_writes_diagnostics() {
     let dir = TempDir::new().expect("tempdir");
-    let ms_path =
-        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms_path = common::create_gain_solve_fixture_ms(dir.path(), SyntheticGainFixtureKind::G);
     let caltable_path = dir.path().join("solved-minsnr.gcal");
 
     run_gain_solve(
@@ -632,8 +627,7 @@ fn solve_gain_min_snr_flags_low_snr_solutions_and_writes_diagnostics() {
 #[test]
 fn solve_gain_phase_t_corrects_synthetic_ms_downstream() {
     let dir = TempDir::new().expect("tempdir");
-    let ms_path =
-        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::T);
+    let ms_path = common::create_gain_solve_fixture_ms(dir.path(), SyntheticGainFixtureKind::T);
     let caltable_path = dir.path().join("solved.tcal");
 
     let report = run_gain_solve(
@@ -683,10 +677,8 @@ fn solve_gain_phase_t_corrects_synthetic_ms_downstream() {
 #[test]
 fn solve_gain_amplitude_phase_g_corrects_synthetic_ms_downstream() {
     let dir = TempDir::new().expect("tempdir");
-    let ms_path = common::create_gain_solve_fixture_ms(
-        dir.path(),
-        common::SyntheticGainFixtureKind::GAmplitudePhase,
-    );
+    let ms_path =
+        common::create_gain_solve_fixture_ms(dir.path(), SyntheticGainFixtureKind::GAmplitudePhase);
     let caltable_path = dir.path().join("solved-ap.gcal");
 
     let report = run_gain_solve(
@@ -736,10 +728,8 @@ fn solve_gain_amplitude_phase_g_corrects_synthetic_ms_downstream() {
 #[test]
 fn solve_gain_amplitude_phase_t_corrects_synthetic_ms_downstream() {
     let dir = TempDir::new().expect("tempdir");
-    let ms_path = common::create_gain_solve_fixture_ms(
-        dir.path(),
-        common::SyntheticGainFixtureKind::TAmplitudePhase,
-    );
+    let ms_path =
+        common::create_gain_solve_fixture_ms(dir.path(), SyntheticGainFixtureKind::TAmplitudePhase);
     let caltable_path = dir.path().join("solved-ap.tcal");
 
     let report = run_gain_solve(
@@ -789,10 +779,8 @@ fn solve_gain_amplitude_phase_t_corrects_synthetic_ms_downstream() {
 #[test]
 fn solve_gain_amplitude_phase_t_with_solnorm_normalizes_average_amplitude() {
     let dir = TempDir::new().expect("tempdir");
-    let ms_path = common::create_gain_solve_fixture_ms(
-        dir.path(),
-        common::SyntheticGainFixtureKind::TAmplitudePhase,
-    );
+    let ms_path =
+        common::create_gain_solve_fixture_ms(dir.path(), SyntheticGainFixtureKind::TAmplitudePhase);
     let caltable_path = dir.path().join("solved-ap-solnorm.tcal");
 
     run_gain_solve(
@@ -880,22 +868,22 @@ fn solve_gain_phase_g_solint_integration_writes_per_integration_solutions() {
     let ms_path = common::create_gain_solve_fixture_ms_from_clusters(
         dir.path(),
         &[
-            common::SyntheticGainTimeCluster {
+            SyntheticGainTimeCluster {
                 time_seconds: 100.0,
                 scan_number: 1,
                 gains: gains_a,
             },
-            common::SyntheticGainTimeCluster {
+            SyntheticGainTimeCluster {
                 time_seconds: 110.0,
                 scan_number: 1,
                 gains: gains_a,
             },
-            common::SyntheticGainTimeCluster {
+            SyntheticGainTimeCluster {
                 time_seconds: 200.0,
                 scan_number: 1,
                 gains: gains_b,
             },
-            common::SyntheticGainTimeCluster {
+            SyntheticGainTimeCluster {
                 time_seconds: 210.0,
                 scan_number: 1,
                 gains: gains_b,
@@ -977,22 +965,22 @@ fn solve_gain_phase_g_solint_seconds_groups_nearby_integrations() {
     let ms_path = common::create_gain_solve_fixture_ms_from_clusters(
         dir.path(),
         &[
-            common::SyntheticGainTimeCluster {
+            SyntheticGainTimeCluster {
                 time_seconds: 100.0,
                 scan_number: 1,
                 gains: gains_a,
             },
-            common::SyntheticGainTimeCluster {
+            SyntheticGainTimeCluster {
                 time_seconds: 110.0,
                 scan_number: 1,
                 gains: gains_a,
             },
-            common::SyntheticGainTimeCluster {
+            SyntheticGainTimeCluster {
                 time_seconds: 200.0,
                 scan_number: 1,
                 gains: gains_b,
             },
-            common::SyntheticGainTimeCluster {
+            SyntheticGainTimeCluster {
                 time_seconds: 210.0,
                 scan_number: 1,
                 gains: gains_b,
@@ -1064,12 +1052,12 @@ fn solve_gain_phase_g_combine_scans_writes_one_solution_group_across_scans() {
     let ms_path = common::create_gain_solve_fixture_ms_from_clusters(
         dir.path(),
         &[
-            common::SyntheticGainTimeCluster {
+            SyntheticGainTimeCluster {
                 time_seconds: 100.0,
                 scan_number: 1,
                 gains,
             },
-            common::SyntheticGainTimeCluster {
+            SyntheticGainTimeCluster {
                 time_seconds: 200.0,
                 scan_number: 2,
                 gains,
@@ -1140,7 +1128,7 @@ fn solve_gain_phase_g_combine_scan_and_field_writes_one_solution_group_across_fi
     ];
     let ms_path = common::create_gain_solve_fixture_ms_from_clusters(
         dir.path(),
-        &[common::SyntheticGainTimeCluster {
+        &[SyntheticGainTimeCluster {
             time_seconds: 100.0,
             scan_number: 1,
             gains,
@@ -1150,7 +1138,7 @@ fn solve_gain_phase_g_combine_scan_and_field_writes_one_solution_group_across_fi
     common::append_gain_solve_cluster_for_field(
         &mut ms,
         1,
-        &common::SyntheticGainTimeCluster {
+        &SyntheticGainTimeCluster {
             time_seconds: 200.0,
             scan_number: 2,
             gains,
@@ -1249,17 +1237,17 @@ fn solve_gain_phase_g_with_prior_caltable_corrects_residual_downstream() {
     ];
     let ms_path = common::create_gain_solve_fixture_ms_from_clusters(
         dir.path(),
-        &[common::SyntheticGainTimeCluster {
+        &[SyntheticGainTimeCluster {
             time_seconds: 100.0,
             scan_number: 1,
             gains: total_gains,
         }],
     );
-    let prior_table = common::create_apply_gain_caltable(
+    let prior_table = create_apply_gain_caltable(
         &dir.path().join("prior.gcal"),
         &["TARGET0"],
         &[
-            common::SyntheticGainSolutionRow {
+            SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -1267,7 +1255,7 @@ fn solve_gain_phase_g_with_prior_caltable_corrects_residual_downstream() {
                 gains: prior_gains[0].to_vec(),
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -1275,7 +1263,7 @@ fn solve_gain_phase_g_with_prior_caltable_corrects_residual_downstream() {
                 gains: prior_gains[1].to_vec(),
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -1413,8 +1401,7 @@ impl GainTableWindow {
 #[test]
 fn solve_gain_writes_windows_collapsed_as_casa_does() {
     let dir = TempDir::new().expect("tempdir");
-    let ms_path =
-        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms_path = common::create_gain_solve_fixture_ms(dir.path(), SyntheticGainFixtureKind::G);
     for (name, spw, frequency, width) in [
         ("all", None, 1.0005e9, 2.0e6),
         ("second", Some("0:1"), 1.001e9, 1.0e6),
@@ -1451,8 +1438,7 @@ fn solve_gain_writes_windows_collapsed_as_casa_does() {
 #[test]
 fn solve_gain_keeps_the_collapse_of_a_window_it_could_not_solve() {
     let dir = TempDir::new().expect("tempdir");
-    let ms_path =
-        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms_path = common::create_gain_solve_fixture_ms(dir.path(), SyntheticGainFixtureKind::G);
     {
         // Row 6 is baseline 0-1 at the third time; it moves to the second
         // window, which the second data description describes.

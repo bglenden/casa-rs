@@ -977,7 +977,7 @@ fn solve_gain_phase_g_combine_scan_and_field_writes_one_solution_group_across_fi
     ];
     let source_ms = common::create_gain_solve_fixture_ms_from_clusters(
         dir.path(),
-        &[common::SyntheticGainTimeCluster {
+        &[common::synthetic_tables::SyntheticGainTimeCluster {
             time_seconds: 100.0,
             scan_number: 1,
             gains,
@@ -987,7 +987,7 @@ fn solve_gain_phase_g_combine_scan_and_field_writes_one_solution_group_across_fi
     common::append_gain_solve_cluster_for_field(
         &mut fixture_ms,
         1,
-        &common::SyntheticGainTimeCluster {
+        &common::synthetic_tables::SyntheticGainTimeCluster {
             time_seconds: 200.0,
             scan_number: 2,
             gains,

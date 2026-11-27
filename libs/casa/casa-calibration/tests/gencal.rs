@@ -10,8 +10,10 @@ use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 #[test]
 fn gencal_antpos_writes_offsets_for_selected_antennas_and_zeroes_others() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let ms_path =
-        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms_path = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     let caltable_path = dir.path().join("antpos.cal");
 
     let report = gencal(&GencalRequest {
@@ -61,8 +63,10 @@ fn gencal_antpos_writes_offsets_for_selected_antennas_and_zeroes_others() {
 #[test]
 fn gencal_refuses_a_non_table_destination_without_modifying_it() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let ms_path =
-        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms_path = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     let caltable_path = dir.path().join("existing.cal");
     std::fs::create_dir(&caltable_path).expect("create existing output");
     let sentinel = caltable_path.join("sentinel");
@@ -87,8 +91,10 @@ fn gencal_refuses_a_non_table_destination_without_modifying_it() {
 #[test]
 fn gencal_opacity_expands_selected_spws_across_antennas() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let ms_path =
-        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms_path = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     let caltable_path = dir.path().join("opacity.cal");
 
     let report = gencal(&GencalRequest {
@@ -151,8 +157,10 @@ fn gencal_opacity_expands_selected_spws_across_antennas() {
 #[test]
 fn gencal_gceff_uses_gaincurve_rows_and_vla_efficiency() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let ms_path =
-        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms_path = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     let gaincurve_path = dir.path().join("GainCurves");
     write_gaincurve_table(&gaincurve_path);
     let caltable_path = dir.path().join("gceff.cal");
@@ -200,8 +208,10 @@ fn gencal_gceff_uses_gaincurve_rows_and_vla_efficiency() {
 #[test]
 fn gencal_rejects_invalid_antpos_and_spw_contracts() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let ms_path =
-        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms_path = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
 
     let err = gencal(&GencalRequest {
         measurement_set: ms_path.clone(),

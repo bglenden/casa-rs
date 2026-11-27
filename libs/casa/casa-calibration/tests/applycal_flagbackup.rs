@@ -22,10 +22,10 @@ use tempfile::TempDir;
 /// An MS whose row 0 has no solution for antenna 1, so `calflag` flags it.
 fn fixture(dir: &Path) -> (PathBuf, PathBuf) {
     let ms_path = common::create_apply_fixture_ms(dir, true);
-    let caltable_path = common::create_apply_gain_caltable(
+    let caltable_path = common::synthetic_tables::create_apply_gain_caltable(
         &dir.join("phase.gcal"),
         &["TARGET0"],
-        &[common::SyntheticGainSolutionRow {
+        &[common::synthetic_tables::SyntheticGainSolutionRow {
             time_seconds: 100.0,
             field_id: 0,
             spectral_window_id: 0,

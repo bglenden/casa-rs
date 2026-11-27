@@ -120,11 +120,11 @@ fn use_incremental_gain_storage(input_table: &std::path::Path) {
 
 fn check_scaled_product(endian: Option<casa_tables::EndianFormat>, ism: bool) {
     let dir = TempDir::new().expect("tempdir");
-    let input_table = common::create_apply_gain_caltable(
+    let input_table = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("input.gcal"),
         &["REF0", "TARGET0"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 10.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -132,7 +132,7 @@ fn check_scaled_product(endian: Option<casa_tables::EndianFormat>, ism: bool) {
                 gains: vec![Complex32::new(1.0, 0.0), Complex32::new(1.0, 0.0)],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 20.0,
                 field_id: 1,
                 spectral_window_id: 0,
@@ -220,11 +220,11 @@ fn check_scaled_product(endian: Option<casa_tables::EndianFormat>, ism: bool) {
 #[test]
 fn fluxscale_incremental_writes_correction_factors_and_honors_gainthreshold() {
     let dir = TempDir::new().expect("tempdir");
-    let input_table = common::create_apply_gain_caltable(
+    let input_table = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("input-threshold.gcal"),
         &["REF0", "TARGET0"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 10.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -232,7 +232,7 @@ fn fluxscale_incremental_writes_correction_factors_and_honors_gainthreshold() {
                 gains: vec![Complex32::new(1.0, 0.0), Complex32::new(1.0, 0.0)],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 20.0,
                 field_id: 1,
                 spectral_window_id: 0,
@@ -240,7 +240,7 @@ fn fluxscale_incremental_writes_correction_factors_and_honors_gainthreshold() {
                 gains: vec![Complex32::new(2.0, 0.0), Complex32::new(2.0, 0.0)],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 30.0,
                 field_id: 1,
                 spectral_window_id: 0,
