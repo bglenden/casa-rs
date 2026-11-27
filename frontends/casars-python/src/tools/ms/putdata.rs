@@ -10,7 +10,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use super::legacy_selection::deprecation;
-use super::{PyMsTool, runtime_error};
+use super::{AttachedMs, PyMsTool, runtime_error};
 use crate::tools::table::casa_record;
 
 #[pymethods]
@@ -39,7 +39,11 @@ impl PyMsTool {
         deprecation(py, "putdataold", "putdata")?;
         py.detach(|| {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
-            match attached.as_mut().filter(|ms| ms.writable) {
+            match attached
+                .as_mut()
+                .map(AttachedMs::legacy_view_for_filter)
+                .filter(|ms| ms.writable)
+            {
                 Some(ms) => ms.put_legacy_data_rows(items),
                 None => Ok(false),
             }
