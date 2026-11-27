@@ -35,7 +35,7 @@ if [[ -z "${CASA_RS_MEASURESPATH:-}" ]]; then
   mkdir -p "$measures_root"
   snapshot=libs/casacore/casa-measures/data/casa-measures-runtime.tar.gz
   provenance=libs/casacore/casa-measures/data/casa-measures-runtime.provenance.json
-  "$python_bin" - "$snapshot" "$provenance" <<'PYTHON'
+  "$python_bin" - "$snapshot" "$provenance" >"$tmp_root/verified-provenance.json" <<'PYTHON'
 import hashlib
 import json
 import pathlib
@@ -51,9 +51,11 @@ with archive.open("rb") as source:
         digest.update(block)
 if digest.hexdigest() != manifest["archive_sha256"]:
     raise SystemExit(f"Wrong release snapshot SHA-256: {archive}")
+del manifest["archive_size_bytes"], manifest["archive_sha256"]
+print(json.dumps(manifest, indent=2))
 PYTHON
   tar -xzf "$snapshot" -C "$measures_root"
-  cp "$provenance" "$measures_root/.casa-rs-measures-provenance.json"
+  mv "$tmp_root/verified-provenance.json" "$measures_root/.casa-rs-measures-provenance.json"
   export CASA_RS_MEASURESPATH="$measures_root"
 fi
 

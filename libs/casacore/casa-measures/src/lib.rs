@@ -1178,8 +1178,11 @@ mod tests {
 
     fn installed_runtime() -> (TempDir, MeasuresRuntime) {
         let temp = TempDir::new().expect("tempdir");
-        let archive =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("data/casa-measures-runtime.tar.gz");
+        let archive = std::env::var_os("CASA_RS_PACKAGED_SNAPSHOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("data/casa-measures-runtime.tar.gz")
+            });
         install_packaged_snapshot(&archive, temp.path()).expect("install snapshot");
         let runtime = MeasuresRuntime::open(
             temp.path(),
