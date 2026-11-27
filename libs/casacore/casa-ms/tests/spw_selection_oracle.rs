@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 
+use casa_ms::selection::MsSelection;
 use casa_ms::{DataDescriptionRow, SpectralWindowRow, SpwSelection, resolve_spw_selector};
 use serde_json::Value;
 
@@ -181,6 +182,61 @@ fn every_frozen_casa_case_resolves_as_casa_resolves_it() {
         .filter(|case| case.get("error").is_none())
         .count();
     assert!(accepted > 400, "{accepted} accepted cases");
+}
+
+#[test]
+fn numeric_channel_projection_uses_every_matching_casa_range() {
+    let (oracle, datasets) = oracle();
+    let channel_count = datasets["vla"].windows[0].freqs.len();
+    for text in [
+        "0:5~10,0:20~30",
+        "0:20~30,1:8,0:5~10",
+        "0:7~13^3,0:1~8^2,0:7~13^3",
+        "0:5~10,0",
+        "0,0:5~10",
+        "0~1:0~2;10,0:4~6",
+    ] {
+        let case = oracle["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|case| case["dataset"] == "vla" && case["expression"] == text)
+            .expect("recorded CASA selector");
+        let channel_list: Vec<[i64; 4]> =
+            serde_json::from_value(case["channel"].clone()).expect("CASA channel list");
+        let ranges = channel_list
+            .into_iter()
+            .filter(|range| range[0] == 0)
+            .collect::<Vec<_>>();
+        assert!(ranges.len() > 1, "{text}");
+        let actual = MsSelection::new()
+            .spw_selector(text)
+            .unwrap()
+            .channel_selection_for_spw(0);
+        let expected = if ranges
+            .iter()
+            .any(|range| range == &[0, 0, channel_count as i64 - 1, 1])
+        {
+            None
+        } else {
+            Some(ranges)
+        };
+        let actual = actual.map(|selection| {
+            selection
+                .segments
+                .iter()
+                .map(|segment| {
+                    [
+                        0,
+                        i64::from(segment.start),
+                        i64::from(segment.end),
+                        segment.stride as i64,
+                    ]
+                })
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(actual, expected, "{text}");
+    }
 }
 
 #[test]
