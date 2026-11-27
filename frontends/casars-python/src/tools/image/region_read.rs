@@ -1,19 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_core::{ArrayD, RecordValue};
-use casa_imageanalysis::analysis::{
-    ImageRegionSection, SubimageRegion, evaluate_image_tool_mask_section,
-};
+//! Thin PyO3 `ia.getregion` wrapper delegating to [`casa_imageanalysis::tool::region_read`].
+
+use casa_core::RecordValue;
+use casa_imageanalysis::tool::region_read::read_region_casa;
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyList, PyString, PyTuple};
 
 use crate::convert::{IntList, Variant, value::CasaValue};
-use crate::tools::{LogLine, emit, table::casa_record};
+use crate::tools::table::casa_record;
 
-use super::attachment::read_locked;
-use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
-use super::pixels::{Chunk, ChunkRead, and_mask, collapse_axes};
+use super::handle::{emit_tool_logs, raised};
+use super::pixels::chunk_data_to_casa_value;
 use super::subimage::Region;
 use super::{PyImageTool, stub};
 
@@ -72,37 +71,6 @@ pub(super) fn read_region_argument(
     Ok((!record.is_empty()).then_some(Region::Record(record)))
 }
 
-pub(super) fn resolve_region_section(
-    image: &ImageHandle,
-    region: Option<SubimageRegion<'_>>,
-    include_membership: bool,
-) -> PyResult<ImageRegionSection> {
-    if let ImageHandle::Float(storage) = image {
-        storage
-            .with_float_view(|image| ImageRegionSection::resolve(image, region, include_membership))
-    } else {
-        with_pixels!(image, storage => with_storage!(storage, image =>
-            ImageRegionSection::resolve(image.as_ref(), region, include_membership)))
-    }
-    .map_err(raised)
-}
-
-pub(super) fn read_region_section(
-    image: &ImageHandle,
-    region: Option<SubimageRegion<'_>>,
-    include_membership: bool,
-) -> PyResult<(Chunk, Option<ArrayD<bool>>)> {
-    let section = resolve_region_section(image, region, include_membership)?;
-    Ok((
-        Chunk {
-            start: section.start,
-            size: section.count,
-            stride: section.stride,
-        },
-        section.membership,
-    ))
-}
-
 fn mask_argument(value: Option<&Bound<'_, PyAny>>) -> PyResult<String> {
     let Some(value) = value else {
         return Ok(String::new());
@@ -133,7 +101,8 @@ impl PyImageTool {
     ) -> PyResult<Py<PyAny>> {
         let region = read_region_argument(py, region, "getregion");
         let mask = mask_argument(mask);
-        let (value, log) = py.detach(|| {
+        let axes = axes.map_or_else(Vec::new, |arg| arg.0);
+        let (value, logs) = py.detach(|| {
             let state = self.state();
             let Some(attachment) = state.image.as_ref() else {
                 return Ok((
@@ -146,55 +115,20 @@ impl PyImageTool {
             };
             let region = region?;
             let mask = mask?;
-            read_locked(attachment, |image| {
-                let shape = image.shape();
-                let axes = collapse_axes(
-                    axes.as_ref().map_or(&[], |arg| arg.0.as_slice()),
-                    shape.len(),
-                )?;
-                let region = region.as_ref().map(Region::as_region);
-                let (chunk, membership) =
-                    read_region_section(image, region, getmask || !axes.is_empty())?;
-                let expression = if mask.is_empty() {
-                    None
-                } else {
-                    Some(
-                        evaluate_image_tool_mask_section(
-                            &mask,
-                            shape,
-                            image.coordinates(),
-                            (&chunk.start, &chunk.size, &chunk.stride),
-                            stretch,
-                        )
-                        .map_err(raised)?,
-                    )
-                };
-                let data = chunk.read_from(
-                    image,
-                    &ChunkRead {
-                        axes: &axes,
-                        dropdeg,
-                        getmask,
-                    },
-                    and_mask(membership, expression),
-                )?;
-                let lines = list.then(|| {
-                    let end = chunk
-                        .start
-                        .iter()
-                        .zip(&chunk.size)
-                        .zip(&chunk.stride)
-                        .map(|((&start, &count), &step)| start + (count - 1) * step)
-                        .collect::<Vec<_>>();
-                    LogLine::info(format!(
-                        "Selected bounding box {:?} to {end:?}",
-                        chunk.start
-                    ))
-                });
-                Ok((data, lines.into_iter().collect()))
-            })
+            let (data, logs) = read_region_casa(
+                attachment,
+                region.as_ref().map(Region::as_region),
+                &axes,
+                &mask,
+                list,
+                dropdeg,
+                getmask,
+                stretch,
+            )
+            .map_err(raised)?;
+            Ok::<_, PyErr>((chunk_data_to_casa_value(data), logs))
         })?;
-        emit(py, "casars.tools.image", &log)?;
+        emit_tool_logs(py, &logs)?;
         value.into_python(py)
     }
 }

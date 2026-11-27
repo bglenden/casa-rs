@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_imageanalysis::analysis::{put_image_region, validate_put_region_shapes};
-use casa_tables::LockType;
+//! Thin PyO3 `ia.putregion` wrapper delegating to [`casa_imageanalysis::tool::ops_edit::put_region`].
+
+use casa_imageanalysis::tool::ops_edit::put_region;
+use casa_imageanalysis::tool::pixels::PixelChunk;
 use ndarray::{Array1, ArrayD};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::{PyInt, PyList, PyTuple};
 
-use crate::tools::{LogLine, emit};
-
 use super::PyImageTool;
-use super::handle::{ImageHandle, Storage, raised, with_storage};
-use super::masks::has_region;
+use super::handle::{emit_tool_logs, raised};
 use super::pixels::{Pixels, snapshot_array};
 use super::subimage::Region;
 
@@ -103,15 +102,18 @@ impl PyImageTool {
         locking: bool,
         replicate: bool,
     ) -> PyResult<bool> {
-        // CASA takes a write lock for the edit through either value of locking.
         let _ = locking;
         if self.state().image.is_none() {
             return Ok(false);
         }
-        let (pixels, pixel_history) = if let Some(value) = supplied(pixels) {
+        let (chunk, pixel_history) = if let Some(value) = supplied(pixels) {
             let pixels = Pixels::capture(py, Some(value), true)?;
             let history = pixels_history(value, &pixels)?;
-            (Some(pixels), history)
+            let chunk = match pixels {
+                Pixels::Real(arr) => PixelChunk::Double(arr),
+                Pixels::Complex(arr) => PixelChunk::DComplex(arr),
+            };
+            (Some(chunk), history)
         } else {
             (None, "[]".into())
         };
@@ -122,64 +124,31 @@ impl PyImageTool {
             (None, "[]".into())
         };
         let region = Region::capture(py, region)?;
-        let (ok, logs) = py.detach(|| {
+        let (ok, logs) = py.detach(|| -> PyResult<_> {
             let state = self.state();
             let Some(attachment) = state.image.as_ref() else {
                 return Ok((false, Vec::new()));
             };
-            let mut handle = attachment.lock();
-            if handle.read_only_file_type().is_some() {
-                return Err(raised("This image is not writable"));
-            }
-            if let Some(pixels) = &pixels {
-                let complex = matches!(*handle, ImageHandle::Complex(_) | ImageHandle::DComplex(_));
-                if pixels.is_complex() != complex {
-                    return Err(raised(if complex {
-                        "Real values cannot be put in images with complex valued pixels"
-                    } else {
-                        "Complex values cannot be put in images with real valued pixels"
-                    }));
-                }
-            }
-            validate_put_region_shapes(pixels.as_ref().map(Pixels::shape), mask.as_ref().map(ArrayD::shape))
-                .map_err(raised)?;
-            attachment.require_lock(&mut handle, LockType::Write)?;
-            let fresh_mask_name = mask.as_ref().map(|_| {
-                (0..)
-                    .map(|index| format!("mask{index}"))
-                    .find(|name| !has_region(&handle, name))
-                    .expect("an unused mask name")
+            let history_command = state.history.then(|| {
+                let region_hist = region.as_ref().map_or_else(|| "{...}".into(), Region::history);
+                format!(
+                    "ia.putregion(pixels={pixel_history}, pixelmask={mask_history}, region={region_hist}, list={list}, usemask={usemask}, replicate={replicate})"
+                )
             });
-            let selected = region.as_ref().map(Region::as_region);
-            let command = state.history.then(|| {
-                let region = region.as_ref().map_or_else(|| "{...}".into(), Region::history);
-                format!("ia.putregion(pixels={pixel_history}, pixelmask={mask_history}, region={region}, list={list}, usemask={usemask}, replicate={replicate})")
-            });
-            let name = fresh_mask_name.as_deref().unwrap_or("");
-            match &mut *handle {
-                ImageHandle::Float(storage) => with_storage!(storage, image =>
-                    put_image_region(image.as_mut(), pixels.as_ref().map(Pixels::f32), mask, selected, name, usemask, replicate)
-                ),
-                ImageHandle::Double(storage) => with_storage!(storage, image =>
-                    put_image_region(image.as_mut(), pixels.as_ref().map(Pixels::f64), mask, selected, name, usemask, replicate)
-                ),
-                ImageHandle::Complex(storage) => with_storage!(storage, image =>
-                    put_image_region(image.as_mut(), pixels.as_ref().map(Pixels::c32), mask, selected, name, usemask, replicate)
-                ),
-                ImageHandle::DComplex(storage) => with_storage!(storage, image =>
-                    put_image_region(image.as_mut(), pixels.as_ref().map(Pixels::c64), mask, selected, name, usemask, replicate)
-                ),
-            }
+            let logs = put_region(
+                attachment,
+                chunk.as_ref(),
+                mask.as_ref(),
+                region.as_ref().map(Region::as_region),
+                list,
+                usemask,
+                replicate,
+                history_command,
+            )
             .map_err(raised)?;
-            if let Some(command) = command {
-                handle.record_history("putregion", command)?;
-            }
-            handle.save().map_err(raised)?;
-            attachment.release_requested_lock(&mut handle)?;
-            let logs = list.then(|| LogLine::info("Wrote the selected image region"));
-            Ok((true, logs.into_iter().collect()))
+            Ok((true, logs))
         })?;
-        emit(py, "casars.tools.image", &logs)?;
+        emit_tool_logs(py, &logs)?;
         Ok(ok)
     }
 }

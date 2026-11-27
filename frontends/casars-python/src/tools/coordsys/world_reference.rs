@@ -1,9 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_coordinates::display::{
-    format_latitude_dms_with_precision, format_longitude_hours_with_precision, format_stream_value,
-    format_stream_value_with_precision,
-};
 use casa_coordinates::{CoordinateModel, CoordinateType, QualityType, StokesType};
 use casa_core::measures::{
     MeasFrame,
@@ -11,6 +7,9 @@ use casa_core::measures::{
     doppler::{DopplerRef, MDoppler},
 };
 use casa_core::{RecordValue, Value};
+pub(in crate::tools) use casa_imageanalysis::tool::coords::{
+    format_direction, format_number, scientific_with_precision,
+};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
@@ -51,143 +50,6 @@ fn scalar_measure(kind: &str, frame: &str, value: f64, unit: &str) -> CasaValue 
     ])
 }
 
-pub(in crate::tools) fn scientific_with_precision(value: f64, precision: usize) -> String {
-    let text = format!("{value:.precision$e}");
-    let Some((mantissa, exponent)) = text.split_once('e') else {
-        return format_stream_value_with_precision(value, precision);
-    };
-    let exponent: i32 = exponent.parse().expect("exponent is decimal");
-    format!("{mantissa}e{exponent:+03}")
-}
-
-pub(in crate::tools) fn format_number(
-    value: f64,
-    increment: f64,
-    scientific_style: bool,
-) -> String {
-    let precision = if scientific_style { 8 } else { 6 };
-    format_number_with_precision(value, increment, scientific_style, precision)
-}
-
-pub(in crate::tools) fn format_number_with_precision(
-    value: f64,
-    increment: f64,
-    scientific_style: bool,
-    mut precision: usize,
-) -> String {
-    if value.is_finite() && value.fract() != 0.0 && increment.is_finite() {
-        let mut needed = 1;
-        let mut scale = 1.0;
-        while value.abs() > scale {
-            needed += 1;
-            scale *= 10.0;
-        }
-        let increment = increment.abs();
-        if increment < 1.0 {
-            let mut scale = 0.1;
-            while increment < scale {
-                needed += 1;
-                scale /= 10.0;
-            }
-        } else {
-            let mut adjustment = 1;
-            let mut scale = 1.0;
-            while increment > scale {
-                adjustment += 1;
-                scale *= 10.0;
-            }
-            if adjustment < needed {
-                needed -= adjustment;
-            }
-        }
-        if needed > 5 {
-            precision = needed + 1;
-        }
-    }
-    if scientific_style {
-        scientific_with_precision(value, precision)
-    } else {
-        format_stream_value_with_precision(value, precision)
-    }
-}
-
-fn signed_angle(radians: f64) -> f64 {
-    let (sin, cos) = radians.sin_cos();
-    sin.atan2(cos)
-}
-
-pub(in crate::tools) fn format_direction(
-    frame: DirectionRef,
-    axis: usize,
-    radians: f64,
-    absolute: bool,
-    scientific_style: bool,
-    precision: usize,
-) -> (String, &'static str) {
-    let radians = if radians == 0.0 { 0.0 } else { radians };
-    let name = frame.as_str();
-    let angle_frame = matches!(
-        name,
-        "GALACTIC"
-            | "SUPERGAL"
-            | "ECLIPTIC"
-            | "MECLIPTIC"
-            | "TECLIPTIC"
-            | "AZEL"
-            | "AZELSW"
-            | "AZELGEO"
-            | "AZELSWGEO"
-    );
-    let hour_axis = axis == 0 && name == "HADEC";
-    if absolute && !scientific_style && !angle_frame {
-        if axis != 0 {
-            return (format_latitude_dms_with_precision(radians, precision), "");
-        }
-        if hour_axis {
-            let signed = signed_angle(radians);
-            let sign = if signed.is_sign_negative() { '-' } else { '+' };
-            return (
-                format!(
-                    "{sign}{}",
-                    format_longitude_hours_with_precision(signed.abs(), precision)
-                ),
-                "",
-            );
-        }
-        return (
-            format_longitude_hours_with_precision(radians, precision),
-            "",
-        );
-    }
-    let (number, unit) = if hour_axis {
-        let hour_angle = if absolute {
-            signed_angle(radians)
-        } else {
-            radians
-        };
-        let hours = hour_angle * 12.0 / std::f64::consts::PI;
-        (hours, "h")
-    } else if !absolute {
-        (radians.to_degrees() * 3600.0, "arcsec")
-    } else {
-        let degrees = radians.to_degrees();
-        let degrees = if axis != 0 {
-            degrees
-        } else if matches!(name, "ECLIPTIC" | "MECLIPTIC" | "TECLIPTIC") {
-            signed_angle(radians).to_degrees()
-        } else {
-            degrees.rem_euclid(360.0)
-        };
-        (degrees, "deg")
-    };
-    let text = if scientific_style || !angle_frame {
-        scientific_with_precision(number, precision)
-    } else {
-        format!("{number:.precision$}")
-    };
-    (text, unit)
-}
-
 fn direction_text(
     frame: DirectionRef,
     axis: usize,
@@ -209,37 +71,8 @@ pub(in crate::tools) fn nested_axis_display(
     value: f64,
     increment: f64,
 ) -> PyResult<Option<(String, String, String)>> {
-    use casa_core::quanta::{Quantity, Unit};
-
-    if !matches!(model, CoordinateModel::System(_)) {
-        return Ok(None);
-    }
-    let Some((leaf, local)) = model.world_axis_leaf(axis) else {
-        return Ok(None);
-    };
-    Ok(match leaf {
-        CoordinateModel::Direction(direction) => {
-            let declared = model.declared_axis_units();
-            let angle = Quantity::new(value, "rad")
-                .and_then(|angle| angle.get_value_in(&Unit::new(&declared[axis])?))
-                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-            let local = if direction.longitude_axis().is_none() {
-                1
-            } else {
-                local
-            };
-            let (increment, units) =
-                format_direction(direction.direction_ref(), local, increment, false, true, 6);
-            Some((format_stream_value(angle), increment, units.into()))
-        }
-        CoordinateModel::Stokes(_) => Some((stokes(value), stokes(increment), String::new())),
-        CoordinateModel::Quality(_) => Some((
-            QualityType::from_world(value).name().into(),
-            QualityType::from_world(increment).name().into(),
-            String::new(),
-        )),
-        _ => None,
-    })
+    casa_imageanalysis::tool::coords::nested_axis_display(model, axis, value, increment)
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))
 }
 
 struct Values<'a> {

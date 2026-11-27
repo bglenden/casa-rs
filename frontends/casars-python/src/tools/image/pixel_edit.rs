@@ -1,41 +1,30 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_imageanalysis::analysis::{ImagePixelSelection, evaluate_pixel_expression};
-use casa_images::MutableImageInterface;
-use ndarray::{ArrayD, IxDyn};
+//! Thin PyO3 `ia.set` wrapper delegating to [`casa_imageanalysis::tool::ops_edit::set_pixels_and_mask`].
+
+use casa_imageanalysis::tool::ops_edit::set_pixels_and_mask;
 use pyo3::prelude::*;
 
 use crate::convert::Variant;
-use crate::tools::{LogLine, emit};
 
 use super::PyImageTool;
-use super::handle::{ImageHandle, Storage, raised, with_storage};
-use super::masks::has_region;
+use super::handle::{emit_tool_logs, raised};
 use super::subimage::Region;
 
-fn set_value(pixels: &Variant, formatted_pixels: &str) -> PyResult<Option<f32>> {
+fn pixel_expression(pixels: &Variant, formatted_pixels: &str) -> PyResult<Option<String>> {
     if pixels.is_empty_sequence() {
         return Ok(None);
     }
     match pixels {
-        Variant::Number(value) if value.is_finite() => {
-            return evaluate_pixel_expression(formatted_pixels)
-                .map(Some)
-                .map_err(raised);
-        }
-        Variant::Text(text) if text.is_empty() || text == "[]" => return Ok(None),
+        Variant::Number(value) if value.is_finite() => Ok(Some(formatted_pixels.to_owned())),
+        Variant::Text(text) if text.is_empty() || text == "[]" => Ok(None),
         Variant::Texts(_)
         | Variant::Numbers(_)
         | Variant::Complexes(_)
         | Variant::Array { .. }
-        | Variant::ComplexArray { .. } => {
-            return Err(raised("The pixels expression must be scalar"));
-        }
-        _ => (),
+        | Variant::ComplexArray { .. } => Err(raised("The pixels expression must be scalar")),
+        _ => Ok(Some(pixels.describe())),
     }
-    evaluate_pixel_expression(&pixels.describe())
-        .map(Some)
-        .map_err(raised)
 }
 
 #[pymethods]
@@ -63,84 +52,28 @@ impl PyImageTool {
             Variant::Text(text) => format!("\"{text}\""),
             other => other.describe(),
         };
+        let expr = pixel_expression(&variant, &pixel_history)?;
         let region = Region::argument(py, region, "set")?;
-        let mut logs = Vec::new();
-        let outcome = py.detach(|| {
+        let (outcome, logs) = py.detach(|| -> PyResult<_> {
             let state = self.state();
-            let Some(attachment) = &state.image else { return Ok(false); };
-            let mut handle = attachment.lock();
-            handle.check_single_precision("set")?;
-            let set_mask = pixelmask != -1;
-            let has_pixels = !variant.is_empty_sequence() && !matches!(&variant, Variant::Text(text) if text.is_empty() || text == "[]");
-            let ImageHandle::Float(storage) = &*handle else {
-                return Err(raised("set only supports float-valued images"));
+            let Some(attachment) = &state.image else {
+                return Ok((false, Vec::new()));
             };
-            let text_selection = if let Some(region @ Region::Text(_)) = &region {
-                if handle.fits().is_none() {
-                    Some(with_storage!(storage, image =>
-                        ImagePixelSelection::new(image.as_ref(), Some(region.as_region()))
-                    ).map_err(raised)?)
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            if !has_pixels && !set_mask {
-                logs.push(LogLine::warning("You must specify at least either the pixels or the mask to set"));
-                return Ok(false);
-            }
-            if let Some(kind) = handle.read_only_file_type() {
-                if kind == "MIRIADImage" {
-                    return Err(raised(if has_pixels {
-                        "Failed AlwaysAssert to.isWritable()"
-                    } else {
-                        "SubLattice::pixelMask - no pixelmask available"
-                    }));
-                }
-                return Err(raised(if set_mask {
-                    format!("Cannot make requested mask for this image type which is {kind}")
-                } else {
-                    format!("{kind} is not writable")
-                }));
-            }
-            attachment.require_lock(&mut handle, casa_tables::LockType::Write)?;
-            let ImageHandle::Float(storage) = &*handle else { unreachable!("float attachment checked") };
-            let default = with_storage!(storage, image => image.active_pixel_mask_name());
-            let mask_name = if set_mask {
-                if let Some(name) = default {
-                    Some(name)
-                } else {
-                    let name = (0..).map(|index| format!("mask{index}")).find(|name| !has_region(&handle, name)).expect("a fresh mask name");
-                    let mask = ArrayD::from_elem(IxDyn(handle.shape()), true);
-                    let ImageHandle::Float(storage) = &mut *handle else { unreachable!() };
-                    with_storage!(storage, image => image.put_mask(&name, &mask)).map_err(raised)?;
-                    with_storage!(storage, image => image.set_default_mask(&name)).map_err(raised)?;
-                    handle.save().map_err(raised)?;
-                    Some(name)
-                }
-            } else { None };
-            let mask = mask_name.as_deref().map(|name| (name, pixelmask > 0));
-            let ImageHandle::Float(storage) = &mut *handle else { unreachable!() };
-            let (start, shape) = with_storage!(storage, image => {
-                let selection = match text_selection {
-                    Some(selection) => selection,
-                    None => ImagePixelSelection::new(image.as_ref(), region.as_ref().map(Region::as_region)).map_err(raised)?,
-                };
-                let value = set_value(&variant, &pixel_history)?;
-                selection.apply(image.as_mut(), value, mask).map_err(raised)?
+            let history_command = state.history.then(|| {
+                let region_hist = region.as_ref().map_or_else(|| "{}".into(), Region::history);
+                format!("ia.set(pixels={pixel_history}, pixelmask={pixelmask}, region={region_hist}, list={list})")
             });
-            if list {
-                logs.push(LogLine::info(format!("Selected region at {start:?} with shape {shape:?}")));
-            }
-            if state.history {
-                let region = region.as_ref().map_or_else(|| "{}".into(), Region::history);
-                handle.record_history("set", format!("ia.set(pixels={pixel_history}, pixelmask={pixelmask}, region={region}, list={list})"))?;
-            }
-            handle.save().map_err(raised)?;
-            Ok(true)
-        });
-        emit(py, "casars.tools.image", &logs)?;
-        outcome
+            set_pixels_and_mask(
+                attachment,
+                expr.as_deref(),
+                pixelmask,
+                region.as_ref().map(Region::as_region),
+                list,
+                history_command,
+            )
+            .map_err(raised)
+        })?;
+        emit_tool_logs(py, &logs)?;
+        Ok(outcome)
     }
 }

@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::path::Path;
+//! Thin PyO3 `ia.convolve` wrapper delegating to [`casa_imageanalysis::tool::ops_transform::convolve_image`].
 
-use casa_core::{ArrayD, RecordValue};
-use casa_imageanalysis::analysis::{
-    ConvolutionKernel, ConvolutionOptions, ConvolutionPixel, ImageConvolution,
-    ensure_outfile_does_not_alias_input,
-};
-use casa_images::ImageInterface;
+use std::path::PathBuf;
+
+use casa_core::ArrayD;
+use casa_imageanalysis::tool::ops_transform::{ConvolveKernelInput, convolve_image};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyTuple};
@@ -15,17 +13,12 @@ use pyo3::types::{PyList, PyTuple};
 use crate::convert::Variant;
 
 use super::PyImageTool;
-use super::attachment::{AttachedImage, read_locked};
-use super::create::publish_image;
-use super::handle::{ImageHandle, Storage, raised, with_storage};
+use super::handle::{external_open_check, raised};
 use super::pixels::snapshot_array;
 use super::subimage::{RegionArgument, mask_argument, require_bool};
 
 const INVALID_KERNEL: &str = "kernel is not understood, try using an array or an image";
-const KERNEL_PRECISION: &str =
-    "Invalid Table data type when accessing column in ArrayColumn ctor for column map";
 
-#[derive(Default)]
 enum KernelArgument {
     File {
         path: String,
@@ -35,7 +28,6 @@ enum KernelArgument {
         pixels: ArrayD<f64>,
         history: String,
     },
-    #[default]
     Unsupported,
 }
 
@@ -110,198 +102,6 @@ impl KernelArgument {
             _ => Self::Unsupported,
         })
     }
-
-    fn history(&self) -> &str {
-        match self {
-            Self::File { history, .. } | Self::Array { history, .. } => history,
-            Self::Unsupported => unreachable!("validated convolution kernel"),
-        }
-    }
-}
-
-struct Request<'a> {
-    outfile: &'a str,
-    kernel: &'a KernelArgument,
-    scale: f64,
-    region: &'a RegionArgument,
-    mask: &'a str,
-    overwrite: bool,
-    stretch: bool,
-    history: bool,
-}
-
-impl Request<'_> {
-    fn run(&self, source: &AttachedImage) -> PyResult<AttachedImage> {
-        if !matches!(
-            &*source.lock(),
-            ImageHandle::Float(_) | ImageHandle::Double(_)
-        ) {
-            return Err(raised("This method only supports real-valued images"));
-        }
-        let kernel_path = match self.kernel {
-            KernelArgument::File { path, .. } => {
-                let path = Path::new(path);
-                if !path.is_dir() {
-                    return Err(raised(format!("Table {} does not exist", path.display())));
-                }
-                Some(path)
-            }
-            KernelArgument::Array { .. } => None,
-            KernelArgument::Unsupported => return Err(raised(INVALID_KERNEL)),
-        };
-        let same = kernel_path
-            .and_then(|path| path.canonicalize().ok())
-            .is_some_and(|path| source.native_path() == Some(&path));
-        let kernel = kernel_path
-            .filter(|_| !same)
-            .map(AttachedImage::open_for_ordered_read)
-            .transpose()?;
-        let mut coordinates = None;
-        let mut output = publish_image(self.outfile, self.overwrite, |destination| {
-            let build = |image: &ImageHandle, kernel: Option<&ImageHandle>| {
-                self.build(source, image, kernel, destination)
-            };
-            let product = if let Some(kernel) = &kernel {
-                let source_first = source
-                    .native_path()
-                    .zip(kernel.native_path())
-                    .is_none_or(|(left, right)| left < right);
-                if source_first {
-                    read_locked(source, |image| {
-                        read_locked(kernel, |kernel| build(image, Some(kernel)))
-                    })?
-                } else {
-                    read_locked(kernel, |kernel| {
-                        read_locked(source, |image| build(image, Some(kernel)))
-                    })?
-                }
-            } else {
-                read_locked(source, |image| build(image, same.then_some(image)))?
-            };
-            coordinates = AttachedImage::capture_live_coordinates(&product)?;
-            Ok(product)
-        })?;
-        if let Some((record, system)) = coordinates {
-            output.keep_live_coordinates(record, system);
-        }
-        Ok(output)
-    }
-
-    fn build(
-        &self,
-        attachment: &AttachedImage,
-        image: &ImageHandle,
-        kernel: Option<&ImageHandle>,
-        destination: Option<&Path>,
-    ) -> PyResult<ImageHandle> {
-        if !self.outfile.is_empty() {
-            let destination = Path::new(self.outfile);
-            for input in image
-                .path()
-                .into_iter()
-                .chain(kernel.and_then(ImageHandle::path))
-                .chain(attachment.operand_paths().iter().map(|path| path.as_path()))
-            {
-                ensure_outfile_does_not_alias_input(destination, input).map_err(raised)?;
-            }
-        }
-        let record = image.coordinate_record();
-        let (mut product, changed, dimensions) = match image {
-            ImageHandle::Float(storage) => {
-                let native = match kernel {
-                    Some(ImageHandle::Float(Storage::Paged(native))) => {
-                        Some(native.as_ref() as &dyn ImageInterface<f32>)
-                    }
-                    Some(_) => return Err(raised(KERNEL_PRECISION)),
-                    None => None,
-                };
-                let (out, changed, dimensions) = match storage {
-                    Storage::Temp {
-                        image,
-                        fits: Some(fits),
-                        ..
-                    } => self.convolve(&fits.image_view(image), record, native, destination),
-                    _ => {
-                        with_storage!(storage, source => self.convolve(source.as_ref(), record, native, destination))
-                    }
-                }?;
-                (ImageHandle::Float(out), changed, dimensions)
-            }
-            ImageHandle::Double(storage) => {
-                let native = match kernel {
-                    Some(ImageHandle::Double(Storage::Paged(native))) => {
-                        Some(native.as_ref() as &dyn ImageInterface<f64>)
-                    }
-                    Some(_) => return Err(raised(KERNEL_PRECISION)),
-                    None => None,
-                };
-                let (out, changed, dimensions) = with_storage!(storage, source => self.convolve(source.as_ref(), record, native, destination))?;
-                (ImageHandle::Double(out), changed, dimensions)
-            }
-            _ => return Err(raised("This method only supports real-valued images")),
-        };
-        if let Some(record) = changed {
-            product.set_coordinate_record(record)?;
-        }
-        product.append_history_entries(&image.history_entries()?)?;
-        if self.history {
-            let Self {
-                outfile,
-                kernel,
-                scale,
-                region,
-                mask,
-                overwrite,
-                stretch,
-                ..
-            } = self;
-            let kernel = kernel.history();
-            let region = region.history();
-            product.record_history("convolve", format!("ia.convolve(outfile={outfile:?}, kernel={kernel}, scale={scale:.6}, region={region}, vmask={mask:?}, overwrite={overwrite}, stretch={stretch})"))?;
-        }
-        if dimensions < image.shape().len() {
-            product.append_history_at("ImageConvolverTask::convolve", &["NOTE: kernel with fewer dimensions than the input image applied. Degenerate axes added to the kernel".to_owned()])?;
-        }
-        product.save().map_err(raised)?;
-        Ok(product)
-    }
-
-    fn convolve<T: ConvolutionPixel>(
-        &self,
-        source: &dyn ImageInterface<T>,
-        coordinates: RecordValue,
-        native: Option<&dyn ImageInterface<T>>,
-        path: Option<&Path>,
-    ) -> PyResult<(Storage<T>, Option<RecordValue>, usize)> {
-        let data;
-        let (kernel, rank) = if let Some(native) = native {
-            (ConvolutionKernel::Image(native), native.ndim())
-        } else {
-            let KernelArgument::Array { pixels, .. } = self.kernel else {
-                unreachable!("validated convolution kernel")
-            };
-            data = pixels.mapv(T::from_f64);
-            (ConvolutionKernel::Array(&data), data.ndim())
-        };
-        let plan =
-            ImageConvolution::new(source, coordinates, self.region.selection()).map_err(raised)?;
-        let mut output = Storage::create(
-            plan.section.shape.clone(),
-            plan.section.coordinates.clone(),
-            path,
-            None,
-        )
-        .map_err(raised)?;
-        let options = ConvolutionOptions {
-            scale: self.scale,
-            mask: Some(self.mask),
-            stretch: self.stretch,
-            destination: (!self.outfile.is_empty()).then(|| Path::new(self.outfile)),
-        };
-        with_storage!(&mut output, dest => plan.copy_to(source, kernel, options, dest.as_mut()))
-            .map_err(raised)?;
-        Ok((output, plan.section.coordinate_record, rank))
-    }
 }
 
 #[pymethods]
@@ -322,23 +122,40 @@ impl PyImageTool {
     ) -> PyResult<Py<Self>> {
         let kernel = KernelArgument::capture(py, kernel)?;
         let mask = mask_argument(mask)?;
-        let output = py.detach(|| {
+        let output = py.detach(|| -> PyResult<_> {
             let state = self.state();
             let Some(source) = state.image.as_ref() else {
                 return Ok(None);
             };
-            Request {
+            let (kernel_in, kernel_history) = match kernel {
+                KernelArgument::File { path, history } => {
+                    (ConvolveKernelInput::ImagePath(PathBuf::from(path)), history)
+                }
+                KernelArgument::Array { pixels, history } => {
+                    (ConvolveKernelInput::Array(pixels), history)
+                }
+                KernelArgument::Unsupported => return Err(raised(INVALID_KERNEL)),
+            };
+            let history_command = state.history.then(|| {
+                let region_hist = region.history();
+                format!(
+                    "ia.convolve(outfile={outfile:?}, kernel={kernel_history}, scale={scale:.6}, region={region_hist}, vmask={mask:?}, overwrite={overwrite}, stretch={stretch})"
+                )
+            });
+            convolve_image(
+                source,
                 outfile,
-                kernel: &kernel,
+                &kernel_in,
                 scale,
-                region: &region,
-                mask: &mask,
+                region.selection(),
+                &mask,
                 overwrite,
                 stretch,
-                history: state.history,
-            }
-            .run(source)
+                history_command,
+                external_open_check(),
+            )
             .map(Some)
+            .map_err(raised)
         })?;
         Py::new(py, output.map_or_else(Self::new, Self::attached))
     }

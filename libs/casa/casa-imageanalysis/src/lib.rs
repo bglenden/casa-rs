@@ -6,6 +6,7 @@ pub mod convolve2d;
 mod linear_mosaic;
 mod plane;
 pub mod regrid;
+pub mod tool;
 pub use analysis::{
     ExportFitsRequest, FeatherRequest, FeatherSummary, FitsExportSummary, FitsImportSummary,
     ImageHeaderSummary, ImageMathSummary, ImageRegridSummary, ImageStatisticsSummary,

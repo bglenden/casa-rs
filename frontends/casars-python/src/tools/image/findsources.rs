@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_imageanalysis::analysis::{
-    FindSourcesOptions, MaxFitOptions, find_image_sources, fit_image_maximum,
-};
-use casa_images::ImageInterface;
+//! Thin PyO3 `ia.findsources` / `ia.maxfit` wrappers delegating to [`casa_imageanalysis::tool::ops_fit`].
+
+use casa_imageanalysis::analysis::{FindSourcesOptions, MaxFitOptions};
+use casa_imageanalysis::tool::ops_fit::{find_sources, max_fit};
 use pyo3::prelude::*;
 
 use crate::tools::{LogLine, emit};
 
 use super::PyImageTool;
-use super::attachment::read_locked;
 use super::data_compat::record_to_py;
-use super::handle::{ImageHandle, Storage, raised, with_storage};
+use super::handle::{ImageHandle, raised};
 use super::subimage::{RegionArgument, mask_argument, require_bool};
 
 #[pymethods]
@@ -46,43 +45,25 @@ impl PyImageTool {
         let region: RegionArgument =
             region.map_or_else(|| Ok(Default::default()), |argument| argument.extract())?;
         let mask = mask_argument(mask)?;
-        let record = py.detach(|| {
+        let record = py.detach(|| -> PyResult<_> {
             let state = self.state();
             let Some(source) = &state.image else {
                 return Ok(Default::default());
             };
-            read_locked(source, |image| {
-                let ImageHandle::Float(storage) = image else {
-                    return Err(raised("This application supports only float-valued images"));
-                };
-                let maximum =
-                    usize::try_from(nmax).map_err(|_| raised("nmax must be nonnegative"))?;
-                let coordinates = image.coordinate_record();
-                let search = |source: &dyn ImageInterface<f32>| {
-                    find_image_sources(
-                        source,
-                        coordinates,
-                        FindSourcesOptions {
-                            region: region.selection(),
-                            mask: Some(&mask),
-                            maximum,
-                            cutoff,
-                            point,
-                            fit_width: width,
-                            find_negative: negfind,
-                        },
-                    )
-                    .map_err(raised)
-                };
-                match storage {
-                    Storage::Temp {
-                        image,
-                        fits: Some(fits),
-                        ..
-                    } => search(&fits.image_view(image)),
-                    _ => with_storage!(storage, image => search(image.as_ref())),
-                }
-            })
+            let maximum = usize::try_from(nmax).map_err(|_| raised("nmax must be nonnegative"))?;
+            find_sources(
+                source,
+                FindSourcesOptions {
+                    region: region.selection(),
+                    mask: Some(&mask),
+                    maximum,
+                    cutoff,
+                    point,
+                    fit_width: width,
+                    find_negative: negfind,
+                },
+            )
+            .map_err(raised)
         })?;
         record_to_py(py, record)
     }
@@ -104,40 +85,23 @@ impl PyImageTool {
         }
         let region: RegionArgument =
             region.map_or_else(|| Ok(Default::default()), |argument| argument.extract())?;
-        let result = py.detach(|| {
+        let result = py.detach(|| -> PyResult<_> {
             let state = self.state();
             let Some(source) = &state.image else {
                 return Ok(None);
             };
-            read_locked(source, |image| {
-                let ImageHandle::Float(storage) = image else {
-                    return Err(raised("This method only supports float-valued images"));
-                };
-                let coordinates = image.coordinate_record();
-                let fit = |source: &dyn ImageInterface<f32>| {
-                    fit_image_maximum(
-                        source,
-                        coordinates,
-                        MaxFitOptions {
-                            region: region.selection(),
-                            point,
-                            width,
-                            negative: negfind,
-                            list,
-                        },
-                    )
-                    .map(Some)
-                    .map_err(raised)
-                };
-                match storage {
-                    Storage::Temp {
-                        image,
-                        fits: Some(fits),
-                        ..
-                    } => fit(&fits.image_view(image)),
-                    _ => with_storage!(storage, image => fit(image.as_ref())),
-                }
-            })
+            max_fit(
+                source,
+                MaxFitOptions {
+                    region: region.selection(),
+                    point,
+                    width,
+                    negative: negfind,
+                    list,
+                },
+            )
+            .map(Some)
+            .map_err(raised)
         })?;
         let Some(result) = result else {
             return record_to_py(py, Default::default());

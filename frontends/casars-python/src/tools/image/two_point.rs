@@ -1,68 +1,19 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+//! Thin PyO3 `ia.twopointcorrelation` wrapper delegating to [`casa_imageanalysis::tool::ops_transform::two_point_correlation`].
+
 use std::path::Path;
 
-use casa_coordinates::CoordinateType;
-use casa_core::RecordValue;
-use casa_imageanalysis::analysis::{
-    ImageTwoPoint, StructurePixel, SubimageRegion, TwoPointOptions,
-    ensure_artifacts_do_not_overlap, ensure_outfile_does_not_alias_input,
-};
-use casa_images::{ImageInterface, image_history_rows};
+use casa_imageanalysis::analysis::TwoPointOptions;
+use casa_imageanalysis::tool::ops_transform::two_point_correlation;
 use pyo3::prelude::*;
 
 use crate::convert::IntList;
 
 use super::PyImageTool;
-use super::attachment::read_locked;
-use super::beam_view::BeamView;
-use super::beams::subset_beam_record;
-use super::create::publish_image;
-use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
+use super::handle::{external_open_check, raised};
 use super::records::numeric_axis_vector;
 use super::subimage::{RegionArgument, mask_argument, require_bool};
-
-fn make_product<T: StructurePixel>(
-    source: &dyn ImageInterface<T>,
-    native: RecordValue,
-    beam_view: &BeamView,
-    options: TwoPointOptions<'_>,
-    stage: Option<&Path>,
-) -> PyResult<Storage<T>> {
-    let plan = ImageTwoPoint::new(source, native, beam_view.record(), options).map_err(raised)?;
-    let mut result = Storage::create(plan.shape.clone(), plan.coordinates.clone(), stage, None)
-        .map_err(raised)?;
-    with_storage!(&mut result, image => plan.copy_to(source, image.as_mut())).map_err(raised)?;
-    let mut info = plan.image_info.to_record();
-    let beams = beam_view.beam_set().map_err(raised)?;
-    if beams.is_multi() {
-        let channels = plan.source.beam_planes(
-            source.find_axis(CoordinateType::Spectral),
-            beams.n_channels(),
-        );
-        let stokes = plan
-            .source
-            .beam_planes(source.find_axis(CoordinateType::Stokes), beams.n_stokes());
-        subset_beam_record(
-            &mut info,
-            Some(beam_view.record()),
-            &beams,
-            &channels,
-            &stokes,
-        )
-        .map_err(raised)?;
-    } else if let Some(beam) = beam_view.record().get("restoringbeam") {
-        info.upsert("restoringbeam", beam.clone());
-    }
-    with_storage!(&mut result, image => image.set_image_info_record(info)).map_err(raised)?;
-    match &mut result {
-        Storage::Paged(image) => image
-            .set_coordinate_record(plan.coordinate_record)
-            .map_err(raised)?,
-        Storage::Temp { record, .. } => *record = plan.coordinate_record,
-    }
-    Ok(result)
-}
 
 #[pymethods]
 impl PyImageTool {
@@ -89,47 +40,30 @@ impl PyImageTool {
             let mask = mask?;
             let destination = (!outfile.is_empty()).then(|| Path::new(outfile));
             let options = TwoPointOptions {
-                axes: &axes.0, method, region: region.selection(),
-                mask: (!mask.is_empty()).then_some(mask.as_str()), stretch, destination,
+                axes: &axes.0,
+                method,
+                region: region.selection(),
+                mask: (!mask.is_empty()).then_some(mask.as_str()),
+                stretch,
+                destination,
             };
-            let product = publish_image(outfile, overwrite, |stage| read_locked(input, |handle| {
-                handle.check_single_precision("twopointcorrelation")?;
-                if let Some(destination) = destination {
-                    for source in handle.path().into_iter().chain(input.operand_paths().iter().map(|path| path.as_path())) {
-                        ensure_outfile_does_not_alias_input(destination, source).map_err(raised)?;
-                    }
-                    if let Some(region) = options.region.and_then(SubimageRegion::external_path) {
-                        ensure_artifacts_do_not_overlap(destination, region).map_err(raised)?;
-                    }
-                }
-                let beams = input.beam_view();
-                let record = handle.coordinate_record();
-                let mut output = match handle {
-                    ImageHandle::Float(source) => ImageHandle::Float(source.with_float_view(|image| {
-                        make_product(image, record, &beams, options, stage)
-                    })?),
-                    ImageHandle::Complex(source) => ImageHandle::Complex(with_storage!(source, image =>
-                        make_product(image.as_ref(), record, &beams, options, stage))?),
-                    _ => unreachable!("pixel type was checked"),
-                };
-                let history = with_pixels!(handle, source => match source {
-                    Storage::Paged(image) => image_history_rows(image.name().expect("native image path")).map_err(raised)?,
-                    Storage::Temp { image, .. } => image.history_rows().map_err(raised)?.into_owned(),
-                });
-                with_pixels!(&mut output, storage => with_storage!(storage, image => image.append_history_entries(&history)))
-                    .map_err(raised)?;
-                if state.history {
-                    let region = region.history();
-                    output.record_history("twopointcorrelation", format!(
-                        "ia.twopointcorrelation(outfile={outfile:?}, region={region}, mask={mask:?}, axes={:?}, method={method:?}, overwrite={overwrite}, stretch={stretch})",
-                        axes.0,
-                    ))?;
-                }
-                output.save().map_err(raised)?;
-                Ok(output)
-            }))?;
-            drop(product);
-            Ok(true)
+            let history_command = state.history.then(|| {
+                let region_hist = region.history();
+                format!(
+                    "ia.twopointcorrelation(outfile={outfile:?}, region={region_hist}, mask={mask:?}, axes={:?}, method={method:?}, overwrite={overwrite}, stretch={stretch})",
+                    axes.0,
+                )
+            });
+            two_point_correlation(
+                input,
+                outfile,
+                overwrite,
+                options,
+                history_command,
+                external_open_check(),
+            )
+            .map(|_| true)
+            .map_err(raised)
         })
     }
 }

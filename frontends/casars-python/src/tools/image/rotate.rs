@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+//! Thin PyO3 `ia.rotate` wrapper delegating to [`casa_imageanalysis::tool::ops_transform::regrid_attached`].
+
 use std::path::Path;
 
 use casa_imageanalysis::analysis::{ImageRegridOptions, ImageRegridTarget};
+use casa_imageanalysis::tool::ops_transform::regrid_attached;
 use pyo3::prelude::*;
 
 use crate::convert::{IntList, Variant, quantity, value_in};
 
 use super::PyImageTool;
-use super::handle::raised;
-use super::regrid::{publish_regridded_image, regrid_indices};
+use super::handle::{external_open_check, raised};
+use super::regrid::regrid_indices;
 use super::subimage::{Region, mask_argument, require_bool};
 
 #[pymethods]
@@ -33,15 +36,18 @@ impl PyImageTool {
         #[pyo3(from_py_with = require_bool)] stretch: bool,
     ) -> PyResult<Py<Self>> {
         let angle = pa.map_or(Ok(0.), |value| rotation_angle(value.extract()?));
-        let pa = pa.map_or_else(
+        let pa_repr = pa.map_or_else(
             || Ok("[]".into()),
             |value| Ok::<_, PyErr>(value.repr()?.to_str()?.to_owned()),
         )?;
         let region = Region::capture(py, region);
         let mask = mask_argument(mask);
-        let attachment = py.detach(|| {
+        let attachment = py.detach(|| -> PyResult<_> {
             let state = self.state();
-            let input = state.image.as_ref().ok_or_else(|| raised("Unable to create image"))?;
+            let input = state
+                .image
+                .as_ref()
+                .ok_or_else(|| raised("Unable to create image"))?;
             let region = region?;
             let mask = mask?;
             let options = ImageRegridOptions {
@@ -50,18 +56,28 @@ impl PyImageTool {
                 axes: &[],
                 region: region.as_ref().map(Region::as_region),
                 mask: (!mask.is_empty()).then_some(mask.as_str()),
-                method, decimate, replicate, convert_reference: false, dropdeg,
-                force: false, as_velocity: false, stretch,
+                method,
+                decimate,
+                replicate,
+                convert_reference: false,
+                dropdeg,
+                force: false,
+                as_velocity: false,
+                stretch,
                 outfile: (!outfile.is_empty()).then(|| Path::new(outfile)),
             };
             let history = state.history.then(|| {
                 let region = region.as_ref().map_or_else(|| "{}".into(), Region::history);
-                ("rotate", format!(
-                    "ia.rotate(outfile={outfile:?}, shape={:?}, pa={pa}, region={region}, mask={mask:?}, method={method:?}, decimate={decimate}, replicate={replicate}, dropdeg={dropdeg}, overwrite={overwrite}, stretch={stretch})",
-                    shape.0,
-                ))
+                (
+                    "rotate",
+                    format!(
+                        "ia.rotate(outfile={outfile:?}, shape={:?}, pa={pa_repr}, region={region}, mask={mask:?}, method={method:?}, decimate={decimate}, replicate={replicate}, dropdeg={dropdeg}, overwrite={overwrite}, stretch={stretch})",
+                        shape.0,
+                    ),
+                )
             });
-            publish_regridded_image(input, outfile, overwrite, options, history)
+            regrid_attached(input, outfile, overwrite, options, history, external_open_check())
+                .map_err(raised)
         })?;
         Py::new(py, Self::attached(attachment))
     }

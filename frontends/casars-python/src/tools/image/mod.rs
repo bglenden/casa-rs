@@ -8,7 +8,6 @@ mod attachment;
 mod beam_deconvolution;
 mod beam_edit;
 mod beam_rotate;
-mod beam_view;
 mod beams;
 mod bounding_box;
 mod calc;
@@ -21,14 +20,12 @@ mod convolve;
 mod convolve2d;
 mod coordinate_conversion;
 mod copy;
-mod copy_region;
 mod create;
 mod crop;
 mod data_compat;
 mod decimate;
 mod decompose;
 mod deconvolve_components;
-mod default_record;
 mod deviation;
 mod fft;
 mod findsources;
@@ -37,7 +34,6 @@ mod fitprofile;
 mod fits_export;
 mod fits_header;
 mod fits_import;
-mod fits_rename;
 mod getprofile;
 mod handle;
 mod histograms;
@@ -49,10 +45,8 @@ mod makecomplex;
 mod mask_expression;
 mod masks;
 mod metadata;
-mod miriad_rename;
 mod modify;
 mod moments;
-mod native_rename;
 mod noise;
 mod pad;
 mod pbcor;
@@ -67,7 +61,6 @@ mod region_read;
 mod regrid;
 mod replace_masked;
 mod rotate;
-mod saved_expression;
 mod sepconvolve;
 mod serialization;
 mod slice;
@@ -76,12 +69,12 @@ mod statistics;
 mod subimage;
 mod summary;
 pub(crate) mod surface;
-mod text_output;
 mod transpose;
 mod two_point;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
+use casa_imageanalysis::tool::ImageToolState;
 use pyo3::prelude::*;
 
 use crate::tools::not_yet_implemented_in;
@@ -98,25 +91,17 @@ fn stub(method: &str) -> PyResult<Py<PyAny>> {
 /// CASA's `image` tool.
 #[pyclass(name = "image", module = "casars.tools", frozen)]
 pub(crate) struct PyImageTool {
-    state: Mutex<ImageState>,
-}
-
-struct ImageState {
-    image: Option<AttachedImage>,
-    history: bool,
+    state: Mutex<ImageToolState>,
 }
 
 impl PyImageTool {
     fn attached(image: AttachedImage) -> Self {
         Self {
-            state: Mutex::new(ImageState {
-                image: Some(image),
-                history: true,
-            }),
+            state: Mutex::new(ImageToolState::attached(image)),
         }
     }
 
-    fn state(&self) -> MutexGuard<'_, ImageState> {
+    fn state(&self) -> MutexGuard<'_, ImageToolState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
@@ -136,10 +121,7 @@ impl PyImageTool {
     #[new]
     fn new() -> Self {
         Self {
-            state: Mutex::new(ImageState {
-                image: None,
-                history: true,
-            }),
+            state: Mutex::new(ImageToolState::new()),
         }
     }
 }

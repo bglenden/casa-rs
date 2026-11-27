@@ -1,23 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::path::Path;
+//! Thin PyO3 `ia.convolve2d` wrapper delegating to [`casa_imageanalysis::tool::ops_transform::convolve_2d_gaussian`].
 
-use casa_core::RecordValue;
-use casa_core::quanta::{Quantity, casacore::stream_double};
-use casa_imageanalysis::analysis::{
-    ConvolutionOptions, ConvolutionPixel, GaussianConvolutionOptions, ImageGaussianConvolution,
-    ensure_outfile_does_not_alias_input,
-};
-use casa_images::{BeamComponent, GaussianBeam, ImageInfo, ImageInterface, StoredGaussianBeam};
+use casa_core::quanta::Quantity;
+use casa_imageanalysis::analysis::GaussianConvolutionOptions;
+use casa_imageanalysis::tool::ops_transform::convolve_2d_gaussian;
 use pyo3::prelude::*;
 
 use crate::convert::{IntList, Variant, quantity};
 
 use super::PyImageTool;
-use super::attachment::{AttachedImage, read_locked};
-use super::beams::{image_info_record, stored_beam_record};
-use super::create::publish_image;
-use super::handle::{ImageHandle, Storage, raised, with_storage};
+use super::handle::{external_open_check, raised};
 use super::subimage::{RegionArgument, mask_argument, require_bool};
 
 fn parsed_widths(widths: &[Variant; 3], beam: &Variant) -> PyResult<[Quantity; 3]> {
@@ -60,259 +53,28 @@ fn parsed_widths(widths: &[Variant; 3], beam: &Variant) -> PyResult<[Quantity; 3
     Ok([parse(major)?, parse(minor)?, parse(angle)?])
 }
 
-struct Request<'a> {
-    outfile: &'a str,
-    axes: IntList,
-    r#type: &'a str,
-    widths: [Variant; 3],
-    scale: f64,
-    region: RegionArgument,
-    mask: String,
-    overwrite: bool,
-    stretch: bool,
-    targetres: bool,
-    beam: Variant,
-    history: bool,
-}
-
-impl Request<'_> {
-    fn run(&self, attachment: &AttachedImage) -> PyResult<AttachedImage> {
-        let mut live_coordinates = None;
-        let mut output = publish_image(self.outfile, self.overwrite, |path| {
-            let staged = read_locked(attachment, |source| self.build(attachment, source, path))?;
-            live_coordinates = AttachedImage::capture_live_coordinates(&staged)?;
-            Ok(staged)
-        })?;
-        if let Some((record, system)) = live_coordinates {
-            output.keep_live_coordinates(record, system);
-        }
-        Ok(output)
+fn check_kernel(kind_raw: &str, beam: &Variant, targetres: bool) -> PyResult<()> {
+    let kind = kind_raw.to_ascii_lowercase();
+    let gaussian = !kind.is_empty() && "gaussian".starts_with(&kind);
+    let has_beam = matches!(beam, Variant::Record(record) if !record.is_empty());
+    if !gaussian && has_beam {
+        return Err(raised("beam can only be given with a gaussian kernel"));
     }
-
-    fn check_kernel(&self) -> PyResult<()> {
-        let kind = self.r#type.to_ascii_lowercase();
-        let gaussian = !kind.is_empty() && "gaussian".starts_with(&kind);
-        let has_beam = matches!(&self.beam, Variant::Record(record) if !record.is_empty());
-        if !gaussian && has_beam {
-            return Err(raised("beam can only be given with a gaussian kernel"));
-        }
-        if gaussian {
-            return Ok(());
-        }
-        if !kind.is_empty() && "boxcar".starts_with(&kind) {
-            if self.targetres {
-                return Err(raised(
-                    "targetres can only be true for a Gaussian convolving kernel",
-                ));
-            }
-            return Err(raised("Boxcar kernel not yet implemented"));
-        }
-        if !kind.is_empty() && "hanning".starts_with(&kind) {
-            return Err(raised("The kernel type HANNING is not supported"));
-        }
-        Err(raised(format!("Illegal kernel type {}.", self.r#type)))
+    if gaussian {
+        return Ok(());
     }
-
-    fn build(
-        &self,
-        attachment: &AttachedImage,
-        source: &ImageHandle,
-        destination: Option<&Path>,
-    ) -> PyResult<ImageHandle> {
-        if !matches!(source, ImageHandle::Float(_) | ImageHandle::Double(_)) {
-            return Err(raised("convolve2d only supports real-valued images"));
+    if !kind.is_empty() && "boxcar".starts_with(&kind) {
+        if targetres {
+            return Err(raised(
+                "targetres can only be true for a Gaussian convolving kernel",
+            ));
         }
-        if !self.outfile.is_empty() {
-            for input in source
-                .path()
-                .into_iter()
-                .chain(attachment.operand_paths().iter().map(|path| path.as_path()))
-            {
-                ensure_outfile_does_not_alias_input(Path::new(self.outfile), input)
-                    .map_err(raised)?;
-            }
-        }
-        self.check_kernel()?;
-        let widths = parsed_widths(&self.widths, &self.beam)?;
-        let geometry = GaussianConvolutionOptions {
-            axes: self.axes.0.clone(),
-            widths,
-            scale: self.scale,
-            target_resolution: self.targetres,
-        };
-        let coordinates = source.coordinate_record();
-        let beams = attachment.beam_view().clone();
-        let (mut output, updated) = match source {
-            ImageHandle::Float(storage) => {
-                let (product, updated) = match storage {
-                    Storage::Temp {
-                        image,
-                        fits: Some(fits),
-                        ..
-                    } => self.convolve(
-                        &fits.image_view(image),
-                        coordinates,
-                        beams.record(),
-                        geometry,
-                        destination,
-                    ),
-                    _ => with_storage!(storage, image => self.convolve(
-                        image.as_ref(), coordinates, beams.record(), geometry, destination,
-                    )),
-                }?;
-                (ImageHandle::Float(product), updated)
-            }
-            ImageHandle::Double(storage) => {
-                let (product, updated) = with_storage!(storage, image => self.convolve(
-                    image.as_ref(), coordinates, beams.record(), geometry, destination,
-                ))?;
-                (ImageHandle::Double(product), updated)
-            }
-            _ => unreachable!("checked real image precision"),
-        };
-        if let Some(record) = updated {
-            output.set_coordinate_record(record)?;
-        }
-        output.append_history_entries(&source.history_entries()?)?;
-        if self.history {
-            output.record_history("convolve2d", self.history_call())?;
-        }
-        output.append_history_at(
-            "Image2DConvolver::_dealWithRestoringBeam",
-            &[
-                beam_history(
-                    &format!(
-                        "Original {}",
-                        source.path().map_or_else(
-                            || "Temporary_Image".to_owned(),
-                            |path| path.display().to_string()
-                        )
-                    ),
-                    Some(beams.record()),
-                )?,
-                beam_history(
-                    &format!("Output {}", self.outfile),
-                    image_info_record(&output),
-                )?,
-            ],
-        )?;
-        output.save().map_err(raised)?;
-        Ok(output)
+        return Err(raised("Boxcar kernel not yet implemented"));
     }
-
-    fn convolve<T: ConvolutionPixel>(
-        &self,
-        input: &dyn ImageInterface<T>,
-        coordinates: RecordValue,
-        beams: &RecordValue,
-        geometry: GaussianConvolutionOptions,
-        destination: Option<&Path>,
-    ) -> PyResult<(Storage<T>, Option<RecordValue>)> {
-        let plan = ImageGaussianConvolution::new(
-            input,
-            coordinates,
-            beams,
-            self.region.selection(),
-            geometry,
-        )
-        .map_err(raised)?;
-        let options = ConvolutionOptions {
-            scale: self.scale,
-            mask: Some(&self.mask),
-            stretch: self.stretch,
-            destination: (!self.outfile.is_empty()).then(|| Path::new(self.outfile)),
-        };
-        let section = plan.section();
-        let mut result = Storage::create(
-            section.shape.clone(),
-            section.coordinates.clone(),
-            destination,
-            None,
-        )
-        .map_err(raised)?;
-        with_storage!(&mut result, image => plan.copy_to(input, options, image.as_mut()))
-            .map_err(raised)?;
-        with_storage!(&mut result, image => image.set_image_info_record(plan.image_info_record().clone())).map_err(raised)?;
-        Ok((result, section.coordinate_record.clone()))
+    if !kind.is_empty() && "hanning".starts_with(&kind) {
+        return Err(raised("The kernel type HANNING is not supported"));
     }
-
-    fn history_call(&self) -> String {
-        let Self {
-            outfile,
-            axes,
-            r#type,
-            widths,
-            scale,
-            region,
-            mask,
-            overwrite,
-            stretch,
-            targetres,
-            ..
-        } = self;
-        let widths = widths.each_ref().map(|value| match value {
-            Variant::Text(text) => format!("{text:?}"),
-            value => value.describe(),
-        });
-        let [major, minor, pa] = widths;
-        let axes = axes
-            .0
-            .iter()
-            .map(i64::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        let region = region.history();
-        let beam = "{...}";
-        let kind = r#type;
-        format!(
-            "ia.convolve2d(outfile={outfile:?}, axes=[{axes}], type={kind:?}, major={major}, minor={minor}, pa={pa}, scale={scale:.6}, region={region}, mask={mask:?}, overwrite={overwrite}, stretch={stretch}, targetres={targetres}, beam={beam})"
-        )
-    }
-}
-
-fn beam_history(description: &str, record: Option<&RecordValue>) -> PyResult<String> {
-    let Some(info) = record else {
-        return Ok(format!("{description} has no beam"));
-    };
-    let beams = ImageInfo::from_record(info).map_err(raised)?.beam_set;
-    let format_beam = |beam: GaussianBeam| -> PyResult<String> {
-        let mut stored = None;
-        for pol in 0..beams.n_stokes() {
-            for channel in 0..beams.n_channels() {
-                if *beams.beam(channel, pol) == beam {
-                    stored = Some(stored_beam_record(Some(info), &beams, channel, pol));
-                    break;
-                }
-            }
-        }
-        let record = stored.unwrap_or_else(|| beam.to_record());
-        let stored = StoredGaussianBeam::from_record(&record).map_err(raised)?;
-        Ok([
-            BeamComponent::Major,
-            BeamComponent::Minor,
-            BeamComponent::PositionAngle,
-        ]
-        .into_iter()
-        .zip(["major", "minor", "pa"])
-        .map(|(component, name)| {
-            let q = stored.component(component);
-            format!("{name}: {} {}", stream_double(q.value()), q.unit().name())
-        })
-        .collect::<Vec<_>>()
-        .join(", "))
-    };
-    if beams.is_multi() {
-        let min = format_beam(beams.min_area_beam().copied().unwrap_or_default())?;
-        let max = format_beam(beams.max_area_beam().copied().unwrap_or_default())?;
-        let median = format_beam(beams.median_area_beam().unwrap_or_default())?;
-        Ok(format!(
-            "{description} has multiple beams. Min area beam: {min}. Max area beam: {max}. Median area beam {median}"
-        ))
-    } else if let Some(beam) = beams.single_beam().filter(|beam| !beam.is_null()) {
-        Ok(format!("{description} resolution {}", format_beam(beam)?))
-    } else {
-        Ok(format!("{description} has no beam"))
-    }
+    Err(raised(format!("Illegal kernel type {kind_raw}.")))
 }
 
 #[pymethods]
@@ -338,29 +100,54 @@ impl PyImageTool {
         beam: Option<Variant>,
     ) -> PyResult<Py<Self>> {
         let mask = mask_argument(mask)?;
-        let widths =
+        let widths_arg =
             [major, minor, pa].map(|width| width.unwrap_or_else(|| Variant::Text("0deg".into())));
-        let output = py.detach(|| {
+        let beam_arg = beam.unwrap_or(Variant::Empty);
+        let output = py.detach(|| -> PyResult<_> {
             let state = self.state();
             let Some(source) = state.image.as_ref() else {
                 return Ok(None);
             };
-            Request {
-                outfile,
-                axes,
-                r#type,
+            check_kernel(r#type, &beam_arg, targetres)?;
+            let widths = parsed_widths(&widths_arg, &beam_arg)?;
+            let geometry = GaussianConvolutionOptions {
+                axes: axes.0.clone(),
                 widths,
                 scale,
-                region,
-                mask,
+                target_resolution: targetres,
+            };
+            let history_command = state.history.then(|| {
+                let width_strs = widths_arg.each_ref().map(|v| match v {
+                    Variant::Text(t) => format!("{t:?}"),
+                    v => v.describe(),
+                });
+                let [mj, mn, p] = width_strs;
+                let axes_str = axes
+                    .0
+                    .iter()
+                    .map(i64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let region_hist = region.history();
+                format!(
+                    "ia.convolve2d(outfile={outfile:?}, axes=[{axes_str}], type={type:?}, major={mj}, minor={mn}, pa={p}, scale={scale:.6}, region={region_hist}, mask={mask:?}, overwrite={overwrite}, stretch={stretch}, targetres={targetres}, beam={{...}})",
+                    type = r#type
+                )
+            });
+            convolve_2d_gaussian(
+                source,
+                outfile,
+                region.selection(),
+                &mask,
+                geometry,
+                scale,
                 overwrite,
                 stretch,
-                targetres,
-                beam: beam.unwrap_or(Variant::Empty),
-                history: state.history,
-            }
-            .run(source)
+                history_command,
+                external_open_check(),
+            )
             .map(Some)
+            .map_err(raised)
         })?;
         Py::new(py, output.map_or_else(Self::new, Self::attached))
     }

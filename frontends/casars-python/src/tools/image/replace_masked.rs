@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_imageanalysis::analysis::{
-    MaskReplacementOptions, MaskReplacementOutcome, SubimageRegion, replace_masked_complex_pixels,
-    replace_masked_real_pixels, validate_mask_replacement_region,
-};
+//! Thin PyO3 `ia.replacemaskedpixels` wrapper delegating to [`casa_imageanalysis::tool::ops_edit::replace_masked_pixels`].
+
+use casa_imageanalysis::tool::ops_edit::replace_masked_pixels;
 use pyo3::prelude::*;
 
 use crate::convert::Variant;
-use crate::tools::{LogLine, emit};
 
 use super::PyImageTool;
-use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
+use super::handle::{emit_tool_logs, raised};
 use super::subimage::{Region, mask_argument};
 
 fn pixel_argument(pixels: Option<&Bound<'_, PyAny>>) -> PyResult<(Variant, String)> {
@@ -52,59 +50,31 @@ impl PyImageTool {
         };
         let region = Region::argument(py, region, "replacemaskedpixels")?;
         let mask = mask_argument(mask)?;
-        let mut logs = Vec::new();
-        let outcome = py.detach(|| {
+        let (logs, outcome) = py.detach(|| -> PyResult<_> {
             let state = self.state();
             let Some(attachment) = &state.image else {
-                return Ok(false);
+                return Ok((Vec::new(), false));
             };
-            let mut image = attachment.lock();
-            image.check_single_precision("replacemaskedpixels")?;
-            if expression.is_empty() {
-                return Err(raised("You must specify an expression"));
-            }
-            if image.fits().is_some() {
-                return Err(raised("This image is not writable.  It is probably a reference or expression virtual image"));
-            }
             Region::reject_compound_record(region.as_ref())?;
-            if let Some(Region::Text(text)) = &region {
-                // Reject compound text before upgrading the attachment's lock.
-                with_pixels!(&*image, storage => with_storage!(storage, pixels =>
-                    validate_mask_replacement_region(pixels.as_ref(), SubimageRegion::Text(text))
-                )).map_err(raised)?;
-            }
-            attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
-            let selection = MaskReplacementOptions {
+            let history_command = state.history.then(|| {
+                let region_hist = region.as_ref().map_or_else(|| "{...}".into(), Region::history);
+                format!(
+                    "ia.replacemaskedpixels(pixels={pixel_history}, region={region_hist}, mask=\"{mask}\", update={update}, list={list}, stretch={stretch})"
+                )
+            });
+            replace_masked_pixels(
+                attachment,
                 expression,
-                region: region.as_ref().map(Region::as_region),
-                mask: &mask,
+                region.as_ref().map(Region::as_region),
+                &mask,
                 update,
+                list,
                 stretch,
-            };
-            let applied = match &mut *image {
-                ImageHandle::Float(storage) => with_storage!(storage, image =>
-                    replace_masked_real_pixels(image.as_mut(), selection)),
-                ImageHandle::Complex(storage) => with_storage!(storage, image =>
-                    replace_masked_complex_pixels(image.as_mut(), selection)),
-                _ => unreachable!("single precision checked"),
-            }.map_err(raised)?;
-            if matches!(applied, MaskReplacementOutcome::MissingNativeMask) {
-                image.save().map_err(raised)?;
-                return Err(raised("SubLattice::pixelMask - no pixelmask available"));
-            }
-            if list {
-                logs.push(LogLine::info(format!("Replaced values of masked pixels by {expression}")));
-            }
-            if state.history {
-                let region = region.as_ref().map_or_else(|| "{...}".into(), Region::history);
-                image.record_history("replacemaskedpixels", format!(
-                    "ia.replacemaskedpixels(pixels={pixel_history}, region={region}, mask=\"{mask}\", update={update}, list={list}, stretch={stretch})"
-                ))?;
-            }
-            image.save().map_err(raised)?;
-            Ok(true)
-        });
-        emit(py, "casars.tools.image", &logs)?;
-        outcome
+                history_command,
+            )
+            .map_err(raised)
+        })?;
+        emit_tool_logs(py, &logs)?;
+        Ok(outcome)
     }
 }
