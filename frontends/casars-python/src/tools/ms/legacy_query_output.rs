@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::MutexGuard;
+use std::sync::{Arc, MutexGuard};
 
 use casa_mstransform::tool_sort::{
     check_named_output_path, named_keyword_output_staging_parent,
@@ -42,6 +42,11 @@ pub(super) struct StagedLegacyQuery {
     subtable: Option<QuerySubtable>,
     independent: bool,
     _stage_lock: Option<TableWriteLock>,
+}
+
+pub(super) enum PublishedLegacyQuery {
+    Independent(Box<AttachedMs>),
+    Reference(Arc<Vec<PathBuf>>),
 }
 
 #[derive(Clone, Copy)]
@@ -218,7 +223,8 @@ impl AttachedMs {
             .independent
             .then(|| options.copy_endian())
             .transpose()?;
-        let subtable = QuerySubtable::resolve(name, &self.path)?;
+        let active = self.legacy_selection.query_parent(&self.path);
+        let subtable = QuerySubtable::resolve(name, active, &self.path)?;
         let output = if let Some(subtable) = &subtable {
             subtable.output.clone()
         } else {
@@ -292,7 +298,10 @@ impl AttachedMs {
         subtable: Option<&QuerySubtable>,
     ) -> PyResult<PathBuf> {
         let current = self.path.as_path();
-        let inputs = std::iter::once(current).chain((original != current).then_some(original));
+        let active = self.legacy_selection.query_parent(current);
+        let inputs = std::iter::once(current)
+            .chain((original != current).then_some(original))
+            .chain(active.filter(|path| *path != current && *path != original));
         let mut parent = output
             .parent()
             .expect("validated output has a parent")
@@ -328,7 +337,7 @@ impl StagedLegacyQuery {
     pub(super) fn publish(
         self,
         retained: &mut BTreeMap<PathBuf, TableWriteLock>,
-    ) -> PyResult<Option<AttachedMs>> {
+    ) -> PyResult<PublishedLegacyQuery> {
         let mut owner_lock = None;
         let link_lock = if let Some(subtable) = &self.subtable {
             let lock = match retained.get_mut(&subtable.owner) {
@@ -363,7 +372,12 @@ impl StagedLegacyQuery {
                 if let Some((subtable, lock)) = link_lock {
                     subtable.write_link(lock)?;
                 }
-                Ok(attached)
+                Ok(match attached {
+                    Some(attached) => PublishedLegacyQuery::Independent(Box::new(attached)),
+                    None => PublishedLegacyQuery::Reference(
+                        crate::tools::table::attach_table_paths(vec![self.output.clone()]),
+                    ),
+                })
             },
         )
     }

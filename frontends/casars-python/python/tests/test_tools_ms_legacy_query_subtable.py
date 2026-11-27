@@ -94,13 +94,21 @@ def test_legacy_taql_self_reference_respects_overwrite_and_open_peers(native_dat
             with pytest.raises(RuntimeError, match="still open"):
                 selector.selecttaqlold('True LIMIT 3 GIVING ".::RESULT"')
             assert peer.nrows() == 2
+            derived = peer.query("TRUE")
+        with closing(derived):
+            with pytest.raises(RuntimeError, match="still open"):
+                selector.selecttaqlold('True LIMIT 3 GIVING ".::RESULT"')
+            assert derived.nrows() == 2
         assert selector.selecttaqlold('True LIMIT 3 GIVING ".::RESULT"')
     with closing(casa.table()) as child:
         assert child.open(str(output))
         assert child.nrows() == 3
 
 
-@pytest.mark.parametrize("destination", ["parent.ms::ANTENNA::RESULT", ".DATA::ANT_LINK::RESULT"])
+@pytest.mark.parametrize(
+    "destination",
+    ["parent.ms::ANTENNA::RESULT", '"::ANTENNA::RESULT"', "::ANTENNA::RESULT", ".DATA::ANT_LINK::RESULT"],
+)
 def test_legacy_taql_resolves_a_nested_parent(native_dataset, tmp_path, monkeypatch, destination):
     casa = pinned_casa()
     for api in (casa, tools):
@@ -110,7 +118,8 @@ def test_legacy_taql_resolves_a_nested_parent(native_dataset, tmp_path, monkeypa
         copytree(native_dataset, "source.ms")
         parent = cwd / "parent.ms"
         copytree(native_dataset, parent)
-        antenna = parent / "ANTENNA"
+        antenna = (cwd / "source.ms" if destination.lstrip('"').startswith("::") else parent) / "ANTENNA"
+        Path(".DATA").touch()
         with closing(casa.table()) as source:
             assert source.open("source.ms", nomodify=False)
             source.putcolkeyword("DATA", "ANT_LINK", f"Table: {antenna}")
@@ -140,6 +149,71 @@ def test_legacy_taql_reference_parent_persists_the_keyword_on_its_base(native_da
             with closing(casa.table()) as parent:
                 assert parent.open(str(path))
                 assert parent.getkeyword("RESULT") == f"Table: {reference / 'RESULT'}"
+
+
+def test_legacy_taql_consecutive_results_resolve_the_active_named_view(native_dataset, tmp_path):
+    for api in (pinned_casa(), tools):
+        source = tmp_path / f"{api.__name__}-source.ms"
+        parent = tmp_path / f"{api.__name__}-parent.ms"
+        copytree(native_dataset, source)
+        copytree(native_dataset, parent)
+        with closing(api.ms()) as selector:
+            assert selector.open(str(source))
+            assert selector.selecttaqlold(f'True LIMIT 5 OFFSET 1 GIVING "{parent}::FIRST"')
+            assert selector.selecttaqlold('True LIMIT 2 OFFSET 1 GIVING ".::SECOND"')
+            np.testing.assert_array_equal(selector.rangeold("rows")["rows"], [2, 3])
+        with closing(pinned_casa().table()) as reader:
+            assert reader.open(str(source))
+            assert reader.getkeyword("SECOND") == f"Table: {parent / 'FIRST' / 'SECOND'}"
+
+
+def test_legacy_taql_refreshes_readers_of_a_reference_and_its_retained_owner(native_dataset, tmp_path):
+    root = tmp_path / "parent.ms"
+    alias = tmp_path / "alias.ms"
+    copytree(native_dataset, root)
+    with closing(pinned_casa().table()) as writer:
+        assert writer.open(str(root))
+        with closing(writer.query("TRUE", name=str(alias))):
+            pass
+    with closing(tools.table()) as reader, closing(tools.table()) as view, closing(tools.ms()) as selector:
+        assert reader.open(str(root)) and view.open(str(alias))
+        assert "RESULT" not in reader.keywordnames() and "RESULT" not in view.keywordnames()
+        assert selector.open(str(root), nomodify=False, lock=True)
+        assert selector.selecttaqlold(f'True LIMIT 2 GIVING "{alias}::RESULT"')
+        for live in (reader, view):
+            assert live.getkeyword("RESULT") == f"Table: {alias / 'RESULT'}"
+    with closing(tools.ms()) as selector:
+        assert selector.open(str(alias))
+        for count in (3, 4):
+            assert selector.selectinitold(reset=True)
+            assert selector.selecttaqlold(f'True LIMIT {count} GIVING ".::RESULT"')
+            assert selector.nrowold(True) == count
+
+
+def test_legacy_taql_refuses_to_replace_a_nested_keyword_dependency(native_dataset, tmp_path):
+    source = tmp_path / "source.ms"
+    parent = tmp_path / "parent.ms"
+    child = parent / "RESULT"
+    copytree(native_dataset, source)
+    copytree(native_dataset, parent)
+    copytree(native_dataset, child)
+    with closing(pinned_casa().table()) as writer:
+        assert writer.open(str(source), nomodify=False)
+        writer.putkeyword("META.CAL", f"Table: {child}", makesubrecord=True)
+    with closing(tools.ms()) as selector:
+        assert selector.open(str(source))
+        with pytest.raises(RuntimeError, match="overlaps a source table"):
+            selector.selecttaqlold(f'True LIMIT 2 GIVING "{parent}::RESULT"')
+
+
+def test_legacy_taql_reports_a_transient_parent_without_creating_a_child(native_dataset, tmp_path):
+    with closing(tools.ms()) as selector:
+        assert selector.open(str(native_dataset))
+        assert selector.selecttaqlold("True LIMIT 5")
+        with pytest.raises(RuntimeError, match="no persisted directory"):
+            selector.selecttaqlold('True LIMIT 2 GIVING ".::SECOND"')
+        assert selector.nrowold(True) == 5
+    assert not (native_dataset / "SECOND").exists()
 
 
 def test_legacy_taql_kind_conflict_preserves_parent_and_leaves_no_child(native_dataset, tmp_path):

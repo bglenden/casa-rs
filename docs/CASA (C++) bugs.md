@@ -12009,6 +12009,12 @@ incompatible existing type fails before a child is published (#1030).
 Concatenated parents are refused before publication because their descriptor
 has no persisted keyword record.
 
+An unnamed `selecttaqlold('True LIMIT 5')` leaves a transient selection. A
+subsequent `GIVING ".::RESULT"` can abort when CASA tries to create the
+result under the transient view's nonexistent directory. casa-rs reports
+that the view has no persisted directory and preserves the current selection
+(#1030).
+
 ## Duplicate observations can interrupt a subtable-only concatenation
 
 With two identical OBSERVATION rows in the attached MeasurementSet and

@@ -25,7 +25,8 @@ pub(crate) fn path_is_in_use(path: &Path) -> bool {
         used |= match state {
             Some(state) => state.open.as_ref().is_some_and(|open| {
                 let matches = |name: &Path| {
-                    name.canonicalize().is_ok_and(|name| name.starts_with(&path))
+                    name.canonicalize()
+                        .is_ok_and(|name| name.starts_with(&path))
                 };
                 if matches(&open.name) {
                     return true;

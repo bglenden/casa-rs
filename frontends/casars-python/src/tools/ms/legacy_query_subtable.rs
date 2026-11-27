@@ -21,7 +21,11 @@ pub(super) struct QuerySubtable {
 }
 
 impl QuerySubtable {
-    pub(super) fn resolve(name: &str, active: &Path) -> PyResult<Option<Self>> {
+    pub(super) fn resolve(
+        name: &str,
+        active: Option<&Path>,
+        source: &Path,
+    ) -> PyResult<Option<Self>> {
         let Some((parent, keyword)) = name.rsplit_once("::") else {
             return Ok(None);
         };
@@ -33,7 +37,12 @@ impl QuerySubtable {
         }
         let mut chain = parent.split("::").peekable();
         let first = chain.next().expect("split returns a first component");
-        let (mut parent, mut column) = first_parent(first, active)?;
+        if active.is_none() && first == "." && chain.peek().is_none() {
+            return Err(runtime_error(
+                "the active TaQL view has no persisted directory",
+            ));
+        }
+        let (mut parent, mut column) = first_parent(first, active.unwrap_or(source))?;
         let mut table = open(&parent)?;
         while let Some(part) = chain.next() {
             if part == "." {
@@ -141,10 +150,15 @@ fn first_parent<'a>(first: &'a str, active: &Path) -> PyResult<(PathBuf, Option<
 
 fn keyword_owner(parent: &Path) -> PyResult<PathBuf> {
     let path = Table::keyword_descriptor_path(parent).map_err(runtime_error)?;
-    if matches!(Table::immediate_part_names(&path, &path).map_err(runtime_error)?, TablePartNames::Plain(_)) {
+    if matches!(
+        Table::immediate_part_names(&path, &path).map_err(runtime_error)?,
+        TablePartNames::Plain(_)
+    ) {
         Ok(path)
     } else {
-        Err(runtime_error("a concatenation cannot persist TaQL result keywords"))
+        Err(runtime_error(
+            "a concatenation cannot persist TaQL result keywords",
+        ))
     }
 }
 

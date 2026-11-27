@@ -16,7 +16,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use super::legacy_iteration::LegacyIteration;
-use super::legacy_query_output::{QueryOutputOptions, StagedLegacyQuery};
+use super::legacy_query_output::{PublishedLegacyQuery, QueryOutputOptions, StagedLegacyQuery};
 use super::legacy_visibility::LegacyAxes;
 use super::metadata_link::compose_rows;
 use super::selection_indices::{selectinit_id, selection_dictionary, selection_text};
@@ -389,13 +389,11 @@ impl AttachedMs {
         }
         let (selected, staged) = view.prepare_legacy_taql(text, &original_path)?;
         let nonempty = !selected.is_empty();
-        let named_reference = staged.as_ref().and_then(StagedLegacyQuery::reference_path).map(Path::to_owned);
         let output = staged
             .map(|stage| stage.publish(&mut self.write_locks))
-            .transpose()?
-            .flatten();
+            .transpose()?;
         let view = self.legacy_view_mut();
-        if let Some(mut output) = output {
+        if let Some(PublishedLegacyQuery::Independent(mut output)) = output {
             output.legacy_selection.initial =
                 view.legacy_selection.initial.clone().map(|mut initial| {
                     initial.rows = None;
@@ -408,11 +406,11 @@ impl AttachedMs {
                     .legacy_selection
                     .set_iterator_rows(Some(Arc::from([])), false);
             }
-            self.replace_legacy_output(Some(Box::new(output)));
+            self.replace_legacy_output(Some(output));
         } else {
-            view.legacy_selection.query_parent = match named_reference {
-                Some(path) => LegacyQueryParent::Named(crate::tools::table::attach_table_paths(vec![path])),
-                None => LegacyQueryParent::Transient,
+            view.legacy_selection.query_parent = match output {
+                Some(PublishedLegacyQuery::Reference(paths)) => LegacyQueryParent::Named(paths),
+                _ => LegacyQueryParent::Transient,
             };
             view.legacy_selection
                 .set_iterator_rows(Some(selected), false);
