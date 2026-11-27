@@ -32,8 +32,7 @@ use super::update::storage;
 use super::{Msv2Observation, OpenOptions};
 use crate::columns::direction_columns::DirectionColumn;
 use crate::selection::antenna_expr::StoredAntennaRow;
-use crate::subtables::{optional_bool, optional_string};
-use crate::{MeasurementSet, MsError, MsResult, SubtableId};
+use crate::{MeasurementSet, MsError, SubtableId};
 
 /// One `ANTENNA` row, as content.
 #[derive(Clone, Debug, PartialEq)]
@@ -53,17 +52,6 @@ pub struct NamespaceField {
     pub name: String,
     /// `PHASE_DIR`'s constant term in its frame.
     pub phase_centre: MDirection,
-}
-
-/// One persisted FIELD row with the metadata used for selection in that
-/// table's namespace.
-pub struct CalibrationField {
-    /// The field's name and phase centre.
-    pub identity: NamespaceField,
-    /// `CODE`, when supplied.
-    pub code: Option<String>,
-    /// `FLAG_ROW`, when supplied.
-    pub flagged: Option<bool>,
 }
 
 /// One `SPECTRAL_WINDOW` row, as content.
@@ -267,81 +255,6 @@ pub fn antenna_namespace(source: &Path) -> Result<AntennaNamespace, ObservationE
         .map_err(storage)
 }
 
-/// The fields available to a caltable consumer. Casacore selectors use
-/// the MSv2's stored FIELD numbers. MSv4 fields use catalogue identities.
-pub enum FieldNamespace<'a> {
-    /// Selection in the source table's FIELD numbering.
-    Msv2(Msv2FieldSelection<'a>),
-    /// Catalogue fields of an opened processing set.
-    Msv4(&'a [NamespaceField]),
-}
-
-/// A selector backed by the MSv2's FIELD subtable.
-pub struct Msv2FieldSelection<'a>(&'a MeasurementSet);
-
-impl Msv2FieldSelection<'_> {
-    /// Resolve a CASA selector to FIELD indices. Empty text selects every
-    /// field and returns an empty list.
-    ///
-    /// # Errors
-    /// When the selector or FIELD metadata is invalid.
-    pub fn select(&self, selector: &str) -> MsResult<Vec<i32>> {
-        self.0.resolve_field_selector(selector)
-    }
-}
-
-/// Open the field namespace of either store for `query`. MSv2 resolves
-/// selectors over its FIELD subtable; MSv4 uses the observation's catalogue.
-///
-/// # Errors
-/// When the store cannot be opened or the MSv4 catalogue cannot be admitted.
-pub fn with_field_namespace<T>(
-    source: &Path,
-    query: impl FnOnce(FieldNamespace<'_>) -> T,
-) -> Result<T, ObservationError> {
-    if super::is_msv4_store(source) {
-        #[cfg(all(feature = "msv4", unix))]
-        {
-            let budget = super::creation::default_memory_bytes()?;
-            let mut admit = |required| {
-                if required > budget {
-                    Err(ObservationError::OverBudget {
-                        what: "MSv4 field catalogue opening",
-                        required,
-                        budget,
-                    })
-                } else {
-                    Ok(())
-                }
-            };
-            let observation =
-                super::Msv4Observation::open_granted(source, &OpenOptions::default(), &mut admit)?;
-            let catalogue = &observation.catalogue().fields;
-            let projection_bytes = catalogue.len() * std::mem::size_of::<NamespaceField>()
-                + catalogue
-                    .iter()
-                    .map(|field| field.name.len())
-                    .sum::<usize>();
-            admit(observation.held_bytes().saturating_add(projection_bytes))?;
-            let fields: Vec<_> = catalogue
-                .iter()
-                .map(|field| NamespaceField {
-                    name: field.name.clone(),
-                    phase_centre: field.phase_centre.clone(),
-                })
-                .collect();
-            drop(observation);
-            return Ok(query(FieldNamespace::Msv4(&fields)));
-        }
-        #[cfg(not(all(feature = "msv4", unix)))]
-        return Err(ObservationError::Unsupported {
-            what: "an MSv4 field namespace without casa-ms's msv4 feature",
-        });
-    }
-    let ms = MeasurementSet::open(source).map_err(storage)?;
-    Ok(query(FieldNamespace::Msv2(Msv2FieldSelection(&ms))))
-}
-
 impl NamespaceRows {
     /// Read a persisted calibration table's antenna names and positions
     /// in its own row order, without reading the other subtables.
@@ -353,27 +266,6 @@ impl NamespaceRows {
         let table = Table::open(TableOptions::new(directory.join("ANTENNA")))
             .map_err(|error| storage(MsError::from(error)))?;
         antennas(&table)
-    }
-
-    /// Read the calibration table's FIELD metadata in its persisted row
-    /// order.
-    ///
-    /// # Errors
-    /// When the FIELD metadata is unreadable or cannot state its phase centre.
-    pub fn read_fields(directory: &Path) -> Result<Vec<CalibrationField>, ObservationError> {
-        let table = Table::open(TableOptions::new(directory.join("FIELD")))
-            .map_err(|error| storage(MsError::from(error)))?;
-        fields(&table)?
-            .into_iter()
-            .enumerate()
-            .map(|(row, identity)| {
-                Ok(CalibrationField {
-                    identity,
-                    code: optional_string(&table, row, "CODE").map_err(storage)?,
-                    flagged: optional_bool(&table, row, "FLAG_ROW").map_err(storage)?,
-                })
-            })
-            .collect()
     }
 
     /// The rows of the `ANTENNA`, `FIELD` and `SPECTRAL_WINDOW` subtables

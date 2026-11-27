@@ -14,6 +14,7 @@
 
 #[cfg(unix)]
 pub mod creation;
+mod field_namespace;
 mod grouping;
 mod heap;
 mod msv2;
@@ -28,6 +29,9 @@ use casa_observation::Observation;
 
 pub use casa_observation::ObservationError;
 
+pub use field_namespace::{
+    FieldNamespace, Msv2FieldSelection, Msv4FieldSelection, with_field_namespace,
+};
 pub use msv2::catalogue::{Feeds, read_feeds};
 pub use msv2::{MainRowKeys, Msv2Cursor, Msv2Observation};
 #[cfg(feature = "msv4")]
@@ -36,9 +40,8 @@ pub use msv4::{
     Msv4WriteCounters, Msv4Writer, STATION_NAMED, check_fields, kept_samples, unix_times,
 };
 pub use namespace::{
-    AntennaNamespace, CalibrationField, FieldNamespace, Msv2FieldSelection, NamespaceAntenna,
-    NamespaceField, NamespaceRows, NamespaceWindow, PersistedNamespace, antenna_namespace,
-    persisted_namespace, with_field_namespace,
+    AntennaNamespace, NamespaceAntenna, NamespaceField, NamespaceRows, NamespaceWindow,
+    PersistedNamespace, antenna_namespace, persisted_namespace,
 };
 pub use update::UpdateSession;
 #[cfg(unix)]

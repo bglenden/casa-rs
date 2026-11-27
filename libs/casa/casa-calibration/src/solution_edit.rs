@@ -12,23 +12,23 @@ use crate::output::CalibrationOutput;
 use crate::output::CalibrationOutputMode;
 use crate::paths::{copy_editable_table_tree, normalized, overlap, subtable_owner};
 
-pub(crate) fn edit_calibration_table(
+pub(crate) fn edit_calibration_table<E: From<String>>(
     input: &Path,
     destination: &Path,
-    edit: impl FnOnce(&mut Table, &Path) -> Result<(), String>,
-) -> Result<(), String> {
+    edit: impl FnOnce(&mut Table, &Path) -> Result<(), E>,
+) -> Result<(), E> {
     stage_calibration_table_edit(input, destination, |table, path| {
         edit(table, path)?;
         update_spectral_window_flags(table, path)?;
-        crate::output_merge::save_sorted(table, path).map_err(error_text)
+        crate::output_merge::save_sorted(table, path).map_err(|error| E::from(error_text(error)))
     })
 }
 
-pub(crate) fn stage_calibration_table_edit(
+pub(crate) fn stage_calibration_table_edit<E: From<String>>(
     input: &Path,
     destination: &Path,
-    edit_and_save: impl FnOnce(&mut Table, &Path) -> Result<(), String>,
-) -> Result<(), String> {
+    edit_and_save: impl FnOnce(&mut Table, &Path) -> Result<(), E>,
+) -> Result<(), E> {
     stage_calibration_table_edit_with_mode(
         input,
         destination,
@@ -37,20 +37,22 @@ pub(crate) fn stage_calibration_table_edit(
     )
 }
 
-pub(crate) fn stage_calibration_table_edit_with_mode(
+pub(crate) fn stage_calibration_table_edit_with_mode<E: From<String>>(
     input: &Path,
     destination: &Path,
     mode: CalibrationOutputMode,
-    edit_and_save: impl FnOnce(&mut Table, &Path) -> Result<(), String>,
-) -> Result<(), String> {
+    edit_and_save: impl FnOnce(&mut Table, &Path) -> Result<(), E>,
+) -> Result<(), E> {
     let input = normalized(input).map_err(error_text)?;
     let destination = normalized(destination).map_err(error_text)?;
     if input != destination && overlap(&input, &destination).map_err(error_text)? {
-        return Err("the input and output calibration tables overlap".into());
+        return Err(E::from(
+            "the input and output calibration tables overlap".to_owned(),
+        ));
     }
     let source = open_for_snapshot(&input, input != destination)?;
     if source.info().table_type != TABLE_INFO_TYPE {
-        return Err("input is not a calibration table".into());
+        return Err(E::from("input is not a calibration table".to_owned()));
     }
     let output = CalibrationOutput::prepare(&destination, mode).map_err(error_text)?;
     let _destination_lock = if input != destination && destination.exists() {
@@ -73,7 +75,7 @@ pub(crate) fn stage_calibration_table_edit_with_mode(
     edit_and_save(&mut table, &output.staging)?;
     drop(table);
     lock.release().map_err(error_text)?;
-    output.commit().map_err(error_text)
+    output.commit().map_err(|error| E::from(error_text(error)))
 }
 
 #[cfg(unix)]

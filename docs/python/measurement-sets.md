@@ -73,6 +73,8 @@ subtable using its stored row numbers and position values.
 
 For `tasks.smoothcal` with an MSv4 input, `field` selects rows of
 `tablein`'s `FIELD` subtable. The selected rows must identify unique
-observation fields by name and phase centre. With MSv2, `field` selects
-from the MeasurementSet's `FIELD` subtable. An empty selector smooths
-solutions for every field in the calibration table.
+observation fields by name and phase centre in the same frame. The task
+refuses field binding for ephemeris-tracking fields or polynomial calibration
+directions. With MSv2, `field` selects from the MeasurementSet's `FIELD`
+subtable. An empty selector smooths every calibration-table field without
+binding individual field identities across stores.

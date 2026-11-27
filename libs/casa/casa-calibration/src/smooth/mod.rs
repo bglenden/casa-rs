@@ -7,10 +7,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use casa_core::{ArrayValue, Complex32, Value};
-use casa_ms::observation_io::{
-    FieldNamespace, NamespaceField, NamespaceRows, ObservationError, with_field_namespace,
-};
-use casa_ms::selection::parser::{FieldSelectorRow, resolve_field_selector_rows};
+use casa_ms::observation_io::{FieldNamespace, ObservationError, with_field_namespace};
 use casa_tables::{RequiredScalarColumnValues, Table, TableOptions};
 
 use crate::solution_edit::{edit_calibration_table, error_text};
@@ -46,6 +43,12 @@ pub enum SmoothError {
     Calibration(String),
 }
 
+impl From<String> for SmoothError {
+    fn from(error: String) -> Self {
+        Self::Calibration(error)
+    }
+}
+
 /// Smooth calibration solutions over a centered time window and publish
 /// the result. MSv2 field expressions use the MeasurementSet's FIELD
 /// numbering. With MSv4, expressions use the calibration table's FIELD
@@ -70,6 +73,7 @@ pub fn smooth_calibration_table(
     }
     let smooth = |table: &mut Table, path: &Path, fields: &[i32]| {
         smooth_table(table, path, fields, smoother, seconds / 2.0, ratesmooth)
+            .map_err(SmoothError::from)
     };
     with_field_namespace(ms_path, |namespace| match namespace {
         FieldNamespace::Msv2(selection) => {
@@ -78,67 +82,13 @@ pub fn smooth_calibration_table(
                 smooth(table, path, &fields)
             })
         }
-        FieldNamespace::Msv4(catalogue) => {
+        FieldNamespace::Msv4(selection) => {
             edit_calibration_table(input, destination, |table, path| {
-                let fields = bound_fields(catalogue, path, field)?;
+                let fields = selection.select(path, field)?;
                 smooth(table, path, &fields)
             })
         }
     })?
-    .map_err(SmoothError::Calibration)
-}
-
-fn bound_fields(
-    catalogue: &[NamespaceField],
-    path: &Path,
-    selector: &str,
-) -> Result<Vec<i32>, String> {
-    if selector.trim().is_empty() {
-        return Ok(Vec::new());
-    }
-    let table = NamespaceRows::read_fields(path).map_err(error_text)?;
-    let rows: Vec<_> = table
-        .iter()
-        .map(|field| FieldSelectorRow {
-            name: &field.identity.name,
-            code: field.code.as_deref(),
-            flagged: field.flagged.unwrap_or_default(),
-        })
-        .collect();
-    let selected = resolve_field_selector_rows(&rows, selector).map_err(error_text)?;
-    for &row in &selected {
-        let field = &table[row as usize].identity;
-        let mut matches = catalogue.iter().filter(|entry| same_field(entry, field));
-        let Some(entry) = matches.next() else {
-            return Err(format!(
-                "calibration table field {} is absent from the MSv4 store",
-                field.name
-            ));
-        };
-        if matches.next().is_some()
-            || table
-                .iter()
-                .enumerate()
-                .any(|(id, other)| id != row as usize && same_field(entry, &other.identity))
-        {
-            return Err(format!(
-                "calibration table field {} has an ambiguous MSv4 identity",
-                field.name
-            ));
-        }
-    }
-    Ok(selected)
-}
-
-fn same_field(entry: &NamespaceField, field: &NamespaceField) -> bool {
-    let name = &entry.name;
-    let names_agree = *name == field.name
-        || name
-            .rsplit_once('_')
-            .is_some_and(|(base, suffix)| base == field.name && suffix.parse::<u32>().is_ok());
-    names_agree
-        && entry.phase_centre.refer() == field.phase_centre.refer()
-        && entry.phase_centre.as_angles() == field.phase_centre.as_angles()
 }
 
 fn smooth_table(
