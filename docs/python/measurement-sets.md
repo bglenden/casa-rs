@@ -1,0 +1,56 @@
+# MeasurementSet formats
+
+MSv2 stores use casacore tables, usually in a directory ending in `.ms`.
+XRADIO MSv4 stores use schema 4.0.1 in a local Zarr v3 processing set ending
+in `.ps.zarr`.
+
+## Python format support
+
+| Public Python parameter | Operation | MSv2 | MSv4 | End-to-end tests |
+| --- | --- | --- | --- | --- |
+| `tasks.msconvert(vis=…)` | Read an existing MeasurementSet | Yes | Yes | [All four input/output pairings][format-tests] |
+| `tasks.msconvert(outputvis=…, outformat=…)` | Create a new MeasurementSet | `outformat="msv2"` | `outformat="msv4"` | [All four input/output pairings][format-tests] |
+
+[format-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_msconvert_formats.py
+
+## Choose the output format
+
+```python
+from casars import tasks
+
+converted = tasks.msconvert(
+    vis="target.ms", outputvis="target.ps.zarr", outformat="msv4"
+)
+rewritten = tasks.msconvert(
+    vis="target.ms", outputvis="target-copy.ms", outformat="msv2"
+)
+print(converted.value["losses"])
+print(rewritten.value["losses"])
+```
+
+The input format is detected from the store. Give both `outputvis` and
+`outformat` to choose its destination and format explicitly. With
+`outformat` omitted, the task selects the other format. An existing
+destination requires `overwrite=True`.
+
+## Conversion limits
+
+`msconvert` writes a new store from the data its conversion path carries.
+This applies to same-format rewrites too. For example, an MSv2-to-MSv2
+rewrite can report that it dropped the `HISTORY` subtable or fields such as
+`OBSERVATION.LOG`. The completion's `value["losses"]` and task logs report
+the specific losses.
+
+- MSv4 carries element flags. During conversion from MSv2, a row flag
+  contributes to those element flags. The original row flag and flag
+  categories cannot be reconstructed from the element flags.
+- MSv4 stores weights and has no `SIGMA` column. When the source lacks
+  `SIGMA`, an MSv2 output derives it as `1 / sqrt(WEIGHT)` for positive
+  weights.
+- The conversion to MSv4 uses XRADIO names for fields and antennas. A
+  conversion back to MSv2 keeps the names stated by the MSv4 input.
+- An MSv2 output uses `padding="flagged"` by default for unfilled cells in
+  the time/baseline grid. Use `padding="omitted"` to skip those cells.
+- A feature outside the supported conversion profile can refuse the task.
+  The error identifies the feature it could not carry. Inspect the reported
+  losses before treating the converted store as a replacement for its input.

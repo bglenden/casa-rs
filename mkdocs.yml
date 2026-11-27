@@ -20,6 +20,7 @@ nav:
   - Python:
       - Overview: python/index.md
       - Data API: python/data.md
+      - MeasurementSet Formats: python/measurement-sets.md
       - Calibrate Tasks: python/tasks-calibrate.md
       - Compatibility: python/versioning.md
       - API Reference: python/api.md
