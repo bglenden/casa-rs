@@ -344,7 +344,11 @@ impl FitWindow {
             let fit = |row: &[(f64, f64, f64)]| {
                 passes
                     .and_then(|passes| {
-                        fit_polynomial_row(row, terms, RowWeights::Reweighted(passes))
+                        fit_polynomial_row(
+                            row.iter().copied(),
+                            terms,
+                            RowWeights::Reweighted(passes),
+                        )
                     })
                     .unwrap_or_default()
             };

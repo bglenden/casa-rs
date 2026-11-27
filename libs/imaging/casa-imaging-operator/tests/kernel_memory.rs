@@ -184,6 +184,51 @@ fn measure<T>(stage: impl FnOnce() -> T) -> (u64, i64, T) {
     (PEAK.load(Ordering::Relaxed), left, result)
 }
 
+#[test]
+fn supplied_continuum_fit_does_not_retain_copy_of_admitted_samples() {
+    use casa_imaging_model::ContinuumChannelUse;
+    use casa_imaging_operator::{ContinuumRowInput, ContinuumSample, fit_and_subtract_continuum};
+    use num_complex::Complex64;
+
+    if !alone("supplied_continuum_fit_does_not_retain_copy_of_admitted_samples") {
+        return;
+    }
+    const CHANNELS: u64 = 8_192;
+    let frequencies: Vec<_> = (0..CHANNELS).map(|channel| channel as f64).collect();
+    let samples: Vec<_> = frequencies
+        .iter()
+        .map(|&frequency| {
+            let normalized = 1.0 - 2.0 * frequency / (CHANNELS - 1) as f64;
+            ContinuumSample::new(
+                Complex64::new(3.0 + 1.5 * normalized, -2.0 + 0.5 * normalized),
+                false,
+                2.0,
+                ContinuumChannelUse::FitAndApply,
+            )
+        })
+        .collect();
+    let (peak, _, fit) = measure(|| {
+        fit_and_subtract_continuum(ContinuumRowInput::new(&frequencies, &samples, 1))
+            .expect("two-term weighted fit")
+    });
+    assert_eq!(fit.fit_sample_indices().len() as u64, CHANNELS);
+    assert!(
+        fit.residual()
+            .iter()
+            .all(|residual| residual.norm() < 1.0e-10)
+    );
+    // Per channel: one normalized coordinate, one index, the two-term row
+    // and its basis, and the weighted dense design and SVD's peak work arrays.
+    let per_channel =
+        size_of::<usize>() + size_of::<(Vec<f64>, f64, f64)>() + 11 * size_of::<f64>();
+    let limit = CHANNELS * per_channel as u64 + 4096;
+    assert!(
+        peak <= limit,
+        "supplied continuum fit peaked at {peak} bytes, above {limit}"
+    );
+    println!("continuum live peak: {peak} bytes across {CHANNELS} channels");
+}
+
 fn routing() -> PolarizationRouting {
     PolarizationRouting::compile(
         &[Correlation::XX, Correlation::YY],

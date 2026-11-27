@@ -801,3 +801,18 @@ def test_good_range_applies_to_secondary_multiplet_peak(casa):
     assert native["converged"].item()
     assert not native["valid"].item()
     assert native["type"].item() == "UNDEF"
+
+
+@pytest.mark.parametrize(
+    ("dtype", "pixel_type", "pixel_name"),
+    [(np.float64, "d", "double"), (np.complex64, "f", "complex")],
+)
+def test_unsupported_pixel_type_is_checked_before_sigma(dtype, pixel_type, pixel_name):
+    image = tools.image()
+    try:
+        assert image.fromarray(pixels=np.ones((2, 2, 4), dtype=dtype), type=pixel_type)
+        assert image.pixeltype() == pixel_name
+        with pytest.raises(RuntimeError, match="This method only supports Float valued images"):
+            image.fitprofile(sigma=True)
+    finally:
+        image.done()

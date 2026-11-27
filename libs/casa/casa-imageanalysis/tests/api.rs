@@ -3,5 +3,7 @@
 mod fits_sections;
 #[path = "cases/image_tool.rs"]
 mod image_tool;
+#[path = "cases/image_tool_contract.rs"]
+mod image_tool_contract;
 #[path = "cases/linear_mosaic.rs"]
 mod linear_mosaic;

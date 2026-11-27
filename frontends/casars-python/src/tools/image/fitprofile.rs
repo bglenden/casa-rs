@@ -6,7 +6,9 @@ use casa_core::{ArrayD, RecordValue};
 use casa_imageanalysis::analysis::{
     ProfileDivisor, ProfileEstimates, ProfileOutputNames, ProfilePeaks,
 };
-use casa_imageanalysis::tool::ops_fit::{FitProfileRequest, ProfileSigmaInput, fit_profile};
+use casa_imageanalysis::tool::ops_fit::{
+    FitProfileRequest, ProfileSigmaInput, check_profile_fit_type, fit_profile,
+};
 use ndarray::{IxDyn, ShapeBuilder};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -78,7 +80,16 @@ impl PyImageTool {
         outsigma: &str,
         planes: IntList,
     ) -> PyResult<Py<PyAny>> {
-        if py.detach(|| self.state().image.is_none()) {
+        let attached = py
+            .detach(|| {
+                self.state()
+                    .image
+                    .as_ref()
+                    .map(check_profile_fit_type)
+                    .transpose()
+            })
+            .map_err(raised)?;
+        if attached.is_none() {
             return record_to_py(py, RecordValue::default());
         }
         let Some(sigma) = sigma_argument(sigma)? else {
@@ -102,22 +113,7 @@ impl PyImageTool {
                 .bind(py)
                 .call_method1("isEnabledFor", (20,))?
                 .extract()?;
-        let history_call = format!(
-            "ia.fitprofile(box={:?}, region={}, chans={:?}, stokes={:?}, axis={}, mask={:?}, ngauss={}, poly={}, estimates={:?}, minpts={}, multifit={}, model={:?}, residual={:?})",
-            r#box,
-            region_arg.history(),
-            chans,
-            stokes,
-            axis,
-            mask,
-            ngauss,
-            poly,
-            estimates,
-            minpts,
-            multifit,
-            model,
-            residual,
-        );
+        let region_history = region_arg.history();
         let (record, logs) = py.detach(|| -> PyResult<_> {
             let state = self.state();
             let Some(source) = &state.image else {
@@ -170,7 +166,7 @@ impl PyImageTool {
                 logfile,
                 append,
                 log_details,
-                history_call,
+                region_history: &region_history,
                 record_history: state.history,
             };
             fit_profile(source, request, external_open_check()).map_err(raised)

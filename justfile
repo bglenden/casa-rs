@@ -70,7 +70,7 @@ imaging-t41-moving-source-casa testdata_root cubesource_casa_prefix:
     #!/usr/bin/env bash
     set -euo pipefail
     test -d "{{testdata_root}}"
-    CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CARGO_INCREMENTAL=0 cargo test -p casa-ms selected_observation::tests::t41_ephemeris_oracle::t41_trackfield_phase_centre_matches_casa_at_three_row_times -- --ignored --exact --nocapture
+    CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CARGO_INCREMENTAL=0 cargo test -p casa-imaging --lib store_law::t41_trackfield_oracle::t41_trackfield_phase_centre_matches_casa_at_three_row_times -- --ignored --exact --nocapture
     CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T41_CASA_PREFIX="{{cubesource_casa_prefix}}" CARGO_INCREMENTAL=0 cargo test -p casa-parity --test api t41_moving_source_casa_oracle::t41_tracked_cubesource_matches_casa_geometry_and_dirty_products --release -- --ignored --exact --nocapture
 
 # Focused #534 heterogeneous ALMA/ACA response, bounded selection, and CASA product gate.

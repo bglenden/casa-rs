@@ -356,6 +356,18 @@ in `tests/data/image_analysis_casa.json` for the cases in
 `tools/images/image_analysis_oracle.py`, run with CASA's Python, whenever the
 cases change.
 
+**Frozen imaging oracles.** `scripts/test-slow.sh` explicitly selects the
+moving-field phase-centre and MFS envelope tests that use recorded CASA
+values. Product comparisons with separately frozen workstation artifacts
+remain opt-in. Use `cargo test -p casa-parity --test api -- --ignored --list`
+to list their exact names. The `imaging-t31-multidomain-geometry`,
+`imaging-t41-moving-source-casa`, `imaging-t44-mtmfs-products` and
+`imaging-t59-low-memory` recipes pass the frozen prefixes to the matching
+tests. For T34 and the representative full-Stokes and outlier comparisons,
+run the exact `casa-parity` test with `--ignored --exact` and the input
+and product paths named by that case. The default `casa-parity` test
+invocation does not execute these product comparisons.
+
 **importvla.** The CASA comparisons need `--features cpp-interop-tests` and a
 CASA Python (`casa_test_support::discover_casa_python`), and write temporary
 MeasurementSets under `target/`. `cargo test -p casacore-interop

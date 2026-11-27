@@ -207,19 +207,27 @@ pub fn max_fit(
     })
 }
 
+const PROFILE_READ_TYPE_ERROR: &str =
+    "getprofile does not support images with double precision pixel values";
+
+/// Validates the pixel type before interpreting `ia.getprofile` arguments.
+pub fn check_profile_read_type(attached: &AttachedImage) -> ImageToolResult<()> {
+    if matches!(
+        *attached.lock(),
+        ImageHandle::Float(_) | ImageHandle::Complex(_)
+    ) {
+        Ok(())
+    } else {
+        Err(ImageToolError::new(PROFILE_READ_TYPE_ERROR))
+    }
+}
+
 /// Extracts a 1D collapsed profile along `options.axis` and optionally writes a text report (`ia.getprofile`).
 pub fn get_profile(
     attached: &AttachedImage,
     options: ReadProfileOptions<'_>,
 ) -> ImageToolResult<ProfileData> {
-    match *attached.lock() {
-        ImageHandle::Float(_) | ImageHandle::Complex(_) => {}
-        _ => {
-            return Err(ImageToolError::new(
-                "getprofile does not support images with double precision pixel values",
-            ));
-        }
-    }
+    check_profile_read_type(attached)?;
     read_locked(attached, |source| match source {
         ImageHandle::Float(storage) => storage.with_float_view(|image| {
             read_profile_typed(attached, source, image, options).map(ProfileData::Float)
@@ -227,9 +235,7 @@ pub fn get_profile(
         ImageHandle::Complex(storage) => with_storage!(storage, image => {
             read_profile_typed(attached, source, image.as_ref(), options).map(ProfileData::Complex)
         }),
-        _ => Err(ImageToolError::new(
-            "getprofile does not support images with double precision pixel values",
-        )),
+        _ => Err(ImageToolError::new(PROFILE_READ_TYPE_ERROR)),
     })
 }
 
@@ -353,16 +359,67 @@ pub struct FitComponentsRequest<'a> {
     pub summary: &'a str,
     /// Overwrite existing output files/tables.
     pub overwrite: bool,
-    /// Constant zero level initial guess and fixed flag (`None` disables).
-    pub zero_level: Option<(f64, bool)>,
+    /// Fit a constant zero level alongside the Gaussian components.
+    pub fit_zero_level: bool,
+    /// Initial zero level and whether it is held fixed.
+    pub zero_level: (f64, bool),
     /// Explicit RMS noise value (`0.0` uses residual RMS).
     pub rms: Option<ComponentFitQuantity<'a>>,
     /// Noise correlation FWHM.
     pub noise_fwhm: Option<ComponentFitQuantity<'a>>,
-    /// History string for `ia.fitcomponents(...)` and logfile header.
-    pub history_call: String,
+    /// Display forms of CASA arguments that can have several input types.
+    pub history: FitComponentsHistory<'a>,
     /// Record CASA command history in created outputs.
     pub record_history: bool,
+}
+
+/// Original CASA argument spellings used in fit history and reports.
+pub struct FitComponentsHistory<'a> {
+    /// Region representation, such as `[]` or a named region.
+    pub region: &'a str,
+    /// Channel selection as entered by the caller.
+    pub channels: &'a str,
+    /// RMS noise as entered by the caller.
+    pub rms: &'a str,
+    /// Noise correlation FWHM as entered by the caller.
+    pub noise_fwhm: &'a str,
+}
+
+impl FitComponentsRequest<'_> {
+    fn history_call(&self) -> String {
+        let range = |values: &[f64]| {
+            let values = values
+                .iter()
+                .map(|value| format!("{value:.6}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("[{values}]")
+        };
+        format!(
+            "ia.fitcomponents(box={:?}, region={}, chans={}, stokes={:?}, mask={:?}, includepix={}, excludepix={}, residual={:?}, model={:?}, estimates={:?}, logfile={:?}, append={}, newestimates={:?}, complist={:?}, dooff={}, offset={:.6}, fixoffset={}, stretch={}, rms={}, noisefwhm={})",
+            self.box_selection.unwrap_or_default(),
+            self.history.region,
+            self.history.channels,
+            self.stokes.unwrap_or_default(),
+            self.mask.unwrap_or_default(),
+            range(self.includepix),
+            range(self.excludepix),
+            self.residual,
+            self.model,
+            self.estimates
+                .map_or_else(|| "".into(), Path::to_string_lossy),
+            self.logfile,
+            self.append,
+            self.newestimates,
+            self.complist,
+            self.fit_zero_level,
+            self.zero_level.0,
+            self.zero_level.1,
+            self.stretch,
+            self.history.rms,
+            self.history.noise_fwhm,
+        )
+    }
 }
 
 /// Fits 2D Gaussian components on selected sky planes (`ia.fitcomponents`).
@@ -379,6 +436,7 @@ pub fn fit_components(
             "This method only supports real valued images",
         ));
     }
+    let history_call = request.history_call();
     let paths = [
         request.model,
         request.residual,
@@ -415,10 +473,18 @@ pub fn fit_components(
                     }
                     match source {
                         ImageHandle::Float(storage) => storage.with_float_view(|img| {
-                            fit_components_typed(attached, source, img, &request, &paths, staged)
+                            fit_components_typed(
+                                attached,
+                                source,
+                                img,
+                                &request,
+                                &history_call,
+                                &paths,
+                                staged,
+                            )
                         }),
                         ImageHandle::Double(storage) => with_storage!(storage, img => {
-                            fit_components_typed(attached, source, img.as_ref(), &request, &paths, staged)
+                            fit_components_typed(attached, source, img.as_ref(), &request, &history_call, &paths, staged)
                         }),
                         _ => Err(ImageToolError::new(
                             "This method only supports real valued images",
@@ -459,7 +525,7 @@ pub fn fit_components(
     if !request.logfile.is_empty() {
         let text = format!(
             "{}\n{} fitted components\n{}",
-            request.history_call,
+            history_call,
             fit.components.len(),
             fit.log_text()
         );
@@ -473,6 +539,7 @@ fn fit_components_typed<T: ComponentFitPixel>(
     source: &ImageHandle,
     image: &dyn ImageInterface<T>,
     request: &FitComponentsRequest<'_>,
+    history_call: &str,
     paths: &[&Path],
     staged: [Option<&Path>; 2],
 ) -> ImageToolResult<ImageComponentFit> {
@@ -491,7 +558,7 @@ fn fit_components_typed<T: ComponentFitPixel>(
             include_pixels: request.includepix,
             exclude_pixels: request.excludepix,
             estimates: request.estimates,
-            zero_level: request.zero_level,
+            zero_level: request.fit_zero_level.then_some(request.zero_level),
             beams: Some(&beams),
             rms: request.rms.as_ref().map(|q| match q {
                 ComponentFitQuantity::Numeric(v) => ComponentFitQuantity::Numeric(*v),
@@ -541,7 +608,7 @@ fn fit_components_typed<T: ComponentFitPixel>(
             let mut handle = ImageHandle::Float(Storage::Paged(Box::new(output)));
             handle.append_history_entries(&source_history)?;
             if request.record_history {
-                handle.record_history("fitcomponents", request.history_call.clone())?;
+                handle.record_history("fitcomponents", history_call.to_owned())?;
             }
             handle.save()?;
         }
@@ -589,10 +656,39 @@ pub struct FitProfileRequest<'a> {
     pub append: bool,
     /// Include full fitted parameter report lines in returned `ToolLogLine`s.
     pub log_details: bool,
-    /// Formatted `ia.fitprofile(...)` command string for logs/history.
-    pub history_call: String,
+    /// Region argument as displayed in CASA history and reports.
+    pub region_history: &'a str,
     /// Write history into output spectra/sigma images.
     pub record_history: bool,
+}
+
+impl FitProfileRequest<'_> {
+    fn history_call(&self) -> String {
+        let [pixel_box, chans, stokes] = self.selection;
+        let [model, residual] = self.outputs.spectra;
+        format!(
+            "ia.fitprofile(box={pixel_box:?}, region={}, chans={chans:?}, stokes={stokes:?}, axis={}, mask={:?}, ngauss={}, poly={}, estimates={:?}, minpts={}, multifit={}, model={model:?}, residual={residual:?})",
+            self.region_history,
+            self.axis,
+            self.mask,
+            self.ngauss,
+            self.poly,
+            self.estimates_file,
+            self.min_points,
+            self.multifit
+        )
+    }
+}
+
+const PROFILE_FIT_TYPE_ERROR: &str = "This method only supports Float valued images";
+
+/// Validates the pixel type before interpreting `ia.fitprofile` arguments.
+pub fn check_profile_fit_type(attached: &AttachedImage) -> ImageToolResult<()> {
+    if matches!(*attached.lock(), ImageHandle::Float(_)) {
+        Ok(())
+    } else {
+        Err(ImageToolError::new(PROFILE_FIT_TYPE_ERROR))
+    }
 }
 
 /// Fits 1D spectral/axis profiles (`ia.fitprofile`).
@@ -601,16 +697,13 @@ pub fn fit_profile(
     request: FitProfileRequest<'_>,
     is_external_open: ExternalPathCheck<'_>,
 ) -> ImageToolResult<(RecordValue, Vec<ToolLogLine>)> {
-    if !matches!(*attached.lock(), ImageHandle::Float(_)) {
-        return Err(ImageToolError::new(
-            "This method only supports Float valued images",
-        ));
-    }
+    check_profile_fit_type(attached)?;
     let sigma_img = match request.sigma {
         ProfileSigmaInput::Path(path) => Some(Image::open(path)?),
         _ => None,
     };
     validate_profile_log(request.logfile)?;
+    let history_call = request.history_call();
     let (stages, fit) = read_locked(attached, |source| match source {
         ImageHandle::Float(storage) => storage.with_float_view(|image| {
             compute_profile_fit(
@@ -619,12 +712,10 @@ pub fn fit_profile(
                 image,
                 &request,
                 sigma_img.as_ref(),
-                is_external_open,
+                &history_call,
             )
         }),
-        _ => Err(ImageToolError::new(
-            "This method only supports Float valued images",
-        )),
+        _ => Err(ImageToolError::new(PROFILE_FIT_TYPE_ERROR)),
     })?;
     let mut logs: Vec<_> = fit.summary.iter().cloned().map(ToolLogLine::info).collect();
     if request.ngauss < 0 {
@@ -638,7 +729,7 @@ pub fn fit_profile(
         ));
     }
     let details = (request.log_details || !request.logfile.is_empty())
-        .then(|| profile_log_text(&request.history_call, &fit));
+        .then(|| profile_log_text(&history_call, &fit));
     let staged_log = if let Some(details) = &details
         && !request.logfile.is_empty()
     {
@@ -668,7 +759,7 @@ fn compute_profile_fit(
     image: &dyn ImageInterface<f32>,
     request: &FitProfileRequest<'_>,
     sigma_img: Option<&Image>,
-    is_external_open: ExternalPathCheck<'_>,
+    history_call: &str,
 ) -> ImageToolResult<(NamedImageStages, ImageProfileFitResult)> {
     let mut beam_record = image.image_info()?.to_record();
     attachment.beam_view().apply_to(&mut beam_record);
@@ -709,7 +800,6 @@ fn compute_profile_fit(
         },
         request.outputs,
     )?;
-    let _ = is_external_open;
     validate_fit_paths(
         fit.destinations().chain(nonempty(request.logfile)),
         source
@@ -754,7 +844,7 @@ fn compute_profile_fit(
             if request.record_history {
                 out.append_history_at(
                     "::image::fitprofile",
-                    &["Ran ia.fitprofile".into(), request.history_call.clone()],
+                    &["Ran ia.fitprofile".into(), history_call.to_owned()],
                 )?;
             }
             out.append_history_at("::ImageProfileFitter::fit", &fit.summary)?;
