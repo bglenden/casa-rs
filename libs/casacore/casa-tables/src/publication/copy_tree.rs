@@ -93,7 +93,7 @@ fn managed_table_file(name: &OsStr) -> bool {
         matches!(
             name,
             "table.dat" | "table.info" | "table.lock" | "table.dat_tmp"
-        )
+        ) || crate::storage::table_control::is_staged_table_dat(name)
     }) || table_manager_file_sequence(name).is_some()
 }
 
@@ -400,6 +400,36 @@ mod tests {
     use super::*;
 
     const SOURCE_PROBE: &str = "CASA_TABLE_COPY_TEST_SOURCE";
+
+    #[test]
+    fn a_replacement_does_not_copy_descriptor_staging_files() {
+        let scratch = tempfile::tempdir().unwrap();
+        let source = scratch.path().join("source");
+        let replacement = scratch.path().join("replacement");
+        fs::create_dir(&source).unwrap();
+        fs::create_dir(&replacement).unwrap();
+        for name in [
+            "table.dat",
+            "table.dat_tmp",
+            "table.dat_tmp.AbC123dEf456",
+            "table.dat_tmp.notes",
+        ] {
+            fs::write(source.join(name), b"source").unwrap();
+        }
+        fs::write(replacement.join("table.dat"), b"replacement").unwrap();
+
+        preserve_replacement_tree_entries(&source, &replacement).unwrap();
+        assert!(!replacement.join("table.dat_tmp").exists());
+        assert!(!replacement.join("table.dat_tmp.AbC123dEf456").exists());
+        assert_eq!(
+            fs::read(replacement.join("table.dat_tmp.notes")).unwrap(),
+            b"source"
+        );
+        assert_eq!(
+            fs::read(replacement.join("table.dat")).unwrap(),
+            b"replacement"
+        );
+    }
 
     #[test]
     fn stage_shares_unchanged_root_payloads_only() {
