@@ -173,18 +173,6 @@ pub fn lock_image(attached: &AttachedImage, mode: &str, nattempts: isize) -> Ima
 pub fn unlock_image(attached: &AttachedImage) -> ImageToolResult<bool> {
     let mut image = attached.lock();
     attached.check_bound_name(&image)?;
-    let writable = !attached.is_read_only()
-        && image.read_only_file_type().is_none()
-        && with_pixels!(&*image, storage => match storage {
-            Storage::Paged(paged) => paged.is_writable(),
-            Storage::Temp { .. } => true,
-        });
-    if writable {
-        image.save()?;
-    }
-    if attached.has_advisory_lock() {
-        return Ok(true);
-    }
     for input in attached.expression_inputs() {
         let mut source = input.lock();
         input.check_bound_name(&source)?;

@@ -18,8 +18,7 @@ use CasaDefault::{
 };
 use Kind as K;
 use Returns as R;
-#[allow(unused_imports)]
-use Status::{Implemented as Yes, NotYetImplemented as No};
+use Status::Implemented as Yes;
 
 /// Every public method of CASA's installed `ms` binding.
 const METHODS: &[Method] = &[
@@ -38,7 +37,7 @@ const METHODS: &[Method] = &[
         "asdmref",
         &[param("abspath", K::Text, Text(""))],
         R::Any,
-        No,
+        Yes,
     ),
     method("close", &[], R::Bool, Yes),
     method(

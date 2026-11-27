@@ -277,6 +277,7 @@ pub use schema::{
     TableSchema,
 };
 pub use sorting::{TableGroup, TableIterator};
+pub use storage::asdm_stman::AsdmBdfIndex;
 pub use storage::table_control::read_table_record_file;
 #[doc(hidden)]
 pub use storage::virtual_compress::{ComplexCompression, ComplexScale};

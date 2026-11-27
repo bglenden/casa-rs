@@ -5,7 +5,9 @@
 use std::path::Path;
 
 use casa_imageanalysis::analysis::{CollapseFunction, ProfileFrequencyFrame, ReadProfileOptions};
-use casa_imageanalysis::tool::ops_fit::{get_profile, spectral_axis_index};
+use casa_imageanalysis::tool::ops_fit::{
+    check_profile_read_type, get_profile, spectral_axis_index,
+};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -36,6 +38,14 @@ impl PyImageTool {
         frame: &str,
         logfile: &str,
     ) -> PyResult<Py<PyAny>> {
+        py.detach(|| {
+            let state = self.state();
+            let attached = state
+                .image
+                .as_ref()
+                .ok_or_else(|| raised("No image attached to tool"))?;
+            check_profile_read_type(attached).map_err(raised)
+        })?;
         let axis_u = usize::try_from(axis).map_err(|_| raised("Axis must be greater than 0"))?;
         let rest_frequency = match restfreq {
             None | Some(Variant::Empty) => None,

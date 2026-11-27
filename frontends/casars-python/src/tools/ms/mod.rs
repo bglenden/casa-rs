@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's `ms` tool (ms): every method of CASA 6.7.6.14's binding,
-//! with its signature (ADR-0017, #1025). A method casa-rs does not implement
-//! yet raises `NotImplementedError` naming #1030 (`stubs.rs`).
+//! with its signature (ADR-0017, #1025).
 
 mod addephemeris;
+mod asdm_reference;
 mod attachment_info;
 mod concatenate;
 mod continuum;
@@ -31,7 +31,6 @@ mod spectral_rewrite;
 mod split;
 mod statistics;
 mod statwt;
-mod stubs;
 mod subtable_queries;
 mod summary;
 pub(crate) mod surface;
@@ -51,16 +50,6 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBoolMethods};
 
-use crate::tools::not_yet_implemented_in;
-
-/// The issue that records the methods casa-rs refuses.
-const ISSUE: u32 = 1030;
-
-/// A method casa-rs does not implement yet.
-fn stub(method: &str) -> PyResult<Py<PyAny>> {
-    not_yet_implemented_in("ms", method, ISSUE)
-}
-
 /// CASA's `ms` tool.
 #[pyclass(name = "ms", module = "casars.tools", frozen)]
 pub(crate) struct PyMsTool {
@@ -74,6 +63,7 @@ struct AttachedMs {
     main: Table,
     main_files: attachment_info::TableFiles,
     main_stamp: Option<attachment_info::TableStamp>,
+    asdm_index: Option<Option<Arc<casa_tables::AsdmBdfIndex>>>,
     #[cfg(unix)]
     history_snapshot: Option<history::HistorySnapshot>,
     subtables: subtable_queries::Subtables,
@@ -143,6 +133,7 @@ impl AttachedMs {
             main,
             main_files,
             main_stamp,
+            asdm_index: None,
             #[cfg(unix)]
             history_snapshot: None,
             subtables: subtable_queries::Subtables::default(),

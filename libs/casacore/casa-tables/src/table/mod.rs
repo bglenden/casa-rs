@@ -22,6 +22,7 @@ use crate::storage::{CompositeStorage, StorageSnapshot, TableInfo};
 use crate::table::columns::collect_undefined_cells_for_schema;
 use crate::table_impl::TableImpl;
 
+mod asdm_reference;
 mod cache_paths;
 mod columns;
 mod description;

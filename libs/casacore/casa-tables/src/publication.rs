@@ -39,6 +39,30 @@ pub use bound_file::{
     StagedDirectoryFile, open_regular_directory_entry, open_symlink_directory_entry,
 };
 
+pub(crate) fn sync_publication_file(file: &std::fs::File) -> std::io::Result<()> {
+    #[cfg(target_vendor = "apple")]
+    {
+        use std::os::fd::AsRawFd;
+
+        use std::io;
+
+        // Match casacore's ordinary fsync. File::sync_all requests a
+        // device-level F_FULLFSYNC on Apple.
+        loop {
+            // SAFETY: the borrowed file keeps the descriptor alive.
+            if unsafe { libc::fsync(file.as_raw_fd()) } == 0 {
+                return Ok(());
+            }
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        }
+    }
+    #[cfg(not(target_vendor = "apple"))]
+    file.sync_all()
+}
+
 /// Keep a directory's filesystem identity alive without listing its entries.
 ///
 /// # Errors
