@@ -656,6 +656,7 @@ dependencies = [
  "casa-observation",
  "casa-tables",
  "casa-test-support",
+ "fitsio",
  "ndarray",
  "num-complex",
  "rayon",

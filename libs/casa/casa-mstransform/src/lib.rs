@@ -6,6 +6,7 @@
 pub mod concat;
 #[cfg(all(feature = "msv4", unix))]
 pub mod convert;
+pub mod fits_idi;
 pub mod tool_concatenate;
 pub mod tool_iteration;
 pub mod tool_lister;
