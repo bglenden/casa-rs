@@ -8,7 +8,7 @@ use casa_imaging_operator::{
 };
 use casa_imaging_runtime::pass::{Partition, PassDomain, PassError, Residency};
 
-use crate::fixture::{
+use super::fixture::{
     IMAGE, Rows, Run, WIDTH_HZ, normalised_peak, offset_linear_cube, operator, operator_of, planes,
     run, sparse_model, window_of,
 };

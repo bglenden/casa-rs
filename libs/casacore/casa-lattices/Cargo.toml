@@ -16,10 +16,7 @@ casa-tables.workspace = true
 casa-core.workspace = true
 crossbeam-channel = "0.5"
 ndarray.workspace = true
-ndarray-stats = "0.7"
-noisy_float = "0.2"
 num-complex.workspace = true
-ordered-float = "5.1"
 tempfile = "3"
 thiserror.workspace = true
 

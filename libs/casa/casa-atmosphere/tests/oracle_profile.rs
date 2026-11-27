@@ -4,7 +4,7 @@
 //! pressure steps (in and out of range), a profile topped above ATM's
 //! reference levels and a user temperature profile.
 
-mod common;
+use crate::common;
 
 use casa_atmosphere::{AtmosphereProfile, AtmosphereType, Layer, ProfileParameters};
 use common::{Agreement, json, num, nums};

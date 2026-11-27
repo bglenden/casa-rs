@@ -26,11 +26,13 @@ imaging = [
     "dep:ndarray",
 ]
 images = [
+    "dep:casa-tables",
     "dep:casa-imageanalysis",
     "dep:casa-images",
     "dep:casa-lattices",
 ]
 ms = [
+    "dep:casa-tables",
     "dep:casa-flagging",
     "casa-mstransform/msv4",
     "dep:casa-atmosphere",
@@ -75,7 +77,7 @@ casa-numerics = { workspace = true, optional = true }
 casa-observation = { workspace = true, optional = true }
 casa-plot-data = { path = "../casa-plot-data", features = ["ms"], optional = true }
 casa-simulation = { workspace = true, optional = true }
-casa-tables.workspace = true
+casa-tables = { workspace = true, optional = true }
 casa-core.workspace = true
 casa-vla = { workspace = true, optional = true }
 fs2 = "0.4"
@@ -93,5 +95,4 @@ ureq = { version = "3", optional = true }
 
 [dev-dependencies]
 casa-imaging-deconvolution.workspace = true
-casa-test-support = { path = "../../dev/casa-test-support" }
 tempfile = "3"

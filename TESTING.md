@@ -410,7 +410,7 @@ does not stand in for a scientific comparison.
   invariance, precision and kernel-set laws on in-process synthetic
   MeasurementSets, in each imaging crate's tests (`t0_laws`, `aw_laws`,
   `wplanes_laws`, `mosaic_laws`, `resample`, `predict`, `weighting`,
-  `pass_laws`, the deconvolution solver laws), and the Metal-against-CPU
+  `api::pass_laws`, the deconvolution solver laws), and the Metal-against-CPU
   laws (`cargo nextest run -p casa-imaging-metal`).
 - **T1, end to end** (under ten minutes each; CI):
   `cargo test -p casars-imager --test t1` through the production route, one

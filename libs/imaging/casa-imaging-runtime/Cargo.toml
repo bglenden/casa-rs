@@ -44,10 +44,6 @@ name = "minor_cycle_memory"
 path = "tests/minor_cycle_memory.rs"
 
 [[test]]
-name = "pass_laws"
-path = "tests/pass_laws/main.rs"
-
-[[test]]
 name = "pass_memory"
 path = "tests/pass_memory.rs"
 

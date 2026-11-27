@@ -15,3 +15,6 @@ fn complex_fft_maps_an_origin_impulse_to_a_constant_spectrum() {
         assert!((value - Complex64::new(2.0, -1.0)).norm() < 1.0e-12);
     }
 }
+
+#[cfg(target_os = "macos")]
+mod plan_memory;

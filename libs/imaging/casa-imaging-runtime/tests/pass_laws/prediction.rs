@@ -15,7 +15,7 @@ use casa_imaging_runtime::pass::{
 };
 use num_complex::Complex32;
 
-use crate::fixture::{
+use super::fixture::{
     IMAGE, RowKind, Rows, nearest_cube, offset_linear_cube, operator, prediction_block,
     prediction_rows, prediction_shape, row_kind, sparse_model, window_of,
 };

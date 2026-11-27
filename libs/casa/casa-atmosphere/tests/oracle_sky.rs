@@ -4,7 +4,7 @@
 //! sequence in which setters change the state the defaulted overloads read,
 //! replayed with explicit [`Sky`] conditions.
 
-mod common;
+use crate::common;
 
 use casa_atmosphere::{AbsorptionProfile, ChannelTotals, Sky};
 use common::{Agreement, json, num, nums, sky_atmosphere, sky_grid};
