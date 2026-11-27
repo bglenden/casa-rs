@@ -11,6 +11,8 @@ mod fits_visibility;
 mod history;
 mod iteration;
 mod legacy_iteration;
+mod legacy_query_config;
+mod legacy_query_output;
 mod legacy_selection;
 mod legacy_statwt;
 mod legacy_visibility;
@@ -86,7 +88,17 @@ struct AttachedMs {
 
 impl AttachedMs {
     fn open(name: PathBuf, writable: bool, lock: bool, check: bool) -> PyResult<Self> {
-        let _publication = crate::tools::table::lock_attachment_publication();
+        let publication = crate::tools::table::lock_attachment_publication();
+        Self::open_with_publication_guard(name, writable, lock, check, &publication)
+    }
+
+    fn open_with_publication_guard(
+        name: PathBuf,
+        writable: bool,
+        lock: bool,
+        check: bool,
+        _publication: &std::sync::MutexGuard<'static, ()>,
+    ) -> PyResult<Self> {
         let path = name.canonicalize().map_err(runtime_error)?;
         let directory = std::fs::metadata(&path).map_err(runtime_error)?;
         let main_files = attachment_info::TableFiles::new(&path);
@@ -96,7 +108,9 @@ impl AttachedMs {
         let is_multi_ms = main.info().sub_type == "CONCATENATED";
         let part_names = Table::immediate_part_names(&path, &name).map_err(runtime_error)?;
         let reference_multi = is_multi_ms && matches!(part_names, TablePartNames::Reference(_));
-        let sources = if reference_multi {
+        let sources = if reference_multi
+            || (is_multi_ms && matches!(part_names, TablePartNames::Plain(_)))
+        {
             // A saved view can inherit the multi-MS subtype. Its descriptor
             // holds a row projection, and the view is the logical input.
             let view = MeasurementSet::open(&path).map_err(runtime_error)?;
