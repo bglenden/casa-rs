@@ -120,10 +120,7 @@ fn casa_rs_gaincal(ms: &Path, output: PathBuf, field: &str, spw: &str) {
 /// `solved` rows are unflagged.
 fn compare(ms: &Path, field: &str, spw: &str, solved: usize) {
     let root = ms.parent().expect("a working directory");
-    let ours = root.join(format!(
-        "casa-rs-{}.G",
-        spw.replace([':', '~', ';', ','], "_")
-    ));
+    let ours = root.join(format!("casa-rs-{}.G", spw.replace([':', '~'], "_")));
     casa_rs_gaincal(ms, ours.clone(), field, spw);
     let casa = match common::run_casa_gaincal(
         root,
@@ -215,7 +212,13 @@ fn gain_table_windows_match_casa_on_ngc5921() {
     let source = common::ngc5921_source();
     let root = TempDir::new().expect("tempdir");
     let ms = working_copy(&root, &source);
-    for spw in ["0", "0:5~10;20~30", "0:41~50;3~17", "0:5~25^5"] {
+    for spw in [
+        "0",
+        "0:5~10;20~30",
+        "0:5~10,0:20~30",
+        "0:41~50;3~17",
+        "0:5~25^5",
+    ] {
         compare(&ms, "0", spw, 1);
     }
 }
