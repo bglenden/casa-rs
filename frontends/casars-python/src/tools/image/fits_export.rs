@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::path::{Path, PathBuf};
+//! Thin PyO3 `ia.tofits` wrapper delegating to [`casa_imageanalysis::tool::fits`].
 
-use casa_imageanalysis::analysis::{
-    ExportFitsRequest, ImageFitsExportOptions, export_attached_fits, validate_attached_fits_target,
-};
-use casa_images::image_history_entries;
+use casa_imageanalysis::analysis::ImageFitsExportOptions;
+use casa_imageanalysis::tool::fits::export_attached_to_fits;
 use pyo3::prelude::*;
 
 use super::PyImageTool;
-use super::handle::{ImageHandle, Storage, raised};
+use super::handle::raised;
 use super::subimage::{Region, mask_argument};
 
 #[pymethods]
@@ -40,12 +38,6 @@ impl PyImageTool {
         if self.state().image.is_none() {
             return Ok(false);
         }
-        if outfile.is_empty() {
-            return Err(raised("fitsfile must be specified"));
-        }
-        if matches!(outfile, "." | "..") {
-            return Err(raised(format!("Invalid fitsfile name {outfile}")));
-        }
         let region = Region::argument(py, region, "tofits")?;
         let mask = mask_argument(mask)?;
         let options = ImageFitsExportOptions {
@@ -63,79 +55,11 @@ impl PyImageTool {
             let Some(attachment) = state.image.as_ref() else {
                 return Ok(false);
             };
-            let mut handle = attachment.lock();
-            if !matches!(*handle, ImageHandle::Float(_)) {
-                return Err(raised(
-                    "Only writing float-valued images to FITS is supported",
-                ));
-            }
-            let request = ExportFitsRequest {
-                imagename: handle.path().map_or_else(PathBuf::new, Path::to_path_buf),
-                fitsimage: PathBuf::from(outfile),
-                velocity,
-                optical,
-                bitpix,
-                minpix,
-                maxpix,
-                overwrite,
-                dropstokes,
-                stokeslast,
-                history,
-                dropdeg,
-            };
-            let operand_paths = attachment.operand_paths();
-            validate_attached_fits_target(
-                &request,
-                handle
-                    .path()
-                    .into_iter()
-                    .chain(operand_paths.iter().map(PathBuf::as_path)),
+            export_attached_to_fits(
+                attachment, outfile, velocity, optical, bitpix, minpix, maxpix, overwrite, dropdeg,
+                dropstokes, stokeslast, history, options,
             )
-            .map_err(raised)?;
-            attachment.require_pixel_read_lock(&mut handle)?;
-            let ImageHandle::Float(storage) = &*handle else {
-                unreachable!("image storage stays fixed while locked");
-            };
-            let beams = attachment.beam_view();
-            let options = ImageFitsExportOptions {
-                beam_record: Some(beams.record()),
-                operand_paths,
-                ..options
-            };
-            let entries = if history {
-                match storage {
-                    Storage::Paged(_) => {
-                        image_history_entries(&request.imagename).map_err(raised)?
-                    }
-                    Storage::Temp { image, .. } => image
-                        .history_rows()
-                        .map_err(raised)?
-                        .iter()
-                        .map(|row| row.entry.clone())
-                        .collect(),
-                }
-            } else {
-                Vec::new()
-            };
-            let coordinates = handle.coordinate_record();
-            match storage {
-                Storage::Paged(image) => {
-                    export_attached_fits(&request, image.as_ref(), coordinates, &entries, options)
-                }
-                Storage::Temp {
-                    image,
-                    fits: Some(fits),
-                    ..
-                } => {
-                    let view = fits.image_view(image);
-                    export_attached_fits(&request, &view, coordinates, &entries, options)
-                }
-                Storage::Temp { image, .. } => {
-                    export_attached_fits(&request, image.as_ref(), coordinates, &entries, options)
-                }
-            }
-            .map_err(raised)?;
-            Ok(true)
+            .map_err(raised)
         })
     }
 }

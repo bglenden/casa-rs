@@ -1,23 +1,19 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::path::Path;
+//! Thin PyO3 `ia.subimage` wrapper and region argument parser delegating to [`casa_imageanalysis::tool::subimage`].
 
 use casa_core::{RecordValue, ScalarValue, Value};
-use casa_imageanalysis::analysis::{
-    SubimageOptions, SubimagePlan, SubimageRegion, ensure_outfile_does_not_alias_input,
-};
-use casa_images::image_history_rows;
-use casa_images::{ImageInterface, ImagePixel};
+use casa_imageanalysis::analysis::SubimageRegion;
+use casa_imageanalysis::tool::subimage::{SubimageRequest, extract_subimage};
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyList, PyString, PyTuple};
 
 use crate::convert::{IntList, Variant};
-use crate::tools::{LogLine, emit, table::casa_record};
+use crate::tools::table::casa_record;
 
 use super::PyImageTool;
-use super::create::publish_image;
-use super::handle::{ImageHandle, Storage, raised, with_storage};
+use super::handle::{emit_tool_logs, external_open_check, raised};
 
 pub(super) enum Region {
     Text(String),
@@ -202,105 +198,6 @@ pub(super) fn mask_argument(value: Option<&Bound<'_, PyAny>>) -> PyResult<String
     Err(raised("Mask is not understood, try a valid LEL string"))
 }
 
-struct Request<'a> {
-    outfile: &'a str,
-    region: Option<Region>,
-    mask: String,
-    dropdeg: bool,
-    overwrite: bool,
-    list: bool,
-    stretch: bool,
-    wantreturn: bool,
-    keepaxes: Vec<i64>,
-}
-
-impl Request<'_> {
-    fn copy_selection<T: ImagePixel + Copy>(
-        &self,
-        source: &dyn ImageInterface<T>,
-        coordinates: Option<RecordValue>,
-        beams: &RecordValue,
-        path: Option<&Path>,
-        logs: &mut Vec<LogLine>,
-    ) -> PyResult<Storage<T>> {
-        let options = SubimageOptions {
-            region: self.region.as_ref().map(Region::as_region),
-            dropdeg: self.dropdeg,
-            keepaxes: &self.keepaxes,
-        };
-        let plan = SubimagePlan::new_preserving_beams(source, coordinates, options, beams)
-            .map_err(raised)?;
-        if self.list {
-            let (blc, trc) = plan.bounds();
-            logs.push(LogLine::info(format!(
-                "Selected bounding box {blc:?} to {trc:?}"
-            )));
-        }
-        let mut result = Storage::create(plan.shape.clone(), plan.coordinates.clone(), path, None)
-            .map_err(raised)?;
-        let expression = (!self.mask.is_empty()).then_some(self.mask.as_str());
-        with_storage!(&mut result, copy =>
-            plan.copy_to(source, copy.as_mut(), expression, self.stretch)
-        )
-        .map_err(raised)?;
-        if let Some(record) = plan.coordinate_record {
-            match &mut result {
-                Storage::Paged(image) => image.set_coordinate_record(record).map_err(raised)?,
-                Storage::Temp {
-                    record: coordinates,
-                    ..
-                } => *coordinates = record,
-            }
-        }
-        Ok(result)
-    }
-
-    fn build<T: ImagePixel + Copy>(
-        &self,
-        source: &Storage<T>,
-        beams: &RecordValue,
-        path: Option<&Path>,
-        logs: &mut Vec<LogLine>,
-    ) -> PyResult<Storage<T>> {
-        let coordinates = match source {
-            Storage::Paged(image) => match image.table().keywords().get("coords") {
-                Some(Value::Record(record)) => Some(record.clone()),
-                _ => None,
-            },
-            Storage::Temp { record, .. } => Some(record.clone()),
-        };
-        let mut result = with_storage!(
-            source, image => self.copy_selection(image.as_ref(), coordinates, beams, path, logs)
-        )?;
-        let rows = match source {
-            Storage::Paged(image) => {
-                image_history_rows(image.name().expect("persistent image")).map_err(raised)?
-            }
-            Storage::Temp { image, .. } => image.history_rows().map_err(raised)?.into_owned(),
-        };
-        with_storage!(&mut result, image => image.append_history_entries(&rows)).map_err(raised)?;
-        Ok(result)
-    }
-
-    fn history(&self) -> String {
-        let region = self
-            .region
-            .as_ref()
-            .map_or_else(|| "\"\"".to_owned(), Region::history);
-        format!(
-            "ia.subimage(outfile={:?}, region={region}, mask={:?}, dropdeg={}, overwrite={}, list={}, stretch={}, wantreturn={}, keepaxes={:?})",
-            self.outfile,
-            self.mask,
-            self.dropdeg,
-            self.overwrite,
-            self.list,
-            self.stretch,
-            self.wantreturn,
-            self.keepaxes
-        )
-    }
-}
-
 #[pymethods]
 impl PyImageTool {
     #[allow(clippy::too_many_arguments)]
@@ -318,60 +215,30 @@ impl PyImageTool {
         wantreturn: bool,
         keepaxes: Option<IntList>,
     ) -> PyResult<Py<Self>> {
-        let request = Request {
-            outfile,
-            region: Region::argument(py, region, "subimage")?,
-            mask: mask_argument(mask)?,
-            dropdeg,
-            overwrite,
-            list,
-            stretch,
-            wantreturn,
-            keepaxes: keepaxes.map_or_else(Vec::new, |axes| axes.0),
-        };
-        let mut logs = Vec::new();
-        let result = py.detach(|| {
+        let region = Region::argument(py, region, "subimage")?;
+        let mask = mask_argument(mask)?;
+        let keepaxes = keepaxes.map_or_else(Vec::new, |axes| axes.0);
+        let (result, logs) = py.detach(|| {
             let state = self.state();
-            let attached = state.image.as_ref().ok_or_else(|| raised("Unable to create image"))?;
-            if outfile.is_empty() && !wantreturn {
-                logs.push(LogLine::warning("outfile was not specified and wantreturn is false. The resulting image will be inaccessible"));
-            }
-            publish_image(outfile, overwrite, |path| {
-                // Release the source handle before publication takes the image registry lock.
-                let mut original = attached.lock();
-                attached.require_pixel_read_lock(&mut original)?;
-                let beams = attached.beam_view().clone();
-                if !outfile.is_empty() && let Some(source) = original.path() {
-                    ensure_outfile_does_not_alias_input(Path::new(outfile), source).map_err(raised)?;
-                }
-                let mut copy = match &*original {
-                    ImageHandle::Float(Storage::Temp { image, record, fits: Some(fits) }) => {
-                        let source = fits.image_view(image);
-                        let mut storage = request.copy_selection(&source, Some(record.clone()), beams.record(), path, &mut logs)?;
-                        with_storage!(&mut storage, product =>
-                            product.append_history_entries(&image.history_rows().map_err(raised)?)
-                        ).map_err(raised)?;
-                        ImageHandle::Float(storage)
-                    }
-                    ImageHandle::Float(source) => ImageHandle::Float(request.build(source, beams.record(), path, &mut logs)?),
-                    ImageHandle::Double(source) => ImageHandle::Double(request.build(source, beams.record(), path, &mut logs)?),
-                    ImageHandle::Complex(source) => ImageHandle::Complex(request.build(source, beams.record(), path, &mut logs)?),
-                    ImageHandle::DComplex(source) => ImageHandle::DComplex(request.build(source, beams.record(), path, &mut logs)?),
-                };
-                if state.history {
-                    copy.record_history("subimage", request.history())?;
-                }
-                copy.save().map_err(raised)?;
-                Ok(copy)
-            })
-        });
-        emit(py, "casars.tools.image", &logs)?;
-        let result = result?;
-        if wantreturn {
-            Py::new(py, Self::attached(result))
-        } else {
-            py.detach(|| drop(result));
-            Py::new(py, Self::new())
-        }
+            let attached = state
+                .image
+                .as_ref()
+                .ok_or_else(|| raised("Unable to create image"))?;
+            let request = SubimageRequest {
+                outfile,
+                region: region.as_ref().map(Region::as_region),
+                mask: (!mask.is_empty()).then_some(mask.as_str()),
+                dropdeg,
+                overwrite,
+                list,
+                stretch,
+                wantreturn,
+                keepaxes: &keepaxes,
+            };
+            extract_subimage(attached, &request, state.history, external_open_check())
+                .map_err(raised)
+        })?;
+        emit_tool_logs(py, &logs)?;
+        Py::new(py, result.map_or_else(Self::new, Self::attached_handle))
     }
 }

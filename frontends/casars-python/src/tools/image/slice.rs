@@ -226,7 +226,9 @@ impl PyImageTool {
             let npts = usize::try_from(npts).map_err(|_| raised("npts must be non-negative"))?;
             let method = method.parse()?;
             let mut image = attachment.lock();
-            attachment.require_pixel_read_lock(&mut image)?;
+            attachment
+                .require_pixel_read_lock(&mut image)
+                .map_err(raised)?;
             macro_rules! read {
                 ($view:expr, $pixels:expr) => {
                     get_slice($view, &x.values, &y.values, axes, &coord, npts, method)
@@ -263,7 +265,9 @@ impl PyImageTool {
                     read!(view.as_ref(), complex)
                 }),
             };
-            let release = attachment.release_requested_lock(&mut image);
+            let release = attachment
+                .release_requested_lock(&mut image)
+                .map_err(raised);
             result.and_then(|value| release.map(|()| value))
         })?;
         output.into_python(py)

@@ -3,8 +3,8 @@
 use std::sync::Mutex;
 
 use casa_coordinates::{
-    CoordinateModel, CoordinateSystem, CoordinateType, ObsInfo, StokesCoordinate, StokesType,
-    TabularCoordinate, defaults,
+    CoordinateModel, CoordinateSystem, ObsInfo, StokesCoordinate, StokesType, TabularCoordinate,
+    defaults,
 };
 use casa_core::measures::{EpochRef, MEpoch, MPosition, epoch_to_record};
 use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
@@ -16,7 +16,7 @@ use crate::convert::{StringList, value::CasaValue};
 use crate::tools::table::casa_record;
 
 use super::linear_transform::validate_restored_linear_coordinates;
-use super::{CoordinateState, PyCoordsys, current_epoch, default_spectral_conversion};
+use super::{CoordinateState, PyCoordsys, current_epoch};
 
 fn raised(message: impl Into<String>) -> PyErr {
     PyRuntimeError::new_err(message.into())
@@ -68,32 +68,9 @@ pub(super) fn stokes_values<'a>(
     Ok(values)
 }
 
-fn native_coordinate_field(name: &str) -> Option<(&str, usize)> {
-    let offset = name.find(|character: char| character.is_ascii_digit())?;
-    let (kind, index) = name.split_at(offset);
-    let index = index.parse().ok()?;
-    match kind {
-        "direction" | "spectral" | "stokes" | "linear" | "tabular" | "quality" | "coordsys"
-        | "coordinate" => Some((kind, index)),
-        _ => None,
-    }
-}
-
 pub(in crate::tools) fn validate_coordinate_indices(record: &RecordValue) -> PyResult<usize> {
-    let mut indices = Vec::new();
-    for field in record.fields() {
-        let Some((_, index)) = native_coordinate_field(&field.name) else {
-            continue;
-        };
-        indices.push(index);
-    }
-    indices.sort_unstable();
-    if !indices.iter().copied().eq(0..indices.len()) {
-        return Err(raised(
-            "Coordinate record numbering must be contiguous and unique",
-        ));
-    }
-    Ok(indices.len())
+    casa_imageanalysis::tool::coords::validate_coordinate_indices(record)
+        .map_err(|error| raised(error.to_string()))
 }
 
 /// Append a coordinate and its axis-mapping fields, keeping the existing record intact.
@@ -102,47 +79,8 @@ pub(in crate::tools) fn append_coordinate(
     record: &mut RecordValue,
     coordinate: impl Into<CoordinateModel>,
 ) -> PyResult<()> {
-    let coordinate = coordinate.into();
-    let index = coordinates.n_coordinates();
-    let first_pixel = coordinates.n_pixel_axes() as i32;
-    let first_world = coordinates.n_world_axes() as i32;
-    let n_pixel = coordinate.n_pixel_axes();
-    let n_world = coordinate.n_world_axes();
-    let replacements = coordinate
-        .to_world(&vec![0.0; n_pixel])
-        .map_err(|error| raised(error.to_string()))?;
-    let kind = coordinate.coordinate_type();
-    let name = kind.record_prefix();
-    let mut axis_record = coordinate.to_record();
-    match kind {
-        CoordinateType::Spectral => {
-            axis_record.upsert("conversion", default_spectral_conversion().into());
-        }
-        CoordinateType::Linear => {
-            axis_record.remove("coordinate_type");
-            axis_record.remove("naxes");
-        }
-        _ => {}
-    }
-    record.upsert(format!("{name}{index}"), axis_record.into());
-    record.upsert(
-        format!("pixelmap{index}"),
-        ArrayValue::from_i32_vec((first_pixel..first_pixel + n_pixel as i32).collect()).into(),
-    );
-    record.upsert(
-        format!("worldmap{index}"),
-        ArrayValue::from_i32_vec((first_world..first_world + n_world as i32).collect()).into(),
-    );
-    record.upsert(
-        format!("pixelreplace{index}"),
-        ArrayValue::from_f64_vec(vec![0.0; n_pixel]).into(),
-    );
-    record.upsert(
-        format!("worldreplace{index}"),
-        ArrayValue::from_f64_vec(replacements).into(),
-    );
-    coordinates.add_coordinate(coordinate);
-    Ok(())
+    casa_imageanalysis::tool::coords::append_coordinate(coordinates, record, coordinate)
+        .map_err(|error| raised(error.to_string()))
 }
 
 impl CoordinateState {
@@ -198,7 +136,9 @@ fn evla_observation() -> ObsInfo {
 
 fn normalize_stokes_records(record: &mut RecordValue) -> PyResult<()> {
     for field in record.fields_mut() {
-        let Some((kind, _)) = native_coordinate_field(&field.name) else {
+        let Some((kind, _)) =
+            casa_imageanalysis::tool::coords::native_coordinate_field(&field.name)
+        else {
             continue;
         };
         let Value::Record(subrecord) = &mut field.value else {

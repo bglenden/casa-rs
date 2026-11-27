@@ -1,21 +1,20 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+//! Thin PyO3 `ia.deviation` wrapper delegating to [`casa_imageanalysis::tool::ops_transform::deviation_image`].
+
 use std::path::Path;
 
 use casa_core::quanta::Quantity;
-use casa_imageanalysis::analysis::{
-    DeviationOptions, ImageDeviation, SubimageRegion, ensure_outfile_does_not_alias_input,
-};
-use casa_images::{ImageInterface, resample::RegridMethod};
+use casa_imageanalysis::analysis::{DeviationOptions, SubimageRegion};
+use casa_imageanalysis::tool::ops_transform::deviation_image;
+use casa_images::resample::RegridMethod;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyString};
 
 use crate::convert::{IntList, Variant, quantity};
 
 use super::PyImageTool;
-use super::attachment::{AttachedImage, read_locked};
-use super::create::publish_image;
-use super::handle::{ImageHandle, Storage, raised, with_storage};
+use super::handle::{external_open_check, raised};
 use super::subimage::{RegionArgument, mask_argument, require_bool};
 
 struct LengthArgument {
@@ -179,163 +178,6 @@ impl<'a, 'py> FromPyObject<'a, 'py> for AnchorArgument {
     }
 }
 
-struct Request<'a> {
-    outfile: &'a str,
-    region: RegionArgument,
-    mask: String,
-    overwrite: bool,
-    stretch: bool,
-    grid: IntList,
-    anchor: AnchorArgument,
-    xlength: LengthArgument,
-    ylength: LengthArgument,
-    interp: &'a str,
-    stattype: &'a str,
-    statalg: &'a str,
-    zscore: f64,
-    maxiter: i64,
-    history: bool,
-}
-
-impl Request<'_> {
-    fn build(
-        &self,
-        attachment: &AttachedImage,
-        source: &ImageHandle,
-        path: Option<&Path>,
-    ) -> PyResult<ImageHandle> {
-        let ImageHandle::Float(storage) = source else {
-            return Err(raised("This method only supports Float valued images"));
-        };
-        if !self.outfile.is_empty() {
-            for input in source
-                .path()
-                .into_iter()
-                .chain(attachment.operand_paths().iter().map(|path| path.as_path()))
-            {
-                ensure_outfile_does_not_alias_input(Path::new(self.outfile), input)
-                    .map_err(raised)?;
-            }
-        }
-        let grid: [i64; 2] = self
-            .grid
-            .0
-            .as_slice()
-            .try_into()
-            .map_err(|_| raised("grid must have exactly two positive integer values"))?;
-        if grid.iter().any(|&entry| entry <= 0) {
-            return Err(raised("Both grid value(s) must be positive"));
-        }
-        let interpolation = match self.interp.to_ascii_lowercase().as_bytes().first() {
-            Some(b'c') => RegridMethod::Cubic,
-            Some(b'l') => RegridMethod::Linear,
-            Some(b'n') => RegridMethod::Nearest,
-            _ => {
-                return Err(raised(format!(
-                    "Interpolation algorithm {} is not supported.",
-                    self.interp
-                )));
-            }
-        };
-        let options = DeviationOptions {
-            region: self.region.selection(),
-            mask: Some(&self.mask),
-            stretch: self.stretch,
-            destination: (!self.outfile.is_empty()).then(|| Path::new(self.outfile)),
-            grid: grid.map(|entry| entry as usize),
-            anchor: self.anchor.selection.as_ref().copied().map_err(raised)?,
-            x_length: self.xlength.parse("xlength")?,
-            y_length: (!self.ylength.is_empty())
-                .then(|| self.ylength.parse("ylength"))
-                .transpose()?,
-            interpolation,
-            statistic: self.stattype,
-            algorithm: self.statalg,
-            zscore: self.zscore,
-            maxiter: self.maxiter,
-        };
-        let compute = |image: &dyn ImageInterface<f32>| -> PyResult<ImageHandle> {
-            let plan = ImageDeviation::new(
-                image,
-                source.coordinate_record(),
-                attachment.beam_view().record(),
-                options,
-            )
-            .map_err(raised)?;
-            let section = plan.section();
-            let mut result = Storage::create(
-                section.shape.clone(),
-                section.coordinates.clone(),
-                path,
-                None,
-            )
-            .map_err(raised)?;
-            with_storage!(&mut result, output => plan.copy_to(image, output.as_mut()))
-                .map_err(raised)?;
-            let mut output = ImageHandle::Float(result);
-            if let Some(record) = &section.coordinate_record {
-                output.set_coordinate_record(record.clone())?;
-            }
-            Ok(output)
-        };
-        let mut output = match storage {
-            Storage::Temp {
-                image,
-                fits: Some(fits),
-                ..
-            } => compute(&fits.image_view(image)),
-            _ => with_storage!(storage, image => compute(image.as_ref())),
-        }?;
-        output.append_history_entries(&source.history_entries()?)?;
-        if self.history {
-            output.record_history("deviation", self.history_call())?;
-        }
-        output.save().map_err(raised)?;
-        Ok(output)
-    }
-
-    fn history_call(&self) -> String {
-        let Self {
-            outfile,
-            region,
-            mask,
-            overwrite,
-            stretch,
-            grid,
-            anchor,
-            xlength,
-            ylength,
-            interp,
-            stattype,
-            statalg,
-            zscore,
-            maxiter,
-            ..
-        } = self;
-        let region = match region.selection() {
-            Some(SubimageRegion::Text(text)) => history_string(text),
-            _ => region.history(),
-        };
-        let grid = grid
-            .0
-            .iter()
-            .map(i64::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        let anchor = &anchor.history;
-        let xlength = xlength.history();
-        let ylength = ylength.history();
-        let outfile = history_string(outfile);
-        let mask = history_string(mask);
-        let interp = history_string(interp);
-        let stattype = history_string(stattype);
-        let statalg = history_string(statalg);
-        format!(
-            "ia.deviation(outfile={outfile}, region={region}, mask={mask}, overwrite={overwrite}, stretch={stretch}, grid=[{grid}], anchor={anchor}, xlength={xlength}, ylength={ylength}, interp={interp}, stattype={stattype}, statalg={statalg}, zscore={zscore:.6}, maxiter={maxiter})"
-        )
-    }
-}
-
 #[pymethods]
 impl PyImageTool {
     /// Create an image of local statistics sampled across each direction plane.
@@ -360,39 +202,79 @@ impl PyImageTool {
         maxiter: i64,
     ) -> PyResult<Py<Self>> {
         let mask = mask_argument(mask)?;
-        let output = py.detach(|| {
+        let output = py.detach(|| -> PyResult<_> {
             let state = self.state();
             let Some(attachment) = state.image.as_ref() else {
                 return Ok(None);
             };
-            let request = Request {
-                outfile,
-                region,
-                mask,
-                overwrite,
+            let grid_arr: [i64; 2] = grid
+                .0
+                .as_slice()
+                .try_into()
+                .map_err(|_| raised("grid must have exactly two positive integer values"))?;
+            if grid_arr.iter().any(|&entry| entry <= 0) {
+                return Err(raised("Both grid value(s) must be positive"));
+            }
+            let interpolation = match interp.to_ascii_lowercase().as_bytes().first() {
+                Some(b'c') => RegridMethod::Cubic,
+                Some(b'l') => RegridMethod::Linear,
+                Some(b'n') => RegridMethod::Nearest,
+                _ => {
+                    return Err(raised(format!(
+                        "Interpolation algorithm {interp} is not supported."
+                    )));
+                }
+            };
+            let options = DeviationOptions {
+                region: region.selection(),
+                mask: Some(&mask),
                 stretch,
-                grid,
-                anchor,
-                xlength,
-                ylength,
-                interp,
-                stattype,
-                statalg,
+                destination: (!outfile.is_empty()).then(|| Path::new(outfile)),
+                grid: grid_arr.map(|entry| entry as usize),
+                anchor: anchor.selection.as_ref().copied().map_err(raised)?,
+                x_length: xlength.parse("xlength")?,
+                y_length: (!ylength.is_empty())
+                    .then(|| ylength.parse("ylength"))
+                    .transpose()?,
+                interpolation,
+                statistic: stattype,
+                algorithm: statalg,
                 zscore,
                 maxiter,
-                history: state.history,
             };
-            let mut live_coordinates = None;
-            let mut product = publish_image(outfile, overwrite, |path| {
-                let staged =
-                    read_locked(attachment, |source| request.build(attachment, source, path))?;
-                live_coordinates = AttachedImage::capture_live_coordinates(&staged)?;
-                Ok(staged)
-            })?;
-            if let Some((record, system)) = live_coordinates {
-                product.keep_live_coordinates(record, system);
-            }
-            Ok::<_, PyErr>(Some(product))
+            let history_command = state.history.then(|| {
+                let region_hist = match region.selection() {
+                    Some(SubimageRegion::Text(text)) => history_string(text),
+                    _ => region.history(),
+                };
+                let grid_str = grid
+                    .0
+                    .iter()
+                    .map(i64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(
+                    "ia.deviation(outfile={}, region={region_hist}, mask={}, overwrite={overwrite}, stretch={stretch}, grid=[{grid_str}], anchor={}, xlength={}, ylength={}, interp={}, stattype={}, statalg={}, zscore={zscore:.6}, maxiter={maxiter})",
+                    history_string(outfile),
+                    history_string(&mask),
+                    anchor.history,
+                    xlength.history(),
+                    ylength.history(),
+                    history_string(interp),
+                    history_string(stattype),
+                    history_string(statalg),
+                )
+            });
+            deviation_image(
+                attachment,
+                outfile,
+                overwrite,
+                options,
+                history_command,
+                external_open_check(),
+            )
+            .map(Some)
+            .map_err(raised)
         })?;
         Py::new(py, output.map_or_else(Self::new, Self::attached))
     }

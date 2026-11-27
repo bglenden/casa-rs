@@ -4,7 +4,7 @@ use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType, SpectralCoor
 use casa_core::measures::MeasFrame;
 use casa_core::measures::doppler::{DopplerRef, MDoppler};
 use casa_core::quanta::{Dimension, Quantity, Unit, UnitDim, casacore};
-use casa_core::{RecordValue, ScalarValue, Value};
+use casa_core::{RecordValue, Value};
 use numpy::{PyArrayDescrMethods, PyReadonlyArrayDyn, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyRuntimeError, PySystemError};
 use pyo3::prelude::*;
@@ -154,36 +154,7 @@ pub(in crate::tools) fn stored_velocity_settings(
     record: Option<&RecordValue>,
     spectral: &SpectralCoordinate,
 ) -> PyResult<(Unit, DopplerRef)> {
-    let mut convention = spectral.velocity_convention();
-    let stored_unit = if let Some(record) = record {
-        if record.get("velType").is_none() {
-            let legacy_code = match record.get("prefVelType") {
-                Some(Value::Scalar(ScalarValue::Int32(code))) => Some(*code),
-                Some(Value::Scalar(ScalarValue::Int64(code))) => i32::try_from(*code).ok(),
-                _ => None,
-            };
-            if let Some(legacy) = legacy_code.and_then(DopplerRef::from_casacore_code) {
-                convention = legacy;
-            }
-        }
-        match record.get("velUnit").or_else(|| record.get("prefVelUnit")) {
-            Some(Value::Scalar(ScalarValue::String(unit))) if !unit.is_empty() => unit.as_str(),
-            _ => "km/s",
-        }
-    } else {
-        "km/s"
-    };
-    let stored = casacore::casacore_unit(stored_unit).map_err(raised)?;
-    let speed = UnitDim::basis(Dimension::Length) / UnitDim::basis(Dimension::Time);
-    if stored.val().dim == speed {
-        Ok((stored, convention))
-    } else {
-        // Restoring an incompatible unit leaves both defaults.
-        Ok((
-            Unit::new("km/s").expect("standard speed unit"),
-            DopplerRef::RADIO,
-        ))
-    }
+    casa_imageanalysis::tool::coords::stored_velocity_settings(record, spectral).map_err(raised)
 }
 
 impl VelocityConversion {

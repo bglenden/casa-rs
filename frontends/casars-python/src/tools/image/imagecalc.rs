@@ -5,22 +5,19 @@ use std::path::{Path, PathBuf};
 use casa_coordinates::{CoordinateSystem, CoordinateType, StokesCoordinate, StokesType};
 use casa_core::{Complex32, RecordValue};
 use casa_imageanalysis::analysis::{
-    ImageToolExpressionInputs, ImageToolPixelExpression, ensure_outfile_does_not_alias_input,
-    materialize_image_tool_expression,
+    ImageToolExpressionInputs, ImageToolPixelExpression, materialize_image_tool_expression,
 };
+use casa_imageanalysis::tool::attachment::ensure_outfile_does_not_alias_input;
+use casa_imageanalysis::tool::beams::{image_info, image_info_record};
+use casa_imageanalysis::tool::concatenate::virtual_image;
+use casa_imageanalysis::tool::saved_expression::{self, StagedOutput, check_expression_geometry};
 use casa_images::{ImageExprValue, ImageExpression, ImageInfo, ImagePixelType, TempImage};
 use pyo3::prelude::*;
 
 use super::PyImageTool;
 use super::attachment::AttachedImage;
-use super::beams::{image_info, image_info_record};
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
-use super::saved_expression::{self, StagedOutput};
-
-fn no_coordinates() -> PyErr {
-    raised("Exception: Images in expression have no coordinates.")
-}
 
 fn storage_from_expression<T: ImageExprValue>(
     expression: ImageExpression<T>,
@@ -55,7 +52,7 @@ impl Metadata {
             )));
         }
         if casa_images::expr_file::is_image_expr(path) {
-            let source = super::saved_expression::open(path)?;
+            let source = saved_expression::open(path).map_err(raised)?;
             return Self::from_image(&source.lock());
         }
         Self::from_image(&ImageHandle::open(path).map_err(raised)?)
@@ -64,12 +61,14 @@ impl Metadata {
     fn read_staged(name: &Path, output: &StagedOutput<'_>) -> PyResult<Self> {
         let entry = casa_tables::lexical_absolute(name);
         let referent = name.canonicalize().map_err(raised)?;
-        saved_expression::check_output_dependencies(output.target, &[entry, referent], false)?;
+        saved_expression::check_output_dependencies(output.target, &[entry, referent], false)
+            .map_err(raised)?;
         let image = if casa_images::is_image_concat(name) {
-            super::concatenate::virtual_image::open_metadata(name, output)?
+            virtual_image::open_metadata(name, output)
         } else {
-            saved_expression::open_metadata(name, output)?
-        };
+            saved_expression::open_metadata(name, output)
+        }
+        .map_err(raised)?;
         Self::from_image(&image)
     }
 
@@ -108,7 +107,7 @@ impl Metadata {
         if let Some(coordinates) = self.coordinates {
             let system = CoordinateSystem::from_record(&coordinates).map_err(raised)?;
             if system.n_pixel_axes() == image.shape().len() {
-                image.set_coordinate_record(coordinates)?;
+                image.set_coordinate_record(coordinates).map_err(raised)?;
             }
         }
         with_pixels!(image, storage => with_storage!(storage, image => {
@@ -123,8 +122,6 @@ fn calls_function(expression: &str, function: &str) -> bool {
     let mut chars = expression.char_indices().peekable();
     while let Some((start, ch)) = chars.next() {
         if matches!(ch, '\'' | '"') {
-            // Quoted paths are single image-reference tokens. The expression
-            // parser treats the opposite quote literally and has no escapes.
             for (_, next) in chars.by_ref() {
                 if next == ch {
                     break;
@@ -158,7 +155,9 @@ fn apply_expression_metadata(image: &mut ImageHandle, expression: &str) -> PyRes
             "Failed AlwaysAssert which < nCoordinates() && newCoordinate.nPixelAxes() == coordinates_p[which]->nPixelAxes() && newCoordinate.nWorldAxes() == coordinates_p[which]->nWorldAxes()"
         ))?;
         system.replace_coordinate(index, StokesCoordinate::new(vec![StokesType::Pangle]));
-        image.set_coordinate_record(system.to_record())?;
+        image
+            .set_coordinate_record(system.to_record())
+            .map_err(raised)?;
         "deg"
     } else {
         return Ok(());
@@ -186,35 +185,6 @@ fn path_identity(path: &Path) -> Option<PathBuf> {
     })
 }
 
-pub(super) fn check_geometry(
-    expression: &ImageToolPixelExpression,
-    has_sources: bool,
-) -> PyResult<()> {
-    let (shape, has_coordinates) = match expression {
-        ImageToolPixelExpression::Real(expression) => (
-            expression.shape(),
-            expression.coordinates().n_pixel_axes() > 0,
-        ),
-        ImageToolPixelExpression::Complex(expression) => (
-            expression.shape(),
-            expression.coordinates().n_pixel_axes() > 0,
-        ),
-        ImageToolPixelExpression::Boolean(shape) => {
-            return Err(if shape.is_empty() || !has_sources {
-                no_coordinates()
-            } else {
-                raised(
-                    "LatticeExpr::constructor - Bool expression cannot be converted to a numeric type",
-                )
-            });
-        }
-    };
-    if shape.is_empty() || !has_coordinates {
-        return Err(no_coordinates());
-    }
-    Ok(())
-}
-
 #[pymethods]
 impl PyImageTool {
     #[pyo3(signature = (outfile="", pixels="", overwrite=false, imagemd="", prec="float"), text_signature = "($self, outfile='', pixels='', overwrite=False, imagemd='', prec='float')")]
@@ -240,9 +210,10 @@ impl PyImageTool {
             let has_sources = inputs.paths().next().is_some();
             let uses_bound_sources = saved_expression::has_manifest_operands(&inputs);
             let (expression, retained, paths) = if uses_bound_sources {
-                saved_expression::compile_inline(&inputs, outfile.is_empty())?
+                saved_expression::compile_inline(&inputs, outfile.is_empty()).map_err(raised)?
             } else {
-                let retained = AttachedImage::open_expression_inputs(inputs.paths())?;
+                let retained =
+                    AttachedImage::open_expression_inputs(inputs.paths()).map_err(raised)?;
                 let expression = if outfile.is_empty() { inputs.compile_lazy() } else { inputs.compile() }
                     .map_err(raised)?;
                 (expression, retained, inputs.paths().map(Path::to_path_buf).collect())
@@ -250,7 +221,7 @@ impl PyImageTool {
             if !outfile.is_empty() && !overwrite && Path::new(outfile).symlink_metadata().is_ok() {
                 return Err(raised(format!("Exception: File {outfile} exists, and the user does not want to remove it..")));
             }
-            check_geometry(&expression, has_sources)?;
+            check_expression_geometry(&expression, has_sources).map_err(raised)?;
             if !outfile.is_empty() {
                 let output = Path::new(outfile);
                 let overlap_error = || raised(
@@ -295,7 +266,7 @@ impl PyImageTool {
                     ImageToolPixelExpression::Boolean(_) => unreachable!("numeric expression checked"),
                 };
                 if staged_metadata {
-                    let staged = StagedOutput::new(output_path, path.expect("named staged image"))?;
+                    let staged = StagedOutput::new(output_path, path.expect("named staged image")).map_err(raised)?;
                     Metadata::read_staged(metadata_path, &staged)?.apply(&mut output)?;
                 } else if let Some(metadata) = metadata {
                     metadata.apply(&mut output)?;
@@ -305,7 +276,7 @@ impl PyImageTool {
                     let [outfile, pixels, imagemd] = [outfile, pixels, imagemd].map(|value| if value.len() > 300 { "..." } else { value });
                     output.record_history("imagecalc", format!(
                         "ia.imagecalc(outfile=\"{outfile}\", pixels=\"{pixels}\", overwrite={overwrite}, imagemd=\"{imagemd}\")"
-                    ))?;
+                    )).map_err(raised)?;
                 }
                 output.save().map_err(raised)?;
                 Ok(output)

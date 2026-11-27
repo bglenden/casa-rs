@@ -435,7 +435,9 @@ impl Chunk {
         expression: Option<ArrayD<bool>>,
     ) -> PyResult<CasaValue> {
         if let Some(fits) = image.fits() {
-            let pixels = fits.read(&self.start, &self.size, &self.stride)?;
+            let pixels = fits
+                .read(&self.start, &self.size, &self.stride)
+                .map_err(raised)?;
             let mask = (request.getmask || !request.axes.is_empty())
                 .then(|| pixels.mapv(|value| !value.is_nan()));
             return self.format(
@@ -508,7 +510,7 @@ impl PyImageTool {
                 return Ok(CasaValue::Bools { shape: vec![0], values: Vec::new() });
             };
             let mut image = attachment.lock();
-            attachment.require_pixel_read_lock(&mut image)?;
+            attachment.require_pixel_read_lock(&mut image).map_err(raised)?;
             let shape = image.shape();
             if image.coordinates().n_pixel_axes() != shape.len() {
                 return Err(raised("LCSlicer::makeComplete - referencePixel and newLatticeShape vectors do not have same length"));
@@ -516,7 +518,7 @@ impl PyImageTool {
             let chunk = Chunk::read(shape, &blc.map_or_else(Vec::new, |arg| arg.0), &trc.map_or_else(Vec::new, |arg| arg.0), &inc.map_or_else(Vec::new, |arg| arg.0))?;
             let collapse = collapse_axes(axes.as_ref().map_or(&[], |axes| axes.0.as_slice()), shape.len())?;
             let value = chunk.read_from(&image, &ChunkRead { axes: &collapse, dropdeg, getmask }, None)?;
-            attachment.release_requested_lock(&mut image)?;
+            attachment.release_requested_lock(&mut image).map_err(raised)?;
             Ok(value)
         })?;
         value.into_python(py)
@@ -549,7 +551,7 @@ impl PyImageTool {
             if image.fits().is_some() {
                 return Err(raised("FITSImage::putSlice - is not possible as FITSImage is not writable"));
             }
-            attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
+            attachment.require_lock(&mut image, casa_tables::LockType::Write).map_err(raised)?;
             match &mut *image {
                 ImageHandle::Float(storage) => chunk.put(storage, pixels.f32())?,
                 ImageHandle::Double(storage) => chunk.put(storage, pixels.f64())?,
@@ -557,17 +559,17 @@ impl PyImageTool {
                 ImageHandle::DComplex(storage) => chunk.put(storage, pixels.c64())?,
             }
             if locking && cfg!(unix) {
-                image.unlock_storage()?;
+                image.unlock_storage().map_err(raised)?;
             } else {
                 image.save().map_err(raised)?;
-                attachment.release_requested_lock(&mut image)?;
+                attachment.release_requested_lock(&mut image).map_err(raised)?;
             }
             if history {
                 let command = format!(
                     "ia.putchunk(pixels={}, blc={}, inc={}, list={list}, locking={locking}, replicate={replicate})",
                     pixels.history(), format!("{blc:?}").replace(' ', ""), format!("{inc:?}").replace(' ', "")
                 );
-                image.record_history("putchunk", command)?;
+                image.record_history("putchunk", command).map_err(raised)?;
             }
             Ok(true)
         })

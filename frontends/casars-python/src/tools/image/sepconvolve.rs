@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+//! Thin PyO3 `ia.sepconvolve` wrapper delegating to [`casa_imageanalysis::tool::ops_transform::sepconvolve_image`].
+
 use std::path::Path;
 
-use casa_coordinates::CoordinateType;
-use casa_core::{RecordValue, quanta::Quantity};
-use casa_imageanalysis::analysis::{
-    ImageSepConvolution, SepConvolutionOptions, SubimageRegion, ensure_artifacts_do_not_overlap,
-    ensure_outfile_does_not_alias_input,
-};
-use casa_images::{ImageInterface, image_history_rows};
+use casa_core::quanta::Quantity;
+use casa_imageanalysis::analysis::SepConvolutionOptions;
+use casa_imageanalysis::tool::ops_transform::sepconvolve_image;
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyString, PyTuple};
@@ -16,11 +14,7 @@ use pyo3::types::{PyList, PyString, PyTuple};
 use crate::convert::{IntList, Variant, read_quantity};
 
 use super::PyImageTool;
-use super::attachment::read_locked;
-use super::beam_view::BeamView;
-use super::beams::subset_beam_record;
-use super::create::publish_image;
-use super::handle::{ImageHandle, Storage, raised, with_storage};
+use super::handle::{external_open_check, raised};
 use super::records::{numeric_axis_vector, string_vector};
 use super::subimage::{RegionArgument, mask_argument, require_bool};
 
@@ -120,8 +114,6 @@ fn width_text(text: &str) -> PyResult<Quantity> {
     if text.is_empty() {
         return Ok(Quantity::dimensionless(0.0));
     }
-    // A string-vector entry contains one quantity. CASA consumes its first
-    // numeric value and attached unit even if another quantity follows it.
     let context = " in converting convolution width";
     if let Some((first, rest)) = text.split_once(|c: char| c.is_whitespace() || c == ',')
         && rest
@@ -133,56 +125,6 @@ fn width_text(text: &str) -> PyResult<Quantity> {
         return Ok(quantity);
     }
     read_quantity(text, context).map_err(raised)
-}
-
-fn make_product(
-    image: &dyn ImageInterface<f32>,
-    record: RecordValue,
-    beams: &BeamView,
-    options: SepConvolutionOptions<'_>,
-    stage: Option<&Path>,
-) -> PyResult<ImageHandle> {
-    let mut plan =
-        ImageSepConvolution::new(image, record, beams.record(), options).map_err(raised)?;
-    let mut output = Storage::create(
-        plan.section.shape.clone(),
-        plan.section.coordinates.clone(),
-        stage,
-        None,
-    )
-    .map_err(raised)?;
-    with_storage!(&mut output, product => plan.copy_to(image, product.as_mut())).map_err(raised)?;
-    let mut info = plan.section.image_info().to_record();
-    let beam_set = beams.beam_set().map_err(raised)?;
-    if beam_set.is_multi() {
-        let channels = plan.section.beam_planes(
-            image.find_axis(CoordinateType::Spectral),
-            beam_set.n_channels(),
-        );
-        let polarizations = plan
-            .section
-            .beam_planes(image.find_axis(CoordinateType::Stokes), beam_set.n_stokes());
-        subset_beam_record(
-            &mut info,
-            Some(beams.record()),
-            &beam_set,
-            &channels,
-            &polarizations,
-        )
-        .map_err(raised)?;
-    } else {
-        beams.apply_to(&mut info);
-    }
-    with_storage!(&mut output, product => product.set_image_info_record(info)).map_err(raised)?;
-    if let Some(record) = plan.section.coordinate_record.take() {
-        match &mut output {
-            Storage::Paged(image) => image.set_coordinate_record(record).map_err(raised)?,
-            Storage::Temp {
-                record: current, ..
-            } => *current = record,
-        }
-    }
-    Ok(ImageHandle::Float(output))
 }
 
 #[pymethods]
@@ -209,53 +151,49 @@ impl PyImageTool {
         }
         let widths = parse_widths(widths);
         let mask = mask_argument(mask);
-        let attachment = py.detach(|| {
+        let attachment = py.detach(|| -> PyResult<_> {
             let state = self.state();
-            let input = state.image.as_ref().ok_or_else(|| raised("Unable to create image"))?;
+            let input = state
+                .image
+                .as_ref()
+                .ok_or_else(|| raised("Unable to create image"))?;
             let mask = mask?;
             let (widths, widths_history) = widths?;
             let Some(widths) = widths else {
-                input.lock().check_single_precision("sepconvolve")?;
+                input
+                    .lock()
+                    .check_single_precision("sepconvolve")
+                    .map_err(raised)?;
                 return Ok(None);
             };
             let destination = (!outfile.is_empty()).then(|| Path::new(outfile));
             let options = SepConvolutionOptions {
-                axes: &axes.0, types: &types, widths: &widths, scale,
-                region: region.selection(), mask: (!mask.is_empty()).then_some(mask.as_str()),
-                stretch, destination,
+                axes: &axes.0,
+                types: &types,
+                widths: &widths,
+                scale,
+                region: region.selection(),
+                mask: (!mask.is_empty()).then_some(mask.as_str()),
+                stretch,
+                destination,
             };
-            publish_image(outfile, overwrite, |stage| read_locked(input, |handle| {
-                handle.check_single_precision("sepconvolve")?;
-                let ImageHandle::Float(source) = handle else {
-                    return Err(raised("Exception: image cannot be NULL."));
-                };
-                if let Some(destination) = destination {
-                    for source in handle.path().into_iter().chain(input.operand_paths().iter().map(|path| path.as_path())) {
-                        ensure_outfile_does_not_alias_input(destination, source).map_err(raised)?;
-                    }
-                    if let Some(region) = options.region.and_then(SubimageRegion::external_path) {
-                        ensure_artifacts_do_not_overlap(destination, region).map_err(raised)?;
-                    }
-                }
-                let mut output = source.with_float_view(|image| {
-                    make_product(image, handle.coordinate_record(), &input.beam_view(), options, stage)
-                })?;
-                let history = match source {
-                    Storage::Paged(image) => image_history_rows(image.name().expect("native image path")).map_err(raised)?,
-                    Storage::Temp { image, .. } => image.history_rows().map_err(raised)?.into_owned(),
-                };
-                let ImageHandle::Float(product) = &mut output else { unreachable!() };
-                with_storage!(product, image => image.append_history_entries(&history)).map_err(raised)?;
-                if state.history {
-                    let region = region.history();
-                    output.record_history("sepconvolve", format!(
-                        "ia.sepconvolve(outfile={outfile:?}, axes={:?}, types={:?}, widths={widths_history}, scale={scale}, region={region}, mask={mask:?}, overwrite={overwrite}, stretch={stretch})",
-                        axes.0, types,
-                    ))?;
-                }
-                output.save().map_err(raised)?;
-                Ok(output)
-            })).map(Some)
+            let history_command = state.history.then(|| {
+                let region_hist = region.history();
+                format!(
+                    "ia.sepconvolve(outfile={outfile:?}, axes={:?}, types={:?}, widths={widths_history}, scale={scale}, region={region_hist}, mask={mask:?}, overwrite={overwrite}, stretch={stretch})",
+                    axes.0, types,
+                )
+            });
+            sepconvolve_image(
+                input,
+                outfile,
+                overwrite,
+                options,
+                history_command,
+                external_open_check(),
+            )
+            .map(Some)
+            .map_err(raised)
         })?;
         Py::new(py, attachment.map_or_else(Self::new, Self::attached))
     }

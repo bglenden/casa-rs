@@ -1,27 +1,19 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+//! Thin PyO3 `ia.pv` wrapper and `casa_contracts` ParameterValue shim delegating to [`casa_imageanalysis::tool::ops_spatial::pv_image`].
+
 use std::path::Path;
 
 use casa_contracts::ParameterValue;
-use casa_imageanalysis::{
-    ImpvRequest, PvAmount, PvPosition,
-    analysis::{
-        SubimageRegion, ensure_artifacts_do_not_overlap, ensure_outfile_does_not_alias_input,
-        generate_image_pv,
-    },
-};
-use casa_images::image_history_rows;
+use casa_imageanalysis::tool::ops_spatial::pv_image;
+use casa_imageanalysis::{ImpvRequest, PvAmount, PvPosition};
 use pyo3::prelude::*;
 
 use crate::convert::{IntList, Variant};
 use crate::parameters::parameter_value;
-use crate::tools::{LogLine, emit};
 
 use super::PyImageTool;
-use super::attachment::{AttachedImage, read_locked};
-use super::beams::subset_beam_record;
-use super::create::publish_image;
-use super::handle::{ImageHandle, Storage, raised};
+use super::handle::{emit_tool_logs, external_open_check, raised};
 use super::subimage::{RegionArgument, require_bool};
 
 #[pymethods]
@@ -107,113 +99,27 @@ impl PyImageTool {
             length_text = length_text?,
             pa_text = pa_text?,
         );
-        let region = region.selection();
-        let output = py.detach(|| {
+        let region_sel = region.selection();
+        let (output, logs) = py.detach(|| -> PyResult<_> {
             let state = self.state();
             let Some(input) = &state.image else {
-                return Ok(None);
+                return Ok((None, Vec::new()));
             };
-            let result = publish_image(outfile.trim(), overwrite, |path| {
-                build(
-                    input,
-                    path,
-                    region,
-                    &request,
-                    state.history.then_some(history),
-                )
-            })?;
-            Ok::<_, PyErr>(wantreturn.then_some(result))
+            pv_image(
+                input,
+                &request,
+                region_sel,
+                outfile,
+                overwrite,
+                wantreturn,
+                state.history.then_some(history),
+                external_open_check(),
+            )
+            .map_err(raised)
         })?;
-        if !wantreturn && outfile.trim().is_empty() {
-            emit(
-                py,
-                "casars.tools.image",
-                &[LogLine::warning(
-                    "outfile was not specified and wantreturn is false. The resulting image will be inaccessible",
-                )],
-            )?;
-        }
+        emit_tool_logs(py, &logs)?;
         Py::new(py, output.map_or_else(Self::new, Self::attached))
     }
-}
-
-fn build(
-    input: &AttachedImage,
-    stage: Option<&Path>,
-    region: Option<SubimageRegion<'_>>,
-    request: &ImpvRequest,
-    history: Option<String>,
-) -> PyResult<ImageHandle> {
-    read_locked(input, |handle| {
-        let ImageHandle::Float(storage) = handle else {
-            return Err(raised("This method only supports Float valued images"));
-        };
-        if stage.is_some() {
-            for source in handle
-                .path()
-                .into_iter()
-                .chain(input.operand_paths().iter().map(|path| path.as_path()))
-            {
-                ensure_outfile_does_not_alias_input(&request.outfile, source).map_err(raised)?;
-            }
-            if let Some(region) = region.and_then(SubimageRegion::external_path) {
-                ensure_artifacts_do_not_overlap(&request.outfile, region).map_err(raised)?;
-            }
-        }
-        let view = input.beam_view();
-        let mut result = storage.with_float_view(|image| {
-            let mut beams = image.image_info().map_err(raised)?.to_record();
-            view.apply_to(&mut beams);
-            generate_image_pv(image, handle.coordinate_record(), &beams, request, region)
-                .map_err(raised)
-        })?;
-        let source_beams = view.beam_set().map_err(raised)?;
-        let mut info = result.image.image_info().map_err(raised)?.to_record();
-        if source_beams.is_multi() {
-            let [channels, polarizations] = &result.beam_planes;
-            subset_beam_record(
-                &mut info,
-                Some(view.record()),
-                &source_beams,
-                channels,
-                polarizations,
-            )
-            .map_err(raised)?;
-        } else {
-            view.apply_to(&mut info);
-        }
-        result.image.set_image_info_record(info).map_err(raised)?;
-        let entries = match storage {
-            Storage::Paged(image) => {
-                image_history_rows(image.name().expect("persistent image")).map_err(raised)?
-            }
-            Storage::Temp { image, .. } => image.history_rows().map_err(raised)?.into_owned(),
-        };
-        result
-            .image
-            .append_history_entries(&entries)
-            .map_err(raised)?;
-        if let Some(line) = history {
-            result
-                .image
-                .append_history_at("image::pv", &["Ran ia.pv".into(), line])
-                .map_err(raised)?;
-        }
-        let record = result.coordinate_record;
-        let output = if let Some(path) = stage {
-            let mut image = result.image.save_as(path).map_err(raised)?;
-            image.set_coordinate_record(record).map_err(raised)?;
-            image.save().map_err(raised)?;
-            Storage::Paged(Box::new(image))
-        } else {
-            Storage::Temp {
-                image: Box::new(result.image),
-                fits: None,
-                record,
-            }
-        };
-        Ok(ImageHandle::Float(output))
-    })
 }
 
 fn position(value: Option<&Bound<'_, PyAny>>, name: &str) -> PyResult<Option<PvPosition>> {

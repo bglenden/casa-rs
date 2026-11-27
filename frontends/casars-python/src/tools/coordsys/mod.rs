@@ -4,13 +4,11 @@
 
 mod axis_labels;
 mod construction;
-pub(super) use construction::{append_coordinate, validate_coordinate_indices};
 mod conversion_frames;
 pub(super) use conversion_frames::profile_frequency_frame;
 mod convert_direction;
 mod direction_edit;
 mod doppler;
-pub(super) use doppler::stored_velocity_settings;
 mod frame_metadata;
 mod inspect;
 mod linear_transform;
@@ -38,11 +36,12 @@ pub(super) use transform_single::{WorldArgument, image_pixel_argument};
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use casa_coordinates::{CoordinateModel, CoordinateSystem, ObsInfo, defaults};
-use casa_core::measures::direction::{DirectionRef, MDirection};
-use casa_core::measures::{EpochRef, MEpoch, MPosition};
-use casa_core::measures::{direction_to_record, epoch_to_record, position_to_record};
-use casa_core::{RecordField, RecordValue, ScalarValue, Value};
+use casa_coordinates::{CoordinateModel, CoordinateSystem, ObsInfo};
+use casa_core::measures::{EpochRef, MEpoch};
+use casa_core::{RecordValue, ScalarValue, Value};
+pub(crate) use casa_imageanalysis::tool::coords::{
+    default_image_obs_info, default_spectral_conversion,
+};
 use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 
@@ -70,39 +69,6 @@ struct CoordinateState {
     coordinates: CoordinateSystem,
     record: RecordValue,
     parent_name: String,
-}
-
-pub(crate) fn default_image_obs_info() -> ObsInfo {
-    // ITRF position of ALMA from the casacore Observatories table.
-    let (sin_lon, cos_lon) = (-1.182_546_595_504_989_2_f64).sin_cos();
-    let (sin_lat, cos_lat) = (-0.399_414_986_926_273_8_f64).sin_cos();
-    let radius = 6_379_946.013_264_43_f64;
-    defaults::obs_info().with_telescope_position(MPosition::new_itrf(
-        cos_lon * cos_lat * radius,
-        sin_lon * cos_lat * radius,
-        sin_lat * radius,
-    ))
-}
-
-pub(crate) fn default_spectral_conversion() -> RecordValue {
-    // LAST is casacore's placeholder for an unset conversion frame.
-    let epoch = epoch_to_record(&MEpoch::from_mjd(0.0, EpochRef::LAST));
-    RecordValue::new(vec![
-        RecordField::new("epoch", Value::Record(epoch)),
-        RecordField::new(
-            "direction",
-            Value::Record(direction_to_record(&MDirection::from_angles(
-                0.0,
-                std::f64::consts::FRAC_PI_2,
-                DirectionRef::J2000,
-            ))),
-        ),
-        RecordField::new(
-            "position",
-            Value::Record(position_to_record(&MPosition::new_itrf(0.0, 0.0, 0.0))),
-        ),
-        RecordField::new("system", Value::Scalar(ScalarValue::String("LSRK".into()))),
-    ])
 }
 
 fn current_epoch(mut info: ObsInfo) -> ObsInfo {

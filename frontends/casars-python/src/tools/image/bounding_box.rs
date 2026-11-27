@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+//! Thin PyO3 `ia.boundingbox` wrapper delegating to [`casa_imageanalysis::tool::ops_fit::bounding_box`].
+
 use casa_imageanalysis::analysis::ImageRegionBounds;
+use casa_imageanalysis::tool::ops_fit::bounding_box;
 use pyo3::prelude::*;
 
 use crate::convert::value::CasaValue;
 
 use super::PyImageTool;
-use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
+use super::handle::raised;
 use super::subimage::Region;
 
 fn into_record(bounds: ImageRegionBounds) -> CasaValue {
@@ -41,35 +44,15 @@ impl PyImageTool {
         region: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         let selection = Region::capture(py, region);
-        let result = py.detach(|| {
+        let result = py.detach(|| -> PyResult<_> {
             let state = self.state();
             let Some(attachment) = state.image.as_ref() else {
                 return Ok(CasaValue::empty_record());
             };
-            let image = attachment.lock();
-            let unsupported_precision = match &*image {
-                ImageHandle::Double(_) => Some("double"),
-                ImageHandle::DComplex(_) => Some("complex<double>"),
-                _ => None,
-            };
-            if let Some(precision) = unsupported_precision {
-                return Err(raised(format!(
-                    "boundingbox does not support images with {precision} precision pixel values"
-                )));
-            }
             let selection = selection?;
-            let region = selection.as_ref().map(Region::as_region);
-            let bounds = match &*image {
-                ImageHandle::Float(Storage::Temp {
-                    image,
-                    fits: Some(fits),
-                    ..
-                }) => ImageRegionBounds::resolve(&fits.image_view(image), region),
-                handle => with_pixels!(handle, storage => with_storage!(
-                    storage, image => ImageRegionBounds::resolve(image.as_ref(), region)
-                )),
-            };
-            bounds.map(into_record).map_err(raised)
+            let bounds = bounding_box(attachment, selection.as_ref().map(Region::as_region))
+                .map_err(raised)?;
+            Ok(into_record(bounds))
         })?;
         result.into_python(py)
     }

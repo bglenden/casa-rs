@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+//! Thin PyO3 `ia.fitsheader` wrapper delegating to [`casa_imageanalysis::tool::fits`].
+
 use casa_core::{ArrayValue, RecordValue, Value};
-use casa_imageanalysis::analysis::image_fits_header_with_beams;
-use casa_images::image_history_entries;
+use casa_imageanalysis::tool::fits::{FitsHeaderOutput, fits_header};
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyString};
@@ -10,7 +11,7 @@ use pyo3::types::{PyList, PyString};
 use crate::convert::value::CasaValue;
 
 use super::PyImageTool;
-use super::handle::{ImageHandle, Storage, raised, with_storage};
+use super::handle::raised;
 
 fn header_record(record: &RecordValue) -> CasaValue {
     CasaValue::record(record.fields().iter().map(|field| match &field.value {
@@ -57,7 +58,7 @@ impl PyImageTool {
         exclude: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         let exclude = exclusions(exclude)?;
-        py.detach(|| {
+        py.detach(|| -> PyResult<CasaValue> {
             let state = self.state();
             let Some(attachment) = state.image.as_ref() else {
                 return Ok(if retstr {
@@ -66,43 +67,10 @@ impl PyImageTool {
                     CasaValue::empty_record()
                 });
             };
-            let handle = attachment.lock();
-            let ImageHandle::Float(storage) = &*handle else {
-                return Err(raised("fitsheader only supports floating point images"));
-            };
-            let name = handle.path().map_or_else(
-                || "Temporary_Image".to_owned(),
-                |path| path.display().to_string(),
-            );
-            let needs_history = retstr || !exclude.iter().any(|name| name == "HISTORY");
-            let history = if needs_history {
-                match storage {
-                    Storage::Paged(_) => {
-                        image_history_entries(handle.path().expect("persistent image"))
-                            .map_err(raised)?
-                    }
-                    Storage::Temp { image, .. } => image
-                        .history_rows()
-                        .map_err(raised)?
-                        .iter()
-                        .map(|row| row.entry.clone())
-                        .collect(),
-                }
-            } else {
-                Vec::new()
-            };
-            let beams = attachment.beam_view();
-            let header = with_storage!(storage, image =>
-                image_fits_header_with_beams(
-                    image.as_ref(), handle.shape(), &name, &history, Some(beams.record())
-                )
-            )
-            .map_err(raised)?;
-            Ok(if retstr {
-                CasaValue::Text(header.card_string())
-            } else {
-                header_record(&header.record(&exclude))
-            })
+            match fits_header(attachment, retstr, &exclude).map_err(raised)? {
+                FitsHeaderOutput::CardString(s) => Ok(CasaValue::Text(s)),
+                FitsHeaderOutput::Record(rec) => Ok(header_record(&rec)),
+            }
         })?
         .into_python(py)
     }

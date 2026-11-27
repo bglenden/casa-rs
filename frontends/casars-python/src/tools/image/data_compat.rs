@@ -14,7 +14,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyComplex, PyDict, PyList};
 
 use super::attachment::{self, AttachedImage};
-use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
+use super::handle::{ImageHandle, raised, with_pixels, with_storage};
 use super::{PyImageTool, pixels::snapshot_array};
 
 impl PyImageTool {
@@ -57,7 +57,8 @@ impl PyImageTool {
                 )));
             }
             let path = std::path::absolute(path).map_err(raised)?;
-            let image = AttachedImage::open_data(&mut attachment::registry(), &path, writable)?;
+            let image = AttachedImage::open_data(&mut attachment::registry(), &path, writable)
+                .map_err(raised)?;
             Ok(Self::attached(image))
         })
     }
@@ -222,7 +223,7 @@ impl PyImageTool {
                 .image
                 .as_ref()
                 .ok_or_else(|| raised("Image is detached"))?;
-            attachment.check_directory()?;
+            attachment.check_directory().map_err(raised)?;
             let mut image = attachment.lock();
             match (&mut *image, data) {
                 (ImageHandle::Float(storage), ArrayValue::Float32(values)) => {

@@ -8,7 +8,6 @@ mod attachment;
 mod beam_deconvolution;
 mod beam_edit;
 mod beam_rotate;
-mod beam_view;
 mod beams;
 mod bounding_box;
 mod calc;
@@ -21,14 +20,12 @@ mod convolve;
 mod convolve2d;
 mod coordinate_conversion;
 mod copy;
-mod copy_region;
 mod create;
 mod crop;
 mod data_compat;
 mod decimate;
 mod decompose;
 mod deconvolve_components;
-mod default_record;
 mod deviation;
 mod fft;
 mod findsources;
@@ -37,7 +34,6 @@ mod fitprofile;
 mod fits_export;
 mod fits_header;
 mod fits_import;
-mod fits_rename;
 mod getprofile;
 mod handle;
 mod histograms;
@@ -49,10 +45,8 @@ mod makecomplex;
 mod mask_expression;
 mod masks;
 mod metadata;
-mod miriad_rename;
 mod modify;
 mod moments;
-mod native_rename;
 mod noise;
 mod pad;
 mod pbcor;
@@ -67,7 +61,6 @@ mod region_read;
 mod regrid;
 mod replace_masked;
 mod rotate;
-mod saved_expression;
 mod sepconvolve;
 mod serialization;
 mod slice;
@@ -76,7 +69,6 @@ mod statistics;
 mod subimage;
 mod summary;
 pub(crate) mod surface;
-mod text_output;
 mod transpose;
 mod two_point;
 
@@ -114,6 +106,10 @@ impl PyImageTool {
                 history: true,
             }),
         }
+    }
+
+    fn attached_handle(handle: handle::ImageHandle) -> Self {
+        Self::attached(AttachedImage::from_handle(handle))
     }
 
     fn state(&self) -> MutexGuard<'_, ImageState> {

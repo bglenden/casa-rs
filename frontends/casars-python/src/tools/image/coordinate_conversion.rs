@@ -9,7 +9,8 @@ use crate::convert::value::CasaValue;
 use crate::tools::coordsys::{PyCoordsys, WorldArgument, image_pixel_argument};
 
 use super::PyImageTool;
-use super::handle::{ImageHandle, Storage, with_storage};
+use super::attachment::coordsys_for;
+use super::handle::{ImageHandle, raised, with_storage};
 use super::point::{pixel_position, pixel_sample};
 
 #[pymethods]
@@ -32,8 +33,10 @@ impl PyImageTool {
                 return Ok(CasaValue::empty_record());
             };
             let image = attachment.lock();
-            image.check_single_precision("coordmeasures")?;
-            let coords = attachment.coordsys(&image)?;
+            image
+                .check_single_precision("coordmeasures")
+                .map_err(raised)?;
+            let coords = coordsys_for(attachment, &image)?;
             let requested = pixel.iter().map(|&axis| axis as i64).collect::<Vec<_>>();
             let result = coords.image_measures(pixel, dframe, sframe)?;
             match &*image {
@@ -126,7 +129,7 @@ impl PyImageTool {
         self.state()
             .image
             .as_ref()
-            .map(|attachment| attachment.coordsys(&attachment.lock()))
+            .map(|attachment| coordsys_for(attachment, &attachment.lock()))
             .transpose()
     }
 }
