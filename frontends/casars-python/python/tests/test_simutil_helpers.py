@@ -22,7 +22,7 @@ from casars import simutil
 from _casa_tools import close
 
 HELPERS = json.loads((Path(__file__).resolve().parent / "data" / "casa_simutil_helpers.json").read_text(encoding="utf-8"))
-INPUTS = Path(__file__).resolve().parents[4] / "crates" / "casa-simulation" / "tests" / "data" / "skymodel_inputs.tar.gz"
+INPUTS = Path(__file__).resolve().parents[4] / "libs/casa" / "casa-simulation" / "tests" / "data" / "skymodel_inputs.tar.gz"
 MESSAGE = "a message with WARNING and ERROR in it"
 
 

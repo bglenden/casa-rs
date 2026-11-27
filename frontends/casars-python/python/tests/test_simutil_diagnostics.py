@@ -10,7 +10,7 @@ import pytest
 from casars.simutil import simutil
 
 
-CONFIGS = Path(__file__).resolve().parents[4] / "crates" / "casa-simulation/tests/data/readantenna"
+CONFIGS = Path(__file__).resolve().parents[4] / "libs/casa" / "casa-simulation/tests/data/readantenna"
 CASES = json.loads((Path(__file__).parent / "data/casa_simutil_diagnostics.json").read_text())["cases"]
 
 

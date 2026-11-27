@@ -165,7 +165,9 @@ pub fn generate_casa_phase_gain(
     refant: &str,
 ) -> Result<PathBuf, String> {
     let python = discover_casa_python().ok_or_else(casa_skip_reason)?;
-    let ms_path = ngc5921_ms_path().ok_or_else(casa_skip_reason)?;
+    let source = ngc5921_ms_path().ok_or_else(casa_skip_reason)?;
+    let ms_path = output_dir.join("ngc5921.ms");
+    copy_measurement_set(&source, &ms_path)?;
     let script = r#"
 import os
 from casatasks import gaincal
