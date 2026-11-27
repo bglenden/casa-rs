@@ -109,7 +109,20 @@ pub(crate) fn check_named_table_output(input: &Table, output: &Path) -> MsResult
 ///
 /// The output would overlap a source table, or a source table or link could not be opened.
 pub fn check_named_output_path(input: &Path, output: &Path) -> MsResult<()> {
-    subtables::check_named_output(input, output)
+    subtables::check_named_output(input, output, None).map(|_| ())
+}
+
+/// Check a result published through `owner`'s `keyword` and choose a staging
+/// directory outside any linked table trees that the writer may copy.
+/// # Errors
+/// The output would replace a source table, or a source table or link could not be opened.
+pub fn named_keyword_output_staging_parent(
+    input: &Path,
+    output: &Path,
+    owner: &Path,
+    keyword: &str,
+) -> MsResult<PathBuf> {
+    subtables::check_named_output(input, output, Some((owner, keyword)))
 }
 
 fn ordered_rows(table: &Table, names: &[&str]) -> MsResult<Vec<usize>> {

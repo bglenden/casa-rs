@@ -2031,6 +2031,15 @@ impl TableImpl {
         &mut self.keywords
     }
 
+    pub(crate) fn replace_keyword_records(
+        &mut self,
+        keywords: RecordValue,
+        column_keywords: HashMap<String, RecordValue>,
+    ) {
+        self.keywords = keywords;
+        self.column_keywords = column_keywords;
+    }
+
     pub(crate) fn column_keywords(&self, column: &str) -> Option<&RecordValue> {
         self.column_keywords.get(column)
     }

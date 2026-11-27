@@ -11990,6 +11990,31 @@ sort together even though they occupy separate positions in the selector.
 casa-rs applies the same view-relative row IDs used by a WHERE predicate
 and returns `[3, 8, 7, 3]` (#1030).
 
+## Legacy MS TaQL can publish a dangling subtable keyword
+
+CASA 6.7.6.14 writes the physical child of `GIVING "parent.ms::RESULT" AS PLAIN`
+or `AS SCRATCH` but assigns the parent keyword to the temporary selection.
+After the tool closes, a reader can open the named child directly but cannot
+open the table named by the parent keyword. Repeating a plain copy onto the
+source MeasurementSet's own keyword can terminate the pinned process. When
+the destination is inside a linked source subtable, the pinned copy attempts
+to copy that directory into itself and can leave a partial output.
+For a concatenated parent, CASA reports success and leaves the named child,
+but the parent drops its newly assigned keyword when it closes.
+
+casa-rs stages the copy outside the source subtable trees and publishes the
+child and the keyword naming that child. The keyword uses casacore's relative
+path encoding so the parent and result can move together. A keyword with an
+incompatible existing type fails before a child is published (#1030).
+Concatenated parents are refused before publication because their descriptor
+has no persisted keyword record.
+
+An unnamed `selecttaqlold('True LIMIT 5')` leaves a transient selection. A
+subsequent `GIVING ".::RESULT"` can abort when CASA tries to create the
+result under the transient view's nonexistent directory. casa-rs reports
+that the view has no persisted directory and preserves the current selection
+(#1030).
+
 ## Duplicate observations can interrupt a subtable-only concatenation
 
 With two identical OBSERVATION rows in the attached MeasurementSet and

@@ -443,7 +443,11 @@ pub(super) fn synchronize_root(root: &mut RootOpen) -> Result<(), Fail> {
                 "Cannot lock table to refresh keywords".into(),
             ));
         }
-        root.table.resync_locked()?;
+        if !root.table.resync_locked()? {
+            // A reference synchronizes its own lock file, while its keywords
+            // come from the parent. A local writer can also retain its lock.
+            root.table.refresh_persisted_keywords()?;
+        }
         if !already_locked {
             root.table.unlock_metadata_only()?;
         }

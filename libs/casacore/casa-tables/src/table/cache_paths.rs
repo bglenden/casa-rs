@@ -273,6 +273,40 @@ impl Table {
         Ok(paths.into_iter().collect())
     }
 
+    /// Visit the descriptor and every persisted table required to open it.
+    /// Relative reference and concatenation paths keep their on-disk meaning.
+    #[doc(hidden)]
+    pub fn visit_layout_paths(
+        path: &Path,
+        mut record: impl FnMut(&Path),
+    ) -> Result<(), TableError> {
+        visit(path, &mut HashSet::new(), 0, true, &mut |path| {
+            record(path);
+            Ok(())
+        })
+    }
+
+    /// Resolve the underlying descriptor that supplies a reference's keywords.
+    /// A non-reference table returns its own canonical path.
+    #[doc(hidden)]
+    pub fn keyword_descriptor_path(path: &Path) -> Result<PathBuf, TableError> {
+        let canonical = |path: &Path| {
+            path.canonicalize()
+                .map_err(|error| TableError::Storage(error.to_string()))
+        };
+        let mut path = canonical(path)?;
+        for _ in 0..64 {
+            let TablePartNames::Reference(parent) = Self::immediate_part_names(&path, &path)?
+            else {
+                return Ok(path);
+            };
+            path = canonical(&parent)?;
+        }
+        Err(TableError::Storage(
+            "table reference chain is too deep".into(),
+        ))
+    }
+
     /// Open a table and refresh the tile cache across its persisted layout.
     ///
     /// The callback runs before reading each path's descriptor so a caller

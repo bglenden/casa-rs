@@ -1403,7 +1403,8 @@ impl<'src> Parser<'src> {
         let mut out = String::new();
         let mut prev_end = match self.lexer.peek_with_span() {
             Some((ref tok, ref span))
-                if matches!(tok, Token::Ident | Token::Slash | Token::Dot) || tok.is_keyword() =>
+                if matches!(tok, Token::Ident | Token::Slash | Token::Dot | Token::Colon)
+                    || tok.is_keyword() =>
             {
                 let end = span.end;
                 let text = self.lexer.slice(span).to_string();
@@ -1431,6 +1432,7 @@ impl<'src> Parser<'src> {
                     | Token::Slash
                     | Token::Dot
                     | Token::Minus
+                    | Token::Colon
             ) || tok.is_keyword();
             if !is_path_part {
                 break;
@@ -1445,7 +1447,9 @@ impl<'src> Parser<'src> {
 
     fn peek_is_table_name(&mut self) -> bool {
         match self.lexer.peek() {
-            Some(Token::Ident | Token::StringLiteral | Token::Slash | Token::Dot) => true,
+            Some(
+                Token::Ident | Token::StringLiteral | Token::Slash | Token::Dot | Token::Colon,
+            ) => true,
             Some(tok) => tok.is_keyword(),
             None => false,
         }
