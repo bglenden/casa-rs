@@ -40,6 +40,8 @@ built from `main`.
   from CASA or casacore, and the CASA behaviours casa-rs follows for parity
 - [Agent reference](agent-reference.md): workstation, CASA/C++ oracle, data
   and storage locations, and release recipes
+- [Release process](release-process.md) for milestone triage and documentation
+  cleanup
 - `adr/`: accepted architecture decisions
 - [MeasurementSet boundary](measurement-set/contracts.md): its rules and
   the obligations for capabilities not yet offered
