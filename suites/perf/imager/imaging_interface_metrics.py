@@ -22,6 +22,19 @@ DEFAULT_PATHS = [
     "libs/casacore/casa-ms/src/spectral_selection.rs",
     "libs/casacore/casa-ms/src/selection.rs",
     "libs/casacore/casa-ms/src/selection/syntax.rs",
+    "libs/casacore/casa-ms/src/visibility_buffer/mod.rs",
+    "libs/casacore/casa-ms/src/visibility_buffer/reads.rs",
+    "libs/casacore/casa-ms/src/visibility_buffer/telemetry.rs",
+    "libs/casacore/casa-ms/src/visibility_buffer/tests.rs",
+    "libs/casacore/casa-ms/src/spectral_selection/mod.rs",
+    "libs/casacore/casa-ms/src/spectral_selection/axis.rs",
+    "libs/casacore/casa-ms/src/spectral_selection/frames.rs",
+    "libs/casacore/casa-ms/src/spectral_selection/contributions.rs",
+    "libs/casacore/casa-ms/src/spectral_selection/tests.rs",
+    "libs/casacore/casa-ms/src/selection/mod.rs",
+    "libs/casacore/casa-ms/src/selection/row_planning.rs",
+    "libs/casacore/casa-ms/src/selection/structured.rs",
+    "libs/casacore/casa-ms/src/selection/tests.rs",
 ]
 
 PUBLIC_RE = re.compile(r"^\s*pub\s+(fn|struct|enum|trait|type|const|static|mod|use)\b")

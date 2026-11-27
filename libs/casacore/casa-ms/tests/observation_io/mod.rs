@@ -4,35 +4,35 @@
 //! read through both adapters into the same batches.
 
 #[cfg(unix)]
-#[path = "observation_io/arrays.rs"]
+#[path = "arrays.rs"]
 mod arrays;
 #[cfg(unix)]
-#[path = "observation_io/channel_order.rs"]
+#[path = "channel_order.rs"]
 mod channel_order;
 #[cfg(unix)]
-#[path = "observation_io/creation.rs"]
+#[path = "creation.rs"]
 mod creation;
-#[path = "common/layouts.rs"]
+#[path = "../common/layouts.rs"]
 mod layouts;
 #[cfg(unix)]
-#[path = "observation_io/metadata.rs"]
+#[path = "metadata.rs"]
 mod metadata;
-#[path = "observation_io/refusals.rs"]
+#[path = "refusals.rs"]
 mod refusals;
 #[cfg(unix)]
-#[path = "observation_io/sources.rs"]
+#[path = "sources.rs"]
 mod sources;
-#[path = "observation_io/split.rs"]
+#[path = "split.rs"]
 mod split;
-#[path = "observation_io/times.rs"]
+#[path = "times.rs"]
 mod times;
-#[path = "observation_io/update.rs"]
+#[path = "update.rs"]
 mod update;
-#[path = "observation_io/weights.rs"]
+#[path = "weights.rs"]
 mod weights;
-#[path = "observation_io/work.rs"]
+#[path = "work.rs"]
 mod work;
-#[path = "observation_io/writer.rs"]
+#[path = "writer.rs"]
 mod writer;
 
 use std::collections::BTreeMap;
