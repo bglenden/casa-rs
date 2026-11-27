@@ -273,16 +273,7 @@ impl<'src> Parser<'src> {
                 self.lexer.expect(&Token::RBracket)?;
                 giving_expr = Some(expr);
             } else {
-                let table_name = self.parse_table_name()?;
-                let output_type = if self.lexer.eat_if(&Token::As).is_some() {
-                    Some(self.parse_ident_string()?)
-                } else {
-                    None
-                };
-                giving = Some(GivingClause {
-                    table_name,
-                    output_type,
-                });
+                giving = Some(self.parse_giving_destination()?);
             }
         }
 
@@ -302,6 +293,48 @@ impl<'src> Parser<'src> {
             giving,
             giving_expr,
         })
+    }
+
+    fn parse_giving_destination(&mut self) -> Result<GivingClause, TaqlError> {
+        let table_name = if self.lexer.peek() == Some(&Token::As) {
+            String::new()
+        } else {
+            self.parse_table_name()?
+        };
+        let mut clause = GivingClause {
+            table_name,
+            output_type: None,
+            output_options: None,
+        };
+        if self.lexer.eat_if(&Token::As).is_none() {
+            return Ok(clause);
+        }
+        if self.lexer.eat_if(&Token::LBracket).is_none() {
+            clause.output_type = Some(self.parse_ident_string()?);
+            return Ok(clause);
+        }
+        let mut fields = Vec::new();
+        loop {
+            let name = self.parse_ident_string()?;
+            self.lexer.expect(&Token::Eq)?;
+            let value = self.parse_expr()?;
+            let data_type = self
+                .lexer
+                .eat_if(&Token::As)
+                .map(|_| self.parse_ident_string())
+                .transpose()?;
+            fields.push(GivingOption {
+                name,
+                value,
+                data_type,
+            });
+            if self.lexer.eat_if(&Token::Comma).is_none() {
+                break;
+            }
+        }
+        self.lexer.expect(&Token::RBracket)?;
+        clause.output_options = Some(fields);
+        Ok(clause)
     }
 
     fn parse_select_columns(&mut self) -> Result<Vec<SelectColumn>, TaqlError> {
@@ -1370,7 +1403,8 @@ impl<'src> Parser<'src> {
         let mut out = String::new();
         let mut prev_end = match self.lexer.peek_with_span() {
             Some((ref tok, ref span))
-                if matches!(tok, Token::Ident | Token::Slash | Token::Dot) || tok.is_keyword() =>
+                if matches!(tok, Token::Ident | Token::Slash | Token::Dot | Token::Colon)
+                    || tok.is_keyword() =>
             {
                 let end = span.end;
                 let text = self.lexer.slice(span).to_string();
@@ -1398,6 +1432,7 @@ impl<'src> Parser<'src> {
                     | Token::Slash
                     | Token::Dot
                     | Token::Minus
+                    | Token::Colon
             ) || tok.is_keyword();
             if !is_path_part {
                 break;
@@ -1412,7 +1447,9 @@ impl<'src> Parser<'src> {
 
     fn peek_is_table_name(&mut self) -> bool {
         match self.lexer.peek() {
-            Some(Token::Ident | Token::StringLiteral | Token::Slash | Token::Dot) => true,
+            Some(
+                Token::Ident | Token::StringLiteral | Token::Slash | Token::Dot | Token::Colon,
+            ) => true,
             Some(tok) => tok.is_keyword(),
             None => false,
         }

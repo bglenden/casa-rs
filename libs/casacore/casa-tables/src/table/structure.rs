@@ -118,6 +118,19 @@ impl Table {
         Ok(())
     }
 
+    /// Reload persisted keyword records and table information after a metadata
+    /// write announced in this process. Row and lock state stay in place.
+    #[doc(hidden)]
+    pub fn refresh_persisted_keywords(&mut self) -> Result<(), TableError> {
+        if let Some(path) = self.path().filter(|path| path.join("table.dat").is_file()) {
+            let snapshot = crate::storage::CompositeStorage.load_metadata_only(path)?;
+            self.inner
+                .replace_keyword_records(snapshot.keywords, snapshot.column_keywords);
+            self.table_info = snapshot.table_info;
+        }
+        Ok(())
+    }
+
     /// Atomically publish table keywords while preserving column keywords,
     /// the table information file, and all row storage.
     ///

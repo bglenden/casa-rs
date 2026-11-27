@@ -21,6 +21,7 @@ mod cell_convert;
 mod cell_value;
 mod coliter;
 mod copy;
+pub(in crate::tools) use copy::{check_target, refuse_nested};
 mod create;
 mod create_multi_move;
 mod description;
@@ -29,7 +30,6 @@ mod housekeeping;
 mod keyword_value;
 mod new_column;
 mod query;
-pub(super) use query::save_ms_query_selection;
 mod read;
 mod registry;
 mod row;
@@ -77,8 +77,8 @@ pub(crate) fn component_keyword_epoch(
     registry::keyword_epoch(path)
 }
 
-/// Notify already-open table tools of a component-list metadata write.
-pub(crate) fn component_keyword_published(path: &std::path::Path) {
+/// Notify already-open table tools of a metadata write by another tool.
+pub(crate) fn notify_keyword_change(path: &std::path::Path) {
     registry::keyword_published(path);
 }
 

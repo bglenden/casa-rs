@@ -1,0 +1,155 @@
+"""Exercise the independent in-memory MSSelector view against pinned CASA."""
+
+from contextlib import closing
+from pathlib import Path
+from shutil import copytree
+
+import numpy as np
+import pytest
+
+from casars import tools
+from test_tools_ms import pinned_casa
+from test_tools_msmetadata import measures, native_dataset
+
+
+@pytest.mark.parametrize("giving", ['AS MEMORY', '"ignored.ms" AS [type="memory"]'])
+def test_legacy_taql_memory_owns_its_values_and_keeps_the_modern_attachment(
+    native_dataset, tmp_path, monkeypatch, giving,
+):
+    casa = pinned_casa()
+    monkeypatch.chdir(tmp_path)
+    with closing(casa.table()) as table:
+        assert table.open(str(native_dataset))
+        original_rows = table.nrows()
+        data = table.getcol("DATA", 3, 7)
+        flags = table.getcol("FLAG", 3, 7)
+    for api in (casa, tools):
+        with closing(api.ms()) as selector:
+            assert selector.open(str(native_dataset))
+            assert selector.selecttaqlold(f"True LIMIT 7 OFFSET 3 GIVING {giving}")
+            assert selector.name() == str(native_dataset)
+            assert selector.nrow() == original_rows and selector.nrowold(True) == 7
+            assert selector.iswritable() is False
+            np.testing.assert_array_equal(selector.rangeold("rows")["rows"], np.arange(7))
+            rec = selector.getdataold(["data", "flag", "flag_row"])
+            np.testing.assert_array_equal(rec["data"], data.astype(np.complex128), strict=True)
+            np.testing.assert_array_equal(rec["flag"], flags, strict=True)
+            update = {name: np.logical_not(rec[name]) for name in ("flag", "flag_row")}
+            assert selector.putdataold(update)
+            current = selector.getdataold(["flag", "flag_row"])
+            for name, values in update.items():
+                np.testing.assert_array_equal(current[name], values, strict=True)
+            assert selector.selecttaqlold("True LIMIT 2 OFFSET 1 GIVING AS MEMORY")
+            np.testing.assert_array_equal(selector.rangeold("rows")["rows"], [1, 2])
+            assert selector.iterinitold(["TIME"], maxrows=1, adddefaultsortcolumns=False)
+            assert selector.iteroriginold()
+            assert selector.getdataold(["data"])["data"].shape[-1] == 1
+            assert selector.iterendold()
+            assert selector.selectinitold(reset=True)
+            assert selector.nrowold(True) == original_rows
+        assert not (tmp_path / "ignored.ms").exists()
+    with closing(casa.table()) as table:
+        assert table.open(str(native_dataset))
+        np.testing.assert_array_equal(table.getcol("FLAG", 3, 7), flags, strict=True)
+
+
+def test_legacy_taql_memory_copies_metadata_independently(native_dataset, tmp_path):
+    casa = pinned_casa()
+    for api in (casa, tools):
+        source = tmp_path / f"{api.__name__}-source.ms"
+        output = tmp_path / f"{api.__name__}-output.ms"
+        copytree(native_dataset, source)
+        with closing(api.ms()) as selector:
+            assert selector.open(str(source))
+            assert selector.selecttaqlold("True LIMIT 4 GIVING AS MEMORY")
+            with closing(casa.table()) as antenna:
+                assert antenna.open(str(source / "ANTENNA"), nomodify=False)
+                name = antenna.getcell("NAME", 0)
+                antenna.putcell("NAME", 0, "EDITED_ORIGINAL")
+            assert selector.selecttaqlold(f'True LIMIT 2 GIVING "{output}" AS PLAIN')
+            np.testing.assert_array_equal(selector.rangeold("rows")["rows"], [0, 1])
+        with closing(casa.table()) as antenna:
+            assert antenna.open(str(output / "ANTENNA"))
+            assert antenna.getcell("NAME", 0) == name
+
+
+def test_legacy_taql_memory_empty_selector_can_reset(native_dataset):
+    for api in (pinned_casa(), tools):
+        with closing(api.ms()) as selector:
+            assert selector.open(str(native_dataset))
+            original = selector.nrow()
+            assert not selector.selecttaqlold("False GIVING AS MEMORY")
+            assert selector.nrowold(True) == 0
+            assert selector.getdataold(["data"]) == {}
+            assert selector.selectinitold(reset=True)
+            assert selector.nrowold(True) == original
+
+
+def test_legacy_taql_memory_subtable_name_leaves_no_unopenable_disk_keyword(native_dataset, tmp_path):
+    casa = pinned_casa()
+    for api in (casa, tools):
+        parent = tmp_path / f"{api.__name__}-parent.ms"
+        copytree(native_dataset, parent)
+        with closing(api.ms()) as selector:
+            assert selector.open(str(native_dataset))
+            assert selector.selecttaqlold(f'True LIMIT 2 GIVING "{parent}::RESULT" AS MEMORY')
+            np.testing.assert_array_equal(selector.rangeold("rows")["rows"], [0, 1])
+        assert not (parent / "RESULT").exists()
+        with closing(casa.table()) as table:
+            assert table.open(str(parent))
+            links = table.getkeywords()
+            if api is casa:
+                assert not Path(links["RESULT"].removeprefix("Table: ")).exists()
+            else:
+                assert "RESULT" not in links
+
+
+def test_legacy_taql_untyped_output_from_memory_reopens_independently(native_dataset, tmp_path):
+    casa = pinned_casa()
+    target = tmp_path / "result.ms"
+    with closing(casa.table()) as source:
+        assert source.open(str(native_dataset))
+        expected = source.getcol("DATA", 4, 2)
+    with closing(tools.ms()) as selector:
+        assert selector.open(str(native_dataset))
+        assert selector.selecttaqlold("True LIMIT 5 OFFSET 3 GIVING AS MEMORY")
+        np.testing.assert_array_equal(selector.getdataold(["data"])["data"][..., 1:3], expected, strict=True)
+        assert selector.selecttaqlold(f'True LIMIT 2 OFFSET 1 GIVING "{target}"')
+        np.testing.assert_array_equal(selector.rangeold("rows")["rows"], [1, 2])
+    for api in (casa, tools):
+        with closing(api.table()) as reader:
+            assert reader.open(str(target))
+            np.testing.assert_array_equal(reader.getcol("DATA"), expected, strict=True)
+
+
+def test_legacy_taql_memory_detaches_table_and_column_keyword_tables(native_dataset, tmp_path):
+    casa = pinned_casa()
+    for api in (casa, tools):
+        source = tmp_path / f"{api.__name__}-source.ms"
+        target = tmp_path / f"{api.__name__}-output.ms"
+        extra = source / "AUXILIARY"
+        child = extra / "SPECTRAL_WINDOW"
+        copytree(native_dataset, source)
+        copytree(source / "ANTENNA", extra)
+        copytree(source / "SPECTRAL_WINDOW", child)
+        with closing(casa.table()) as table:
+            assert table.open(str(source), nomodify=False)
+            table.putkeyword("AUX", f"Table: {extra}")
+            table.putcolkeyword("DATA", "AUX", f"Table: {extra}")
+            assert table.open(str(extra), nomodify=False)
+            original_name = table.getcell("NAME", 0)
+            table.putkeyword("CHILD", f"Table: {child}")
+        with closing(api.ms()) as selector:
+            assert selector.open(str(source))
+            assert selector.selecttaqlold("True LIMIT 4 GIVING AS MEMORY")
+            with closing(casa.table()) as table:
+                assert table.open(str(extra), nomodify=False)
+                table.putcell("NAME", 0, "EDITED_ORIGINAL")
+            assert selector.selecttaqlold(f'True LIMIT 2 GIVING "{target}" AS PLAIN')
+        with closing(casa.table()) as table:
+            assert table.open(str(target))
+            assert table.getkeyword("AUX") == f"Table: {target / 'AUXILIARY'}"
+            assert table.getcolkeyword("DATA", "AUX") == f"Table: {target / 'AUXILIARY'}"
+            assert table.open(str(target / "AUXILIARY"))
+            assert table.getcell("NAME", 0) == original_name
+            assert table.getkeyword("CHILD") == f"Table: {target / 'AUXILIARY' / 'SPECTRAL_WINDOW'}"

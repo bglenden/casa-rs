@@ -29,6 +29,7 @@ pub(in crate::tools) struct MetadataLink {
     directory: Metadata,
     original_rows: usize,
     live_concatenation: bool,
+    memory: bool,
     state: Mutex<State>,
 }
 
@@ -87,6 +88,7 @@ impl MetadataLink {
             directory: attached.directory.clone(),
             original_rows: attached.original_rows,
             live_concatenation: matches!(attached.part_names, TablePartNames::Concatenation { .. }),
+            memory: attached.memory_ms.is_some(),
             state: Mutex::new(State {
                 selected,
                 plain_rows: attached
@@ -136,6 +138,9 @@ impl MetadataLink {
     }
 
     pub(in crate::tools) fn verify_directory(&self) -> MsResult<()> {
+        if self.memory {
+            return Ok(());
+        }
         let valid =
             fs::metadata(&self.path).is_ok_and(|current| same_directory(&self.directory, &current));
         if valid {

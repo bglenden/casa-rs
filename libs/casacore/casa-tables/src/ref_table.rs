@@ -287,6 +287,20 @@ impl<'a> RefTable<'a> {
         self.layout.save(self.parent, &opts, opts.path())
     }
 
+    /// Save this view with its immediate parent link encoded relative to
+    /// `destination`. Move the staged directory there before opening the view.
+    /// Unlike [`Self::save_for_destination`], this retains any intermediate
+    /// persisted views of the parent table.
+    /// # Errors
+    /// The parent has no persisted path, or the staged descriptor cannot be written.
+    pub fn save_relative_to(
+        &self,
+        staging: crate::table::TableOptions,
+        destination: &Path,
+    ) -> Result<(), TableError> {
+        self.layout.save(self.parent, &staging, destination)
+    }
+
     /// Stage this reference table with its parent link relative to
     /// the intended publication path. The staged directory must be moved
     /// to that destination before opening it. A saved reference parent is
@@ -325,7 +339,7 @@ impl<'a> RefTable<'a> {
                 .collect();
             return layout.save(&root, &staging, destination);
         }
-        self.layout.save(self.parent, &staging, destination)
+        self.save_relative_to(staging, destination)
     }
 }
 
@@ -738,6 +752,20 @@ mod tests {
             reference_values,
             [4, 0].map(|value| Some(ScalarValue::Int32(value)))
         );
+
+        let reference = Table::open(TableOptions::new(&view)).unwrap();
+        let plain_copy = base.to_memory_rows(&[1, 0, 1]).unwrap();
+        let reference_copy = reference.to_memory_rows(&[0, 1, 0]).unwrap();
+        for (row, expected) in [4, 0, 4].into_iter().enumerate() {
+            assert_eq!(
+                plain_copy.row(row).unwrap(),
+                reference_copy.row(row).unwrap()
+            );
+            assert_eq!(
+                plain_copy.cell(row, "probe").unwrap(),
+                Some(&Value::Scalar(ScalarValue::Int32(expected))),
+            );
+        }
     }
 
     #[test]

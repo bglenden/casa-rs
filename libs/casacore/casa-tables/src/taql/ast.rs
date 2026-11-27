@@ -181,6 +181,19 @@ pub struct GivingClause {
     pub table_name: String,
     /// Optional output type (e.g., "MEMORY", "PLAIN", "SCRATCH").
     pub output_type: Option<String>,
+    /// Ordered fields from the optional `AS [name=value, ...]` record.
+    pub output_options: Option<Vec<GivingOption>>,
+}
+
+/// A constant field of a TaQL output options record.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GivingOption {
+    /// Original field name.
+    pub name: String,
+    /// Expression to evaluate before the output table is created.
+    pub value: Expr,
+    /// Optional casacore type code following `AS`.
+    pub data_type: Option<String>,
 }
 
 /// A `COUNT [(cols)] FROM table [WHERE expr]` statement.
@@ -868,10 +881,25 @@ impl fmt::Display for SelectStatement {
             write!(f, " OFFSET {o}")?;
         }
         if let Some(ref g) = self.giving {
-            write!(f, " GIVING ")?;
-            fmt_table_name(f, &g.table_name)?;
+            write!(f, " GIVING")?;
+            if !g.table_name.is_empty() {
+                write!(f, " ")?;
+                fmt_table_name(f, &g.table_name)?;
+            }
             if let Some(ref ot) = g.output_type {
                 write!(f, " AS {ot}")?;
+            } else if let Some(ref options) = g.output_options {
+                write!(f, " AS [")?;
+                for (index, field) in options.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}={}", field.name, field.value)?;
+                    if let Some(data_type) = &field.data_type {
+                        write!(f, " AS {data_type}")?;
+                    }
+                }
+                write!(f, "]")?;
             }
         } else if let Some(ref expr) = self.giving_expr {
             write!(f, " GIVING [{expr}]")?;

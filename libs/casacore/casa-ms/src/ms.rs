@@ -37,6 +37,7 @@ use crate::subtables::{
 use crate::validate::{self, ValidationIssue};
 
 pub mod linked_subtables;
+mod memory;
 mod optional_subtables;
 
 /// The MS version number written by this crate.
@@ -68,19 +69,11 @@ pub struct MeasurementSet {
     main: Table,
     subtables: HashMap<SubtableId, Table>,
     subtable_paths: HashMap<SubtableId, PathBuf>,
+    detached_keyword_tables: std::collections::BTreeMap<PathBuf, Table>,
     path: Option<PathBuf>,
 }
 
 impl MeasurementSet {
-    /// Create an in-memory MeasurementSet from a builder.
-    ///
-    /// The resulting MS has empty tables with the correct schemas and
-    /// the MS_VERSION keyword set.
-    pub fn create_memory(builder: MeasurementSetBuilder) -> MsResult<Self> {
-        let schemas = builder.build_schemas()?;
-        Self::from_schemas(schemas, None)
-    }
-
     /// Prepare an in-memory MeasurementSet that writes into a caller-owned private stage.
     #[doc(hidden)]
     pub fn create_staged(path: &Path, builder: MeasurementSetBuilder) -> MsResult<Self> {
@@ -185,6 +178,7 @@ impl MeasurementSet {
             main,
             subtables,
             subtable_paths,
+            detached_keyword_tables: Default::default(),
             path: Some(path),
         })
     }
@@ -253,6 +247,7 @@ impl MeasurementSet {
             main,
             subtables,
             subtable_paths,
+            detached_keyword_tables: Default::default(),
             path: Some(path),
         };
         tracing::info!(
@@ -546,6 +541,10 @@ impl MeasurementSet {
         self.path = Some(target.staging_path().to_path_buf());
         self.rebase_subtable_paths(target.staging_path());
         self.save_using(save_main)?;
+        for (relative, table) in &self.detached_keyword_tables {
+            let output = target.staging_path().join(relative);
+            table.save(measurement_set_table_options(&output))?;
+        }
         target
             .commit()
             .map_err(|error| MsError::InvalidInput(error.to_string()))?;
@@ -1061,6 +1060,7 @@ impl MeasurementSet {
             main,
             subtables,
             subtable_paths,
+            detached_keyword_tables: Default::default(),
             path,
         })
     }

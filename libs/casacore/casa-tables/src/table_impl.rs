@@ -845,6 +845,7 @@ impl TableImpl {
         source: &LazyRowsSource,
         column: &str,
         row_indices: &[usize],
+        preserve_ism_defaults: bool,
     ) -> Result<Vec<Option<ScalarValue>>, TableError> {
         let mut profiler = StorageProfiler::start(format!(
             "table_impl::load_scalar_column_rows_now path={} column={column}",
@@ -852,18 +853,20 @@ impl TableImpl {
         ));
         let storage = CompositeStorage;
         let values = match source.read_metadata.get() {
-            Some(metadata) => storage.load_plain_scalar_column_rows(
+            Some(metadata) => storage.load_plain_scalar_column_rows_in_layout(
                 &source.path,
                 &metadata.table_dat,
                 column,
                 row_indices,
                 Some(source.row_count_hint as u64),
+                preserve_ism_defaults,
             ),
-            None => storage.load_scalar_column_rows_with_row_hint(
+            None => storage.load_scalar_column_rows_in_layout(
                 &source.path,
                 column,
                 row_indices,
                 Some(source.row_count_hint as u64),
+                preserve_ism_defaults,
             ),
         }
         .map_err(|err| {
@@ -1375,6 +1378,19 @@ impl TableImpl {
         row_indices: &[usize],
         column: &str,
     ) -> Result<Option<Vec<Option<ScalarValue>>>, TableError> {
+        self.selected_scalar_cells(row_indices, column, false)
+    }
+
+    pub(crate) fn retained_copy_descriptor(&self) -> Option<&TableDatContents> {
+        Some(&self.lazy_rows.as_ref()?.read_metadata.get()?.table_dat)
+    }
+
+    pub(crate) fn selected_scalar_cells(
+        &self,
+        row_indices: &[usize],
+        column: &str,
+        preserve_ism_defaults: bool,
+    ) -> Result<Option<Vec<Option<ScalarValue>>>, TableError> {
         if let Some(loaded) = self.loaded_rows.get() {
             let values = row_indices
                 .iter()
@@ -1391,7 +1407,8 @@ impl TableImpl {
             return Ok(Some(values));
         }
 
-        if let Some(cached_column) = self.loaded_scalar_columns.get(column)
+        if !preserve_ism_defaults
+            && let Some(cached_column) = self.loaded_scalar_columns.get(column)
             && let Some(values) = cached_column.get()
         {
             let selected = row_indices
@@ -1405,7 +1422,8 @@ impl TableImpl {
             return Ok(None);
         };
 
-        let mut values = Self::load_scalar_column_rows_now(source, column, row_indices)?;
+        let mut values =
+            Self::load_scalar_column_rows_now(source, column, row_indices, preserve_ism_defaults)?;
         if let Some(overrides) = self.pending_scalar_cells.by_column.get(column) {
             for (out_idx, &row_index) in row_indices.iter().enumerate() {
                 if let Some(value) = overrides.get(&row_index)
@@ -2011,6 +2029,15 @@ impl TableImpl {
     pub(crate) fn keywords_mut(&mut self) -> &mut RecordValue {
         self.note_metadata_change();
         &mut self.keywords
+    }
+
+    pub(crate) fn replace_keyword_records(
+        &mut self,
+        keywords: RecordValue,
+        column_keywords: HashMap<String, RecordValue>,
+    ) {
+        self.keywords = keywords;
+        self.column_keywords = column_keywords;
     }
 
     pub(crate) fn column_keywords(&self, column: &str) -> Option<&RecordValue> {

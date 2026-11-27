@@ -1422,7 +1422,7 @@ impl CompositeStorage {
         self.load_scalar_column_rows_in_layout(table_path, column, selected_rows, row_hint, false)
     }
 
-    fn load_scalar_column_rows_in_layout(
+    pub(crate) fn load_scalar_column_rows_in_layout(
         &self,
         table_path: &Path,
         column: &str,
@@ -2787,7 +2787,7 @@ impl CompositeStorage {
         )
     }
 
-    fn load_plain_scalar_column_rows_in_layout(
+    pub(crate) fn load_plain_scalar_column_rows_in_layout(
         &self,
         table_path: &Path,
         table_dat: &TableDatContents,
@@ -3251,15 +3251,17 @@ impl CompositeStorage {
             }
             ComplexScale::PerRow { scale, offset, .. } => {
                 let read = |column: &str| -> Result<Vec<f32>, StorageError> {
-                    self.load_plain_scalar_column_rows(table_path, table_dat, column, rows, None)?
-                        .into_iter()
-                        .map(|value| match value {
-                            Some(ScalarValue::Float32(value)) => Ok(value),
-                            _ => Err(StorageError::FormatMismatch(format!(
-                                "compressed scale column {column:?} is not Float32"
-                            ))),
-                        })
-                        .collect()
+                    self.load_plain_scalar_column_rows_in_layout(
+                        table_path, table_dat, column, rows, None, true,
+                    )?
+                    .into_iter()
+                    .map(|value| match value {
+                        Some(ScalarValue::Float32(value)) => Ok(value),
+                        _ => Err(StorageError::FormatMismatch(format!(
+                            "compressed scale column {column:?} is not Float32"
+                        ))),
+                    })
+                    .collect()
                 };
                 (read(scale)?, read(offset)?)
             }

@@ -1,5 +1,14 @@
 """Validate legacy row selection against the pinned CASA MSSelector."""
 
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
+import os
+from pathlib import Path
+from shutil import copytree
+import subprocess
+import sys
+import time
+
 import numpy as np
 import pytest
 
@@ -230,9 +239,6 @@ def test_legacy_taql_giving_persists_an_ordered_reference(native_dataset, tmp_pa
     with pytest.raises(RuntimeError, match="not a true table directory"):
         reader.selecttaqlold(f'True GIVING "{protected}"')
     assert (protected / "sentinel").read_text() == "preserve"
-    for kind in ("MEMORY", "PLAIN"):
-        with pytest.raises(NotImplementedError, match=r"GIVING.*#1030"):
-            reader.selecttaqlold(f'True GIVING "{tmp_path / "typed.ms"}" AS {kind}')
     np.testing.assert_array_equal(reader.rangeold("rows")["rows"], order)
     assert reader.done()
 
@@ -245,3 +251,272 @@ def test_legacy_taql_sort_assigns_each_duplicate_its_own_row_id(native_dataset):
     assert reader.selecttaqlold("True ORDERBY ROWID() DESC")
     np.testing.assert_array_equal(reader.rangeold("rows")["rows"], order[::-1])
     assert reader.done()
+
+
+@pytest.mark.parametrize("mode", ["PLAIN", "PLAIN_BIG", "PLAIN_LITTLE", "SCRATCH"])
+def test_legacy_taql_explicit_disk_output(native_dataset, tmp_path, mode):
+    casa = pinned_casa()
+    source_table = casa.table()
+    assert source_table.open(str(native_dataset))
+    selected = [7, 3, 8, 6]
+    expected = source_table.getcol("UVW")[:, selected[::-1][:3]]
+    expected_info = source_table.info()
+    source_rows = source_table.nrows()
+    assert source_table.close()
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(str(native_dataset), nomodify=False)
+        assert reader.selectold({"rows": selected})
+        output = tmp_path / f"{mode}-{api.__name__}.ms"
+        command = f'True ORDERBY ROWID() DESC LIMIT 3 GIVING "{output}" AS {mode}'
+        assert reader.selecttaqlold(command)
+        assert reader.name() == str(native_dataset)
+        assert reader.nrow() == source_rows and reader.nrowold(False) == source_rows
+        assert reader.nrowold(True) == 3
+        np.testing.assert_array_equal(reader.rangeold("rows")["rows"], [0, 1, 2])
+        np.testing.assert_array_equal(reader.getdataold(["uvw"])["uvw"], expected, strict=True)
+        assert reader.putdataold({"flag_row": np.ones(3, dtype=bool)}) is False
+        assert reader.selecttaqlold("ROWID() == 1")
+        np.testing.assert_array_equal(reader.rangeold("rows")["rows"], [1])
+        assert reader.selectinitold(reset=True)
+        assert reader.nrowold(True) == source_rows
+        assert reader.done()
+        for disk_api in (casa, tools):
+            saved = disk_api.table()
+            assert saved.open(str(output))
+            assert saved.nrows() == 3
+            assert saved.info() == expected_info
+            np.testing.assert_array_equal(saved.getcol("UVW"), expected, strict=True)
+            if mode in {"PLAIN_BIG", "PLAIN_LITTLE"}:
+                assert saved.endianformat() == mode.split("_")[1].lower()
+            assert saved.close()
+
+
+@pytest.mark.parametrize("blocksize", ["2147483649", "2 + 2", "4 AS I4"])
+def test_legacy_taql_output_options_record(native_dataset, tmp_path, blocksize):
+    casa = pinned_casa()
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(str(native_dataset))
+        target = tmp_path / f"{api.__name__}-record.ms"
+        query = (f'True LIMIT 3 GIVING "{target}" AS '
+                 '[type="plain", plain_little=true, endian="big", plain_little=true, '
+                 f'storage="sepfile", blocksize={blocksize}, overwrite=(1 == 0)]')
+        assert reader.selecttaqlold(query)
+        assert reader.selectinitold(reset=True)
+        with pytest.raises(RuntimeError):
+            reader.selecttaqlold(query)
+        assert reader.nrowold(True) == reader.nrow()
+        assert reader.done()
+        for disk_api in (casa, tools):
+            saved = disk_api.table()
+            assert saved.open(str(target))
+            assert saved.endianformat() == "big" and saved.nrows() == 3
+            assert saved.close()
+    reader = tools.ms()
+    assert reader.open(str(native_dataset))
+    target = tmp_path / "blocked.ms"
+    with pytest.raises(NotImplementedError, match=r"MultiFile.*#1030"):
+        reader.selecttaqlold(f'True GIVING "{target}" AS [type="plain", storage="multifile"]')
+    assert not target.exists()
+    assert reader.done()
+
+
+@pytest.mark.parametrize("mode", ["multifile", "multihdf5"])
+def test_legacy_taql_reference_ignores_physical_storage(native_dataset, tmp_path, mode):
+    casa = pinned_casa()
+    for api in (casa, tools):
+        output = tmp_path / f"{api.__name__}.ms"
+        with closing(api.ms()) as reader:
+            assert reader.open(str(native_dataset))
+            command = f'True LIMIT 3 OFFSET 2 GIVING "{output}" AS [storage="{mode}"]'
+            assert reader.selecttaqlold(command)
+            np.testing.assert_array_equal(reader.rangeold("rows")["rows"], [2, 3, 4])
+        assert not (output / "table.mf").exists()
+        with closing(casa.table()) as reader:
+            assert reader.open(str(output)) and reader.nrows() == 3
+
+
+@pytest.mark.parametrize("options", [
+    "[]", "[plain]", '[type="plain", blocksize=2, blocksize=4 AS I4]',
+])
+def test_legacy_taql_rejects_incomplete_output_options(native_dataset, tmp_path, options):
+    for api in (pinned_casa(), tools):
+        output = tmp_path / f"{api.__name__}.ms"
+        with closing(api.ms()) as reader:
+            assert reader.open(str(native_dataset))
+            with pytest.raises(RuntimeError):
+                reader.selecttaqlold(f'True LIMIT 2 GIVING "{output}" AS {options}')
+            assert not output.exists()
+
+
+@pytest.mark.parametrize("mode,order", [
+    ("PLAIN", "big"), ('[type="plain", endian="aipsrc"]', "big"), ("PLAIN_LOCAL", sys.byteorder),
+])
+def test_legacy_taql_disk_output_uses_configured_endian(native_dataset, tmp_path, mode, order):
+    casa = pinned_casa()
+    first, later = (tmp_path / "first.rc", tmp_path / "later.rc")
+    first.write_text("table.endian*: big\n")
+    later.write_text("table.endianformat: little\n")
+    environment = dict(os.environ, CASARCFILES=f"{first}:{later}")
+    runner = """
+from importlib import import_module
+import sys
+factory = import_module(sys.argv[1]).ms
+with __import__('contextlib').closing(factory()) as tool:
+    assert tool.open(sys.argv[2])
+    assert tool.selecttaqlold(f'True LIMIT 2 GIVING "{sys.argv[3]}" AS {sys.argv[4]}')
+"""
+    for module in ("casatools", "casars.tools"):
+        output = tmp_path / f"{module}.ms"
+        subprocess.run([sys.executable, "-c", runner, module, str(native_dataset), str(output), mode],
+                       env=environment, check=True)
+        with closing(casa.table()) as reader:
+            assert reader.open(str(output))
+            assert reader.endianformat() == order
+
+
+def test_legacy_taql_reference_cannot_replace_a_live_measurement_set(native_dataset, tmp_path):
+    for api in (pinned_casa(), tools):
+        output = tmp_path / f"{api.__name__}.ms"
+        copytree(native_dataset, output)
+        with closing(api.ms()) as holder, closing(api.ms()) as reader:
+            assert holder.open(str(output)) and reader.open(str(native_dataset))
+            before = holder.nrow()
+            with pytest.raises(RuntimeError):
+                reader.selecttaqlold(f'True LIMIT 1 GIVING "{output}" AS [overwrite=true]')
+            assert holder.nrow() == before
+
+
+def test_legacy_taql_cannot_make_another_output_from_an_empty_copy(native_dataset, tmp_path):
+    for api in (pinned_casa(), tools):
+        first = tmp_path / f"{api.__name__}-empty.ms"
+        second = tmp_path / f"{api.__name__}-next.ms"
+        with closing(api.ms()) as reader:
+            assert reader.open(str(native_dataset))
+            assert not reader.selecttaqlold(f'False GIVING "{first}" AS PLAIN')
+            assert first.exists() and reader.nrowold(True) == 0
+            assert not reader.selecttaqlold(f'True GIVING "{second}" AS PLAIN')
+            assert not second.exists()
+
+
+def test_legacy_taql_disk_copy_uses_view_relative_ids_for_duplicate_rows(native_dataset, tmp_path):
+    reader = tools.ms()
+    assert reader.open(str(native_dataset))
+    assert reader.selectold({"rows": [7, 3, 8, 3]})
+    source = tools.table()
+    assert source.open(str(native_dataset))
+    expected = source.getcol("UVW")[:, [3, 8, 3]]
+    assert source.close()
+    target = tmp_path / "duplicate.ms"
+    assert reader.selecttaqlold(f'True ORDERBY ROWID() DESC LIMIT 3 GIVING "{target}" AS PLAIN')
+    np.testing.assert_array_equal(reader.getdataold(["uvw"])["uvw"], expected, strict=True)
+    assert reader.done()
+
+
+def test_legacy_taql_disk_copy_protects_a_concurrently_opened_output(native_dataset, tmp_path):
+    root = os.environ.get("CASA_RS_TESTDATA_ROOT")
+    stock = Path(root) / "measurementset" / "vla" / "ngc5921_ut.ms" if root else None
+    if stock is None or not stock.is_dir():
+        pytest.skip("Missing ngc5921_ut.ms")
+    output = tmp_path / "existing.ms"
+    copytree(native_dataset, output)
+    with ThreadPoolExecutor(max_workers=1) as executor, closing(tools.ms()) as holder:
+        def replace():
+            with closing(tools.ms()) as reader:
+                assert reader.open(str(stock))
+                return reader.selecttaqlold(f'True GIVING "{output}" AS PLAIN')
+
+        conversion = executor.submit(replace)
+        deadline = time.monotonic() + 10
+        while not any(tmp_path.glob(".taql-ms-*/selected.ms")):
+            assert not conversion.done() and time.monotonic() < deadline
+            time.sleep(0.001)
+        assert holder.open(str(output))
+        before = holder.nrow()
+        with pytest.raises(RuntimeError, match="still open"):
+            conversion.result(timeout=30)
+        assert holder.nrow() == before
+
+
+@pytest.mark.parametrize("copy_before_iterator", [False, True])
+def test_legacy_taql_disk_copy_preserves_iterator_source(native_dataset, tmp_path,
+                                                        copy_before_iterator):
+    results = []
+    for api in (pinned_casa(), tools):
+        target = tmp_path / f"{api.__name__}.ms"
+        query = f'True LIMIT 4 GIVING "{target}" AS PLAIN'
+        with closing(api.ms()) as reader:
+            assert reader.open(str(native_dataset))
+            if copy_before_iterator:
+                assert reader.selecttaqlold(query)
+            assert reader.iterinitold(["SCAN_NUMBER"], maxrows=1, adddefaultsortcolumns=False)
+            assert reader.iteroriginold()
+            if copy_before_iterator:
+                assert reader.selectinitold(reset=True)
+            else:
+                assert reader.selecttaqlold(query)
+            assert reader.iternextold()
+            positioned = reader.nrowold(True), reader.rangeold("rows")["rows"]
+            if copy_before_iterator:
+                assert reader.selecttaqlold("True")
+                assert reader.nrowold(True) == reader.nrow()
+            results.append(positioned)
+    assert results[0][0] == results[1][0]
+    np.testing.assert_array_equal(results[0][1], results[1][1], strict=True)
+
+
+def test_legacy_taql_disk_copy_retains_the_original_polarization_source(native_dataset, tmp_path):
+    for api in (pinned_casa(), tools):
+        target = tmp_path / f"{api.__name__}.ms"
+        with closing(api.ms()) as reader:
+            assert reader.open(str(native_dataset))
+            assert reader.selecttaqlold(f'True LIMIT 4 GIVING "{target}" AS PLAIN')
+            assert reader.nrowold(True) == 4
+            reader.selectpolarizationold([])
+            assert reader.nrowold(True) == reader.nrow()
+
+
+def test_legacy_taql_can_reselect_original_rows_and_keep_selected_channels(native_dataset, tmp_path):
+    for api in (pinned_casa(), tools):
+        output = tmp_path / f"{api.__name__}.ms"
+        with closing(api.ms()) as reader:
+            assert reader.open(str(native_dataset), nomodify=False)
+            assert reader.selecttaqlold(f'True LIMIT 2 GIVING "{output}" AS PLAIN')
+            assert reader.selectchannelold(1, 0, 1, 1)
+            assert reader.selectold({"rows": [4]})
+            np.testing.assert_array_equal(reader.rangeold("rows")["rows"], [4])
+            assert reader.getdataold(["data"])["data"].shape[1] == 1
+            flags = reader.getdataold(["flag_row"])["flag_row"]
+            assert reader.putdataold({"flag_row": flags})
+            assert reader.selecttaqlold(f'True LIMIT 2 GIVING "{output}" AS PLAIN')
+            assert reader.selectchannelold(1, 0, 1, 1)
+            assert reader.selectinitold(0)
+            assert reader.getdataold(["data"])["data"].shape == (2, 1, reader.nrow())
+
+
+def test_legacy_taql_can_attach_flattened_multi_ms_output(native_dataset, tmp_path):
+    casa = pinned_casa()
+    parts = [tmp_path / "one.ms", tmp_path / "two.ms"]
+    for part in parts:
+        copytree(native_dataset, part)
+    source = tmp_path / "source.mms"
+    with closing(tools.ms()) as creator:
+        assert creator.createmultims(str(source), list(map(str, parts)), [])
+    with closing(casa.table()) as original:
+        assert original.open(str(source))
+        expected_info = original.info()
+        assert expected_info["subType"] == "CONCATENATED"
+        expected_data = original.getcol("DATA", original.nrows() - 4, 4)[..., ::-1]
+    for api in (casa, tools):
+        output = tmp_path / f"{api.__name__}.ms"
+        with closing(api.ms()) as reader:
+            assert reader.open(str(source))
+            assert reader.selecttaqlold(f'True ORDERBY ROWID() DESC LIMIT 4 GIVING "{output}" AS PLAIN')
+            assert reader.nrowold(True) == 4
+        with closing(casa.table()) as reader:
+            assert reader.open(str(output))
+            assert reader.info() == expected_info
+            np.testing.assert_array_equal(reader.getcol("DATA"), expected_data, strict=True)
+        with closing(tools.ms()) as reader:
+            assert reader.open(str(output)) and reader.nrow() == 4

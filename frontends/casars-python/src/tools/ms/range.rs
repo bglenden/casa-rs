@@ -7,6 +7,7 @@ use pyo3::prelude::*;
 
 use super::legacy_selection::deprecation;
 use super::metadata_link::compose_rows;
+use super::owned_record::visibility_record;
 use super::visibility::requested_strings;
 use super::{PyMsTool, runtime_error, strict_bool};
 use crate::convert::value::CasaValue;
@@ -49,27 +50,52 @@ impl PyMsTool {
             let Some(ms) = attached.as_mut() else {
                 return Ok(CasaValue::empty_record());
             };
+            let ms = ms.legacy_view_mut();
             let link = ms.working_metadata_link();
             let base = link.selected_rows().map_err(runtime_error)?;
             let rows = compose_rows(base.as_deref(), ms.legacy_selection.rows());
-            if let Some(iteration) = ms.legacy_selection.positioned_iteration() {
+            let options = ms.legacy_selection.visibility_options();
+            if let Some(memory) = &ms.memory_ms {
+                let rows = rows.map_or_else(
+                    || (0..memory.row_count()).collect(),
+                    |rows| rows.into_owned(),
+                );
+                if rows.is_empty() {
+                    return Ok(CasaValue::empty_record());
+                }
+                let record = request
+                    .read(memory.main_table(), &[], None, &rows, options, |ids| {
+                        ids.iter()
+                            .map(|&id| {
+                                memory
+                                    .subtable(id)
+                                    .map(|table| (id, std::slice::from_ref(table)))
+                                    .ok_or_else(|| {
+                                        casa_ms::MsError::MissingSubtable(id.name().to_owned())
+                                    })
+                            })
+                            .collect()
+                    })
+                    .map_err(runtime_error)?;
+                return Ok(visibility_record(record));
+            }
+            if let Some(main) = ms
+                .legacy_selection
+                .positioned_iteration()
+                .and_then(|iteration| iteration.main.as_deref())
+            {
                 link.verify_directory().map_err(runtime_error)?;
-                iteration.main.verify_iterator_layout()?;
+                main.verify_iterator_layout()?;
                 return ms.visibility.range_from_main(
-                    &iteration.main,
+                    main,
                     &link,
                     rows.as_deref(),
                     &request,
-                    ms.legacy_selection.visibility_options(),
+                    options,
                 );
             }
-            ms.visibility.range_for_rows(
-                &ms.path,
-                &link,
-                rows.as_deref(),
-                &request,
-                ms.legacy_selection.visibility_options(),
-            )
+            ms.visibility
+                .range_for_rows(&ms.path, &link, rows.as_deref(), &request, options)
         })?;
         reply.into_python(py)
     }
