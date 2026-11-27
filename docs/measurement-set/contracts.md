@@ -32,22 +32,6 @@ change: no compatibility layer and no second production route kept for
 comparison (a baseline build serves that). A consumer has not moved while a
 wrapper still leaks physical rows or `DATA_DESC_ID` into its algorithm.
 
-## Owner decisions in force
-
-- **Formats** (2026-10-23): MSv2 and MSv4 (XRADIO schema 4.0.1 on local
-  Zarr v3). MSv3 is deferred until a concrete dataset or producer needs it;
-  it then comes as a named profile with its own independent producer and
-  reader checks, never inferred from a product name. Object stores, MSv4
-  image persistence and Zarr v2 are separate later work.
-- **Shape** (2026-10-24): the interface takes MSv4's native shape, and the
-  MSv2 adapter assembles MSv2 into it at opening.
-- **Arrays** (2026-10-24): numerical arrays and views are `ndarray`'s,
-  under thin domain types that carry axis meaning, Measures metadata, and
-  flag and weight meaning.
-- **Measures** (2026-10-24): the boundary uses `casa-types` Measures and
-  quanta types directly, with no observation-specific measure vocabulary,
-  and the Measures APIs may be reworked for bulk use (below).
-
 ## MSv2 row grids
 
 The adapter separates MAIN rows by `PROCESSOR_ID` so each grid carries one
@@ -64,6 +48,22 @@ The grid has one cell per time and baseline and no acquisition axis to hold
 both rows. Keeping one or combining the two would discard information.
 Baseline-dependent times retain their exact values. Unoccupied cells are
 padding and are charged at admission.
+
+## Owner decisions in force
+
+- **Formats** (2026-10-23): MSv2 and MSv4 (XRADIO schema 4.0.1 on local
+  Zarr v3). MSv3 is deferred until a concrete dataset or producer needs it;
+  it then comes as a named profile with its own independent producer and
+  reader checks, never inferred from a product name. Object stores, MSv4
+  image persistence and Zarr v2 are separate later work.
+- **Shape** (2026-10-24): the interface takes MSv4's native shape, and the
+  MSv2 adapter assembles MSv2 into it at opening.
+- **Arrays** (2026-10-24): numerical arrays and views are `ndarray`'s,
+  under thin domain types that carry axis meaning, Measures metadata, and
+  flag and weight meaning.
+- **Measures** (2026-10-24): the boundary uses `casa-types` Measures and
+  quanta types directly, with no observation-specific measure vocabulary,
+  and the Measures APIs may be reworked for bulk use (below).
 
 ## Capabilities not yet offered
 
