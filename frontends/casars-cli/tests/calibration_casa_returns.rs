@@ -10,7 +10,7 @@
 //! one. A CASA parameter casa-rs takes only at its default is refused at
 //! any other value, naming #979.
 
-#[path = "../../../crates/casa-calibration/tests/common/mod.rs"]
+#[path = "../../../libs/casa/casa-calibration/tests/common/mod.rs"]
 mod common;
 #[path = "../../../libs/casacore/casa-ms/tests/common/mod.rs"]
 mod ms_common;

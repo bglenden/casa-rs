@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Calibration apply-mode CLI history test moved from `casa-calibration/tests/apply_modes.rs`.
 
-#[path = "../../../crates/casa-calibration/tests/common/mod.rs"]
+#[path = "../../../libs/casa/casa-calibration/tests/common/mod.rs"]
 mod common;
 
 use casa_core::{Complex32, ScalarValue};

@@ -29,7 +29,7 @@ def main():
     root = args.out.resolve()
     root.mkdir(parents=True, exist_ok=True)
     source = Path(__file__).resolve().parents[2]
-    with tarfile.open(source / "crates/casa-simulation/tests/data/simanalyze_analysis_inputs.tar.gz") as archive:
+    with tarfile.open(source / "libs/casa/casa-simulation/tests/data/simanalyze_analysis_inputs.tar.gz") as archive:
         archive.extractall(root, filter="data")
     os.chdir(root)
     record = {"casa_version": casatasks.version_string(), "lifecycle": {}, "antennas": [], "images": [], "ephemerides": [], "errors": []}

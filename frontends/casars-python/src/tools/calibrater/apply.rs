@@ -4,8 +4,9 @@
 use std::io::ErrorKind;
 
 use casa_calibration::{
-    ApplyCalibrationTableSpec, CalibraterLifecycleError, CallibError, load_callibrary_record,
-    validate_callibrary_record,
+    apply::ApplyCalibrationTableSpec,
+    callib::{CallibError, load_callibrary_record, validate_callibrary_record},
+    solve::CalibraterLifecycleError,
 };
 use casa_contracts::{ParameterValue, casacore_value_to_casa, parameter_value_to_casacore};
 use casa_core::{RecordValue, Value};

@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use casa_calibration::CalibrationSpecification;
+use casa_calibration::gencal::CalibrationSpecification;
 use numpy::PyUntypedArray;
 use pyo3::{
     exceptions::PySystemError,

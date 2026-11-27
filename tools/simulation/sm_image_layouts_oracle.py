@@ -160,7 +160,7 @@ def main():
     root = args.out.resolve()
     inputs = root / "inputs"
     inputs.mkdir(parents=True)
-    source = Path(__file__).resolve().parents[2] / "crates/casa-simulation/tests/data/sm_irregular_channels/ascending.ms"
+    source = Path(__file__).resolve().parents[2] / "libs/casa/casa-simulation/tests/data/sm_irregular_channels/ascending.ms"
     if args.long_track:
         from sm_apply_parameters_oracle import initialize
         fresh = make_session(inputs / "base.ms", stokes="XX XY YX YY", frequency=100e9, channel=1e6)

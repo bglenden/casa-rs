@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::sync::PoisonError;
 
-use casa_calibration::{SingleDishLineFinder, SingleDishLineFit};
+use casa_singledish::{SingleDishLineFinder, SingleDishLineFit};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 

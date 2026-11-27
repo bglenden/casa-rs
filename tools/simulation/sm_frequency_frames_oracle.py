@@ -20,7 +20,7 @@ def main():
     args = parser.parse_args()
     assert version_string() == "6.7.6.14"
     root = args.out.resolve()
-    source = Path(__file__).resolve().parents[2] / "crates/casa-simulation/tests/data/sm_irregular_channels"
+    source = Path(__file__).resolve().parents[2] / "libs/casa/casa-simulation/tests/data/sm_irregular_channels"
     inputs = root / "inputs"
     inputs.mkdir(parents=True)
     for name in ("spectrum.cl", "spectrum.image", "bandpass.cal", "gspline.cal"):

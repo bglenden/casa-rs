@@ -71,16 +71,16 @@ INPUTS = {
     "flatone.single.ptg.txt": "unittest/simobserve/flatone.single.ptg.txt",
 }
 LOCAL_INPUTS = {
-    "if-polarized.image": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_image_layouts/iquv.image"),
+    "if-polarized.image": os.path.join(HERE, "../../libs/casa/casa-simulation/tests/data/sm_image_layouts/iquv.image"),
 
-    "schedule-sky.image": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_ft_modes/large.image"),
-    "schedule-components.cl": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_telescope_beams/sky.cl"),
+    "schedule-sky.image": os.path.join(HERE, "../../libs/casa/casa-simulation/tests/data/sm_ft_modes/large.image"),
+    "schedule-components.cl": os.path.join(HERE, "../../libs/casa/casa-simulation/tests/data/sm_telescope_beams/sky.cl"),
     "schedule-ot.ptg.txt": os.path.join(HERE, "data", "simobserve-schedule-ot.ptg.txt"),
     "schedule-untimed.ptg.txt": os.path.join(HERE, "data", "simobserve-schedule-untimed.ptg.txt"),
     "schedule-timed.ptg.txt": os.path.join(HERE, "data", "simobserve-schedule-timed.ptg.txt"),
 
-    "sd-sky.image": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_total_power/pb_alma.image"),
-    "sd-components.cl": os.path.join(HERE, "../../crates/casa-simulation/tests/data/sm_total_power/point.cl"),
+    "sd-sky.image": os.path.join(HERE, "../../libs/casa/casa-simulation/tests/data/sm_total_power/pb_alma.image"),
+    "sd-components.cl": os.path.join(HERE, "../../libs/casa/casa-simulation/tests/data/sm_total_power/point.cl"),
     "multiple.pointings.ptg.txt": os.path.join(HERE, "data", "simobserve-multiple-pointings.ptg.txt"),
 }
 

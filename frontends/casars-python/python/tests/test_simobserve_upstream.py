@@ -13,7 +13,7 @@ from _table_readback import open_table, read_column
 @pytest.fixture(scope="module")
 def sky_inputs(tmp_path_factory):
     root = tmp_path_factory.mktemp("upstream-simobserve")
-    fixtures = Path(__file__).resolve().parents[4] / "crates" / "casa-simulation/tests/data"
+    fixtures = Path(__file__).resolve().parents[4] / "libs/casa" / "casa-simulation/tests/data"
     with tarfile.open(fixtures / "skymodel_inputs.tar.gz") as archive:
         options = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
         archive.extractall(root, **options)

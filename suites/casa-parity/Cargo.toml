@@ -8,10 +8,17 @@ description = "Opt-in CASA 6.7 oracle parity suite (internal)"
 repository.workspace = true
 publish = false
 
+[features]
+live-casa = []
+
 [lints]
 workspace = true
 
 [dev-dependencies]
+casa-calibration.workspace = true
+casa-simulation.workspace = true
+flate2 = "1"
+tar = "0.4"
 casa-test-support = { path = "../../dev/casa-test-support" }
 casa-components.workspace = true
 casa-coordinates.workspace = true
@@ -29,3 +36,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 sha2.workspace = true
 tempfile = "3"
+
+[[test]]
+name = "calibration_oracle"
+path = "tests/calibration_oracle.rs"
+required-features = ["live-casa"]

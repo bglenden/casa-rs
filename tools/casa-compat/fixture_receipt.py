@@ -12,7 +12,7 @@ the CASA version, the casa-rs revision, the command and this file.
     python3 tools/casa-compat/fixture_receipt.py \\
         --title "simutil against CASA's simutil" --work-issue 1053 \\
         --rust casa-simulation:simutil_casa \\
-        --fixture crates/casa-simulation/tests/data/simutil_casa.json \\
+        --fixture libs/casa/casa-simulation/tests/data/simutil_casa.json \\
         --out resources/casa-compat/evidence/simutil-fixtures-20261103.json
 
 `--pytest` runs Python test files with an interpreter that has `casars`

@@ -43,7 +43,7 @@ def main():
     parser.add_argument("--jones-beam", action="store_true")
     parser.add_argument("--base", type=Path,
         default=Path(__file__).resolve().parents[2] /
-        "crates/casa-simulation/tests/data/sm_image_layouts/base.ms")
+        "libs/casa/casa-simulation/tests/data/sm_image_layouts/base.ms")
     args = parser.parse_args()
     assert version_string() == "6.7.6.14"
     root = args.out.resolve()

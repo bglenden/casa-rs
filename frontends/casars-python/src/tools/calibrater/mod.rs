@@ -17,7 +17,8 @@ use std::{
 };
 
 use casa_calibration::{
-    CalibraterLifecycle, CalibraterLifecycleError, VisibilityFitRequest, VisibilityFitShape,
+    models::{VisibilityFitRequest, VisibilityFitShape},
+    solve::{CalibraterLifecycle, CalibraterLifecycleError},
 };
 use casa_core::quanta::{Quantity, Unit};
 use casa_ms::{MeasurementSet, MsError, MsSelection, SubtableId};

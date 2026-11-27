@@ -20,7 +20,8 @@ casa-imageanalysis.workspace = true
 casa-flagging.workspace = true
 casa-mstransform.workspace = true
 casa-atmosphere.workspace = true
-casa-calibration = { path = "../../crates/casa-calibration" }
+casa-calibration.workspace = true
+casa-singledish.workspace = true
 casa-components.workspace = true
 casa-coordinates.workspace = true
 casa-images.workspace = true
@@ -29,7 +30,7 @@ casa-measures.workspace = true
 casa-ms.workspace = true
 casa-contracts = { path = "../../surfaces/casa-contracts" }
 casa-plot-data = { path = "../../surfaces/casa-plot-data", features = ["ms", "simulation"] }
-casa-simulation = { path = "../../crates/casa-simulation" }
+casa-simulation.workspace = true
 casa-tables.workspace = true
 casa-tasks = { path = "../../surfaces/casa-tasks", features = ["calibration", "imaging", "images", "ms", "simulation", "vla"] }
 casa-core.workspace = true

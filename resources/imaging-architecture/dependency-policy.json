@@ -59,6 +59,8 @@
   "casa-imaging-runtime": "execution",
   "casa-imaging-singledish": "execution",
   "casa-imaging-metal": "backend",
+  "casa-calibration": "application",
+  "casa-singledish": "application",
   "casa-simulation": "application",
   "casa-atmosphere": "science",
   "casa-tasks": "frontend",
@@ -127,6 +129,35 @@
    "casa-observation"
   ],
   "casa-atmosphere": [],
+  "casa-calibration": [
+   "casa-atmosphere",
+   "casa-components",
+   "casa-fft",
+   "casa-flagging",
+   "casa-imageanalysis",
+   "casa-images",
+   "casa-imaging-model",
+   "casa-imaging-operator",
+   "casa-imaging-runtime",
+   "casa-imaging-singledish",
+   "casa-lattices",
+   "casa-measures",
+   "casa-ms",
+   "casa-mstransform",
+   "casa-numerics",
+   "casa-tables"
+  ],
+  "casa-singledish": [
+   "casa-atmosphere",
+   "casa-calibration",
+   "casa-fft",
+   "casa-imageanalysis",
+   "casa-measures",
+   "casa-ms",
+   "casa-mstransform",
+   "casa-numerics",
+   "casa-tables"
+  ],
   "casa-simulation": [
    "casa-atmosphere",
    "casa-calibration",
@@ -215,7 +246,7 @@
     "libs/imaging/casa-imaging-products/src",
     "libs/imaging/casa-imaging-singledish/src",
     "libs/imaging/casa-imaging/src",
-    "crates/casa-simulation/src",
+    "libs/casa/casa-simulation/src",
     "surfaces/casa-contracts/src",
     "surfaces/casa-tasks/src",
     "frontends/casars-cli/src",
@@ -257,7 +288,7 @@
     "libs/imaging/casa-imaging-singledish/src",
     "libs/imaging/casa-imaging-metal/src",
     "libs/imaging/casa-imaging/src",
-    "crates/casa-simulation/src",
+    "libs/casa/casa-simulation/src",
     "libs/casacore/casa-fft/src",
     "libs/casacore/casa-ms/src",
     "libs/casa/casa-mstransform/src",
@@ -293,7 +324,7 @@
     "libs/imaging/casa-imaging-singledish/src",
     "libs/imaging/casa-imaging-metal/src",
     "libs/imaging/casa-imaging/src",
-    "crates/casa-simulation/src",
+    "libs/casa/casa-simulation/src",
     "libs/casacore/casa-fft/src",
     "libs/casacore/casa-ms/src",
     "libs/casa/casa-mstransform/src",
@@ -329,7 +360,7 @@
     "libs/imaging/casa-imaging-singledish/src",
     "libs/imaging/casa-imaging-metal/src",
     "libs/imaging/casa-imaging/src",
-    "crates/casa-simulation/src"
+    "libs/casa/casa-simulation/src"
    ],
    "extensions": [
     ".rs"

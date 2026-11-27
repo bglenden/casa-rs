@@ -14,6 +14,7 @@ calibration = [
     "ms",
     "casa-plot-data/calibration",
     "dep:casa-calibration",
+    "dep:casa-singledish",
     "dep:casa-components",
     "dep:time",
     "dep:ureq",
@@ -60,7 +61,8 @@ workspace = true
 casa-flagging = { workspace = true, optional = true }
 casa-mstransform = { workspace = true, optional = true }
 casa-atmosphere = { workspace = true, optional = true }
-casa-calibration = { path = "../../crates/casa-calibration", optional = true }
+casa-calibration = { workspace = true, optional = true }
+casa-singledish = { workspace = true, optional = true }
 casa-components = { workspace = true, optional = true }
 casa-contracts = { path = "../casa-contracts" }
 casa-imageanalysis = { workspace = true, optional = true }
@@ -72,7 +74,7 @@ casa-ms = { workspace = true, features = ["msv4"], optional = true }
 casa-numerics = { workspace = true, optional = true }
 casa-observation = { workspace = true, optional = true }
 casa-plot-data = { path = "../casa-plot-data", features = ["ms"], optional = true }
-casa-simulation = { path = "../../crates/casa-simulation", optional = true }
+casa-simulation = { workspace = true, optional = true }
 casa-tables.workspace = true
 casa-core.workspace = true
 casa-vla = { workspace = true, optional = true }

@@ -5,7 +5,7 @@
 //! a refused report changes nothing; `applycal` changes only the rows its
 //! selection names; and `calonly` and `trial` change no flags.
 
-#[path = "../../../crates/casa-calibration/tests/common/mod.rs"]
+#[path = "../../../libs/casa/casa-calibration/tests/common/mod.rs"]
 mod common;
 #[path = "../../../libs/casacore/casa-ms/tests/common/mod.rs"]
 mod ms_common;
@@ -15,10 +15,14 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use casa_calibration::{
-    ApplyCalibrationTableSpec, ApplyMode, CalibrationDataset, CalibrationSolveRequest,
-    ExportCorrectedDataRequest, FluxScaleRequest, GainSolveCombine, GainSolveInterval,
-    GainSolveMode, GainSolveModelSource, GainSolveRequest, GainType, RefAntSelector,
-    export_corrected_data, fluxscale, solve_calibration,
+    apply::{ApplyCalibrationTableSpec, ApplyMode},
+    corrected_export::{ExportCorrectedDataRequest, export_corrected_data},
+    fluxscale::{FluxScaleRequest, fluxscale},
+    solve::{
+        CalibrationDataset, CalibrationSolveRequest, GainSolveCombine, GainSolveInterval,
+        GainSolveMode, GainSolveModelSource, GainSolveRequest, GainType, RefAntSelector,
+        solve_calibration,
+    },
 };
 use casa_core::Complex32;
 use casa_ms::MeasurementSet;

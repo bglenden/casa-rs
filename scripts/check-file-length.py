@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """Keep Rust source files under the line limit.
 
-A Rust file under the workspace crate roots (`crates/`, `libs/`, `surfaces/`,
+A Rust file under the workspace crate roots (`libs/`, `surfaces/`,
 `frontends/`, `dev/`, `suites/`) longer than LIMIT lines must be listed in
 the allowlist, and a listed file must leave the list once it is back under
 the limit, so the list only shrinks (#705). Function length is clippy's
@@ -19,7 +19,7 @@ import sys
 LIMIT = 1500
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ALLOWLIST = ROOT / "resources" / "file-length-allowlist.json"
-SCAN_ROOTS = ("crates", "libs", "surfaces", "frontends", "dev", "suites")
+SCAN_ROOTS = ("libs", "surfaces", "frontends", "dev", "suites")
 
 
 def lengths():

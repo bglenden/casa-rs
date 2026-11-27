@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Convert the legacy imager's Python Fourier settings.
 
-use casa_calibration::{
+use casa_calibration::ft::{
     ImagerGridder, ImagerSingleDish, ImagerSingleDishKernel, ImagerTransformOptions,
 };
 use casa_core::measures::position::PositionRef;

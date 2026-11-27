@@ -82,7 +82,7 @@ def main():
         return
     inputs = root / "inputs"
     inputs.mkdir(parents=True, exist_ok=True)
-    source = Path(__file__).resolve().parents[2] / "crates/casa-simulation/tests/data/sm_irregular_channels"
+    source = Path(__file__).resolve().parents[2] / "libs/casa/casa-simulation/tests/data/sm_irregular_channels"
     for name in ("spectrum.cl", "spectrum.image"):
         if not (inputs / name).exists():
             shutil.copytree(source / name, inputs / name, ignore=shutil.ignore_patterns("table.lock"))

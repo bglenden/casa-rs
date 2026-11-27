@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::sync::PoisonError;
 
-use casa_calibration::SingleDishAtmosphere;
+use casa_singledish::SingleDishAtmosphere;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;

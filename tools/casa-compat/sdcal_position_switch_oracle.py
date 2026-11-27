@@ -22,7 +22,7 @@ from tsdimaging_oracle import make_map
 
 
 def make_position_switch(root):
-    shutil.copyfile(ROOT / 'crates/casa-simulation/tests/data/readantenna/aca.tp.cfg',
+    shutil.copyfile(ROOT / 'libs/casa/casa-simulation/tests/data/readantenna/aca.tp.cfg',
                     root / 'aca.tp.cfg')
     vis = Path(make_map(str(root)))
     with opened(vis / 'STATE', True) as state:

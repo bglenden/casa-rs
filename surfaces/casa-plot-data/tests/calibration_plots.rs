@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-#[path = "../../../crates/casa-calibration/tests/common/mod.rs"]
+#[path = "../../../libs/casa/casa-calibration/tests/common/mod.rs"]
 mod common;
 
 use std::path::{Path, PathBuf};

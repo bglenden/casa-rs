@@ -96,13 +96,15 @@ pub fn b(value: bool) -> Value {
     Value::Scalar(ScalarValue::Bool(value))
 }
 
-pub(crate) fn bool_array(values: &[bool], shape: Vec<usize>) -> Value {
+#[doc(hidden)]
+pub fn bool_array(values: &[bool], shape: Vec<usize>) -> Value {
     Value::Array(ArrayValue::Bool(
         ArrayD::from_shape_vec(shape, values.to_vec()).unwrap(),
     ))
 }
 
-pub(crate) fn i32_array(values: &[i32], shape: Vec<usize>) -> Value {
+#[doc(hidden)]
+pub fn i32_array(values: &[i32], shape: Vec<usize>) -> Value {
     Value::Array(ArrayValue::Int32(
         ArrayD::from_shape_vec(shape, values.to_vec()).unwrap(),
     ))

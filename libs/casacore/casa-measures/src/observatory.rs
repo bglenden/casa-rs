@@ -141,7 +141,7 @@ mod tests {
     /// The SMA row of the measures data's `Observatories` table, whose `X`,
     /// `Y`, `Z` lie 13.8 km from its `Long`, `Lat`, `Height`, and the
     /// Cartesian position CASA 6.7.6.14 gives SMA
-    /// (`crates/casa-simulation/tests/data/readantenna_casa.json`).
+    /// (`libs/casa/casa-simulation/tests/data/readantenna_casa.json`).
     #[test]
     fn an_itrf_entry_is_where_casacore_places_it() {
         let sma = entry(

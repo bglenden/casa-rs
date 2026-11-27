@@ -88,8 +88,8 @@ def main():
     with gzip.open(args.reference,'rt') as source:reference=json.load(source)
     root=args.out.resolve();root.mkdir(parents=True,exist_ok=True)
     repo=Path(__file__).resolve().parents[2]
-    with tarfile.open(repo/'crates/casa-simulation/tests/data/simalma_inputs.tar.gz') as archive:archive.extractall(root,filter='data')
-    with tarfile.open(repo/'crates/casa-simulation/tests/data/simanalyze_multi_inputs.tar.gz') as archive:archive.extractall(root,filter='data')
+    with tarfile.open(repo/'libs/casa/casa-simulation/tests/data/simalma_inputs.tar.gz') as archive:archive.extractall(root,filter='data')
+    with tarfile.open(repo/'libs/casa/casa-simulation/tests/data/simanalyze_multi_inputs.tar.gz') as archive:archive.extractall(root,filter='data')
     # The same default TP array is bundled with the independent inputs.
     os.environ['CASA_RS_MEASURESPATH']=os.environ.get('CASA_RS_MEASURESPATH','')
     captured={};original=Figure.savefig;all_failures=[]

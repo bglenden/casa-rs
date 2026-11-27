@@ -69,7 +69,7 @@ def main():
     root = args.out.resolve()
     inputs = root / "inputs"
     inputs.mkdir(parents=True)
-    source = Path(__file__).resolve().parents[2] / "crates/casa-simulation/tests/data/sm_irregular_channels"
+    source = Path(__file__).resolve().parents[2] / "libs/casa/casa-simulation/tests/data/sm_irregular_channels"
     for name in ("spectrum.cl", "spectrum.image"):
         shutil.copytree(source / name, inputs / name, ignore=shutil.ignore_patterns("table.lock"))
     cases = []

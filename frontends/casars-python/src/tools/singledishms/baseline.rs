@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::sync::PoisonError;
 
-use casa_calibration::{
+use casa_singledish::{
     SingleDishBaseline, SingleDishBaselineBasis, SingleDishBaselineDiagnostics,
     SingleDishBaselineMode, SingleDishLineFinder, SingleDishSinusoid,
 };

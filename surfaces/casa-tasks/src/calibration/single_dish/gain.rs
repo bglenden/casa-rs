@@ -4,12 +4,14 @@
 use std::path::Path;
 
 use crate::{TaskFailure, TaskInvocation, TaskSuccess};
-use casa_calibration::execute::SolvePriorApply;
-use casa_calibration::session::resolve_casa_calibration_selection;
-use casa_calibration::single_dish::gain::{Controls, GainGenerateError, generate};
-use casa_calibration::single_dish::lock_solve_output;
+use casa_calibration::apply::SolvePriorApply;
+use casa_calibration::sd_solver::gain::{Controls, GainGenerateError, generate};
+use casa_calibration::sd_solver::lock_solve_output;
+use casa_calibration::solve::resolve_casa_calibration_selection;
 use casa_calibration::{
-    ApplyMode, ApplyPlanRequest, CalibrationOutputMode, GainSolveMode, plan_apply,
+    apply::{ApplyMode, ApplyPlanRequest, plan_apply},
+    output::CalibrationOutputMode,
+    solve::GainSolveMode,
 };
 use casa_contracts::CasaValue;
 use casa_ms::{MeasurementSet, MsSelection};

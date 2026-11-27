@@ -1307,7 +1307,7 @@ fn initialize_hanning_scratch(
         .map_or(["MODEL_DATA", "CORRECTED_DATA"], |plan| {
             [plan.columns[0].as_str(), plan.columns[1].as_str()]
         });
-    casa_calibration::initialize_hanning_scratch_holding(
+    casa_calibration::model_columns::initialize_hanning_scratch_holding(
         ms,
         rows,
         observed,
