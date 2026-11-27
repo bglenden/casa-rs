@@ -11,15 +11,21 @@ use super::{SubimageRegion, and_opt_mask, region::SubimageSelection};
 
 /// The pixels and validity selection for an in-place mask edit.
 pub struct MaskReplacementOptions<'a> {
+    /// The Lattice Expression Language expression for replacement values.
     pub expression: &'a str,
+    /// Restrict the edit to this resolved rectangular region when present.
     pub region: Option<SubimageRegion<'a>>,
+    /// Optional Lattice Expression Language mask selecting valid pixels.
     pub mask: &'a str,
+    /// Mark replaced pixels valid in the image's native pixel mask.
     pub update: bool,
+    /// Allow mask broadcasting along compatible length-one axes.
     pub stretch: bool,
 }
 
 /// The result after writing replacement pixels.
 pub enum MaskReplacementOutcome {
+    /// Replacement values and any requested native mask update were written.
     Applied,
     /// An external or regional mask supplied the invalid pixels, but the
     /// image has no native pixel mask for the requested update. CASA reports

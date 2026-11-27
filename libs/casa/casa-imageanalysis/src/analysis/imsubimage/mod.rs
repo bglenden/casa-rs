@@ -104,7 +104,9 @@ use super::lel_mask::{evaluate_mask, evaluate_strided_mask};
 /// A region as CASA text, a region filename, or a casacore region record.
 #[derive(Clone, Copy)]
 pub enum SubimageRegion<'a> {
+    /// A CASA text region specification interpreted in the image's coordinates.
     Text(&'a str),
+    /// A serialized CASA region record.
     Record(&'a RecordValue),
 }
 

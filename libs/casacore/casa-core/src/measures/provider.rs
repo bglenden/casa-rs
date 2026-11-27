@@ -59,11 +59,21 @@ pub struct EopValues {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ObservatoryPosition {
     /// Geocentric ITRF coordinates, in metres.
-    Itrf { x_m: f64, y_m: f64, z_m: f64 },
+    Itrf {
+        /// Geocentric Earth-fixed x coordinate in metres.
+        x_m: f64,
+        /// Geocentric Earth-fixed y coordinate in metres.
+        y_m: f64,
+        /// Geocentric Earth-fixed z coordinate in metres.
+        z_m: f64,
+    },
     /// WGS84 geodetic coordinates.
     Wgs84 {
+        /// East-positive geodetic longitude in radians.
         longitude_rad: f64,
+        /// North-positive geodetic latitude in radians.
         latitude_rad: f64,
+        /// Height above the WGS84 ellipsoid in metres.
         height_m: f64,
     },
 }

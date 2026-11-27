@@ -40,6 +40,7 @@
 //! rustdoc.
 //!
 //! </details>
+#![warn(missing_docs)]
 
 use std::io::{Read, Write};
 
@@ -64,6 +65,7 @@ pub mod internal {
     pub use super::buffer::{AipsIoBufferWriter, AipsIoSliceReader, detect_aipsio_byte_order};
 }
 
+/// Result of encoding, decoding, or reading a primitive AipsIO value.
 pub type AipsIoResult<T> = Result<T, AipsIoError>;
 
 /// Byte order used when encoding or decoding multi-byte numeric values.

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 
 pub mod correlation;
 pub mod measures;

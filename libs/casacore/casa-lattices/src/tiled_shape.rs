@@ -56,10 +56,12 @@ impl TiledShape {
         })
     }
 
+    /// Return the logical lattice extent in elements, in storage-axis order.
     pub fn shape(&self) -> &[usize] {
         &self.shape
     }
 
+    /// Return the tile extent in elements on each storage axis.
     pub fn tile_shape(&self) -> &[usize] {
         &self.tile_shape
     }

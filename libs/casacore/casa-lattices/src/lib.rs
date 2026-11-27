@@ -44,6 +44,7 @@
 //! C++ template instantiations of `Lattice<T>`.
 //!
 //! </details>
+#![warn(missing_docs)]
 
 mod array_lattice;
 pub mod array_math;

@@ -72,12 +72,19 @@ impl fmt::Display for CoordinateType {
 /// Closed model for every coordinate kind supported by casacore images.
 #[derive(Debug, Clone)]
 pub enum CoordinateModel {
+    /// A linear mapping between pixels and world axes.
     Linear(LinearCoordinate),
+    /// Two celestial axes with a spherical projection and reference frame.
     Direction(DirectionCoordinate),
+    /// A frequency or velocity axis with its spectral reference frame.
     Spectral(Box<SpectralCoordinate>),
+    /// An axis of discrete Stokes or correlation products.
     Stokes(StokesCoordinate),
+    /// World-coordinate samples indexed and interpolated by pixel.
     Tabular(TabularCoordinate),
+    /// A discrete axis describing the role of each plane, such as data or error.
     Quality(QualityCoordinate),
+    /// An ordered composition of coordinate models.
     System(Box<CoordinateSystem>),
 }
 
@@ -96,42 +103,56 @@ macro_rules! dispatch_coordinate {
 }
 
 impl CoordinateModel {
+    /// Return the kind of coordinate model held by this value.
     pub fn coordinate_type(&self) -> CoordinateType {
         dispatch_coordinate!(self, coordinate_type)
     }
 
+    /// Number of pixel axes consumed by the model.
     pub fn n_pixel_axes(&self) -> usize {
         dispatch_coordinate!(self, n_pixel_axes)
     }
 
+    /// Number of world axes produced by the model.
     pub fn n_world_axes(&self) -> usize {
         dispatch_coordinate!(self, n_world_axes)
     }
 
+    /// Convert zero-based pixel coordinates to world values in the model's axis units.
+    ///
+    /// Returns an error for the wrong dimensionality or an invalid conversion.
     pub fn to_world(&self, pixel: &[f64]) -> Result<Vec<f64>, CoordinateError> {
         dispatch_coordinate!(self, to_world, pixel)
     }
 
+    /// Convert world values in the model's axis units to zero-based pixel coordinates.
+    ///
+    /// Returns an error for incompatible values or an invalid inverse conversion.
     pub fn to_pixel(&self, world: &[f64]) -> Result<Vec<f64>, CoordinateError> {
         dispatch_coordinate!(self, to_pixel, world)
     }
 
+    /// World values at the model reference point, in world-axis order.
     pub fn reference_value(&self) -> Vec<f64> {
         dispatch_coordinate!(self, reference_value)
     }
 
+    /// Zero-based pixel coordinates of the model reference point.
     pub fn reference_pixel(&self) -> Vec<f64> {
         dispatch_coordinate!(self, reference_pixel)
     }
 
+    /// World-axis increments per pixel in the units returned by `axis_units`.
     pub fn increment(&self) -> Vec<f64> {
         dispatch_coordinate!(self, increment)
     }
 
+    /// Return the names of the world axes in output order.
     pub fn axis_names(&self) -> Vec<String> {
         dispatch_coordinate!(self, axis_names)
     }
 
+    /// Return the unit strings for the world axes in output order.
     pub fn axis_units(&self) -> Vec<String> {
         dispatch_coordinate!(self, axis_units)
     }
