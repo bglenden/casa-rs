@@ -366,8 +366,8 @@ impl TilePixel for Complex64 {
     const STORAGE_TYPE: PrimitiveType = PrimitiveType::Complex64;
 }
 
-use super::data_file::DataFile;
 use super::canonical::*;
+use super::data_file::DataFile;
 use super::data_type::CasacoreDataType;
 use super::table_control::{
     ColumnDescContents, DataManagerEntry, PlainColumnEntry, TableDescContents, read_iposition,
@@ -9331,7 +9331,7 @@ pub(crate) struct TiledFileIO {
 
 #[allow(clippy::too_many_arguments)]
 fn read_tiled_file_tile(
-    file: &mut std::fs::File,
+    file: &mut (impl std::io::Read + Seek),
     file_pos: u64,
     dst: &mut [u8],
     file_tile_bytes: usize,

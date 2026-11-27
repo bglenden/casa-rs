@@ -2,16 +2,16 @@
 #![allow(dead_code)]
 
 mod array_shapes;
-mod data_file;
-mod multifile;
 mod array_sources;
 pub(crate) mod asdm_stman;
 pub(crate) mod canonical;
 mod cell_elements;
 pub(crate) mod column_changes;
+mod data_file;
 pub(crate) mod data_type;
 mod fixed_arrays;
 pub(crate) mod incremental_stman;
+pub(crate) mod multifile;
 pub(crate) mod row_changes;
 mod scalar_sources;
 mod selected_cells;
@@ -119,6 +119,18 @@ impl RetainedTableReadMetadata {
         table_path: &Path,
         table_dat: TableDatContents,
     ) -> Result<Self, StorageError> {
+        if table_dat.uses_multifile()
+            && table_dat
+                .column_set
+                .data_managers
+                .iter()
+                .any(|manager| multifile::supports_multifile(&manager.type_name))
+        {
+            let container = table_path.join("table.mf");
+            if !container.is_file() {
+                return Err(StorageError::MissingDataFile(container));
+            }
+        }
         table_dat.asdm.retain_indexes()?;
         let tiled = TiledReadMetadata::open(table_path, &table_dat.column_set.data_managers)?;
         Ok(Self { table_dat, tiled })

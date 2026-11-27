@@ -109,6 +109,15 @@ fn edit_hypercolumns(private_keywords: &mut RecordValue, edit: impl Fn(&mut Vec<
 }
 
 impl Table {
+    /// Convert the manager files of a newly written, private plain table into
+    /// a casacore MultiFile container. If conversion fails, discard the private
+    /// table. Call this before publishing the table directory to other readers.
+    #[doc(hidden)]
+    pub fn pack_staged_multifile(path: &Path, block_size: usize) -> Result<(), TableError> {
+        crate::storage::multifile::pack_staged_manager_files(path, block_size)?;
+        Ok(())
+    }
+
     /// Atomically publish table keywords while preserving column keywords,
     /// the table information file, and all row storage.
     ///
@@ -295,6 +304,11 @@ impl Table {
                     "{operation} only supports plain tables"
                 )));
             };
+            if table_dat.uses_multifile() {
+                return Err(TableError::Storage(format!(
+                    "{operation} cannot change MultiFile storage-manager bindings"
+                )));
+            }
             let persisted_rows = self.require_persisted_rows(&path, &table_dat)?;
             table_dat.raise_row_count(persisted_rows);
             let removed_managers = edit(self, &mut table_dat, &path)?;

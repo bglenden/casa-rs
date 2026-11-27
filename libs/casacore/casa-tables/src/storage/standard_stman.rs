@@ -23,7 +23,6 @@ use casa_aipsio::{AipsIo, ByteOrder};
 
 use casa_core::{ArrayValue, ScalarValue, Value};
 
-use super::data_file::{DataFile, DataRead};
 use super::canonical::{
     canonical_element_size, read_bool_bits, read_f32_be, read_f32_le, read_f32_slice_be,
     read_f32_slice_le, read_f64_be, read_f64_le, read_f64_slice_be, read_f64_slice_le,
@@ -32,6 +31,7 @@ use super::canonical::{
     read_u32_slice_le, write_bool_bits, write_i32_be, write_i32_le, write_i64_be, write_i64_le,
 };
 use super::cell_elements::{cell_bools, encode_fixed_cell};
+use super::data_file::{DataFile, DataRead};
 use super::data_type::CasacoreDataType;
 use super::scalar_sources::SCALAR_BLOCK_CELLS;
 use super::stman_aipsio::{ColumnRawData, extract_row_value};
@@ -378,7 +378,10 @@ fn read_bucket(
     Ok(buf)
 }
 
-fn parse_ssm_indices(file: &mut impl DataRead, header: &SsmHeader) -> Result<Vec<SsmIndex>, StorageError> {
+fn parse_ssm_indices(
+    file: &mut impl DataRead,
+    header: &SsmHeader,
+) -> Result<Vec<SsmIndex>, StorageError> {
     if header.nr_indices == 0 || header.first_idx_bucket < 0 {
         return Ok(Vec::new());
     }
@@ -653,7 +656,7 @@ pub(crate) fn read_ssm_file_columns(
         let mut arr_path = file_path.as_os_str().to_os_string();
         arr_path.push("i");
         let arr_pathbuf = std::path::PathBuf::from(arr_path);
-        if arr_pathbuf.exists() {
+        if DataFile::is_file(&arr_pathbuf) {
             Some(StManArrayFileReader::open(&arr_pathbuf, header.big_endian)?)
         } else {
             None

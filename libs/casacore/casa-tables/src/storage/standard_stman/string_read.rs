@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Decode SSM strings with one reusable payload bucket per column read.
 
-use std::fs::File;
-
 use super::bucket_reader::LastBucket;
-use super::{SsmHeader, StorageError, Value, read_i32_be, string_arrays};
+use super::{DataRead, SsmHeader, StorageError, Value, read_i32_be, string_arrays};
 
 const STRING_BUCKET_HEADER: usize = 16;
 
 pub(super) fn read_ssm_string(
-    file: &mut File,
+    file: &mut impl DataRead,
     header: &SsmHeader,
     buckets: &mut LastBucket,
     bucket_nr: i32,
@@ -37,7 +35,7 @@ pub(super) fn read_fixed_ssm_string(bytes: &[u8]) -> Result<String, StorageError
 /// start of the next bucket its header links (casacore's
 /// `SSMStringHandler::getData`).
 pub(super) fn read_ssm_string_bytes(
-    file: &mut File,
+    file: &mut impl DataRead,
     header: &SsmHeader,
     buckets: &mut LastBucket,
     bucket_nr: i32,
@@ -89,7 +87,7 @@ pub(super) fn read_ssm_string_bytes(
 }
 
 pub(super) fn read_ssm_string_array_value(
-    file: &mut File,
+    file: &mut impl DataRead,
     header: &SsmHeader,
     buckets: &mut LastBucket,
     bucket_nr: i32,

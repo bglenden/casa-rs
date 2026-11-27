@@ -143,7 +143,7 @@ pub(super) fn read<R: ReadCell>(
         return Ok(Some(Vec::new()));
     }
 
-    let mut file = File::open(file_path)?;
+    let mut file = DataFile::open(file_path)?;
     let header = parse_ssm_header(&mut file)?;
     let dm_info = parse_ssm_dm_blob(dm_blob)?;
     let indices = parse_ssm_indices(&mut file, &header)?;
@@ -197,8 +197,7 @@ pub(super) fn read<R: ReadCell>(
         let mut array_path = file_path.as_os_str().to_os_string();
         array_path.push("i");
         let array_path = std::path::PathBuf::from(array_path);
-        let array_file = array_path
-            .exists()
+        let array_file = DataFile::is_file(&array_path)
             .then(|| StManArrayFileReader::open(&array_path, header.big_endian))
             .transpose()?;
         return IndirectColumn {
@@ -257,7 +256,7 @@ struct IndirectColumn<'a> {
 impl IndirectColumn<'_> {
     fn read<R: ReadCell>(
         mut self,
-        file: File,
+        file: DataFile,
         requests: &[(usize, usize)],
         cells: &mut R,
     ) -> Result<Vec<Option<R::Cell>>, StorageError> {

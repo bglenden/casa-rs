@@ -107,6 +107,12 @@ pub(crate) struct TableDatContents {
 }
 
 impl TableDatContents {
+    pub(crate) fn uses_multifile(&self) -> bool {
+        self.column_set
+            .storage
+            .is_some_and(|storage| storage.kind == ColumnSetStorage::MULTI_FILE)
+    }
+
     pub(super) fn asdm_column(
         &self,
         column: &ColumnDescContents,
@@ -187,9 +193,21 @@ impl ColumnDescContents {
 #[derive(Debug, Clone)]
 pub(crate) struct ColumnSetContents {
     pub nrrow: u64,
+    pub storage: Option<ColumnSetStorage>,
     pub seq_count: u32,
     pub data_managers: Vec<DataManagerEntry>,
     pub columns: Vec<PlainColumnEntry>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ColumnSetStorage {
+    pub kind: i32,
+    pub block_size: i32,
+}
+
+impl ColumnSetStorage {
+    pub const MULTI_FILE: i32 = 0;
+    pub const SEPARATE: i32 = 2;
 }
 
 #[derive(Debug, Clone)]
@@ -624,13 +642,13 @@ fn read_column_set(
 ) -> Result<ColumnSetContents, StorageError> {
     let version = io.get_i32()?; // negative: -2 or -3
 
-    let nrrow = if version == -3 {
+    let (nrrow, storage) = if version == -3 {
         let nr = io.get_u64()?;
-        let _storage_opt = io.get_i32()?;
-        let _block_size = io.get_i32()?;
-        nr
+        let kind = io.get_i32()?;
+        let block_size = io.get_i32()?;
+        (nr, Some(ColumnSetStorage { kind, block_size }))
     } else {
-        io.get_u32()? as u64
+        (u64::from(io.get_u32()?), None)
     };
 
     let seq_count = io.get_u32()?;
@@ -665,6 +683,7 @@ fn read_column_set(
 
     Ok(ColumnSetContents {
         nrrow,
+        storage,
         seq_count,
         data_managers,
         columns,
@@ -1350,9 +1369,15 @@ fn write_default_value(io: &mut AipsIo, dt: CasacoreDataType) -> Result<(), Stor
 fn write_column_set(io: &mut AipsIo, contents: &TableDatContents) -> Result<(), StorageError> {
     let cs = &contents.column_set;
 
-    // Version -2 (nrrow as u32)
-    io.put_i32(-2)?;
-    io.put_u32(cs.nrrow as u32)?;
+    if let Some(storage) = cs.storage {
+        io.put_i32(-3)?;
+        io.put_u64(cs.nrrow)?;
+        io.put_i32(storage.kind)?;
+        io.put_i32(storage.block_size)?;
+    } else {
+        io.put_i32(-2)?;
+        io.put_u32(cs.nrrow as u32)?;
+    }
     io.put_u32(cs.seq_count)?;
 
     // Data managers
@@ -1763,6 +1788,7 @@ impl TableDatContents {
             table_desc: TableDescContents::from_schema_header(schema, keywords, columns),
             column_set: ColumnSetContents {
                 nrrow,
+                storage: None,
                 seq_count: 1,
                 data_managers: vec![DataManagerEntry {
                     type_name: dm_type_name.to_string(),
@@ -2216,6 +2242,7 @@ impl TableDatContents {
             table_desc: TableDescContents::from_schema_header(schema, keywords, columns),
             column_set: ColumnSetContents {
                 nrrow,
+                storage: None,
                 seq_count,
                 data_managers: dm_entries,
                 columns: plain_columns,
@@ -2604,6 +2631,7 @@ mod tests {
             },
             column_set: ColumnSetContents {
                 nrrow: 1,
+                storage: None,
                 seq_count: 1,
                 data_managers: vec![DataManagerEntry {
                     type_name: "StManAipsIO".to_string(),

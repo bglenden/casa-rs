@@ -8,7 +8,8 @@ use std::path::Path;
 
 use casa_aipsio::AipsIo;
 
-use super::multifile::{MultiFile, MultiFileEntry};
+use super::multifile::{MultiFile, MultiFileEntry, manager_sequence, supports_multifile};
+use super::table_control::{TableDatResult, read_table_dat_dispatch};
 
 pub(super) enum DataFile {
     Separate(File),
@@ -17,32 +18,19 @@ pub(super) enum DataFile {
 
 impl DataFile {
     pub(super) fn is_file(path: &Path) -> bool {
-        path.is_file() || path.parent().is_some_and(|parent| parent.join("table.mf").is_file())
-            && Self::open(path).is_ok()
+        match packed_member(path) {
+            Ok(Some(_)) => true,
+            Ok(None) => path.is_file(),
+            Err(_) => false,
+        }
     }
 
     pub(super) fn open(path: impl AsRef<Path>) -> io::Result<Self> {
         let path = path.as_ref();
-        let missing = match File::open(path) {
-            Ok(file) => return Ok(Self::Separate(file)),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => error,
-            Err(error) => return Err(error),
-        };
-        let Some((directory, member)) = path.parent().zip(path.file_name().and_then(|v| v.to_str())) else {
-            return Err(missing);
-        };
-        if !member.starts_with("table.f") {
-            return Err(missing);
+        if let Some(member) = packed_member(path)? {
+            return Ok(Self::Packed(member));
         }
-        let container = directory.join("table.mf");
-        if !container.is_file() {
-            return Err(missing);
-        }
-        MultiFile::open(&container)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
-            .entry(member)
-            .map(Self::Packed)
-            .ok_or(missing)
+        File::open(path).map(Self::Separate)
     }
 
     pub(super) fn aips(path: impl AsRef<Path>) -> io::Result<AipsIo> {
@@ -72,6 +60,46 @@ impl DataFile {
             Self::Packed(file) => file.read_exact_at(bytes, offset),
         }
     }
+}
+
+fn packed_member(path: &Path) -> io::Result<Option<MultiFileEntry>> {
+    let Some((directory, member)) = path
+        .parent()
+        .zip(path.file_name().and_then(|name| name.to_str()))
+    else {
+        return Ok(None);
+    };
+    let Some(sequence) = manager_sequence(member) else {
+        return Ok(None);
+    };
+    let container = directory.join("table.mf");
+    if !container.is_file() {
+        return Ok(None);
+    }
+    let table = read_table_dat_dispatch(&directory.join(super::TABLE_CONTROL_FILE))
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let TableDatResult::Plain(table) = table else {
+        return Ok(None);
+    };
+    if !table.uses_multifile()
+        || !table
+            .column_set
+            .data_managers
+            .iter()
+            .any(|manager| manager.seq_nr == sequence && supports_multifile(&manager.type_name))
+    {
+        return Ok(None);
+    }
+    MultiFile::open(&container)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
+        .entry(member)
+        .map(Some)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("missing MultiFile member {member}"),
+            )
+        })
 }
 
 pub(super) trait DataRead: Read + Seek {

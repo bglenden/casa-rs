@@ -42,9 +42,9 @@ use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 mod typed;
 pub(crate) use typed::CanonicalArrayElement;
 
-use super::data_file::DataFile;
 use super::StorageError;
 use super::canonical::is_fortran_contiguous;
+use super::data_file::DataFile;
 use super::data_type::CasacoreDataType;
 
 // ---------------------------------------------------------------------------

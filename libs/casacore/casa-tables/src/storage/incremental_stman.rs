@@ -27,11 +27,11 @@ use casa_aipsio::internal::{AipsIoBufferWriter, AipsIoSliceReader, detect_aipsio
 use casa_aipsio::{AipsIo, ByteOrder};
 use casa_core::ScalarValue;
 
-use super::data_file::DataFile;
 use super::canonical::{
     read_f32_be, read_f32_le, read_f64_be, read_f64_le, read_i16_be, read_i16_le, read_i32_be,
     read_i32_le, read_i64_be, read_i64_le, read_u16_be, read_u16_le, read_u32_be, read_u32_le,
 };
+use super::data_file::DataFile;
 use super::data_type::CasacoreDataType;
 use super::scalar_sources::{ColumnSource, RowFields, SCALAR_BLOCK_CELLS};
 use super::stman_aipsio::ColumnRawData;
@@ -230,7 +230,10 @@ pub(crate) fn ism_spec(
 // Index parsing (at end of file, after all buckets)
 // ---------------------------------------------------------------------------
 
-fn parse_ism_index(file: &mut (impl Read + Seek), header: &IsmHeader) -> Result<IsmIndex, StorageError> {
+fn parse_ism_index(
+    file: &mut (impl Read + Seek),
+    header: &IsmHeader,
+) -> Result<IsmIndex, StorageError> {
     let index_offset = ISM_HEADER_SIZE + (header.nr_buckets as u64) * (header.bucket_size as u64);
     file.seek(SeekFrom::Start(index_offset))?;
 
@@ -617,7 +620,7 @@ pub(crate) fn read_ism_file_columns(
         .any(|(_, col_desc)| is_ism_indirect_array(col_desc))
     {
         let array_path = PathBuf::from(format!("{}i", file_path.display()));
-        if !array_path.is_file() {
+        if !DataFile::is_file(&array_path) {
             return Err(StorageError::MissingDataFile(array_path));
         }
         Some(StManArrayFileReader::open(&array_path, be)?)

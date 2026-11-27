@@ -15,7 +15,7 @@ pub(super) struct LastBucket {
 impl LastBucket {
     pub(super) fn read(
         &mut self,
-        file: &mut File,
+        file: &mut impl DataRead,
         header: &SsmHeader,
         number: u32,
     ) -> Result<&[u8], StorageError> {
@@ -28,16 +28,16 @@ impl LastBucket {
 }
 
 /// One operation owns this buffer; no cached bytes survive a table read.
-pub(super) struct ReadBuckets {
-    file: BufReader<File>,
+pub(super) struct ReadBuckets<F> {
+    file: BufReader<F>,
     length: u64,
     position: Option<u64>,
     bucket: Vec<u8>,
 }
 
-impl ReadBuckets {
-    pub(super) fn new(file: File) -> Result<Self, StorageError> {
-        let length = file.metadata()?.len();
+impl<F: DataRead> ReadBuckets<F> {
+    pub(super) fn new(file: F) -> Result<Self, StorageError> {
+        let length = file.data_len()?;
         Ok(Self {
             file: BufReader::with_capacity(32 * 1024, file),
             length,
