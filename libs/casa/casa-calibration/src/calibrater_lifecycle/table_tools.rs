@@ -127,7 +127,8 @@ impl CalibraterLifecycle {
                 output_path(input, destination),
                 mode == "flex",
                 reference,
-            ),
+            )
+            .map_err(|error| error.to_string()),
             _ => Err("Unrecognized refantmode!".into()),
         };
         result.map_err(|message| {

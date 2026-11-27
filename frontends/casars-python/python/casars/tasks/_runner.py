@@ -518,6 +518,9 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         try:
             return run(name, **values).value
         except (TypeError, ValueError) as error:
+            if (name == "rerefant" and isinstance(error, TaskParameterError)
+                    and error.completion.parameter == "vis"):
+                raise
             raise AssertionError(str(error)) from error
     if name == "flagdata":
         argument_text: dict[str, str] = {}

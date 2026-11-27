@@ -496,31 +496,7 @@ impl MeasurementSet {
         if text.is_empty() {
             return Ok(Vec::new());
         }
-        self.with_antenna_rows(|rows| {
-            let mut seen = vec![false; rows.len()];
-            let mut antennas = Vec::new();
-            for clause in antenna_clauses(rows, text, true)? {
-                let ids = match clause.term {
-                    Term::Cross(ids) | Term::AutoOnly(ids) | Term::Pair { first: ids, .. } => ids,
-                    Term::Ordered(_) => continue,
-                };
-                for id in ids {
-                    if clause.negate && id != 0 {
-                        if reject_negative {
-                            return Err(MsError::InvalidInput(format!(
-                                "antenna selector {text:?} produces a negative calibration index for antenna {id}"
-                            )));
-                        }
-                        continue;
-                    }
-                    if !seen[id] {
-                        seen[id] = true;
-                        antennas.push(id);
-                    }
-                }
-            }
-            Ok(antennas)
-        })
+        self.with_antenna_rows(|rows| resolve_antenna1_indices(rows, text, reject_negative))
     }
 
     fn with_antenna_rows<T>(
@@ -547,6 +523,50 @@ impl MeasurementSet {
             .collect();
         resolve(&rows)
     }
+}
+
+/// Resolve the ordered, nonnegative first-antenna indices of a CASA
+/// reference expression against antenna metadata. An empty expression
+/// selects no reference. This takes the same priority order as
+/// [`MeasurementSet::resolve_reference_antennas`].
+///
+/// # Errors
+/// When the antenna expression is invalid or a token matches no antenna.
+pub fn resolve_reference_antennas(antennas: &[AntennaRow<'_>], text: &str) -> MsResult<Vec<usize>> {
+    resolve_antenna1_indices(antennas, text, false)
+}
+
+fn resolve_antenna1_indices(
+    rows: &[AntennaRow<'_>],
+    text: &str,
+    reject_negative: bool,
+) -> MsResult<Vec<usize>> {
+    if text.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut seen = vec![false; rows.len()];
+    let mut antennas = Vec::new();
+    for clause in antenna_clauses(rows, text, true)? {
+        let ids = match clause.term {
+            Term::Cross(ids) | Term::AutoOnly(ids) | Term::Pair { first: ids, .. } => ids,
+            Term::Ordered(_) => continue,
+        };
+        for id in ids {
+            if clause.negate && id != 0 {
+                if reject_negative {
+                    return Err(MsError::InvalidInput(format!(
+                        "antenna selector {text:?} produces a negative calibration index for antenna {id}"
+                    )));
+                }
+                continue;
+            }
+            if !seen[id] {
+                seen[id] = true;
+                antennas.push(id);
+            }
+        }
+    }
+    Ok(antennas)
 }
 
 /// One term and whether `!` negates it.

@@ -24,6 +24,7 @@ mod write;
 pub use cursor::Msv4Cursor;
 pub(crate) use pointing::POINTING_FRAMES;
 pub use read::Msv4Observation;
+pub(super) use read::antenna_catalogue;
 pub use write::{check_fields, kept_samples, unix_times};
 
 /// XRADIO's name for an absent source, which the writer writes for a field

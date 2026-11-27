@@ -39,6 +39,7 @@ use casa_ms::observation_io::{
 };
 use casa_observation::{AntennaId, BindingTolerance, Catalogue, ObservationError, PartitionId};
 
+use crate::rerefant::{names_agree, same_antenna};
 use crate::solve::kernel::SolutionRow;
 use crate::solve::writer::write_gain_caltable_named;
 use crate::solve::{GainSolveReport, GainSolveRequest, SolvedGains};
@@ -143,9 +144,11 @@ impl CalibrationBinding {
             &table.antennas,
             &target.rows.antennas,
             Rules {
-                content: |a: &NamespaceAntenna, b: &NamespaceAntenna| same_antenna(a, b, tolerance),
+                content: |a: &NamespaceAntenna, b: &NamespaceAntenna| {
+                    same_antenna(a, b, tolerance.position_m)
+                },
                 consistent: |a: &NamespaceAntenna, b: &NamespaceAntenna| {
-                    same_antenna(a, b, tolerance) && names_agree(a, b)
+                    same_antenna(a, b, tolerance.position_m) && names_agree(a, b)
                 },
                 agree: names_agree,
             },
@@ -346,30 +349,6 @@ fn associate<T>(
         bound[target_row] = Some(row);
     }
     Ok(bound)
-}
-
-fn same_antenna(a: &NamespaceAntenna, b: &NamespaceAntenna, tolerance: &BindingTolerance) -> bool {
-    a.station == b.station
-        && a.position_m
-            .iter()
-            .zip(&b.position_m)
-            .all(|(x, y)| (x - y).abs() <= tolerance.position_m)
-}
-
-/// Whether two antennas' names agree: the same once each loses the
-/// `_STATION` suffixes a converter appends (XRADIO names an MSv2 antenna
-/// `NAME_STATION`, and a round trip appends it again).
-fn names_agree(a: &NamespaceAntenna, b: &NamespaceAntenna) -> bool {
-    fn bare<'n>(mut name: &'n str, station: &str) -> &'n str {
-        while let Some(stripped) = name
-            .strip_suffix(station)
-            .and_then(|rest| rest.strip_suffix('_'))
-        {
-            name = stripped;
-        }
-        name
-    }
-    bare(&a.name, &a.station) == bare(&b.name, &b.station)
 }
 
 fn same_field(a: &NamespaceField, b: &NamespaceField, tolerance: &BindingTolerance) -> bool {

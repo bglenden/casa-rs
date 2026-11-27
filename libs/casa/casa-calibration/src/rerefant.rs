@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Re-reference a calibration table across solution intervals.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use casa_core::{ArrayValue, ScalarValue, Value};
-use casa_ms::MeasurementSet;
+use casa_ms::observation_io::{
+    AntennaNamespace, NamespaceAntenna, NamespaceRows, ObservationError, antenna_namespace,
+};
+use casa_ms::selection::antenna_expr::{AntennaRow, resolve_reference_antennas};
 use casa_tables::{RequiredScalarColumnValues, Table};
 use ndarray::ArrayD;
 use num_complex::Complex32;
@@ -32,40 +36,86 @@ struct Solution {
     parameters: ArrayValue,
 }
 
-/// Rereferences complex calibration solutions to the requested reference antenna selection and
-/// writes the transformed calibration table.
+/// Failures when opening the MeasurementSet or editing the calibration table.
+#[derive(Debug, thiserror::Error)]
+pub enum RereferenceError {
+    /// The MeasurementSet's antenna metadata could not be read.
+    #[error(transparent)]
+    Observation(#[from] ObservationError),
+    /// The reference selection or table edit failed.
+    #[error("{0}")]
+    Calibration(String),
+}
+
+/// Re-reference complex calibration solutions and write the transformed
+/// calibration table. MSv4 uses the calibration table's antenna names and
+/// indices, with candidates checked against the observation by antenna
+/// identity. An MSv2 retains its casacore antenna-row numbering.
+///
+/// # Errors
+/// When the observation's antenna metadata is unavailable, the reference
+/// selection is invalid, or the calibration table cannot be edited.
 pub fn rereference_calibration_table(
     ms_path: &Path,
     input: &Path,
     destination: &Path,
     flexible: bool,
     selector: &str,
-) -> Result<(), String> {
-    let ms = MeasurementSet::open(ms_path).map_err(error_text)?;
-    let preferred = ms
-        .resolve_reference_antennas(selector)
-        .map_err(error_text)?;
+) -> Result<(), RereferenceError> {
+    let result = match antenna_namespace(ms_path)? {
+        AntennaNamespace::Msv2(antennas) => {
+            let mut choices = reference_choices(&antennas, flexible, selector)
+                .map_err(RereferenceError::Calibration)?;
+            edit_calibration_table(input, destination, |table, _| {
+                edit_references(table, &mut choices)
+            })
+        }
+        AntennaNamespace::Msv4(antennas) => {
+            edit_calibration_table(input, destination, |table, staged| {
+                let cal_antennas = NamespaceRows::read_antennas(staged).map_err(error_text)?;
+                let choices = reference_choices(&cal_antennas, flexible, selector)?;
+                let mut choices = bind_msv4_choices(&antennas, &cal_antennas, &choices)?;
+                edit_references(table, &mut choices)
+            })
+        }
+    };
+    result.map_err(RereferenceError::Calibration)
+}
+
+fn reference_choices(
+    antennas: &[NamespaceAntenna],
+    flexible: bool,
+    selector: &str,
+) -> Result<Vec<i32>, String> {
+    let rows: Vec<_> = antennas
+        .iter()
+        .map(|antenna| AntennaRow {
+            name: &antenna.name,
+            station: &antenna.station,
+            position_m: antenna.position_m,
+        })
+        .collect();
+    let preferred = resolve_reference_antennas(&rows, selector).map_err(error_text)?;
     let Some(&primary) = preferred.first() else {
         return Err("no reference antenna specified".into());
     };
     let mut choices = vec![i32::try_from(primary).map_err(error_text)?];
     if flexible {
-        let antenna = ms.antenna().map_err(error_text)?;
-        let center = antenna
-            .position(*preferred.last().unwrap())
-            .map_err(error_text)?;
-        let mut nearby = (0..antenna.row_count())
-            .filter(|id| !preferred.contains(id))
-            .map(|id| {
-                let position = antenna.position(id).map_err(error_text)?;
-                let distance = position
+        let center = antennas[*preferred.last().unwrap()].position_m;
+        let mut nearby = antennas
+            .iter()
+            .enumerate()
+            .filter(|(id, _)| !preferred.contains(id))
+            .map(|(id, antenna)| {
+                let distance = antenna
+                    .position_m
                     .into_iter()
                     .zip(center)
                     .map(|(a, b)| (a - b).powi(2))
                     .sum::<f64>();
-                Ok((id, distance))
+                (id, distance)
             })
-            .collect::<Result<Vec<_>, String>>()?;
+            .collect::<Vec<_>>();
         nearby.sort_by(|a, b| a.1.total_cmp(&b.1));
         // The second entry retains the last reference, ahead of the fallback list.
         choices.push(choices[0]);
@@ -77,9 +127,70 @@ pub fn rereference_calibration_table(
             choices.push(i32::try_from(id).map_err(error_text)?);
         }
     }
-    edit_calibration_table(input, destination, |table, _| {
-        edit_references(table, &mut choices)
-    })
+    Ok(choices)
+}
+
+fn bind_msv4_choices(
+    antennas: &[NamespaceAntenna],
+    table: &[NamespaceAntenna],
+    choices: &[i32],
+) -> Result<Vec<i32>, String> {
+    let mut bound = BTreeMap::new();
+    let mut matched = Vec::with_capacity(choices.len());
+    for &row in choices {
+        let antenna = &table[row as usize];
+        let mut candidates = antennas
+            .iter()
+            .enumerate()
+            .filter(|(_, other)| same_antenna(antenna, other, 0.0));
+        if let Some((id, other)) = candidates.next() {
+            if candidates.next().is_some() || !names_agree(antenna, other) {
+                return Err(format!(
+                    "calibration table antenna {} at station {} has no unique matching MSv4 antenna",
+                    antenna.name, antenna.station
+                ));
+            }
+            if let Some(previous) = bound.insert(id, row)
+                && previous != row
+            {
+                return Err(format!(
+                    "calibration table antenna rows {previous} and {row} both match MSv4 antenna {}",
+                    other.name
+                ));
+            }
+            matched.push(row);
+        } else if matched.is_empty() {
+            return Err(format!(
+                "reference antenna {} at station {} is absent from the MSv4 store",
+                antenna.name, antenna.station
+            ));
+        }
+    }
+    Ok(matched)
+}
+
+pub(crate) fn same_antenna(a: &NamespaceAntenna, b: &NamespaceAntenna, tolerance_m: f64) -> bool {
+    a.station == b.station
+        && a.position_m
+            .iter()
+            .zip(&b.position_m)
+            .all(|(x, y)| (x - y).abs() <= tolerance_m)
+}
+
+/// Whether two antennas' names agree: the same once each loses the
+/// `_STATION` suffixes a converter appends (XRADIO names an MSv2 antenna
+/// `NAME_STATION`, and a round trip appends it again).
+pub(crate) fn names_agree(a: &NamespaceAntenna, b: &NamespaceAntenna) -> bool {
+    fn bare<'n>(mut name: &'n str, station: &str) -> &'n str {
+        while let Some(stripped) = name
+            .strip_suffix(station)
+            .and_then(|rest| rest.strip_suffix('_'))
+        {
+            name = stripped;
+        }
+        name
+    }
+    bare(&a.name, &a.station) == bare(&b.name, &b.station)
 }
 
 fn solution_indices(table: &Table) -> Result<Vec<SolutionIndex>, String> {

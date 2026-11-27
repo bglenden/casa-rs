@@ -24,7 +24,9 @@ mod update;
 
 use std::path::Path;
 
-use casa_observation::{Observation, ObservationError};
+use casa_observation::Observation;
+
+pub use casa_observation::ObservationError;
 
 pub use msv2::catalogue::{Feeds, read_feeds};
 pub use msv2::{MainRowKeys, Msv2Cursor, Msv2Observation};
@@ -34,8 +36,8 @@ pub use msv4::{
     Msv4WriteCounters, Msv4Writer, STATION_NAMED, check_fields, kept_samples, unix_times,
 };
 pub use namespace::{
-    NamespaceAntenna, NamespaceField, NamespaceRows, NamespaceWindow, PersistedNamespace,
-    persisted_namespace,
+    AntennaNamespace, NamespaceAntenna, NamespaceField, NamespaceRows, NamespaceWindow,
+    PersistedNamespace, antenna_namespace, persisted_namespace,
 };
 pub use update::UpdateSession;
 #[cfg(unix)]
