@@ -60,6 +60,7 @@ pub(super) fn mstransform_staged(
         operation.is_some(),
         started_at,
     )?;
+    options.check_cancelled()?;
     let stage_started_at = Instant::now();
     let mut spectral = select_spectra(request, grammar, options, &selected, legacy_grid)?;
     let (selected_rows, selected_ddids) = filter_selected_rows(
@@ -227,6 +228,7 @@ pub(super) fn mstransform_staged(
         stage_started_at.elapsed(),
         started_at.elapsed(),
     );
+    options.check_cancelled()?;
     let stage_started_at = Instant::now();
     let float_convolution = convolving && request.data_column == TransformDataColumn::FloatData;
     let read_spectral_weights = polarization.is_some()
@@ -327,6 +329,7 @@ pub(super) fn mstransform_staged(
         stage_started_at.elapsed(),
         started_at.elapsed(),
     );
+    options.check_cancelled()?;
     let stage_started_at = Instant::now();
     copy_subtables(
         &input,
@@ -608,6 +611,7 @@ pub(super) fn mstransform_staged(
         )
     });
     for batch_start in (0..row_count).step_by(batch_rows.max(1)) {
+        options.check_cancelled()?;
         let batch_end = (batch_start + batch_rows.max(1)).min(row_count);
         let input_rows = &output_input_rows[batch_start..batch_end];
         let mut combined_scalars = Vec::new();
@@ -1443,7 +1447,15 @@ pub(super) fn mstransform_staged(
             }
             touched_spws.insert(spw_id);
         }
+        if batch_start == 0 {
+            maybe_log_transform_progress(
+                "first_visibility_batch",
+                stage_started_at.elapsed(),
+                started_at.elapsed(),
+            );
+        }
     }
+    options.check_cancelled()?;
     maybe_log_transform_progress(
         "select_channels",
         stage_started_at.elapsed(),
@@ -1481,6 +1493,7 @@ pub(super) fn mstransform_staged(
             visibility: &visibility,
             spectra_output: spectra.output,
         },
+        options,
         budget,
         started_at,
     )

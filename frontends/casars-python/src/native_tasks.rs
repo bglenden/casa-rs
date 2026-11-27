@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender, channel, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -123,19 +123,27 @@ impl NativeTaskResult {
 }
 
 enum WorkerMessage {
-    Log(String),
+    Log(String, Option<Sender<()>>),
     Finished,
 }
 
-struct LogWriter(SyncSender<WorkerMessage>);
+struct LogWriter {
+    sender: SyncSender<WorkerMessage>,
+    synchronize: bool,
+}
 
 impl io::Write for LogWriter {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0
-            .send(WorkerMessage::Log(
-                String::from_utf8_lossy(bytes).into_owned(),
-            ))
+        // With verbose diagnostics enabled, let Python handle the log and
+        // any signal it triggers before the worker passes the checkpoint.
+        let (acknowledge, delivered) = self.synchronize.then(channel).unzip();
+        let line = String::from_utf8_lossy(bytes).into_owned();
+        self.sender
+            .send(WorkerMessage::Log(line, acknowledge))
             .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?;
+        if let Some(delivered) = delivered {
+            let _ = delivered.recv();
+        }
         Ok(bytes.len())
     }
 
@@ -182,7 +190,10 @@ impl TaskLogging {
         }
         if let Some(priority) = self.stderr_priority {
             sinks.push(Arc::new(WriterSink::new(
-                Arc::new(Mutex::new(LogWriter(sender))),
+                Arc::new(Mutex::new(LogWriter {
+                    sender,
+                    synchronize: priority <= CasaPriority::Debug1,
+                })),
                 priority,
             )));
         }
@@ -215,7 +226,7 @@ pub(crate) fn run_native_task(
     let execution = NativeTaskOptions {
         default_logs: logging.default_output,
         log_line: Some(Arc::new(move |line| {
-            let _ = diagnostic_lines.send(WorkerMessage::Log(format!("{line}\n")));
+            let _ = diagnostic_lines.send(WorkerMessage::Log(format!("{line}\n"), None));
         })),
         plot_payload: options.plot_payload,
         bandpass_completed_pages: options.bandpass_completed_pages,
@@ -228,7 +239,7 @@ pub(crate) fn run_native_task(
             .and_then(|write| write.borrow(py).reservations.clone()),
         ..NativeTaskOptions::default()
     };
-    let cancel = execution.imaging.cancel.clone();
+    let cancel = execution.cancel.clone();
     let worker = std::thread::Builder::new()
         .name(format!("casars-{surface}"))
         .spawn(move || {
@@ -245,14 +256,15 @@ pub(crate) fn run_native_task(
                 )
             });
             for line in lines {
-                if sender.send(WorkerMessage::Log(line + "\n")).is_err() {
+                if sender.send(WorkerMessage::Log(line + "\n", None)).is_err() {
                     break;
                 }
             }
             if let Err(error) = sink.flush() {
-                let _ = sender.send(WorkerMessage::Log(format!(
-                    "Error: failed to flush logging: {error}\n"
-                )));
+                let _ = sender.send(WorkerMessage::Log(
+                    format!("Error: failed to flush logging: {error}\n"),
+                    None,
+                ));
             }
             let _ = sender.send(WorkerMessage::Finished);
             reply
@@ -285,7 +297,7 @@ fn collect_logs(
         }
         let receiver = &mut *receiver;
         match py.detach(move || receiver.recv_timeout(Duration::from_millis(20))) {
-            Ok(WorkerMessage::Log(line)) => {
+            Ok(WorkerMessage::Log(line, acknowledge)) => {
                 logs.push_str(&line);
                 if interrupted.is_none()
                     && let Err(error) = relay_log(sys, &line)
@@ -294,6 +306,15 @@ fn collect_logs(
                     cancel.cancel();
                     interrupted = Some(error);
                 }
+                if acknowledge.is_some()
+                    && let Err(error) = py.check_signals()
+                {
+                    cancel.cancel();
+                    interrupted.get_or_insert(error);
+                }
+                // Closing the channel releases the worker even if log
+                // delivery or signal handling raised a Python exception.
+                drop(acknowledge);
             }
             Err(RecvTimeoutError::Timeout) if !worker.is_finished() => {}
             Ok(WorkerMessage::Finished) | Err(_) => break,

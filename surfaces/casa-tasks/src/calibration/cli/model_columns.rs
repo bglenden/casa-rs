@@ -45,8 +45,8 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
 fn run_one(task: &TaskInvocation<'_>, path: &Path, partition: bool) -> Result<(), TaskFailure> {
     let mut lock = acquire_write(task, path).map_err(|error| {
         if task
-            .native_options()
-            .is_some_and(crate::NativeTaskOptions::is_cancelled)
+            .cancellation()
+            .is_some_and(crate::TaskCancellation::is_cancelled)
         {
             TaskFailure::interrupted(error.to_string()).at("vis")
         } else {
@@ -119,7 +119,7 @@ fn acquire_write(
         && let Some(reservations) = options.table_writes.as_ref()
     {
         return TableWriteLock::acquire_reserved_interruptibly(path, reservations, &|| {
-            options.is_cancelled()
+            options.cancel.is_cancelled()
         });
     }
     let _ = task;

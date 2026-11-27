@@ -15,8 +15,7 @@ use super::{
 use crate::runtime::invocation::task_override_values;
 use crate::{BaseSource, OpenSessionRequest, ResolutionPatch};
 
-#[cfg(feature = "imaging")]
-pub use casa_imaging::Cancel as TaskCancellation;
+pub use casa_core::cancellation::Cancellation as TaskCancellation;
 
 /// Writes a task-formatted diagnostic line to the caller's log stream.
 pub type TaskLogLineSink = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
@@ -39,22 +38,11 @@ pub struct NativeTaskOptions {
     /// Clearcal's reservations protecting the tables that it changes.
     #[cfg(all(unix, feature = "calibration"))]
     pub table_writes: Option<std::sync::Arc<[casa_tables::DelegatedTableWrite]>>,
-    /// Per-run controls and a cancellation token for imaging tasks.
+    /// Per-run token shared by native task adapters and their workers.
+    pub cancel: TaskCancellation,
+    /// Imaging controls. Native runs use the invocation's shared cancellation token.
     #[cfg(feature = "imaging")]
     pub imaging: crate::imaging::ImagingExecutionOptions,
-}
-
-impl NativeTaskOptions {
-    pub(crate) fn is_cancelled(&self) -> bool {
-        #[cfg(feature = "imaging")]
-        {
-            self.imaging.cancel.is_cancelled()
-        }
-        #[cfg(not(feature = "imaging"))]
-        {
-            false
-        }
-    }
 }
 
 /// Run a built-in task with explicit overrides and no managed Last state.
@@ -93,7 +81,7 @@ fn run(
     if !workspace.is_absolute() {
         return Err(TaskFailure::validation("task workspace must be absolute"));
     }
-    if options.is_cancelled() {
+    if options.cancel.is_cancelled() {
         return Err(TaskFailure::interrupted(
             "cancelled before the task started",
         ));
@@ -147,13 +135,17 @@ fn execute(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         #[cfg(feature = "imaging")]
         "tclean" => {
-            crate::imaging::run_task_with_options(task, &task.native_options().unwrap().imaging)
+            let native = task.native_options().unwrap();
+            let options = crate::imaging::ImagingExecutionOptions {
+                cancel: native.cancel.clone(),
+                ..native.imaging.clone()
+            };
+            crate::imaging::run_task_with_options(task, &options)
         }
         #[cfg(feature = "imaging")]
-        "tsdimaging" => crate::imaging::single_dish::run(
-            task,
-            task.native_options().unwrap().imaging.cancel.clone(),
-        ),
+        "tsdimaging" => {
+            crate::imaging::single_dish::run(task, task.native_options().unwrap().cancel.clone())
+        }
         #[cfg(feature = "images")]
         "imhead" | "imstat" => crate::images::imexplore::run(task, task.default_stderr_logs()),
         #[cfg(feature = "images")]
@@ -208,5 +200,32 @@ fn execute(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         id => Err(TaskFailure::validation(format!(
             "task {id:?} is unavailable in this build"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use casa_contracts::TaskFailureKind;
+
+    #[test]
+    fn native_invocations_honor_a_shared_cancellation_request() {
+        let options = NativeTaskOptions::default();
+        options.cancel.clone().cancel();
+        let (reply, _) = run_task_in_process(
+            "split",
+            BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &std::env::current_dir().unwrap(),
+            &options,
+        );
+        assert!(matches!(
+            reply,
+            TaskReply::Failed {
+                kind: TaskFailureKind::Interrupted,
+                ..
+            }
+        ));
     }
 }

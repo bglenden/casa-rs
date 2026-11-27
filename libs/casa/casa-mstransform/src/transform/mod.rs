@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use casa_core::cancellation::Cancellation;
 use casa_core::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use casa_tables::streamed_tiled::StreamedTiledShapeValueType;
 use casa_tables::{
@@ -161,6 +162,9 @@ pub struct MsTransformRequest {
 /// Additional options used by the CASA task surfaces.
 #[derive(Debug, Clone, Default)]
 pub struct MsTransformTaskOptions {
+    /// Stop at a safe boundary when cancellation is requested. An interrupted
+    /// transform discards its staged output before returning.
+    pub cancel: Option<Cancellation>,
     /// Explicit visibility columns for callers that accept arbitrary combinations.
     /// Ordinary task surfaces select a predefined combination on the request.
     pub visibility_columns: Option<Vec<OptionalMainColumn>>,
@@ -206,6 +210,15 @@ pub struct MsTransformTaskOptions {
     pub multi_ms: Option<MsTransformMultiMsOptions>,
     /// Computed arrays to read in place of stored input values.
     pub input_view: Option<Arc<dyn TransformInputView>>,
+}
+
+impl MsTransformTaskOptions {
+    fn check_cancelled(&self) -> Result<(), MsTransformError> {
+        if self.cancel.as_ref().is_some_and(Cancellation::is_cancelled) {
+            return Err(MsTransformError::Interrupted);
+        }
+        Ok(())
+    }
 }
 
 /// Materialization behavior for the public legacy MeasurementSet tools.
@@ -345,6 +358,9 @@ pub struct MsTransformReport {
 /// Errors returned by [`mstransform`].
 #[derive(Debug, Error)]
 pub enum MsTransformError {
+    /// The caller cancelled the transform before the final output was published.
+    #[error("MeasurementSet transform interrupted")]
+    Interrupted,
     /// Validation or computation of the selected spectrum failed.
     #[error("{0}")]
     Spectrum(String),
@@ -558,13 +574,42 @@ fn materialize_transform(
             path: flagversions.display().to_string(),
         });
     }
-    let target =
-        MeasurementSetCreateTarget::prepare(&request.output_ms, false).map_err(|error| {
-            MsTransformError::PrepareOutput {
-                path: request.output_ms.display().to_string(),
-                reason: error.to_string(),
+    options.check_cancelled()?;
+    let prepare_error = |reason| MsTransformError::PrepareOutput {
+        path: request.output_ms.display().to_string(),
+        reason,
+    };
+    let target = MeasurementSetCreateTarget::prepare(&request.output_ms, false)
+        .map_err(|error| prepare_error(error.to_string()))?;
+    let staging = target.staging_path().to_owned();
+    if let Some(parent) = staging.parent().filter(|path| !path.as_os_str().is_empty()) {
+        fs::create_dir_all(parent).map_err(|error| prepare_error(error.to_string()))?;
+    }
+    // Own this directory before any writes, so cancellation cannot remove
+    // another invocation's staging files.
+    fs::create_dir(&staging).map_err(|error| prepare_error(error.to_string()))?;
+    let result = stage_then_publish_transform(request, grammar, options, target);
+    match &result {
+        Err(MsTransformError::Interrupted) => {
+            if let Err(error) = fs::remove_dir_all(&staging) {
+                tracing::warn!(path = %staging.display(), %error, "could not remove interrupted transform staging");
             }
-        })?;
+        }
+        Err(_) => {
+            // Keep nonempty staging for ordinary failures.
+            let _ = fs::remove_dir(&staging);
+        }
+        Ok(_) => {}
+    }
+    result
+}
+
+fn stage_then_publish_transform(
+    request: &MsTransformRequest,
+    grammar: RowGrammar,
+    options: &MsTransformTaskOptions,
+    target: MeasurementSetCreateTarget,
+) -> Result<MsTransformReport, MsTransformError> {
     let mut physical_request = request.clone();
     physical_request.output_ms = target.staging_path().to_path_buf();
     if let Some(configuration) = options.multi_ms
@@ -576,6 +621,7 @@ fn materialize_transform(
             configuration,
         )?
     {
+        options.check_cancelled()?;
         if report.row_count > 0 {
             target
                 .commit()
@@ -583,6 +629,8 @@ fn materialize_transform(
                     path: request.output_ms.display().to_string(),
                     reason: error.to_string(),
                 })?;
+        } else {
+            let _ = fs::remove_dir(target.staging_path());
         }
         report.output_ms.clone_from(&request.output_ms);
         return Ok(report);
@@ -602,6 +650,8 @@ fn materialize_transform(
                 &members,
             )?
             else {
+                options.check_cancelled()?;
+                let _ = fs::remove_dir(target.staging_path());
                 return Ok(empty_transform_report(request));
             };
             report
@@ -615,6 +665,7 @@ fn materialize_transform(
         )?,
         _ => transform_product(&physical_request, grammar, options, None, None)?,
     };
+    options.check_cancelled()?;
     target
         .commit()
         .map_err(|error| MsTransformError::PrepareOutput {
@@ -667,6 +718,7 @@ fn transform_selected_product(
     operation: Option<SpectralOperation<'_>>,
     partition: Option<TransformSelection>,
 ) -> Result<MsTransformReport, MsTransformError> {
+    options.check_cancelled()?;
     let report = mstransform_staged(
         request,
         grammar,
@@ -675,6 +727,7 @@ fn transform_selected_product(
         operation,
         partition,
     )?;
+    options.check_cancelled()?;
     if let Some(history) = &options.history {
         task_history::append_task_history(&request.output_ms, history)?;
     }

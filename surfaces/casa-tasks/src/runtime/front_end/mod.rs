@@ -42,9 +42,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 mod native;
-#[cfg(feature = "imaging")]
-pub use native::TaskCancellation;
-pub use native::{NativeTaskOptions, TaskLogLineSink, run_task_in_process};
+pub use native::{NativeTaskOptions, TaskCancellation, TaskLogLineSink, run_task_in_process};
 
 use casa_contracts::{
     CasaValue, EXIT_EXECUTION_FAILED, EXIT_SUCCEEDED, EXIT_VALIDATION_FAILED, ParameterValue,
@@ -252,6 +250,11 @@ impl<'a> TaskInvocation<'a> {
     ))]
     pub(crate) fn native_options(&self) -> Option<&crate::NativeTaskOptions> {
         self.native
+    }
+
+    #[cfg(any(feature = "calibration", feature = "simulation"))]
+    pub(crate) fn cancellation(&self) -> Option<&TaskCancellation> {
+        self.native.map(|options| &options.cancel)
     }
 
     /// Resolve a task-relative path for opening or creating a file. CLI runs

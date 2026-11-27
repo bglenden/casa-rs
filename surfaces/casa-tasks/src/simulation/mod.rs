@@ -308,12 +308,7 @@ fn with_figures<T>(
 }
 
 fn cancellation(task: &TaskInvocation<'_>) -> Cancel {
-    #[cfg(feature = "imaging")]
-    if let Some(options) = task.native_options() {
-        return options.imaging.cancel.clone();
-    }
-    let _ = task;
-    Cancel::new()
+    task.cancellation().cloned().unwrap_or_default()
 }
 
 fn simulation_failure(cancel: &Cancel, error: impl ToString) -> TaskFailure {
