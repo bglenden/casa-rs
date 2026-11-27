@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA image prediction over windows with different correlation setups.
 use crate::existing_ms_calculations;
-#[path = "mixed_correlations/review.rs"]
+#[path = "review.rs"]
 mod review;
 use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{BackendRequest, PredictSpec, SessionResources, Simulator, SimulatorOptions};
@@ -12,12 +12,12 @@ use std::path::Path;
 
 #[test]
 fn mixed_window_correlations_match_casa() {
-    run(include_bytes!("data/sm_mixed_correlations_casa.json.gz"));
+    run(include_bytes!("../data/sm_mixed_correlations_casa.json.gz"));
 }
 
 #[test]
 fn mixed_polarization_aliases_match_casa() {
-    run(include_bytes!("data/sm_mixed_aliases_casa.json.gz"));
+    run(include_bytes!("../data/sm_mixed_aliases_casa.json.gz"));
 }
 
 fn run(bytes: &[u8]) {

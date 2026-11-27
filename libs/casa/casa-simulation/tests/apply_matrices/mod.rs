@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Full polarized table errors imposed on simulated visibilities, against CASA.
-#[path = "apply_matrices/support.rs"]
+#[path = "support.rs"]
 mod matrices;
 use crate::apply_support as support;
 
@@ -11,7 +11,7 @@ use std::io::Read;
 #[test]
 fn full_polarized_table_errors_match_casa() {
     let mut text = String::new();
-    GzDecoder::new(&include_bytes!("data/sm_apply_matrices_casa.json.gz")[..])
+    GzDecoder::new(&include_bytes!("../data/sm_apply_matrices_casa.json.gz")[..])
         .read_to_string(&mut text)
         .unwrap();
     let fixture: Value = serde_json::from_str(&text).unwrap();
