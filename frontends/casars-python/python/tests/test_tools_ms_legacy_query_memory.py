@@ -107,16 +107,19 @@ def test_legacy_taql_memory_subtable_name_leaves_no_unopenable_disk_keyword(nati
 def test_legacy_taql_untyped_output_from_memory_reopens_independently(native_dataset, tmp_path):
     casa = pinned_casa()
     target = tmp_path / "result.ms"
+    with closing(casa.table()) as source:
+        assert source.open(str(native_dataset))
+        expected = source.getcol("DATA", 4, 2)
     with closing(tools.ms()) as selector:
         assert selector.open(str(native_dataset))
         assert selector.selecttaqlold("True LIMIT 5 OFFSET 3 GIVING AS MEMORY")
-        expected = selector.getdataold(["data"])["data"][..., 1:3]
+        np.testing.assert_array_equal(selector.getdataold(["data"])["data"][..., 1:3], expected, strict=True)
         assert selector.selecttaqlold(f'True LIMIT 2 OFFSET 1 GIVING "{target}"')
         np.testing.assert_array_equal(selector.rangeold("rows")["rows"], [1, 2])
     for api in (casa, tools):
         with closing(api.table()) as reader:
             assert reader.open(str(target))
-            np.testing.assert_array_equal(reader.getcol("DATA"), expected.astype(np.complex64), strict=True)
+            np.testing.assert_array_equal(reader.getcol("DATA"), expected, strict=True)
 
 
 def test_legacy_taql_memory_detaches_table_and_column_keyword_tables(native_dataset, tmp_path):
