@@ -348,6 +348,8 @@ fn restore_destination(
 
 #[cfg(test)]
 mod tests {
+    use casa_tables::TableSchema;
+
     use super::*;
 
     #[test]
@@ -357,15 +359,21 @@ mod tests {
         let staged = stage.path().join("result.ms");
         let output = scratch.path().join("output.ms");
         for path in [&staged, &output] {
-            Table::new().save(TableOptions::new(path)).unwrap();
+            let schema = TableSchema::new(Vec::new()).unwrap();
+            Table::with_schema(schema)
+                .save(TableOptions::new(path))
+                .unwrap();
         }
         fs::write(output.join("original"), "preserve").unwrap();
         fs::write(staged.join("replacement"), "staged").unwrap();
         let destination = SortedDestination::inspect(&output, "TaQL selection").unwrap();
+        let mut reached_attachment = false;
         let result = publish_selection(&output, &staged, stage, destination, |_| {
+            reached_attachment = true;
             assert!(output.join("replacement").is_file());
             Err::<(), _>(runtime_error("simulated failure attaching the new view"))
         });
+        assert!(reached_attachment);
         assert!(result.is_err());
         assert_eq!(
             fs::read_to_string(output.join("original")).unwrap(),
