@@ -282,3 +282,38 @@ where
 {
     Ok(array.into_pyarray(py).into_any().unbind())
 }
+
+#[cfg(test)]
+mod tests {
+    use casa_coordinates::CoordinateSystem;
+    use casa_imageanalysis::tool::coords::default_record_for_shape;
+    use casa_images::PagedImage;
+
+    use super::*;
+
+    #[test]
+    fn native_slice_work_releases_the_gil() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("pixels.im");
+        let shape = [2, 3];
+        let record = default_record_for_shape(&shape, false).unwrap();
+        let coordinates = CoordinateSystem::from_record(&record).unwrap();
+        drop(PagedImage::<f32>::create(shape.to_vec(), coordinates, &path).unwrap());
+        let image = PyImageTool::attached(open_data_image(&path, false).unwrap());
+
+        Python::initialize();
+        Python::attach(|py| {
+            // SAFETY: CPython is initialized, and this query is safe whether or
+            // not the calling thread holds the GIL.
+            assert_eq!(unsafe { pyo3::ffi::PyGILState_Check() }, 1);
+            let pixels = image
+                .attached_data(py, |attached| {
+                    // SAFETY: CPython remains initialized during the detached work.
+                    assert_eq!(unsafe { pyo3::ffi::PyGILState_Check() }, 0);
+                    data_slice(attached, &[0, 0], &shape, &[1, 1]).map_err(raised)
+                })
+                .unwrap();
+            assert!(matches!(pixels, ArrayValue::Float32(values) if values.shape() == shape));
+        });
+    }
+}
