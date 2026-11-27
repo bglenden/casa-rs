@@ -113,6 +113,15 @@ impl TableDatContents {
             .is_some_and(|storage| storage.kind == ColumnSetStorage::MULTI_FILE)
     }
 
+    pub(crate) fn require_separate_storage_for_write(&self) -> Result<(), StorageError> {
+        if self.uses_multifile() {
+            return Err(StorageError::FormatMismatch(
+                "this write would change the MultiFile storage layout".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn asdm_column(
         &self,
         column: &ColumnDescContents,

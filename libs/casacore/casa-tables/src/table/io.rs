@@ -1170,6 +1170,7 @@ impl Table {
                         ));
                     }
                 };
+            table_dat.require_separate_storage_for_write()?;
             let persisted_rows = self.require_persisted_rows(&source_path, &table_dat)?;
             table_dat.raise_row_count(persisted_rows);
 
@@ -1360,6 +1361,7 @@ impl Table {
                         ));
                     }
                 };
+            table_dat.require_separate_storage_for_write()?;
             let persisted_rows = self.require_persisted_rows(&source_path, &table_dat)?;
             table_dat.raise_row_count(persisted_rows);
 

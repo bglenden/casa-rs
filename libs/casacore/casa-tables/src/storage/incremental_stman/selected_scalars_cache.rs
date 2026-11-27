@@ -10,7 +10,7 @@ use std::time::SystemTime;
 
 use casa_core::ScalarValue;
 
-use super::{ColumnDescContents, StorageError};
+use super::{ColumnDescContents, DataFile, StorageError};
 
 // A small saved selection can span several multi-MS members. Retain those
 // selections together so reading one member no longer evicts the previous
@@ -50,7 +50,7 @@ pub(super) fn key(
     selected_rows: &[usize],
     preserve_defaults: bool,
 ) -> Result<Key, StorageError> {
-    let metadata = std::fs::metadata(file_path)?;
+    let metadata = DataFile::metadata(file_path)?;
     Ok(Key {
         file_path: file_path.to_path_buf(),
         #[cfg(unix)]

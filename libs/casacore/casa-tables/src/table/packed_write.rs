@@ -67,6 +67,9 @@ impl TableWritePlan<'_> {
         else {
             return Ok(false);
         };
+        if table_dat.uses_multifile() {
+            return Ok(false);
+        }
         let persisted_rows = table.require_persisted_rows(path, &table_dat)?;
         table_dat.raise_row_count(persisted_rows);
         let Some(update) = CompositeStorage.prepare_packed_array_update(
@@ -126,6 +129,9 @@ impl TableWritePlan<'_> {
         else {
             return Ok(false);
         };
+        if table_dat.uses_multifile() {
+            return Ok(false);
+        }
         let persisted_rows = table.require_persisted_rows(path, &table_dat)?;
         table_dat.raise_row_count(persisted_rows);
         let mut updates = Vec::with_capacity(columns.len());

@@ -16,9 +16,9 @@ fn table_reads_packed_cells_and_ignores_shadow_manager_files() {
         ColumnSchema::array_variable("SAMPLES", PrimitiveType::Int32, Some(1)),
     ])
     .unwrap();
-    for manager in [
-        DataManagerKind::StandardStMan,
-        DataManagerKind::IncrementalStMan,
+    for (manager, block_size) in [
+        (DataManagerKind::StandardStMan, 96),
+        (DataManagerKind::IncrementalStMan, 4096),
     ] {
         let path = root.path().join(format!("{manager:?}"));
         let mut source = Table::with_schema(schema.clone());
@@ -39,8 +39,12 @@ fn table_reads_packed_cells_and_ignores_shadow_manager_files() {
         source
             .save(TableOptions::new(&path).with_data_manager(manager))
             .unwrap();
-        Table::pack_staged_multifile(&path, 4096).unwrap();
-        assert!(path.join("table.mf").is_file());
+        Table::pack_staged_multifile(&path, block_size).unwrap();
+        let archive = path.join("table.mf");
+        assert!(archive.is_file());
+        if block_size == 96 {
+            assert_ne!(u64_at(&fs::read(archive).unwrap(), 8), 0);
+        }
         assert!(!path.join("table.f0").exists());
         fs::write(path.join("table.f0"), b"stale manager").unwrap();
         fs::write(path.join("table.f0i"), b"stale array file").unwrap();

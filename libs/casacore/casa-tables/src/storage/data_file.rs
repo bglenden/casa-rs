@@ -2,7 +2,7 @@
 //! The same read interface for a separate data-manager file and a logical
 //! file in a casacore MultiFile container.
 
-use std::fs::File;
+use std::fs::{self, File, Metadata};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
@@ -31,6 +31,13 @@ impl DataFile {
             return Ok(Self::Packed(member));
         }
         File::open(path).map(Self::Separate)
+    }
+
+    pub(super) fn metadata(path: &Path) -> io::Result<Metadata> {
+        match packed_location(path)? {
+            Some((container, _)) => fs::metadata(container),
+            None => fs::metadata(path),
+        }
     }
 
     pub(super) fn aips(path: impl AsRef<Path>) -> io::Result<AipsIo> {
@@ -63,6 +70,22 @@ impl DataFile {
 }
 
 fn packed_member(path: &Path) -> io::Result<Option<MultiFileEntry>> {
+    let Some((container, member)) = packed_location(path)? else {
+        return Ok(None);
+    };
+    MultiFile::open(&container)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
+        .entry(member)
+        .map(Some)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("missing MultiFile member {member}"),
+            )
+        })
+}
+
+fn packed_location(path: &Path) -> io::Result<Option<(std::path::PathBuf, &str)>> {
     let Some((directory, member)) = path
         .parent()
         .zip(path.file_name().and_then(|name| name.to_str()))
@@ -90,16 +113,7 @@ fn packed_member(path: &Path) -> io::Result<Option<MultiFileEntry>> {
     {
         return Ok(None);
     }
-    MultiFile::open(&container)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
-        .entry(member)
-        .map(Some)
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("missing MultiFile member {member}"),
-            )
-        })
+    Ok(Some((container, member)))
 }
 
 pub(super) trait DataRead: Read + Seek {
