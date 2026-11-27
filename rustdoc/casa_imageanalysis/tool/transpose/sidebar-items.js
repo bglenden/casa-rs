@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["TransposeOrder"],"fn":["parse_transpose_order","transpose_attached"]};

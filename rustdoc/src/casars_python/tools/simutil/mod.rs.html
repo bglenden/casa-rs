@@ -247,7 +247,7 @@
 <a href=#247 id=247 data-nosnippet>247</a>        <span class="kw">let </span>directions = ops::directions(<span class="self">self</span>.direction.bind(py))<span class="question-mark">?</span>;
 <a href=#248 id=248 data-nosnippet>248</a>        <span class="kw">if </span>py
 <a href=#249 id=249 data-nosnippet>249</a>            .detach(|| {
-<a href=#250 id=250 data-nosnippet>250</a>                casa_types::quanta::registry::global_registry()
+<a href=#250 id=250 data-nosnippet>250</a>                casa_core::quanta::registry::global_registry()
 <a href=#251 id=251 data-nosnippet>251</a>                    .with_stable_units(|| directions.split())
 <a href=#252 id=252 data-nosnippet>252</a>            })
 <a href=#253 id=253 data-nosnippet>253</a>            .is_err()
@@ -261,8 +261,8 @@
 <a href=#261 id=261 data-nosnippet>261</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="self">self</span>.direction.clone_ref(py));
 <a href=#262 id=262 data-nosnippet>262</a>        }
 <a href=#263 id=263 data-nosnippet>263</a>        <span class="kw">let </span>pointings = py.detach(|| {
-<a href=#264 id=264 data-nosnippet>264</a>            casa_types::quanta::registry::global_registry().with_locked_units(|| {
-<a href=#265 id=265 data-nosnippet>265</a>                <span class="kw">let </span>registry = casa_types::quanta::registry::global_registry();
+<a href=#264 id=264 data-nosnippet>264</a>            casa_core::quanta::registry::global_registry().with_locked_units(|| {
+<a href=#265 id=265 data-nosnippet>265</a>                <span class="kw">let </span>registry = casa_core::quanta::registry::global_registry();
 <a href=#266 id=266 data-nosnippet>266</a>                <span class="kw">let </span>refreshed = <span class="kw">if </span>registry.unit_state() == size_state {
 <a href=#267 id=267 data-nosnippet>267</a>                    <span class="prelude-val">None
 <a href=#268 id=268 data-nosnippet>268</a>                </span>} <span class="kw">else </span>{
@@ -385,7 +385,7 @@
 <a href=#385 id=385 data-nosnippet>385</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
 <a href=#386 id=386 data-nosnippet>386</a>        <span class="kw">let </span>directions = ops::directions(direction.as_ref().unwrap_or(<span class="self">self</span>.direction.bind(py)))<span class="question-mark">?</span>;
 <a href=#387 id=387 data-nosnippet>387</a>        <span class="kw">let </span>split = py.detach(|| directions.split()).map_err(ops::raised)<span class="question-mark">?</span>;
-<a href=#388 id=388 data-nosnippet>388</a>        <span class="kw">let </span>angle = |value: <span class="kw-2">&amp;</span>casa_types::quanta::Quantity| {
+<a href=#388 id=388 data-nosnippet>388</a>        <span class="kw">let </span>angle = |value: <span class="kw-2">&amp;</span>casa_core::quanta::Quantity| {
 <a href=#389 id=389 data-nosnippet>389</a>            CasaValue::quantity(value.value(), value.unit().name())
 <a href=#390 id=390 data-nosnippet>390</a>        };
 <a href=#391 id=391 data-nosnippet>391</a>        CasaValue::Tuple(<span class="macro">vec!</span>[
@@ -415,7 +415,7 @@
 <a href=#415 id=415 data-nosnippet>415</a>                <span class="string">"the direction measure's refer is not a string"</span>,
 <a href=#416 id=416 data-nosnippet>416</a>            ));
 <a href=#417 id=417 data-nosnippet>417</a>        };
-<a href=#418 id=418 data-nosnippet>418</a>        <span class="kw">let </span>(longitude, latitude) = casa_types::quanta::registry::global_registry()
+<a href=#418 id=418 data-nosnippet>418</a>        <span class="kw">let </span>(longitude, latitude) = casa_core::quanta::registry::global_registry()
 <a href=#419 id=419 data-nosnippet>419</a>            .with_stable_units(|| {
 <a href=#420 id=420 data-nosnippet>420</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, PyErr&gt;((ops::quantity(field(<span class="string">"m0"</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>, ops::quantity(field(<span class="string">"m1"</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>))
 <a href=#421 id=421 data-nosnippet>421</a>            })<span class="question-mark">?</span>;
@@ -648,7 +648,7 @@
 <a href=#648 id=648 data-nosnippet>648</a>            <span class="macro">vec!</span>[s.clone()]
 <a href=#649 id=649 data-nosnippet>649</a>        };
 <a href=#650 id=650 data-nosnippet>650</a>        <span class="kw">let </span><span class="kw-2">mut </span>candidates = <span class="macro">vec!</span>[<span class="prelude-val">None</span>; items.len()];
-<a href=#651 id=651 data-nosnippet>651</a>        <span class="kw">let </span>invalid = casa_types::quanta::registry::global_registry().with_stable_units(|| {
+<a href=#651 id=651 data-nosnippet>651</a>        <span class="kw">let </span>invalid = casa_core::quanta::registry::global_registry().with_stable_units(|| {
 <a href=#652 id=652 data-nosnippet>652</a>            items.iter().enumerate().find_map(|(index, item)| {
 <a href=#653 id=653 data-nosnippet>653</a>                <span class="kw">let </span>candidate =
 <a href=#654 id=654 data-nosnippet>654</a>                    candidates[index].get_or_insert_with(|| ops::quantity_candidate(item));

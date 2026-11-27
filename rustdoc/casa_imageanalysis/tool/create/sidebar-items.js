@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ComponentListSource","PixelArrayInput"],"fn":["copy_typed_storage","create_casa_complist_image","create_casa_image","create_from_array","create_from_component_list","create_from_fits","create_from_shape","create_test_image_from_fits","parse_pixel_type"],"struct":["CasaArrayPayload","CasaCreateRequest","FromShapeRequest"]};

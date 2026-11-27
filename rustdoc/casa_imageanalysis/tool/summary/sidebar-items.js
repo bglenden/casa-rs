@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["summarize_image"],"struct":["ImageSummaryReport","SummaryOptions"]};

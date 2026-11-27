@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["check_regrid","check_regrid_along_frequency","direction_affine","regrid","regrid_along_frequency"],"struct":["DirectionAffine","RegridTemplate","Regridded"]};

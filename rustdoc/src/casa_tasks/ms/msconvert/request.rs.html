@@ -5,8 +5,8 @@
 <a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use </span>std::path::{Path, PathBuf};
 <a href=#6 id=6 data-nosnippet>6</a>
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use crate</span>::{TaskFailure, TaskInvocation};
-<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>casa_ms::observation_io::convert::{PaddingRows, selected_data_groups};
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>casa_ms::observation_io::{Msv4Codec, OpenOptions, PartitionScheme, open};
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>casa_ms::observation_io::{Msv4Codec, OpenOptions, PartitionScheme, open};
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>casa_mstransform::convert::{PaddingRows, selected_data_groups};
 <a href=#10 id=10 data-nosnippet>10</a>
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span><span class="kw">super</span>::THREAD_BYTES;
 <a href=#12 id=12 data-nosnippet>12</a>
@@ -121,7 +121,7 @@
 <a href=#121 id=121 data-nosnippet>121</a>    </span><span class="kw">pub </span>padding: PaddingRows,
 <a href=#122 id=122 data-nosnippet>122</a>    <span class="doccomment">/// MSv4 output: the chunk shape, `None` for XRADIO's, sized for each
 <a href=#123 id=123 data-nosnippet>123</a>    /// dataset
-<a href=#124 id=124 data-nosnippet>124</a>    /// ([`xradio_chunks`](casa_ms::observation_io::convert::xradio_chunks)).
+<a href=#124 id=124 data-nosnippet>124</a>    /// ([`xradio_chunks`](casa_mstransform::convert::xradio_chunks)).
 <a href=#125 id=125 data-nosnippet>125</a>    </span><span class="kw">pub </span>chunks: <span class="prelude-ty">Option</span>&lt;[u64; <span class="number">4</span>]&gt;,
 <a href=#126 id=126 data-nosnippet>126</a>    <span class="doccomment">/// MSv4 output: the payload codec.
 <a href=#127 id=127 data-nosnippet>127</a>    </span><span class="kw">pub </span>codec: Msv4Codec,

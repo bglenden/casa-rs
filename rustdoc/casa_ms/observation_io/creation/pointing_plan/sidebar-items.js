@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["omitted","plan"],"struct":["PointingPlan"]};

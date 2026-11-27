@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SliceRecordResult"],"fn":["get_slice_attached","parse_slice_method"]};

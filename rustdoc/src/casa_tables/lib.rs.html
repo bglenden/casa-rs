@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-tables/src/lib.rs`."><title>lib.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_tables" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_tables/</div>lib.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `libs/casacore/casa-tables/src/lib.rs`."><title>lib.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_tables" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_tables/</div>lib.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Read and write casacore-compatible tables.
 <a href=#3 id=3 data-nosnippet>3</a>//!
 <a href=#4 id=4 data-nosnippet>4</a>//! This crate is the Rust implementation of the **Casacore Table Data System
@@ -12,7 +12,7 @@
 <a href=#12 id=12 data-nosnippet>12</a>//! A casacore table is a rectangular data structure: a sequence of rows, each
 <a href=#13 id=13 data-nosnippet>13</a>//! of which is a record (a map from column name to typed value). In addition,
 <a href=#14 id=14 data-nosnippet>14</a>//! a table carries table-level keywords and per-column keywords — both stored
-<a href=#15 id=15 data-nosnippet>15</a>//! as [`casa_types::RecordValue`] maps. From C++ casacore's `Tables.h`:
+<a href=#15 id=15 data-nosnippet>15</a>//! as [`casa_core::RecordValue`] maps. From C++ casacore's `Tables.h`:
 <a href=#16 id=16 data-nosnippet>16</a>//!
 <a href=#17 id=17 data-nosnippet>17</a>//! &gt; "Tables are the fundamental storage mechanism. A table consists of rows
 <a href=#18 id=18 data-nosnippet>18</a>//! &gt; and columns with keyword/value pairs. Cells can contain scalars, direct
@@ -79,7 +79,7 @@
 <a href=#79 id=79 data-nosnippet>79</a>//!
 <a href=#80 id=80 data-nosnippet>80</a>//! ```rust
 <a href=#81 id=81 data-nosnippet>81</a>//! # use casa_tables::{Table, TableSchema, ColumnSchema};
-<a href=#82 id=82 data-nosnippet>82</a>//! # use casa_types::*;
+<a href=#82 id=82 data-nosnippet>82</a>//! # use casa_core::*;
 <a href=#83 id=83 data-nosnippet>83</a>//! # let schema = TableSchema::new(vec![
 <a href=#84 id=84 data-nosnippet>84</a>//! #     ColumnSchema::scalar("id", PrimitiveType::Int32),
 <a href=#85 id=85 data-nosnippet>85</a>//! # ]).unwrap();
@@ -105,7 +105,7 @@
 <a href=#105 id=105 data-nosnippet>105</a>//!
 <a href=#106 id=106 data-nosnippet>106</a>//! ```rust
 <a href=#107 id=107 data-nosnippet>107</a>//! # use casa_tables::{Table, TableSchema, ColumnSchema, SortOrder};
-<a href=#108 id=108 data-nosnippet>108</a>//! # use casa_types::*;
+<a href=#108 id=108 data-nosnippet>108</a>//! # use casa_core::*;
 <a href=#109 id=109 data-nosnippet>109</a>//! # let schema = TableSchema::new(vec![
 <a href=#110 id=110 data-nosnippet>110</a>//! #     ColumnSchema::scalar("id", PrimitiveType::Int32),
 <a href=#111 id=111 data-nosnippet>111</a>//! # ]).unwrap();
@@ -184,7 +184,7 @@
 <a href=#184 id=184 data-nosnippet>184</a>//!
 <a href=#185 id=185 data-nosnippet>185</a>//! ```rust
 <a href=#186 id=186 data-nosnippet>186</a>//! use casa_tables::{Table, TableSchema, ColumnSchema, TableKind};
-<a href=#187 id=187 data-nosnippet>187</a>//! use casa_types::*;
+<a href=#187 id=187 data-nosnippet>187</a>//! use casa_core::*;
 <a href=#188 id=188 data-nosnippet>188</a>//!
 <a href=#189 id=189 data-nosnippet>189</a>//! let schema = TableSchema::new(vec![
 <a href=#190 id=190 data-nosnippet>190</a>//!     ColumnSchema::scalar("id", PrimitiveType::Int32),
@@ -205,7 +205,7 @@
 <a href=#205 id=205 data-nosnippet>205</a>//! use casa_tables::{
 <a href=#206 id=206 data-nosnippet>206</a>//!     Table, TableOptions, TableSchema, ColumnSchema, DataManagerKind,
 <a href=#207 id=207 data-nosnippet>207</a>//! };
-<a href=#208 id=208 data-nosnippet>208</a>//! use casa_types::{PrimitiveType, RecordValue, RecordField, Value, ScalarValue};
+<a href=#208 id=208 data-nosnippet>208</a>//! use casa_core::{PrimitiveType, RecordValue, RecordField, Value, ScalarValue};
 <a href=#209 id=209 data-nosnippet>209</a>//!
 <a href=#210 id=210 data-nosnippet>210</a>//! // 1. Define the schema.
 <a href=#211 id=211 data-nosnippet>211</a>//! let schema = TableSchema::new(vec![
@@ -258,9 +258,9 @@
 <a href=#258 id=258 data-nosnippet>258</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>storage;
 <a href=#259 id=259 data-nosnippet>259</a>
 <a href=#260 id=260 data-nosnippet>260</a><span class="kw">pub mod </span>ascii;
-<a href=#261 id=261 data-nosnippet>261</a><span class="kw">pub mod </span>publication;
-<a href=#262 id=262 data-nosnippet>262</a><span class="kw">pub mod </span>statistics;
-<a href=#263 id=263 data-nosnippet>263</a><span class="kw">pub mod </span>table_measures;
+<a href=#261 id=261 data-nosnippet>261</a><span class="kw">pub mod </span>log_table;
+<a href=#262 id=262 data-nosnippet>262</a><span class="kw">pub mod </span>publication;
+<a href=#263 id=263 data-nosnippet>263</a><span class="kw">pub mod </span>statistics;
 <a href=#264 id=264 data-nosnippet>264</a><span class="kw">pub mod </span>table_quantum;
 <a href=#265 id=265 data-nosnippet>265</a><span class="kw">pub mod </span>taql;
 <a href=#266 id=266 data-nosnippet>266</a>
@@ -277,53 +277,68 @@
 <a href=#277 id=277 data-nosnippet>277</a>    TableSchema,
 <a href=#278 id=278 data-nosnippet>278</a>};
 <a href=#279 id=279 data-nosnippet>279</a><span class="kw">pub use </span>sorting::{TableGroup, TableIterator};
-<a href=#280 id=280 data-nosnippet>280</a><span class="kw">pub use </span>storage::table_control::read_table_record_file;
-<a href=#281 id=281 data-nosnippet>281</a><span class="attr">#[doc(hidden)]
-<a href=#282 id=282 data-nosnippet>282</a></span><span class="kw">pub use </span>storage::virtual_compress::{ComplexCompression, ComplexScale};
-<a href=#283 id=283 data-nosnippet>283</a><span class="kw">pub use </span>storage::{
-<a href=#284 id=284 data-nosnippet>284</a>    DEFAULT_TILE_IO_BYTES, DEFAULT_TILED_ARRAY_CACHE_BYTES, DataManagerInfo,
-<a href=#285 id=285 data-nosnippet>285</a>    STREAMING_TILED_COLUMN_BUFFER_BYTES, StorageError, StreamedTiledPrimitiveColumn,
-<a href=#286 id=286 data-nosnippet>286</a>    StreamedTiledPrimitiveType, StreamedTiledShapeColumn, StreamedTiledShapeComplex32Column,
-<a href=#287 id=287 data-nosnippet>287</a>    StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType, StreamingTiledPrimitiveWriter,
-<a href=#288 id=288 data-nosnippet>288</a>    StreamingTiledShapeComplex32Writer, StreamingTiledShapeWriter, TableInfo, TileLayoutError,
-<a href=#289 id=289 data-nosnippet>289</a>    TileLayoutPlan, TileLayoutPlanner, TilePixel, TiledArrayStorage, TiledArrayStorageLayout,
-<a href=#290 id=290 data-nosnippet>290</a>    TiledFileIoStats, install_streamed_tiled_column,
-<a href=#291 id=291 data-nosnippet>291</a>    install_streamed_tiled_column_primitive_column, install_streamed_tiled_shape_column,
-<a href=#292 id=292 data-nosnippet>292</a>    install_streamed_tiled_shape_complex32_column, install_streamed_tiled_shape_primitive_column,
-<a href=#293 id=293 data-nosnippet>293</a>    install_undefined_tiled_shape_column, set_table_cache_budget_bytes,
-<a href=#294 id=294 data-nosnippet>294</a>    streamed_scalar_columns_resident_bytes, table_cache_budget_bytes,
-<a href=#295 id=295 data-nosnippet>295</a>};
-<a href=#296 id=296 data-nosnippet>296</a><span class="kw">pub use </span>table::{
-<a href=#297 id=297 data-nosnippet>297</a>    ColumnAddition, ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, ColumnOverride,
-<a href=#298 id=298 data-nosnippet>298</a>    ColumnOverrides, CompressedComplexArray, DataManagerKind, EncodedArrayAppend, EndianFormat,
-<a href=#299 id=299 data-nosnippet>299</a>    GeneratedArrayColumn, GeneratedArrayValueRun, GeneratedScalarColumn, GeneratedScalarValueRun,
-<a href=#300 id=300 data-nosnippet>300</a>    IncrementalCorruption, IncrementalLayoutCheck, ManagerAddition, PlainReferenceRead,
-<a href=#301 id=301 data-nosnippet>301</a>    PreparedRowAppender, PreparedTableEdit, PreparedTableRow, PreparedTableRowMut, QueryResult,
-<a href=#302 id=302 data-nosnippet>302</a>    RecordAppendOptions, RecordColumnCell, RecordColumnIter, RequiredScalarColumnDestination,
-<a href=#303 id=303 data-nosnippet>303</a>    RequiredScalarColumnValues, RequiredScalarColumnValuesMut, RowRange,
-<a href=#304 id=304 data-nosnippet>304</a>    STREAMING_SCALAR_COLUMN_BUFFER_BYTES, SelectedArray1DCells, SelectedArray1DCellsMut,
-<a href=#305 id=305 data-nosnippet>305</a>    SelectedArray1DShape, SelectedArray2D, SelectedArray2DCells, SelectedArray2DCellsMut,
-<a href=#306 id=306 data-nosnippet>306</a>    SelectedArray2DShape, SelectedReadFootprint, Slicer, SortOrder, StoredTableDescription,
-<a href=#307 id=307 data-nosnippet>307</a>    StreamedScalarColumn, StreamedScalarType, StreamedScalarValues, StreamingScalarColumnWriter,
-<a href=#308 id=308 data-nosnippet>308</a>    Table, TableCell, TableCellMut, TableColumn, TableColumnMut, TableError, TableKind,
-<a href=#309 id=309 data-nosnippet>309</a>    TableOptions, TablePartNames, TableRow, TableRowMut, TableWritePlan, table_cache_name,
-<a href=#310 id=310 data-nosnippet>310</a>};
-<a href=#311 id=311 data-nosnippet>311</a><span class="kw">pub use </span>table_path::{add_directory, lexical_absolute, strip_directory};
-<a href=#312 id=312 data-nosnippet>312</a>
-<a href=#313 id=313 data-nosnippet>313</a><span class="doccomment">/// Read the outer object type tag from a table directory's `table.dat`.
-<a href=#314 id=314 data-nosnippet>314</a>///
-<a href=#315 id=315 data-nosnippet>315</a>/// A casacore table has the tag `"Table"` regardless of its storage manager
-<a href=#316 id=316 data-nosnippet>316</a>/// or whether it is a plain, reference, or concatenated table. This probe
-<a href=#317 id=317 data-nosnippet>317</a>/// reads only the tag and does not open the table or validate its contents.
-<a href=#318 id=318 data-nosnippet>318</a>///
-<a href=#319 id=319 data-nosnippet>319</a>/// # Errors
-<a href=#320 id=320 data-nosnippet>320</a>///
-<a href=#321 id=321 data-nosnippet>321</a>/// Returns a storage error if the control file is unavailable or its tag
-<a href=#322 id=322 data-nosnippet>322</a>/// cannot be read.
-<a href=#323 id=323 data-nosnippet>323</a></span><span class="kw">pub fn </span>table_type_tag(path: <span class="kw-2">&amp;</span>std::path::Path) -&gt; <span class="prelude-ty">Result</span>&lt;String, StorageError&gt; {
-<a href=#324 id=324 data-nosnippet>324</a>    <span class="kw">use </span>casa_aipsio::{AipsIo, AipsOpenOption};
-<a href=#325 id=325 data-nosnippet>325</a>
-<a href=#326 id=326 data-nosnippet>326</a>    <span class="kw">let </span><span class="kw-2">mut </span>control = AipsIo::open(path.join(storage::TABLE_CONTROL_FILE), AipsOpenOption::Old)<span class="question-mark">?</span>;
-<a href=#327 id=327 data-nosnippet>327</a>    <span class="prelude-val">Ok</span>(control.get_next_type()<span class="question-mark">?</span>)
-<a href=#328 id=328 data-nosnippet>328</a>}
+<a href=#280 id=280 data-nosnippet>280</a><span class="kw">pub use </span>storage::asdm_stman::AsdmBdfIndex;
+<a href=#281 id=281 data-nosnippet>281</a><span class="kw">pub use </span>storage::table_control::read_table_record_file;
+<a href=#282 id=282 data-nosnippet>282</a><span class="attr">#[doc(hidden)]
+<a href=#283 id=283 data-nosnippet>283</a></span><span class="kw">pub use </span>storage::virtual_compress::{ComplexCompression, ComplexScale};
+<a href=#284 id=284 data-nosnippet>284</a><span class="kw">pub use </span>storage::{
+<a href=#285 id=285 data-nosnippet>285</a>    DEFAULT_TILE_IO_BYTES, DEFAULT_TILED_ARRAY_CACHE_BYTES, DataManagerInfo, StorageError,
+<a href=#286 id=286 data-nosnippet>286</a>    TableInfo, TileLayoutError, TileLayoutPlan, TileLayoutPlanner, TilePixel, TiledArrayStorage,
+<a href=#287 id=287 data-nosnippet>287</a>    TiledArrayStorageLayout, TiledFileIoStats, set_table_cache_budget_bytes,
+<a href=#288 id=288 data-nosnippet>288</a>    streamed_scalar_columns_resident_bytes, table_cache_budget_bytes,
+<a href=#289 id=289 data-nosnippet>289</a>};
+<a href=#290 id=290 data-nosnippet>290</a>
+<a href=#291 id=291 data-nosnippet>291</a><span class="doccomment">/// Encode and install streamed tiled columns.
+<a href=#292 id=292 data-nosnippet>292</a></span><span class="kw">pub mod </span>streamed_tiled {
+<a href=#293 id=293 data-nosnippet>293</a>    <span class="kw">pub use </span><span class="kw">crate</span>::storage::{
+<a href=#294 id=294 data-nosnippet>294</a>        STREAMING_TILED_COLUMN_BUFFER_BYTES, StreamedTiledPrimitiveColumn,
+<a href=#295 id=295 data-nosnippet>295</a>        StreamedTiledPrimitiveType, StreamedTiledShapeColumn, StreamedTiledShapeComplex32Column,
+<a href=#296 id=296 data-nosnippet>296</a>        StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType, StreamingTiledPrimitiveWriter,
+<a href=#297 id=297 data-nosnippet>297</a>        StreamingTiledShapeComplex32Writer, StreamingTiledShapeWriter,
+<a href=#298 id=298 data-nosnippet>298</a>        install_streamed_tiled_column, install_streamed_tiled_column_primitive_column,
+<a href=#299 id=299 data-nosnippet>299</a>        install_streamed_tiled_shape_column, install_streamed_tiled_shape_complex32_column,
+<a href=#300 id=300 data-nosnippet>300</a>        install_streamed_tiled_shape_primitive_column, install_undefined_tiled_shape_column,
+<a href=#301 id=301 data-nosnippet>301</a>    };
+<a href=#302 id=302 data-nosnippet>302</a>}
+<a href=#303 id=303 data-nosnippet>303</a><span class="kw">pub use </span>table::{
+<a href=#304 id=304 data-nosnippet>304</a>    ColumnAddition, ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, ColumnOverride,
+<a href=#305 id=305 data-nosnippet>305</a>    ColumnOverrides, CompressedComplexArray, DataManagerKind, EncodedArrayAppend, EndianFormat,
+<a href=#306 id=306 data-nosnippet>306</a>    GeneratedArrayColumn, GeneratedArrayValueRun, GeneratedScalarColumn, GeneratedScalarValueRun,
+<a href=#307 id=307 data-nosnippet>307</a>    IncrementalCorruption, IncrementalLayoutCheck, ManagerAddition, PlainReferenceRead,
+<a href=#308 id=308 data-nosnippet>308</a>    PreparedRowAppender, PreparedTableEdit, PreparedTableRow, PreparedTableRowMut, QueryResult,
+<a href=#309 id=309 data-nosnippet>309</a>    RecordAppendOptions, RecordColumnCell, RecordColumnIter, RequiredScalarColumnDestination,
+<a href=#310 id=310 data-nosnippet>310</a>    RequiredScalarColumnValues, RequiredScalarColumnValuesMut, RowRange,
+<a href=#311 id=311 data-nosnippet>311</a>    STREAMING_SCALAR_COLUMN_BUFFER_BYTES, SelectedArray1DCells, SelectedArray1DCellsMut,
+<a href=#312 id=312 data-nosnippet>312</a>    SelectedArray1DShape, SelectedArray2D, SelectedArray2DCells, SelectedArray2DCellsMut,
+<a href=#313 id=313 data-nosnippet>313</a>    SelectedArray2DShape, SelectedReadFootprint, Slicer, SortOrder, StoredTableDescription,
+<a href=#314 id=314 data-nosnippet>314</a>    StreamedScalarColumn, StreamedScalarType, StreamedScalarValues, StreamingScalarColumnWriter,
+<a href=#315 id=315 data-nosnippet>315</a>    Table, TableCell, TableCellMut, TableColumn, TableColumnMut, TableError, TableKind,
+<a href=#316 id=316 data-nosnippet>316</a>    TableOptions, TablePartNames, TableRow, TableRowMut, TableWritePlan, table_cache_name,
+<a href=#317 id=317 data-nosnippet>317</a>};
+<a href=#318 id=318 data-nosnippet>318</a><span class="kw">pub use </span>table_path::{add_directory, lexical_absolute, strip_directory};
+<a href=#319 id=319 data-nosnippet>319</a>
+<a href=#320 id=320 data-nosnippet>320</a><span class="doccomment">/// Read the outer object type tag from a table directory's `table.dat`.
+<a href=#321 id=321 data-nosnippet>321</a>///
+<a href=#322 id=322 data-nosnippet>322</a>/// A casacore table has the tag `"Table"` regardless of its storage manager
+<a href=#323 id=323 data-nosnippet>323</a>/// or whether it is a plain, reference, or concatenated table. This probe
+<a href=#324 id=324 data-nosnippet>324</a>/// reads only the tag and does not open the table or validate its contents.
+<a href=#325 id=325 data-nosnippet>325</a>///
+<a href=#326 id=326 data-nosnippet>326</a>/// # Errors
+<a href=#327 id=327 data-nosnippet>327</a>///
+<a href=#328 id=328 data-nosnippet>328</a>/// Returns a storage error if the control file is unavailable or its tag
+<a href=#329 id=329 data-nosnippet>329</a>/// cannot be read.
+<a href=#330 id=330 data-nosnippet>330</a></span><span class="kw">pub fn </span>table_type_tag(path: <span class="kw-2">&amp;</span>std::path::Path) -&gt; <span class="prelude-ty">Result</span>&lt;String, StorageError&gt; {
+<a href=#331 id=331 data-nosnippet>331</a>    <span class="kw">use </span>casa_aipsio::{AipsIo, AipsOpenOption};
+<a href=#332 id=332 data-nosnippet>332</a>
+<a href=#333 id=333 data-nosnippet>333</a>    <span class="kw">let </span><span class="kw-2">mut </span>control = AipsIo::open(path.join(storage::TABLE_CONTROL_FILE), AipsOpenOption::Old)<span class="question-mark">?</span>;
+<a href=#334 id=334 data-nosnippet>334</a>    <span class="prelude-val">Ok</span>(control.get_next_type()<span class="question-mark">?</span>)
+<a href=#335 id=335 data-nosnippet>335</a>}
+<a href=#336 id=336 data-nosnippet>336</a>
+<a href=#337 id=337 data-nosnippet>337</a><span class="comment">// Tracing callsite interest is process-global, even for thread-local subscribers.
+<a href=#338 id=338 data-nosnippet>338</a></span><span class="attr">#[cfg(test)]
+<a href=#339 id=339 data-nosnippet>339</a></span><span class="kw">fn </span>tracing_test_lock() -&gt; std::sync::MutexGuard&lt;<span class="lifetime">'static</span>, ()&gt; {
+<a href=#340 id=340 data-nosnippet>340</a>    <span class="kw">static </span>LOCK: std::sync::Mutex&lt;()&gt; = std::sync::Mutex::new(());
+<a href=#341 id=341 data-nosnippet>341</a>    LOCK.lock()
+<a href=#342 id=342 data-nosnippet>342</a>        .unwrap_or_else(std::sync::PoisonError::into_inner)
+<a href=#343 id=343 data-nosnippet>343</a>}
 </code></pre></div></section></main></body></html>

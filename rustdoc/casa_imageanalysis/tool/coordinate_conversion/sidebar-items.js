@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["coord_measures_intensity","to_pixel","to_world"],"struct":["CoordMeasureIntensity"]};

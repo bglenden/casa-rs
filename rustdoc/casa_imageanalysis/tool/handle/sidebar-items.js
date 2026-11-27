@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ImageHandle","Storage"],"fn":["same_file_identity","same_file_snapshot"],"macro":[["with_pixels",1],["with_storage",1]],"struct":["FitsAttachment"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["RegridMethod"],"fn":["linear_sample","regrid_complex_plane"],"struct":["Plane"],"trait":["RegridPixel"]};

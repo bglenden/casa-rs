@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["stage_fits_idi"],"struct":["FitsIdiOptions","StagedFitsIdi"]};

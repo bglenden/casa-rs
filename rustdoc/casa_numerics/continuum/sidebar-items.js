@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["RowWeights"],"fn":["fit_polynomial_row"]};

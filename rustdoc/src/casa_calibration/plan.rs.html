@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-calibration/src/plan.rs`."><title>plan.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_calibration" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_calibration/</div>plan.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `libs/casa/casa-calibration/src/plan.rs`."><title>plan.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_calibration" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_calibration/</div>plan.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Apply-planning support for the implemented CASA calibration-table families.
 <a href=#3 id=3 data-nosnippet>3</a>//!
 <a href=#4 id=4 data-nosnippet>4</a>//! The planner resolves the static parts of an `applycal`-class operation
@@ -16,13 +16,13 @@
 <a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>std::path::{Path, PathBuf};
 <a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>std::time::Instant;
 <a href=#18 id=18 data-nosnippet>18</a>
-<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>casa_ms::ChannelSelection;
-<a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>casa_ms::ms::MeasurementSet;
-<a href=#21 id=21 data-nosnippet>21</a><span class="kw">use </span>casa_ms::schema::main_table::VisibilityDataColumn;
-<a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span>casa_ms::selection::{MsSelection, ResolvedMsSelection};
-<a href=#23 id=23 data-nosnippet>23</a><span class="kw">use </span>casa_ms::{MsError, MsSpectralWindow};
-<a href=#24 id=24 data-nosnippet>24</a><span class="kw">use </span>casa_tables::{Table, TableError, TableOptions};
-<a href=#25 id=25 data-nosnippet>25</a><span class="kw">use </span>casa_types::{ArrayValue, ScalarValue};
+<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>casa_core::{ArrayValue, ScalarValue};
+<a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>casa_ms::ChannelSelection;
+<a href=#21 id=21 data-nosnippet>21</a><span class="kw">use </span>casa_ms::MeasurementSet;
+<a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span>casa_ms::schema::main_table::VisibilityDataColumn;
+<a href=#23 id=23 data-nosnippet>23</a><span class="kw">use </span>casa_ms::selection::{MsSelection, ResolvedMsSelection};
+<a href=#24 id=24 data-nosnippet>24</a><span class="kw">use </span>casa_ms::{MsError, MsSpectralWindow};
+<a href=#25 id=25 data-nosnippet>25</a><span class="kw">use </span>casa_tables::{Table, TableError, TableOptions};
 <a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span>schemars::JsonSchema;
 <a href=#27 id=27 data-nosnippet>27</a><span class="kw">use </span>serde::{Deserialize, Serialize};
 <a href=#28 id=28 data-nosnippet>28</a><span class="kw">use </span>thiserror::Error;
@@ -154,7 +154,7 @@
 <a href=#154 id=154 data-nosnippet>154</a>    </span><span class="kw">pub </span>apply_to: ApplyTableSelection,
 <a href=#155 id=155 data-nosnippet>155</a>    <span class="doccomment">/// Callibrary slice controls; absent uses traditional setapply semantics.
 <a href=#156 id=156 data-nosnippet>156</a>    </span><span class="attr">#[serde(default, skip_serializing_if = <span class="string">"Option::is_none"</span>)]
-<a href=#157 id=157 data-nosnippet>157</a>    </span><span class="kw">pub </span>callibrary: <span class="prelude-ty">Option</span>&lt;<span class="kw">crate</span>::CallibraryOptions&gt;,
+<a href=#157 id=157 data-nosnippet>157</a>    </span><span class="kw">pub </span>callibrary: <span class="prelude-ty">Option</span>&lt;<span class="kw">crate</span>::callib::CallibraryOptions&gt;,
 <a href=#158 id=158 data-nosnippet>158</a>    <span class="doccomment">/// Optional calibration-field selection; absent merges selected fields in time.
 <a href=#159 id=159 data-nosnippet>159</a>    </span><span class="kw">pub </span>gainfield: <span class="prelude-ty">Option</span>&lt;GainFieldSelector&gt;,
 <a href=#160 id=160 data-nosnippet>160</a>    <span class="doccomment">/// Optional CASA-style data-SPW to caltable-SPW mapping.
@@ -1157,8 +1157,8 @@
 <a href=#1157 id=1157 data-nosnippet>1157</a></span><span class="kw">mod </span>tests {
 <a href=#1158 id=1158 data-nosnippet>1158</a>    <span class="kw">use </span>std::path::PathBuf;
 <a href=#1159 id=1159 data-nosnippet>1159</a>
-<a href=#1160 id=1160 data-nosnippet>1160</a>    <span class="kw">use </span>casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
-<a href=#1161 id=1161 data-nosnippet>1161</a>    <span class="kw">use </span>casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+<a href=#1160 id=1160 data-nosnippet>1160</a>    <span class="kw">use </span>casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+<a href=#1161 id=1161 data-nosnippet>1161</a>    <span class="kw">use </span>casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 <a href=#1162 id=1162 data-nosnippet>1162</a>    <span class="kw">use </span>ndarray::{ArrayD, IxDyn, ShapeBuilder};
 <a href=#1163 id=1163 data-nosnippet>1163</a>    <span class="kw">use </span>tempfile::tempdir;
 <a href=#1164 id=1164 data-nosnippet>1164</a>
@@ -1247,7 +1247,7 @@
 <a href=#1247 id=1247 data-nosnippet>1247</a>        std::fs::create_dir_all(<span class="kw-2">&amp;</span>cal_desc_root).unwrap();
 <a href=#1248 id=1248 data-nosnippet>1248</a>        <span class="kw">let </span>cal_desc_schema = TableSchema::new(<span class="macro">vec!</span>[ColumnSchema::array_variable(
 <a href=#1249 id=1249 data-nosnippet>1249</a>            <span class="string">"SPECTRAL_WINDOW_ID"</span>,
-<a href=#1250 id=1250 data-nosnippet>1250</a>            casa_types::PrimitiveType::Int32,
+<a href=#1250 id=1250 data-nosnippet>1250</a>            casa_core::PrimitiveType::Int32,
 <a href=#1251 id=1251 data-nosnippet>1251</a>            <span class="prelude-val">Some</span>(<span class="number">1</span>),
 <a href=#1252 id=1252 data-nosnippet>1252</a>        )])
 <a href=#1253 id=1253 data-nosnippet>1253</a>        .unwrap();
@@ -1280,7 +1280,7 @@
 <a href=#1280 id=1280 data-nosnippet>1280</a>        std::fs::create_dir_all(<span class="kw-2">&amp;</span>bad_root).unwrap();
 <a href=#1281 id=1281 data-nosnippet>1281</a>        <span class="kw">let </span>bad_schema = TableSchema::new(<span class="macro">vec!</span>[ColumnSchema::array_variable(
 <a href=#1282 id=1282 data-nosnippet>1282</a>            <span class="string">"SPECTRAL_WINDOW_ID"</span>,
-<a href=#1283 id=1283 data-nosnippet>1283</a>            casa_types::PrimitiveType::Float32,
+<a href=#1283 id=1283 data-nosnippet>1283</a>            casa_core::PrimitiveType::Float32,
 <a href=#1284 id=1284 data-nosnippet>1284</a>            <span class="prelude-val">Some</span>(<span class="number">1</span>),
 <a href=#1285 id=1285 data-nosnippet>1285</a>        )])
 <a href=#1286 id=1286 data-nosnippet>1286</a>        .unwrap();
@@ -1310,7 +1310,7 @@
 <a href=#1310 id=1310 data-nosnippet>1310</a>        <span class="kw">let </span><span class="kw-2">mut </span>field_table = Table::with_schema_memory(
 <a href=#1311 id=1311 data-nosnippet>1311</a>            TableSchema::new(<span class="macro">vec!</span>[ColumnSchema::scalar(
 <a href=#1312 id=1312 data-nosnippet>1312</a>                <span class="string">"NAME"</span>,
-<a href=#1313 id=1313 data-nosnippet>1313</a>                casa_types::PrimitiveType::String,
+<a href=#1313 id=1313 data-nosnippet>1313</a>                casa_core::PrimitiveType::String,
 <a href=#1314 id=1314 data-nosnippet>1314</a>            )])
 <a href=#1315 id=1315 data-nosnippet>1315</a>            .unwrap(),
 <a href=#1316 id=1316 data-nosnippet>1316</a>        );
@@ -1324,11 +1324,11 @@
 <a href=#1324 id=1324 data-nosnippet>1324</a>        <span class="kw">let </span>spw_path = temp.path().join(<span class="string">"SPECTRAL_WINDOW"</span>);
 <a href=#1325 id=1325 data-nosnippet>1325</a>        <span class="kw">let </span><span class="kw-2">mut </span>spw_table = Table::with_schema_memory(
 <a href=#1326 id=1326 data-nosnippet>1326</a>            TableSchema::new(<span class="macro">vec!</span>[
-<a href=#1327 id=1327 data-nosnippet>1327</a>                ColumnSchema::scalar(<span class="string">"NUM_CHAN"</span>, casa_types::PrimitiveType::Int32),
-<a href=#1328 id=1328 data-nosnippet>1328</a>                ColumnSchema::scalar(<span class="string">"REF_FREQUENCY"</span>, casa_types::PrimitiveType::Float64),
+<a href=#1327 id=1327 data-nosnippet>1327</a>                ColumnSchema::scalar(<span class="string">"NUM_CHAN"</span>, casa_core::PrimitiveType::Int32),
+<a href=#1328 id=1328 data-nosnippet>1328</a>                ColumnSchema::scalar(<span class="string">"REF_FREQUENCY"</span>, casa_core::PrimitiveType::Float64),
 <a href=#1329 id=1329 data-nosnippet>1329</a>                ColumnSchema::array_variable(
 <a href=#1330 id=1330 data-nosnippet>1330</a>                    <span class="string">"CHAN_FREQ"</span>,
-<a href=#1331 id=1331 data-nosnippet>1331</a>                    casa_types::PrimitiveType::Float64,
+<a href=#1331 id=1331 data-nosnippet>1331</a>                    casa_core::PrimitiveType::Float64,
 <a href=#1332 id=1332 data-nosnippet>1332</a>                    <span class="prelude-val">Some</span>(<span class="number">1</span>),
 <a href=#1333 id=1333 data-nosnippet>1333</a>                ),
 <a href=#1334 id=1334 data-nosnippet>1334</a>            ])
@@ -1439,31 +1439,29 @@
 <a href=#1439 id=1439 data-nosnippet>1439</a>        <span class="macro">assert_eq!</span>(unique_i32([<span class="number">5</span>, <span class="number">3</span>, <span class="number">5</span>, <span class="number">1</span>, <span class="number">3</span>]), <span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">3</span>, <span class="number">5</span>]);
 <a href=#1440 id=1440 data-nosnippet>1440</a>        <span class="macro">assert_eq!</span>(scalar_kind(<span class="kw-2">&amp;</span>ScalarValue::Bool(<span class="bool-val">true</span>)), <span class="string">"Bool"</span>);
 <a href=#1441 id=1441 data-nosnippet>1441</a>        <span class="macro">assert_eq!</span>(
-<a href=#1442 id=1442 data-nosnippet>1442</a>            scalar_kind(<span class="kw-2">&amp;</span>ScalarValue::Complex64(casa_types::Complex64::new(
-<a href=#1443 id=1443 data-nosnippet>1443</a>                <span class="number">1.0</span>, <span class="number">2.0
-<a href=#1444 id=1444 data-nosnippet>1444</a>            </span>))),
-<a href=#1445 id=1445 data-nosnippet>1445</a>            <span class="string">"Complex64"
-<a href=#1446 id=1446 data-nosnippet>1446</a>        </span>);
-<a href=#1447 id=1447 data-nosnippet>1447</a>    }
-<a href=#1448 id=1448 data-nosnippet>1448</a>
-<a href=#1449 id=1449 data-nosnippet>1449</a>    <span class="attr">#[test]
-<a href=#1450 id=1450 data-nosnippet>1450</a>    </span><span class="kw">fn </span>summary_support_predicate_accepts_expected_table_families() {
-<a href=#1451 id=1451 data-nosnippet>1451</a>        <span class="kw">let </span><span class="kw-2">mut </span>summary = empty_summary(PathBuf::from(<span class="string">"/tmp/summary"</span>));
-<a href=#1452 id=1452 data-nosnippet>1452</a>        <span class="macro">assert!</span>(summary.supported_for_v1_apply());
-<a href=#1453 id=1453 data-nosnippet>1453</a>
-<a href=#1454 id=1454 data-nosnippet>1454</a>        summary.parameter_family = CalibrationParameterFamily::Float;
-<a href=#1455 id=1455 data-nosnippet>1455</a>        summary.table_subtype = <span class="string">"K Jones"</span>.to_string();
-<a href=#1456 id=1456 data-nosnippet>1456</a>        <span class="macro">assert!</span>(summary.supported_for_v1_apply());
-<a href=#1457 id=1457 data-nosnippet>1457</a>
-<a href=#1458 id=1458 data-nosnippet>1458</a>        summary.table_subtype = <span class="string">"BPOLY"</span>.to_string();
-<a href=#1459 id=1459 data-nosnippet>1459</a>        <span class="macro">assert!</span>(summary.supported_for_v1_apply());
-<a href=#1460 id=1460 data-nosnippet>1460</a>
-<a href=#1461 id=1461 data-nosnippet>1461</a>        summary.issues.push(CalibrationValidationIssue {
-<a href=#1462 id=1462 data-nosnippet>1462</a>            code: <span class="string">"bad"</span>.to_string(),
-<a href=#1463 id=1463 data-nosnippet>1463</a>            severity: CalibrationIssueSeverity::Error,
-<a href=#1464 id=1464 data-nosnippet>1464</a>            message: <span class="string">"nope"</span>.to_string(),
-<a href=#1465 id=1465 data-nosnippet>1465</a>        });
-<a href=#1466 id=1466 data-nosnippet>1466</a>        <span class="macro">assert!</span>(!summary.supported_for_v1_apply());
-<a href=#1467 id=1467 data-nosnippet>1467</a>    }
-<a href=#1468 id=1468 data-nosnippet>1468</a>}
+<a href=#1442 id=1442 data-nosnippet>1442</a>            scalar_kind(<span class="kw-2">&amp;</span>ScalarValue::Complex64(casa_core::Complex64::new(<span class="number">1.0</span>, <span class="number">2.0</span>))),
+<a href=#1443 id=1443 data-nosnippet>1443</a>            <span class="string">"Complex64"
+<a href=#1444 id=1444 data-nosnippet>1444</a>        </span>);
+<a href=#1445 id=1445 data-nosnippet>1445</a>    }
+<a href=#1446 id=1446 data-nosnippet>1446</a>
+<a href=#1447 id=1447 data-nosnippet>1447</a>    <span class="attr">#[test]
+<a href=#1448 id=1448 data-nosnippet>1448</a>    </span><span class="kw">fn </span>summary_support_predicate_accepts_expected_table_families() {
+<a href=#1449 id=1449 data-nosnippet>1449</a>        <span class="kw">let </span><span class="kw-2">mut </span>summary = empty_summary(PathBuf::from(<span class="string">"/tmp/summary"</span>));
+<a href=#1450 id=1450 data-nosnippet>1450</a>        <span class="macro">assert!</span>(summary.supported_for_v1_apply());
+<a href=#1451 id=1451 data-nosnippet>1451</a>
+<a href=#1452 id=1452 data-nosnippet>1452</a>        summary.parameter_family = CalibrationParameterFamily::Float;
+<a href=#1453 id=1453 data-nosnippet>1453</a>        summary.table_subtype = <span class="string">"K Jones"</span>.to_string();
+<a href=#1454 id=1454 data-nosnippet>1454</a>        <span class="macro">assert!</span>(summary.supported_for_v1_apply());
+<a href=#1455 id=1455 data-nosnippet>1455</a>
+<a href=#1456 id=1456 data-nosnippet>1456</a>        summary.table_subtype = <span class="string">"BPOLY"</span>.to_string();
+<a href=#1457 id=1457 data-nosnippet>1457</a>        <span class="macro">assert!</span>(summary.supported_for_v1_apply());
+<a href=#1458 id=1458 data-nosnippet>1458</a>
+<a href=#1459 id=1459 data-nosnippet>1459</a>        summary.issues.push(CalibrationValidationIssue {
+<a href=#1460 id=1460 data-nosnippet>1460</a>            code: <span class="string">"bad"</span>.to_string(),
+<a href=#1461 id=1461 data-nosnippet>1461</a>            severity: CalibrationIssueSeverity::Error,
+<a href=#1462 id=1462 data-nosnippet>1462</a>            message: <span class="string">"nope"</span>.to_string(),
+<a href=#1463 id=1463 data-nosnippet>1463</a>        });
+<a href=#1464 id=1464 data-nosnippet>1464</a>        <span class="macro">assert!</span>(!summary.supported_for_v1_apply());
+<a href=#1465 id=1465 data-nosnippet>1465</a>    }
+<a href=#1466 id=1466 data-nosnippet>1466</a>}
 </code></pre></div></section></main></body></html>

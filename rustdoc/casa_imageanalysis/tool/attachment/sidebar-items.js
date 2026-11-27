@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["conflicting_images","containing_tables","in_use_by_expression","key","lock_table_ancestors","lock_table_tree","lock_table_tree_for_read_only_move","no_external_open","read_locked","registry","remove_file","remove_image_path","remove_native_table"],"struct":["AttachedImage","SharedImage"],"type":["ExternalPathCheck","OpenImages"]};

@@ -8,11 +8,11 @@
 <a href=#8 id=8 data-nosnippet>8</a>//! `getvalue`, `getunit` and `convert` also take quantity records holding
 <a href=#9 id=9 data-nosnippet>9</a>//! arrays. A failure CASA raises is a `RuntimeError` with CASA's message.
 <a href=#10 id=10 data-nosnippet>10</a>
-<a href=#11 id=11 data-nosnippet>11</a></span><span class="kw">use </span>casa_types::quanta::casacore;
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>casa_types::quanta::format::{
+<a href=#11 id=11 data-nosnippet>11</a></span><span class="kw">use </span>casa_core::quanta::casacore;
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>casa_core::quanta::format::{
 <a href=#13 id=13 data-nosnippet>13</a>    CalendarDate, angle_format, format_angle, format_time, time_format,
 <a href=#14 id=14 data-nosnippet>14</a>};
-<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>casa_types::quanta::{Dimension, Quantity, Unit, UnitDim, UnitVal, unique_prefix_index};
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>casa_core::quanta::{Dimension, Quantity, Unit, UnitDim, UnitVal, unique_prefix_index};
 <a href=#16 id=16 data-nosnippet>16</a>
 <a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span><span class="kw">crate</span>::convert::holder::frequency_hz;
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span><span class="kw">crate</span>::convert::quantum::{<span class="self">self</span>, Quantum, quantum_holder};
@@ -34,7 +34,7 @@
 <a href=#34 id=34 data-nosnippet>34</a>
 <a href=#35 id=35 data-nosnippet>35</a><span class="doccomment">/// Define a user unit in casacore's process-wide unit registry.
 <a href=#36 id=36 data-nosnippet>36</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>define(name: <span class="kw-2">&amp;</span>str, value: <span class="kw-2">&amp;</span>Variant) -&gt; ConvertResult&lt;CasaValue&gt; {
-<a href=#37 id=37 data-nosnippet>37</a>    casa_types::quanta::registry::global_registry().define_user(name, <span class="string">"User defined"</span>, || {
+<a href=#37 id=37 data-nosnippet>37</a>    casa_core::quanta::registry::global_registry().define_user(name, <span class="string">"User defined"</span>, || {
 <a href=#38 id=38 data-nosnippet>38</a>        <span class="kw">let </span>quantity = quantity(value)<span class="question-mark">?</span>;
 <a href=#39 id=39 data-nosnippet>39</a>        <span class="kw">let </span>unit = quantity.unit().val();
 <a href=#40 id=40 data-nosnippet>40</a>        <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ConvertError&gt;(UnitVal::new(quantity.value() * unit.factor, unit.dim))
@@ -478,7 +478,7 @@
 <a href=#478 id=478 data-nosnippet>478</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(sections) = map_sections(v) <span class="kw">else </span>{
 <a href=#479 id=479 data-nosnippet>479</a>        <span class="kw">return </span>CasaValue::Text(<span class="string">"Unknown mapping requested\n"</span>.to_string());
 <a href=#480 id=480 data-nosnippet>480</a>    };
-<a href=#481 id=481 data-nosnippet>481</a>    <span class="kw">let </span>registry = casa_types::quanta::registry::global_registry();
+<a href=#481 id=481 data-nosnippet>481</a>    <span class="kw">let </span>registry = casa_core::quanta::registry::global_registry();
 <a href=#482 id=482 data-nosnippet>482</a>    <span class="kw">let </span><span class="kw-2">mut </span>out = String::new();
 <a href=#483 id=483 data-nosnippet>483</a>    <span class="kw">for </span><span class="kw-2">&amp;</span>section <span class="kw">in </span>sections {
 <a href=#484 id=484 data-nosnippet>484</a>        out.push_str(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"== {section} ====\n"</span>));
@@ -499,7 +499,7 @@
 <a href=#499 id=499 data-nosnippet>499</a>            CasaValue::Text(<span class="string">"Unknown mapping requested"</span>.to_string()),
 <a href=#500 id=500 data-nosnippet>500</a>        )]);
 <a href=#501 id=501 data-nosnippet>501</a>    };
-<a href=#502 id=502 data-nosnippet>502</a>    <span class="kw">let </span>registry = casa_types::quanta::registry::global_registry();
+<a href=#502 id=502 data-nosnippet>502</a>    <span class="kw">let </span>registry = casa_core::quanta::registry::global_registry();
 <a href=#503 id=503 data-nosnippet>503</a>    <span class="kw">let </span><span class="kw-2">mut </span>fields = std::collections::BTreeMap::new();
 <a href=#504 id=504 data-nosnippet>504</a>    <span class="kw">for </span><span class="kw-2">&amp;</span>section <span class="kw">in </span>sections {
 <a href=#505 id=505 data-nosnippet>505</a>        <span class="kw">let </span>entries = registry.map_section(section);

@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["AsdmTableError"],"fn":["read_asdm_table"]};

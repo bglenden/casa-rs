@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["prepare_write","prepare_write_holding","virtual_model_fields"]};

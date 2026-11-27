@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["check_named_output_path","check_named_sort_output","write_sorted_measurement_set"]};

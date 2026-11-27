@@ -2,10 +2,10 @@
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Arguments and results of `casars.simutil.simutil`'s methods, as CASA's
 <a href=#3 id=3 data-nosnippet>3</a>//! `simutil` takes and returns them, over [`casa_simulation::simutil`].
 <a href=#4 id=4 data-nosnippet>4</a>
-<a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use </span>casa_simulation::simutil::SimutilError;
-<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_simulation::simutil::direction::{CentredDirections, Directions};
-<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_simulation::simutil::skymodel::{ModelSummary, ModelValue, SkyModelError};
-<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>casa_types::quanta::Quantity;
+<a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use </span>casa_core::quanta::Quantity;
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_simulation::simutil::SimutilError;
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_simulation::simutil::direction::{CentredDirections, Directions};
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>casa_simulation::simutil::skymodel::{ModelSummary, ModelValue, SkyModelError};
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>pyo3::exceptions::{PyOSError, PyRuntimeError, PyTypeError};
 <a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>pyo3::prelude::<span class="kw-2">*</span>;
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>pyo3::types::{PyDict, PyString};
@@ -56,9 +56,9 @@
 <a href=#56 id=56 data-nosnippet>56</a>) -&gt; PyResult&lt;(
 <a href=#57 id=57 data-nosnippet>57</a>    [Variant; <span class="number">2</span>],
 <a href=#58 id=58 data-nosnippet>58</a>    [Quantity; <span class="number">2</span>],
-<a href=#59 id=59 data-nosnippet>59</a>    casa_types::quanta::registry::UnitState,
+<a href=#59 id=59 data-nosnippet>59</a>    casa_core::quanta::registry::UnitState,
 <a href=#60 id=60 data-nosnippet>60</a>)&gt; {
-<a href=#61 id=61 data-nosnippet>61</a>    <span class="kw">let </span>registry = casa_types::quanta::registry::global_registry();
+<a href=#61 id=61 data-nosnippet>61</a>    <span class="kw">let </span>registry = casa_core::quanta::registry::global_registry();
 <a href=#62 id=62 data-nosnippet>62</a>    <span class="kw">let </span>before = registry.unit_state();
 <a href=#63 id=63 data-nosnippet>63</a>    <span class="kw">let </span>one = |item: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;| {
 <a href=#64 id=64 data-nosnippet>64</a>        <span class="kw">let </span>value = item.extract::&lt;Variant&gt;()<span class="question-mark">?</span>;

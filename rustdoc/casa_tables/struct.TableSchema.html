@@ -9,7 +9,7 @@ name, version and comment (its <a href="struct.TableDescHeader.html" title="stru
 descriptions; keywords are handled separately.</p>
 <h2 id="example"><a class="doc-anchor" href="#example">§</a>Example</h2>
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>casa_tables::{ColumnSchema, TableSchema};
-<span class="kw">use </span>casa_types::PrimitiveType;
+<span class="kw">use </span>casa_core::PrimitiveType;
 
 <span class="kw">let </span>schema = TableSchema::new(<span class="macro">vec!</span>[
     ColumnSchema::scalar(<span class="string">"time"</span>, PrimitiveType::Float64),

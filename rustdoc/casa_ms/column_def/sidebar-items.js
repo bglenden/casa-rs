@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["ColumnKind","KeywordValueType"],"fn":["build_table_schema","column_schema"],"struct":["ColumnDef","KeywordDef"]};

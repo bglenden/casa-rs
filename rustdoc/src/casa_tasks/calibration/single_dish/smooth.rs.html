@@ -4,10 +4,10 @@
 <a href=#4 id=4 data-nosnippet>4</a></span><span class="kw">use </span>std::path::Path;
 <a href=#5 id=5 data-nosnippet>5</a>
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use crate</span>::{TaskFailure, TaskInvocation, TaskSuccess};
-<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_calibration::{SingleDishSession, SingleDishSmoothing};
-<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>casa_contracts::CasaValue;
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>casa_ms::MsSelection;
-<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>casa_ms::transform::TransformTaskHistory;
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_contracts::CasaValue;
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>casa_ms::MsSelection;
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>casa_mstransform::TransformTaskHistory;
+<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>casa_singledish::{SingleDishSession, SingleDishSmoothing};
 <a href=#11 id=11 data-nosnippet>11</a>
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span><span class="kw">super</span>::selector;
 <a href=#13 id=13 data-nosnippet>13</a>
@@ -29,7 +29,7 @@
 <a href=#29 id=29 data-nosnippet>29</a>            task.flag(<span class="string">"reindex"</span>)<span class="question-mark">?</span>,
 <a href=#30 id=30 data-nosnippet>30</a>        )
 <a href=#31 id=31 data-nosnippet>31</a>        .map_err(TaskFailure::execution)<span class="question-mark">?</span>;
-<a href=#32 id=32 data-nosnippet>32</a>    <span class="kw">let </span>outfile = task.text(<span class="string">"outfile"</span>)<span class="question-mark">?</span>.unwrap_or_default();
+<a href=#32 id=32 data-nosnippet>32</a>    <span class="kw">let </span>outfile = task.file_text(<span class="string">"outfile"</span>)<span class="question-mark">?</span>.unwrap_or_default();
 <a href=#33 id=33 data-nosnippet>33</a>    <span class="kw">let </span>overwrite = task.flag(<span class="string">"overwrite"</span>)<span class="question-mark">?</span>;
 <a href=#34 id=34 data-nosnippet>34</a>    <span class="kw">if </span>outfile.is_empty() {
 <a href=#35 id=35 data-nosnippet>35</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(TaskFailure::validation(<span class="string">"outfile is empty."</span>).at(<span class="string">"outfile"</span>));

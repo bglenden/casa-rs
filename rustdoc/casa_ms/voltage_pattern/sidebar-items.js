@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["radial_curve_storage","radial_lookup","radial_pattern","radial_squint"],"struct":["VoltagePatternError","VoltagePatternTable"]};

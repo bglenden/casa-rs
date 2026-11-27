@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["image_from_record","image_from_record_with_history","image_to_record"]};

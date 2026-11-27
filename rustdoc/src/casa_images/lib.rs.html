@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-images/src/lib.rs`."><title>lib.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_images" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_images/</div>lib.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `libs/casacore/casa-images/src/lib.rs`."><title>lib.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_images" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_images/</div>lib.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! casacore-compatible typed images and related metadata.
 <a href=#3 id=3 data-nosnippet>3</a>//!
 <a href=#4 id=4 data-nosnippet>4</a>//! # Overview
@@ -31,8 +31,8 @@
 <a href=#31 id=31 data-nosnippet>31</a>//!   coordinate metadata.
 <a href=#32 id=32 data-nosnippet>32</a>//!
 <a href=#33 id=33 data-nosnippet>33</a>//! Supported image pixel types: [`f32`], [`f64`],
-<a href=#34 id=34 data-nosnippet>34</a>//! [`Complex32`](casa_types::Complex32), and
-<a href=#35 id=35 data-nosnippet>35</a>//! [`Complex64`](casa_types::Complex64). The convenience alias [`Image`]
+<a href=#34 id=34 data-nosnippet>34</a>//! [`Complex32`](casa_core::Complex32), and
+<a href=#35 id=35 data-nosnippet>35</a>//! [`Complex64`](casa_core::Complex64). The convenience alias [`Image`]
 <a href=#36 id=36 data-nosnippet>36</a>//! remains available for `PagedImage&lt;f32&gt;`.
 <a href=#37 id=37 data-nosnippet>37</a>//!
 <a href=#38 id=38 data-nosnippet>38</a>//! # Example
@@ -41,7 +41,7 @@
 <a href=#41 id=41 data-nosnippet>41</a>//! use casa_coordinates::CoordinateSystem;
 <a href=#42 id=42 data-nosnippet>42</a>//! use casa_images::{ImageExprBuilder, ImageExprBinaryOp, ImageExprUnaryOp, ImageType, TempImage};
 <a href=#43 id=43 data-nosnippet>43</a>//! use casa_lattices::{Lattice, LatticeIterExt, LatticeMut, TraversalSpec};
-<a href=#44 id=44 data-nosnippet>44</a>//! use casa_types::Complex32;
+<a href=#44 id=44 data-nosnippet>44</a>//! use casa_core::Complex32;
 <a href=#45 id=45 data-nosnippet>45</a>//!
 <a href=#46 id=46 data-nosnippet>46</a>//! let mut image = TempImage::&lt;f32&gt;::new(vec![8, 8], CoordinateSystem::new(), casa_lattices::TempStoragePolicy::Memory).unwrap();
 <a href=#47 id=47 data-nosnippet>47</a>//! image.set(1.0).unwrap();
@@ -59,71 +59,64 @@
 <a href=#59 id=59 data-nosnippet>59</a>//! assert_eq!(ImageType::Velocity.to_string(), "Velocity");
 <a href=#60 id=60 data-nosnippet>60</a>//! ```
 <a href=#61 id=61 data-nosnippet>61</a>
-<a href=#62 id=62 data-nosnippet>62</a></span><span class="kw">pub mod </span>analysis;
-<a href=#63 id=63 data-nosnippet>63</a><span class="kw">pub mod </span>beam;
-<a href=#64 id=64 data-nosnippet>64</a><span class="kw">mod </span>component_list_image;
-<a href=#65 id=65 data-nosnippet>65</a><span class="kw">pub mod </span>concat_file;
-<a href=#66 id=66 data-nosnippet>66</a><span class="kw">pub mod </span>concatenate;
-<a href=#67 id=67 data-nosnippet>67</a><span class="kw">pub mod </span>convolve2d;
-<a href=#68 id=68 data-nosnippet>68</a><span class="kw">pub mod </span>error;
-<a href=#69 id=69 data-nosnippet>69</a><span class="kw">pub mod </span>expr_file;
-<a href=#70 id=70 data-nosnippet>70</a><span class="kw">pub mod </span>expr_parser;
-<a href=#71 id=71 data-nosnippet>71</a><span class="kw">pub mod </span>fits_read;
-<a href=#72 id=72 data-nosnippet>72</a><span class="kw">pub mod </span>fits_table;
-<a href=#73 id=73 data-nosnippet>73</a><span class="kw">pub mod </span>image;
-<a href=#74 id=74 data-nosnippet>74</a><span class="kw">pub mod </span>image_expr;
-<a href=#75 id=75 data-nosnippet>75</a><span class="kw">mod </span>image_expr_lel;
-<a href=#76 id=76 data-nosnippet>76</a><span class="kw">mod </span>image_expr_ops;
-<a href=#77 id=77 data-nosnippet>77</a><span class="kw">pub mod </span>image_info;
-<a href=#78 id=78 data-nosnippet>78</a><span class="kw">mod </span>linear_mosaic;
-<a href=#79 id=79 data-nosnippet>79</a><span class="kw">pub mod </span>miriad_read;
-<a href=#80 id=80 data-nosnippet>80</a><span class="kw">pub mod </span>pixel_slice;
-<a href=#81 id=81 data-nosnippet>81</a><span class="kw">mod </span>plane;
-<a href=#82 id=82 data-nosnippet>82</a><span class="kw">pub mod </span>regrid;
-<a href=#83 id=83 data-nosnippet>83</a><span class="kw">pub mod </span>saved_region;
-<a href=#84 id=84 data-nosnippet>84</a><span class="kw">pub mod </span>subimage;
-<a href=#85 id=85 data-nosnippet>85</a><span class="kw">pub mod </span>temp_image;
-<a href=#86 id=86 data-nosnippet>86</a><span class="kw">pub mod </span>virtual_concat;
-<a href=#87 id=87 data-nosnippet>87</a>
-<a href=#88 id=88 data-nosnippet>88</a><span class="attr">#[cfg(test)]
-<a href=#89 id=89 data-nosnippet>89</a></span><span class="kw">mod </span>mask;
-<a href=#90 id=90 data-nosnippet>90</a><span class="kw">mod </span>mask_reference;
-<a href=#91 id=91 data-nosnippet>91</a>
-<a href=#92 id=92 data-nosnippet>92</a><span class="kw">pub use </span>analysis::{
-<a href=#93 id=93 data-nosnippet>93</a>    ExportFitsRequest, FeatherRequest, FeatherSummary, FitsExportSummary, FitsImportSummary,
-<a href=#94 id=94 data-nosnippet>94</a>    ImageHeaderSummary, ImageMathSummary, ImageRegridSummary, ImageStatisticsSummary,
-<a href=#95 id=95 data-nosnippet>95</a>    ImageSubimageSummary, ImheadValue, ImmathRequest, ImmomentsRequest, ImpbcorRequest,
-<a href=#96 id=96 data-nosnippet>96</a>    ImportFitsRequest, ImportFitsValue, ImpvRequest, ImregridRequest, ImstatOutcome,
-<a href=#97 id=97 data-nosnippet>97</a>    ImstatPlanesSummary, ImstatRequest, ImsubimageRequest, MomentAxis, MomentImageSummary,
-<a href=#98 id=98 data-nosnippet>98</a>    MomentMapSummary, PbcorBeam, PbcorRegion, PbcorSummary, PvAmount, PvImageSummary, PvPosition,
-<a href=#99 id=99 data-nosnippet>99</a>    export_fits, exportfits, feather, imhead, imhead_add_delete, imhead_extrema, imhead_put,
-<a href=#100 id=100 data-nosnippet>100</a>    immath, immoments, impbcor, import_fits, importfits, impv, imregrid, imstat, imsubimage,
-<a href=#101 id=101 data-nosnippet>101</a>    parse_image_channel_selection, parse_imstat_algorithm,
-<a href=#102 id=102 data-nosnippet>102</a>};
-<a href=#103 id=103 data-nosnippet>103</a><span class="kw">pub use </span>analysis::{ImregridOutcome, ImregridTemplate};
-<a href=#104 id=104 data-nosnippet>104</a><span class="kw">pub use </span>beam::{BeamComponent, GaussianBeam, ImageBeamSet, StoredGaussianBeam};
-<a href=#105 id=105 data-nosnippet>105</a><span class="kw">pub use </span>casa_lattices::{
-<a href=#106 id=106 data-nosnippet>106</a>    ScratchSpace, StatisticsAlgorithmKind, TempStoragePlan, TempStoragePolicy,
-<a href=#107 id=107 data-nosnippet>107</a>};
-<a href=#108 id=108 data-nosnippet>108</a><span class="kw">pub use </span>component_list_image::ComponentListImage;
-<a href=#109 id=109 data-nosnippet>109</a><span class="kw">pub use </span>convolve2d::{Convolved, convolve2d};
-<a href=#110 id=110 data-nosnippet>110</a><span class="kw">pub use </span>error::ImageError;
-<a href=#111 id=111 data-nosnippet>111</a><span class="kw">pub use </span>fits_read::{FitsImage, fits_image_shape, read_fits_image};
-<a href=#112 id=112 data-nosnippet>112</a><span class="kw">pub use </span>image::{
-<a href=#113 id=113 data-nosnippet>113</a>    AnyPagedImage, Image, ImageInterface, ImagePixel, ImagePixelType, MutableImageInterface,
-<a href=#114 id=114 data-nosnippet>114</a>    PagedImage, image_pixel_type,
-<a href=#115 id=115 data-nosnippet>115</a>};
-<a href=#116 id=116 data-nosnippet>116</a><span class="kw">pub use </span>image_expr::{
-<a href=#117 id=117 data-nosnippet>117</a>    ImageExprBinaryOp, ImageExprBuilder, ImageExprCompareOp, ImageExprUnaryOp, ImageExpression,
-<a href=#118 id=118 data-nosnippet>118</a>    MaskExprBuilder, MaskExpression, MaskLogicalOp, ReductionOp,
-<a href=#119 id=119 data-nosnippet>119</a>};
-<a href=#120 id=120 data-nosnippet>120</a><span class="kw">pub use </span>image_info::{ImageInfo, ImageType};
-<a href=#121 id=121 data-nosnippet>121</a><span class="kw">pub use </span>linear_mosaic::linearmosaic;
-<a href=#122 id=122 data-nosnippet>122</a><span class="kw">pub use </span>regrid::{
-<a href=#123 id=123 data-nosnippet>123</a>    RegridMethod, RegridTemplate, Regridded, check_regrid, check_regrid_along_frequency, regrid,
-<a href=#124 id=124 data-nosnippet>124</a>    regrid_along_frequency,
-<a href=#125 id=125 data-nosnippet>125</a>};
-<a href=#126 id=126 data-nosnippet>126</a><span class="kw">pub use </span>saved_region::{PolygonRegion, RegionStatistics};
-<a href=#127 id=127 data-nosnippet>127</a><span class="kw">pub use </span>subimage::{SubImage, SubImageMut};
-<a href=#128 id=128 data-nosnippet>128</a><span class="kw">pub use </span>temp_image::TempImage;
+<a href=#62 id=62 data-nosnippet>62</a></span><span class="kw">mod </span>beam;
+<a href=#63 id=63 data-nosnippet>63</a><span class="kw">mod </span>concat_file;
+<a href=#64 id=64 data-nosnippet>64</a><span class="kw">mod </span>concatenate;
+<a href=#65 id=65 data-nosnippet>65</a><span class="kw">mod </span>error;
+<a href=#66 id=66 data-nosnippet>66</a><span class="kw">pub mod </span>expr_file;
+<a href=#67 id=67 data-nosnippet>67</a><span class="kw">pub mod </span>expr_parser;
+<a href=#68 id=68 data-nosnippet>68</a><span class="kw">pub mod </span>fits_read;
+<a href=#69 id=69 data-nosnippet>69</a><span class="kw">pub mod </span>fits_table;
+<a href=#70 id=70 data-nosnippet>70</a><span class="kw">mod </span>image;
+<a href=#71 id=71 data-nosnippet>71</a><span class="kw">mod </span>image_expr;
+<a href=#72 id=72 data-nosnippet>72</a><span class="kw">mod </span>image_expr_lel;
+<a href=#73 id=73 data-nosnippet>73</a><span class="kw">mod </span>image_expr_ops;
+<a href=#74 id=74 data-nosnippet>74</a><span class="kw">mod </span>image_info;
+<a href=#75 id=75 data-nosnippet>75</a><span class="kw">mod </span>miriad_read;
+<a href=#76 id=76 data-nosnippet>76</a><span class="kw">mod </span>pixel_slice;
+<a href=#77 id=77 data-nosnippet>77</a><span class="kw">pub mod </span>saved_region;
+<a href=#78 id=78 data-nosnippet>78</a><span class="kw">mod </span>subimage;
+<a href=#79 id=79 data-nosnippet>79</a><span class="kw">mod </span>temp_image;
+<a href=#80 id=80 data-nosnippet>80</a><span class="kw">mod </span>virtual_concat;
+<a href=#81 id=81 data-nosnippet>81</a>
+<a href=#82 id=82 data-nosnippet>82</a><span class="attr">#[cfg(test)]
+<a href=#83 id=83 data-nosnippet>83</a></span><span class="kw">mod </span>mask;
+<a href=#84 id=84 data-nosnippet>84</a><span class="kw">mod </span>mask_reference;
+<a href=#85 id=85 data-nosnippet>85</a><span class="kw">pub mod </span>resample;
+<a href=#86 id=86 data-nosnippet>86</a>
+<a href=#87 id=87 data-nosnippet>87</a><span class="kw">pub use </span>beam::{
+<a href=#88 id=88 data-nosnippet>88</a>    BeamComponent, GaussianBeam, ImageBeamSet, StoredGaussianBeam, quantity_from_record,
+<a href=#89 id=89 data-nosnippet>89</a>    wrap_position_angle,
+<a href=#90 id=90 data-nosnippet>90</a>};
+<a href=#91 id=91 data-nosnippet>91</a><span class="kw">pub use </span>casa_lattices::{
+<a href=#92 id=92 data-nosnippet>92</a>    ScratchSpace, StatisticsAlgorithmKind, TempStoragePlan, TempStoragePolicy,
+<a href=#93 id=93 data-nosnippet>93</a>};
+<a href=#94 id=94 data-nosnippet>94</a><span class="kw">pub use </span>concat_file::{ConcatManifest, is_image_concat};
+<a href=#95 id=95 data-nosnippet>95</a><span class="kw">pub use </span>concatenate::{ConcatInput, ConcatenationPlan, copy_concatenated_input};
+<a href=#96 id=96 data-nosnippet>96</a><span class="kw">pub use </span>error::ImageError;
+<a href=#97 id=97 data-nosnippet>97</a><span class="kw">pub use </span>fits_read::{FitsImage, fits_image_shape, read_fits_image};
+<a href=#98 id=98 data-nosnippet>98</a><span class="kw">pub use </span>image::{
+<a href=#99 id=99 data-nosnippet>99</a>    AnyPagedImage, Image, ImageHistoryEntry, ImageHistoryRow, ImageInterface, ImagePixel,
+<a href=#100 id=100 data-nosnippet>100</a>    ImagePixelType, MaskSliceWriter, MutableImageInterface, PagedImage, StoredImageMasks,
+<a href=#101 id=101 data-nosnippet>101</a>    add_image_history, append_image_history_entries, image_history_entries, image_history_rows,
+<a href=#102 id=102 data-nosnippet>102</a>    image_pixel_type, make_paged_mask_record,
+<a href=#103 id=103 data-nosnippet>103</a>};
+<a href=#104 id=104 data-nosnippet>104</a><span class="kw">pub use </span>image_expr::{
+<a href=#105 id=105 data-nosnippet>105</a>    ImageExprBinaryOp, ImageExprBuilder, ImageExprCompareOp, ImageExprMeta, ImageExprUnaryOp,
+<a href=#106 id=106 data-nosnippet>106</a>    ImageExprValue, ImageExpression, MaskExprBuilder, MaskExpression, MaskLogicalOp,
+<a href=#107 id=107 data-nosnippet>107</a>    MemorySnapshotImage, OwnedMaskReader, ReductionOp, bounded_read_cursor, validate_slice_request,
+<a href=#108 id=108 data-nosnippet>108</a>};
+<a href=#109 id=109 data-nosnippet>109</a><span class="kw">pub use </span>image_expr_lel::{
+<a href=#110 id=110 data-nosnippet>110</a>    broadcast_array, broadcast_shapes, can_broadcast_to, mask_coordinate_axes,
+<a href=#111 id=111 data-nosnippet>111</a>    rebin_coordinate_record, rebin_reduce_slice,
+<a href=#112 id=112 data-nosnippet>112</a>};
+<a href=#113 id=113 data-nosnippet>113</a><span class="kw">pub use </span>image_info::{ImageInfo, ImageType};
+<a href=#114 id=114 data-nosnippet>114</a><span class="kw">pub use </span>mask_reference::{is_paged_mask_table, subtable_reference};
+<a href=#115 id=115 data-nosnippet>115</a><span class="kw">pub use </span>miriad_read::MiriadImage;
+<a href=#116 id=116 data-nosnippet>116</a><span class="kw">pub use </span>pixel_slice::{PixelSlice, get_slice};
+<a href=#117 id=117 data-nosnippet>117</a><span class="kw">pub use </span>resample::RegridMethod;
+<a href=#118 id=118 data-nosnippet>118</a><span class="kw">pub use </span>saved_region::{PolygonRegion, RegionStatistics};
+<a href=#119 id=119 data-nosnippet>119</a><span class="kw">pub use </span>subimage::{SubImage, SubImageMut};
+<a href=#120 id=120 data-nosnippet>120</a><span class="kw">pub use </span>temp_image::TempImage;
+<a href=#121 id=121 data-nosnippet>121</a><span class="kw">pub use </span>virtual_concat::{ConcatImage, ConcatLockState, ConcatMember};
 </code></pre></div></section></main></body></html>

@@ -17,16 +17,18 @@
 <a href=#17 id=17 data-nosnippet>17</a><span class="kw">pub use </span>casa_return::{fluxscale_record, solve_record};
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">pub use </span>cli::{ImagerSetJyRequest, imager_setjy, task_front_end};
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">pub use </span>flagdata::flagdata_front_end;
-<a href=#20 id=20 data-nosnippet>20</a><span class="kw">pub use </span>managed_output::{
-<a href=#21 id=21 data-nosnippet>21</a>    ApplyMultiMsReport, ApplyPartitionReport, CalibrationTaskResult, CrossHandGainSolveReport,
-<a href=#22 id=22 data-nosnippet>22</a>    CrossHandGainType,
-<a href=#23 id=23 data-nosnippet>23</a>};
-<a href=#24 id=24 data-nosnippet>24</a><span class="kw">pub use </span>mstransform::mstransform_front_end;
-<a href=#25 id=25 data-nosnippet>25</a><span class="kw">pub use </span>task_contract::{
-<a href=#26 id=26 data-nosnippet>26</a>    CALIBRATION_SURFACES, CALIBRATION_TASK_PROTOCOL_NAME, CALIBRATION_TASK_PROTOCOL_VERSION,
-<a href=#27 id=27 data-nosnippet>27</a>    CalibrationTaskRequest, ExecuteApplyTaskRequest, ExportCorrectedDataTaskRequest,
-<a href=#28 id=28 data-nosnippet>28</a>    GencalTaskRequest, PlanApplyTaskRequest, SolveBandpassTaskRequest, SolveGainTaskRequest,
-<a href=#29 id=29 data-nosnippet>29</a>    StatsTaskRequest, SummaryTaskRequest, calibration_protocol_descriptor,
-<a href=#30 id=30 data-nosnippet>30</a>    calibration_task_schema_bundle,
-<a href=#31 id=31 data-nosnippet>31</a>};
+<a href=#20 id=20 data-nosnippet>20</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>flagdata::run <span class="kw">as </span>run_flagdata;
+<a href=#21 id=21 data-nosnippet>21</a><span class="kw">pub use </span>managed_output::{
+<a href=#22 id=22 data-nosnippet>22</a>    ApplyMultiMsReport, ApplyPartitionReport, CalibrationTaskResult, CrossHandGainSolveReport,
+<a href=#23 id=23 data-nosnippet>23</a>    CrossHandGainType,
+<a href=#24 id=24 data-nosnippet>24</a>};
+<a href=#25 id=25 data-nosnippet>25</a><span class="kw">pub use </span>mstransform::mstransform_front_end;
+<a href=#26 id=26 data-nosnippet>26</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>mstransform::run <span class="kw">as </span>run_mstransform;
+<a href=#27 id=27 data-nosnippet>27</a><span class="kw">pub use </span>task_contract::{
+<a href=#28 id=28 data-nosnippet>28</a>    CALIBRATION_SURFACES, CALIBRATION_TASK_PROTOCOL_NAME, CALIBRATION_TASK_PROTOCOL_VERSION,
+<a href=#29 id=29 data-nosnippet>29</a>    CalibrationTaskRequest, ExecuteApplyTaskRequest, ExportCorrectedDataTaskRequest,
+<a href=#30 id=30 data-nosnippet>30</a>    GencalTaskRequest, PlanApplyTaskRequest, SolveBandpassTaskRequest, SolveGainTaskRequest,
+<a href=#31 id=31 data-nosnippet>31</a>    StatsTaskRequest, SummaryTaskRequest, calibration_protocol_descriptor,
+<a href=#32 id=32 data-nosnippet>32</a>    calibration_task_schema_bundle,
+<a href=#33 id=33 data-nosnippet>33</a>};
 </code></pre></div></section></main></body></html>

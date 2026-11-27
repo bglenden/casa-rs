@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["add_tool_ephemeris"],"struct":["ToolEphemeris"]};

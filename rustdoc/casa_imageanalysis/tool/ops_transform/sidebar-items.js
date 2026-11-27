@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CollapseAxes"],"fn":["collapse_image","continuum_sub","deviation_image","moments_image","parse_deviation_grid","parse_deviation_interpolation","regrid_attached","two_point_correlation"],"mod":["convolve"],"struct":["CollapseRequest"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["calc_attached_pixels"]};

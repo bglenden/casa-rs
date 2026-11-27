@@ -4,7 +4,7 @@
 <a href=#4 id=4 data-nosnippet>4</a>
 <a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use crate</span>::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_contracts::ParameterValue;
-<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_images::{ImmomentsRequest, MomentAxis, immoments};
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_imageanalysis::{ImmomentsRequest, MomentAxis, immoments};
 <a href=#8 id=8 data-nosnippet>8</a>
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span><span class="kw">super</span>::front_end::{image_task_front_end, image_task_success};
 <a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span><span class="kw">super</span>::task_contract::ImageAnalysisTaskResult;
@@ -15,7 +15,7 @@
 <a href=#15 id=15 data-nosnippet>15</a>    image_task_front_end(<span class="string">"immoments"</span>, <span class="kw-2">&amp;</span>[<span class="string">"immoments"</span>], run)
 <a href=#16 id=16 data-nosnippet>16</a>}
 <a href=#17 id=17 data-nosnippet>17</a>
-<a href=#18 id=18 data-nosnippet>18</a><span class="kw">fn </span>run(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt; {
+<a href=#18 id=18 data-nosnippet>18</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>run(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt; {
 <a href=#19 id=19 data-nosnippet>19</a>    <span class="kw">let </span>axis = <span class="kw">match </span>task.value(<span class="string">"axis"</span>) {
 <a href=#20 id=20 data-nosnippet>20</a>        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
 <a href=#21 id=21 data-nosnippet>21</a>        <span class="prelude-val">Some</span>(ParameterValue::Integer(index)) =&gt; <span class="prelude-val">Some</span>(MomentAxis::Index(<span class="kw-2">*</span>index)),
@@ -27,7 +27,7 @@
 <a href=#27 id=27 data-nosnippet>27</a>        outfile: task.path(<span class="string">"outfile"</span>)<span class="question-mark">?</span>,
 <a href=#28 id=28 data-nosnippet>28</a>        moments: moment_numbers(<span class="kw-2">&amp;</span>task.integers(<span class="string">"moments"</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
 <a href=#29 id=29 data-nosnippet>29</a>        axis,
-<a href=#30 id=30 data-nosnippet>30</a>        region: task.text(<span class="string">"region"</span>)<span class="question-mark">?</span>,
+<a href=#30 id=30 data-nosnippet>30</a>        region: <span class="kw">super</span>::front_end::region_in_workspace(task)<span class="question-mark">?</span>,
 <a href=#31 id=31 data-nosnippet>31</a>        box_pixels: task.text(<span class="string">"box"</span>)<span class="question-mark">?</span>,
 <a href=#32 id=32 data-nosnippet>32</a>        stokes: task.text(<span class="string">"stokes"</span>)<span class="question-mark">?</span>,
 <a href=#33 id=33 data-nosnippet>33</a>        chans: task.text(<span class="string">"chans"</span>)<span class="question-mark">?</span>,

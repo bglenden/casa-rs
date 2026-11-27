@@ -6,7 +6,7 @@
 <a href=#6 id=6 data-nosnippet>6</a>    ProviderProtocolDescriptor, ProviderSurfaceKind, TaskProviderContract, builtin_surface_bundle,
 <a href=#7 id=7 data-nosnippet>7</a>    merged_components,
 <a href=#8 id=8 data-nosnippet>8</a>};
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>casa_imaging_application::{
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>casa_imaging::{
 <a href=#10 id=10 data-nosnippet>10</a>    Cancel, HostResources, ResourcePolicy, RunContext, single_dish::image_from_parameters,
 <a href=#11 id=11 data-nosnippet>11</a>};
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>schemars::{JsonSchema, schema_for};
@@ -73,48 +73,55 @@
 <a href=#73 id=73 data-nosnippet>73</a>-&gt; TaskFrontEnd&lt;<span class="kw">impl </span>Fn(<span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt;&gt; {
 <a href=#74 id=74 data-nosnippet>74</a>    tsdimaging_front_end_with_cancel(Cancel::new())
 <a href=#75 id=75 data-nosnippet>75</a>}
-<a href=#76 id=76 data-nosnippet>76</a><span class="kw">fn </span>run(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;, cancel: Cancel) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt; {
+<a href=#76 id=76 data-nosnippet>76</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>run(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;, cancel: Cancel) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt; {
 <a href=#77 id=77 data-nosnippet>77</a>    <span class="kw">let </span>started = Instant::now();
 <a href=#78 id=78 data-nosnippet>78</a>    <span class="kw">let </span>parameters = task.plain_values();
-<a href=#79 id=79 data-nosnippet>79</a>    <span class="kw">let </span>context = RunContext {
-<a href=#80 id=80 data-nosnippet>80</a>        host: HostResources::detect().map_err(|e| TaskFailure::execution(e.to_string()))<span class="question-mark">?</span>,
-<a href=#81 id=81 data-nosnippet>81</a>        policy: ResourcePolicy::Balanced,
-<a href=#82 id=82 data-nosnippet>82</a>        cancel,
-<a href=#83 id=83 data-nosnippet>83</a>        summary: <span class="prelude-val">None</span>,
-<a href=#84 id=84 data-nosnippet>84</a>    };
-<a href=#85 id=85 data-nosnippet>85</a>    <span class="kw">let </span>output = image_from_parameters(<span class="kw-2">&amp;</span>parameters, <span class="kw-2">&amp;</span>context)
-<a href=#86 id=86 data-nosnippet>86</a>        .map_err(|e| TaskFailure::execution(e.to_string()))<span class="question-mark">?</span>;
-<a href=#87 id=87 data-nosnippet>87</a>    <span class="kw">let </span>artifacts = [
-<a href=#88 id=88 data-nosnippet>88</a>        (ImagerArtifactKind::Image, <span class="kw-2">&amp;</span>output.image),
-<a href=#89 id=89 data-nosnippet>89</a>        (ImagerArtifactKind::Weight, <span class="kw-2">&amp;</span>output.weight),
-<a href=#90 id=90 data-nosnippet>90</a>    ]
-<a href=#91 id=91 data-nosnippet>91</a>    .into_iter()
-<a href=#92 id=92 data-nosnippet>92</a>    .map(|(kind, path)| ImagerArtifact {
-<a href=#93 id=93 data-nosnippet>93</a>        kind,
-<a href=#94 id=94 data-nosnippet>94</a>        label: path
-<a href=#95 id=95 data-nosnippet>95</a>            .file_name()
-<a href=#96 id=96 data-nosnippet>96</a>            .unwrap_or_default()
-<a href=#97 id=97 data-nosnippet>97</a>            .to_string_lossy()
-<a href=#98 id=98 data-nosnippet>98</a>            .into_owned(),
-<a href=#99 id=99 data-nosnippet>99</a>        path: path.display().to_string(),
-<a href=#100 id=100 data-nosnippet>100</a>        exists: path.exists(),
-<a href=#101 id=101 data-nosnippet>101</a>    })
-<a href=#102 id=102 data-nosnippet>102</a>    .collect();
-<a href=#103 id=103 data-nosnippet>103</a>    <span class="kw">let </span>result = TotalPowerTaskResult {
-<a href=#104 id=104 data-nosnippet>104</a>        run: TotalPowerRun {
-<a href=#105 id=105 data-nosnippet>105</a>            stem: parameters[<span class="string">"outfile"</span>].as_str().unwrap_or_default().into(),
-<a href=#106 id=106 data-nosnippet>106</a>            directory: output
-<a href=#107 id=107 data-nosnippet>107</a>                .image
-<a href=#108 id=108 data-nosnippet>108</a>                .parent()
-<a href=#109 id=109 data-nosnippet>109</a>                .unwrap_or_else(|| std::path::Path::new(<span class="string">"."</span>))
-<a href=#110 id=110 data-nosnippet>110</a>                .display()
-<a href=#111 id=111 data-nosnippet>111</a>                .to_string(),
-<a href=#112 id=112 data-nosnippet>112</a>            warnings: Vec::new(),
-<a href=#113 id=113 data-nosnippet>113</a>            elapsed_ns: started.elapsed().as_nanos().try_into().unwrap_or(u64::MAX),
-<a href=#114 id=114 data-nosnippet>114</a>        },
-<a href=#115 id=115 data-nosnippet>115</a>        request: ImagingParameters(parameters),
-<a href=#116 id=116 data-nosnippet>116</a>        artifacts,
-<a href=#117 id=117 data-nosnippet>117</a>    };
-<a href=#118 id=118 data-nosnippet>118</a>    TaskSuccess::new(<span class="kw">crate</span>::CasaValue::None, <span class="kw-2">&amp;</span>result)
-<a href=#119 id=119 data-nosnippet>119</a>}
+<a href=#79 id=79 data-nosnippet>79</a>    <span class="kw">let </span><span class="kw-2">mut </span>execution_parameters = parameters.clone();
+<a href=#80 id=80 data-nosnippet>80</a>    task.resolve_file_values(<span class="kw-2">&amp;mut </span>execution_parameters, <span class="kw-2">&amp;</span>[<span class="string">"infile"</span>, <span class="string">"outfile"</span>]);
+<a href=#81 id=81 data-nosnippet>81</a>    <span class="kw">let </span>context = RunContext {
+<a href=#82 id=82 data-nosnippet>82</a>        host: HostResources::detect().map_err(|e| TaskFailure::execution(e.to_string()))<span class="question-mark">?</span>,
+<a href=#83 id=83 data-nosnippet>83</a>        policy: ResourcePolicy::Balanced,
+<a href=#84 id=84 data-nosnippet>84</a>        cancel,
+<a href=#85 id=85 data-nosnippet>85</a>        summary: <span class="prelude-val">None</span>,
+<a href=#86 id=86 data-nosnippet>86</a>    };
+<a href=#87 id=87 data-nosnippet>87</a>    <span class="kw">let </span>output = image_from_parameters(<span class="kw-2">&amp;</span>execution_parameters, <span class="kw-2">&amp;</span>context).map_err(|error| {
+<a href=#88 id=88 data-nosnippet>88</a>        <span class="kw">if </span>context.cancel.is_cancelled() {
+<a href=#89 id=89 data-nosnippet>89</a>            TaskFailure::interrupted(error.to_string())
+<a href=#90 id=90 data-nosnippet>90</a>        } <span class="kw">else </span>{
+<a href=#91 id=91 data-nosnippet>91</a>            TaskFailure::execution(error.to_string())
+<a href=#92 id=92 data-nosnippet>92</a>        }
+<a href=#93 id=93 data-nosnippet>93</a>    })<span class="question-mark">?</span>;
+<a href=#94 id=94 data-nosnippet>94</a>    <span class="kw">let </span>artifacts = [
+<a href=#95 id=95 data-nosnippet>95</a>        (ImagerArtifactKind::Image, <span class="kw-2">&amp;</span>output.image),
+<a href=#96 id=96 data-nosnippet>96</a>        (ImagerArtifactKind::Weight, <span class="kw-2">&amp;</span>output.weight),
+<a href=#97 id=97 data-nosnippet>97</a>    ]
+<a href=#98 id=98 data-nosnippet>98</a>    .into_iter()
+<a href=#99 id=99 data-nosnippet>99</a>    .map(|(kind, path)| ImagerArtifact {
+<a href=#100 id=100 data-nosnippet>100</a>        kind,
+<a href=#101 id=101 data-nosnippet>101</a>        label: path
+<a href=#102 id=102 data-nosnippet>102</a>            .file_name()
+<a href=#103 id=103 data-nosnippet>103</a>            .unwrap_or_default()
+<a href=#104 id=104 data-nosnippet>104</a>            .to_string_lossy()
+<a href=#105 id=105 data-nosnippet>105</a>            .into_owned(),
+<a href=#106 id=106 data-nosnippet>106</a>        path: path.display().to_string(),
+<a href=#107 id=107 data-nosnippet>107</a>        exists: path.exists(),
+<a href=#108 id=108 data-nosnippet>108</a>    })
+<a href=#109 id=109 data-nosnippet>109</a>    .collect();
+<a href=#110 id=110 data-nosnippet>110</a>    <span class="kw">let </span>result = TotalPowerTaskResult {
+<a href=#111 id=111 data-nosnippet>111</a>        run: TotalPowerRun {
+<a href=#112 id=112 data-nosnippet>112</a>            stem: parameters[<span class="string">"outfile"</span>].as_str().unwrap_or_default().into(),
+<a href=#113 id=113 data-nosnippet>113</a>            directory: output
+<a href=#114 id=114 data-nosnippet>114</a>                .image
+<a href=#115 id=115 data-nosnippet>115</a>                .parent()
+<a href=#116 id=116 data-nosnippet>116</a>                .unwrap_or_else(|| std::path::Path::new(<span class="string">"."</span>))
+<a href=#117 id=117 data-nosnippet>117</a>                .display()
+<a href=#118 id=118 data-nosnippet>118</a>                .to_string(),
+<a href=#119 id=119 data-nosnippet>119</a>            warnings: Vec::new(),
+<a href=#120 id=120 data-nosnippet>120</a>            elapsed_ns: started.elapsed().as_nanos().try_into().unwrap_or(u64::MAX),
+<a href=#121 id=121 data-nosnippet>121</a>        },
+<a href=#122 id=122 data-nosnippet>122</a>        request: ImagingParameters(parameters),
+<a href=#123 id=123 data-nosnippet>123</a>        artifacts,
+<a href=#124 id=124 data-nosnippet>124</a>    };
+<a href=#125 id=125 data-nosnippet>125</a>    TaskSuccess::new(<span class="kw">crate</span>::CasaValue::None, <span class="kw-2">&amp;</span>result)
+<a href=#126 id=126 data-nosnippet>126</a>}
 </code></pre></div></section></main></body></html>

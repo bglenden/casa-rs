@@ -708,7 +708,7 @@
 <h1 id="alma-and-aca-simulation">ALMA and ACA simulation<a class="headerlink" href="#alma-and-aca-simulation" title="Permanent link">&para;</a></h1>
 <p>Truth class: current descriptive
 Last reality check: 2026-11-15
-Verification: <code>cargo test -p casa-simulation --test simalma_casa --test simalma_parameters</code></p>
+Verification: <code>cargo test -p casa-parity --test api simalma_casa::</code> and <code>cargo test -p casa-simulation --test api simalma_parameters::</code></p>
 <p><code>casars.tasks.simalma</code> runs native ALMA/ACA observations, images each array,
 concatenates the interferometric data and combines them with total power.
 The <a href="../reference/task-parameters/">parameter reference</a> gives CASA's exact

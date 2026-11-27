@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["FitsHeaderOutput"],"fn":["export_attached_to_fits","fits_header","import_fits"],"struct":["ImportFitsRequest"]};

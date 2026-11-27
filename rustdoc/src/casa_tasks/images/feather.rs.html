@@ -3,7 +3,7 @@
 <a href=#3 id=3 data-nosnippet>3</a>//! images, on the shared task front end.
 <a href=#4 id=4 data-nosnippet>4</a>
 <a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use crate</span>::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
-<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_images::{FeatherRequest, feather};
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_imageanalysis::{FeatherRequest, feather};
 <a href=#7 id=7 data-nosnippet>7</a>
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span><span class="kw">super</span>::front_end::{image_task_front_end, image_task_success};
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span><span class="kw">super</span>::task_contract::ImageAnalysisTaskResult;
@@ -14,7 +14,7 @@
 <a href=#14 id=14 data-nosnippet>14</a>    image_task_front_end(<span class="string">"feather"</span>, <span class="kw-2">&amp;</span>[<span class="string">"feather"</span>], run)
 <a href=#15 id=15 data-nosnippet>15</a>}
 <a href=#16 id=16 data-nosnippet>16</a>
-<a href=#17 id=17 data-nosnippet>17</a><span class="kw">fn </span>run(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt; {
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>run(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt; {
 <a href=#18 id=18 data-nosnippet>18</a>    <span class="kw">let </span>request = FeatherRequest {
 <a href=#19 id=19 data-nosnippet>19</a>        imagename: task.path(<span class="string">"imagename"</span>)<span class="question-mark">?</span>,
 <a href=#20 id=20 data-nosnippet>20</a>        highres: task.input_path(<span class="string">"highres"</span>)<span class="question-mark">?</span>,

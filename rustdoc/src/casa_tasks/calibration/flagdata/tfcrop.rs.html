@@ -4,7 +4,7 @@
 <a href=#4 id=4 data-nosnippet>4</a>
 <a href=#5 id=5 data-nosnippet>5</a><span class="kw">use crate</span>::{TaskFailure, TaskInvocation};
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_contracts::ParameterValue;
-<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_ms::flagging::{TfcropFit, TfcropOptions, TfcropPasses, TfcropWindowStats};
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_flagging::{TfcropFit, TfcropOptions, TfcropPasses, TfcropWindowStats};
 <a href=#8 id=8 data-nosnippet>8</a>
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>validate_types(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), TaskFailure&gt; {
 <a href=#10 id=10 data-nosnippet>10</a>    integer_setting(task, <span class="string">"maxnpieces"</span>)<span class="question-mark">?</span>;

@@ -9,13 +9,13 @@
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>casa_contracts::CasaValue;
 <a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>casa_ms::MsSelection;
 <a href=#11 id=11 data-nosnippet>11</a>
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>casa_calibration::{SingleDishLineFinder, SingleDishLineFit, SingleDishSession};
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>casa_singledish::{SingleDishLineFinder, SingleDishLineFit, SingleDishSession};
 <a href=#13 id=13 data-nosnippet>13</a>
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">use super</span>::{baseline::selected_windows, selector};
 <a href=#15 id=15 data-nosnippet>15</a>
 <a href=#16 id=16 data-nosnippet>16</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>run(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt; {
 <a href=#17 id=17 data-nosnippet>17</a>    <span class="kw">let </span>input = task.input_path(<span class="string">"infile"</span>)<span class="question-mark">?</span>;
-<a href=#18 id=18 data-nosnippet>18</a>    <span class="kw">let </span>outfile = task.required_text(<span class="string">"outfile"</span>)<span class="question-mark">?</span>;
+<a href=#18 id=18 data-nosnippet>18</a>    <span class="kw">let </span>outfile = task.required_file_text(<span class="string">"outfile"</span>)<span class="question-mark">?</span>;
 <a href=#19 id=19 data-nosnippet>19</a>    <span class="kw">let </span>output = (!outfile.is_empty()).then(|| Path::new(<span class="kw-2">&amp;</span>outfile));
 <a href=#20 id=20 data-nosnippet>20</a>    <span class="kw">let </span>overwrite = task.flag(<span class="string">"overwrite"</span>)<span class="question-mark">?</span>;
 <a href=#21 id=21 data-nosnippet>21</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(output) = output {

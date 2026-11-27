@@ -882,8 +882,8 @@ CASAPY<span class="w"> </span>tools/simulation/compare_ppdisk_tutorial.py<span c
 <p>The default end-to-end regression uses the same small eight-antenna inputs
 as the existing graphics oracle and compares 13 products from an actual
 CASA run, including the documented full-precision fidelity control:</p>
-<div class="codehilite"><pre><span></span><code>cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-p<span class="w"> </span>casa-images<span class="w"> </span>--test<span class="w"> </span>legacy_simulation_fits
-cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-p<span class="w"> </span>casa-simulation<span class="w"> </span>--test<span class="w"> </span>simanalyze_task_casa
+<div class="codehilite"><pre><span></span><code>cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-p<span class="w"> </span>casa-parity<span class="w"> </span>--test<span class="w"> </span>api<span class="w"> </span>legacy_simulation_fits
+cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-p<span class="w"> </span>casa-parity<span class="w"> </span>--test<span class="w"> </span>api<span class="w"> </span>simanalyze_task_casa::
 python<span class="w"> </span>frontends/casars-python/python/tests/test_ppdisk_tutorial.py
 </code></pre></div>
 

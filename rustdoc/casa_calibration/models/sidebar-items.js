@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["VisibilityFitShape"],"fn":["fit_visibility_component","flagdata_model","plotms_model_input","transform_model_input","visibility_model_input"],"struct":["PlotMsModelReferences","PlotMsModelSpwSelection","VisibilityComponentFit","VisibilityFitRequest"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Store"],"fn":["inventory","refuse_unaccepted","selected_groups","unused_antennas"]};

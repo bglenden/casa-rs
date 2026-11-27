@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["axis_length","beam_area_record","beam_for_units","common_beam_record","format_gaussian_beam","gaussian_beam_record","image_info","image_info_record","image_info_with_beams","parse_beam_record","plane_axes","restoring_beam_record","stored_beam_record","subrecord","subset_beam_record","subset_beam_set","validate_beam_indices"]};

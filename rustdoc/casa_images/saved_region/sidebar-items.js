@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["PolygonRegion","RegionStatistics"]};
+window.SIDEBAR_ITEMS = {"fn":["compound_children","map_world_region_axes","native_region_kind","parse_quantum_vector_field","polygon_pixel_plane"],"struct":["PolygonBounds","PolygonPixelPlane","PolygonRegion","RegionStatistics"]};

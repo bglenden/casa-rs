@@ -774,8 +774,7 @@
 <ul>
 <li><code>casars.data</code> provides in-process access to persistent CASA-style images and
   tables.</li>
-<li><code>casars.tasks</code> provides higher-level task wrappers, each of which starts
-  its task's own executable.</li>
+<li><code>casars.tasks</code> provides higher-level task wrappers that run in process.</li>
 <li><code>casars.tools</code> provides CASA's tools as classes under CASA's names, with
   CASA's methods, parameter order and defaults, so a CASA script changes only
   its imports (ADR-0017): <code>simulator</code> (CASA's <code>sm</code>), <code>measures</code> (<code>me</code>),
@@ -809,20 +808,12 @@
 <p>The generic <code>casars.tasks.run()</code> entry point accepts every catalog task. Every
 task is also exposed exactly once as <code>casars.tasks.&lt;task&gt;</code> through a generated
 CASA-named function that takes CASA's parameters. These functions share the
-Rust-owned parameter and result contracts. A call resolves its parameters in
-Rust, starts the task's executable as a child process with <code>--json-run -</code>,
-passes the task's log lines to <code>sys.stderr</code> as they arrive. A task whose
-surface names its CASA task (every task but the casa-rs tasks <code>calibrate</code>,
-<code>msexplore</code> and <code>msconvert</code>, and <code>plotms</code>) has CASA's exact signature and
-returns CASA's value; the others return a <code>TaskCompletion</code>. A task that
-refuses its parameters raises <code>casars.tasks.TaskParameterError</code>, a
-<code>ValueError</code>, and one that does not succeed
-<code>casars.tasks.TaskExecutionError</code>. The executable is the task's
-<code>CASARS_&lt;APP&gt;_BIN</code> override when it is set, else the one in a suite's <code>bin/</code>
-(<code>CASARS_SUITE_ROOT</code>, or the suite the package was installed into), else, for
-a package built from a checkout, that checkout's build
-(<a href="versioning/#task-runner-compatibility">Compatibility</a>). The in-process
-<code>casars.data</code>, <code>casars.tools</code> and <code>casars.simutil</code> need no executables.</p>
+Rust-owned parameter and result contracts. Native execution releases the GIL
+and relays log lines to <code>sys.stderr</code>. The generic runner returns those lines
+in <code>TaskCompletion.logs</code> alongside status, CASA return value, and products.
+A wrapper for a CASA-named surface returns CASA's value with its original
+signature. Wrappers for <code>calibrate</code>, <code>msexplore</code>, <code>msconvert</code>, and <code>plotms</code>
+return a completion. Tasks are included in the Python wheel.</p>
 <p><code>casars.data</code> is stateful and file-backed. It is intended for interoperability
 with the Python ecosystem through NumPy-native reads and writes. For images,
 the current object surface includes pixel-slice writes on existing persistent

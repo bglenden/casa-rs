@@ -8,8 +8,8 @@
 <a href=#8 id=8 data-nosnippet>8</a>//! `getcol` of a column of `int64` raises "Unknown casa DataType!"; casa-rs
 <a href=#9 id=9 data-nosnippet>9</a>//! returns the `int64` array.
 <a href=#10 id=10 data-nosnippet>10</a>
-<a href=#11 id=11 data-nosnippet>11</a></span><span class="kw">use </span>casa_tables::{ColumnSchema, ColumnType, Table, TableOptions};
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>casa_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
+<a href=#11 id=11 data-nosnippet>11</a></span><span class="kw">use </span>casa_core::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>casa_tables::{ColumnSchema, ColumnType, Table, TableOptions};
 <a href=#13 id=13 data-nosnippet>13</a>
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span><span class="kw">super</span>::state::{Fail, Open, State, no_table_specified};
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span><span class="kw">super</span>::values;
@@ -863,7 +863,7 @@
 <a href=#863 id=863 data-nosnippet>863</a>                        .iter()
 <a href=#864 id=864 data-nosnippet>864</a>                        .map(|field| {
 <a href=#865 id=865 data-nosnippet>865</a>                            <span class="kw">if </span>field.name == <span class="string">"IndexLength" </span>{
-<a href=#866 id=866 data-nosnippet>866</a>                                casa_types::RecordField::new(
+<a href=#866 id=866 data-nosnippet>866</a>                                casa_core::RecordField::new(
 <a href=#867 id=867 data-nosnippet>867</a>                                    <span class="string">"IndexLength"</span>,
 <a href=#868 id=868 data-nosnippet>868</a>                                    Value::Scalar(ScalarValue::Int32(<span class="number">0</span>)),
 <a href=#869 id=869 data-nosnippet>869</a>                                )

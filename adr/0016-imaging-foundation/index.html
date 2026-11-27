@@ -762,7 +762,7 @@ kept in git at the location above as a record, not a binding document.</p>
     <code>casa-imaging-runtime</code> depends unconditionally across platforms on
     <code>casa-imaging-metal</code>, and only <code>objc2-metal</code> inside <code>casa-imaging-metal</code>
     is gated under <code>cfg(target_os = "macos")</code>. Dependency direction is
-    enforced by <code>scripts/check-imaging-dependencies.py</code> over <code>cargo metadata</code>.
+    enforced by <code>scripts/check-workspace-arch.py</code> over <code>cargo metadata</code>.
     Every crate the policy covers, the model included, may depend on the
     <strong>definitional crates</strong>: crates that define values, units, quanta,
     measures and coordinate systems and the pure functions on them, do no
@@ -837,7 +837,7 @@ kept in git at the location above as a record, not a binding document.</p>
 <p>This decision is enforced by:
 - tests: T0 operator laws and T1 end-to-end capability tests (<code>TESTING.md</code>
   "Imaging tiers and evidence")
-- lint/import/dependency rules: <code>scripts/check-imaging-dependencies.py</code>
+- lint/import/dependency rules: <code>scripts/check-workspace-arch.py</code>
   (crate edges, definitional crates closed and free of I/O, device APIs only
   in <code>casa-imaging-metal</code>, no <code>std::env</code> or <code>eprintln!</code> in library crates, no
   content hashing in imaging crates)

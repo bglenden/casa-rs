@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-tables/src/storage/virtual_compress.rs`."><title>virtual_compress.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="casa_tables" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_tables/storage/</div>virtual_compress.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `libs/casacore/casa-tables/src/storage/virtual_compress.rs`."><title>virtual_compress.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="casa_tables" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_tables/storage/</div>virtual_compress.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Lossy compression virtual column engines.
 <a href=#3 id=3 data-nosnippet>3</a>//!
 <a href=#4 id=4 data-nosnippet>4</a>//! This module provides virtual column engines that decompress stored integer
@@ -34,7 +34,7 @@
 <a href=#34 id=34 data-nosnippet>34</a>//! - `CompressFloat` in `casacore/tables/DataMan/CompressFloat.h`
 <a href=#35 id=35 data-nosnippet>35</a>//! - `CompressComplex` in `casacore/tables/DataMan/CompressComplex.h`
 <a href=#36 id=36 data-nosnippet>36</a>
-<a href=#37 id=37 data-nosnippet>37</a></span><span class="kw">use </span>casa_types::{ArrayValue, Complex32, Complex64, RecordField, RecordValue, ScalarValue, Value};
+<a href=#37 id=37 data-nosnippet>37</a></span><span class="kw">use </span>casa_core::{ArrayValue, Complex32, Complex64, RecordField, RecordValue, ScalarValue, Value};
 <a href=#38 id=38 data-nosnippet>38</a><span class="kw">use </span>ndarray::{ArrayD, Axis, IxDyn, Slice};
 <a href=#39 id=39 data-nosnippet>39</a><span class="kw">use </span>std::ops::Range;
 <a href=#40 id=40 data-nosnippet>40</a>
@@ -173,7 +173,7 @@
 <a href=#173 id=173 data-nosnippet>173</a>    stored: <span class="kw-2">&amp;</span>Value,
 <a href=#174 id=174 data-nosnippet>174</a>    scale: f64,
 <a href=#175 id=175 data-nosnippet>175</a>    offset: f64,
-<a href=#176 id=176 data-nosnippet>176</a>    target_type: casa_types::PrimitiveType,
+<a href=#176 id=176 data-nosnippet>176</a>    target_type: casa_core::PrimitiveType,
 <a href=#177 id=177 data-nosnippet>177</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Value, StorageError&gt; {
 <a href=#178 id=178 data-nosnippet>178</a>    <span class="kw">match </span>stored {
 <a href=#179 id=179 data-nosnippet>179</a>        Value::Scalar(ScalarValue::Int16(v)) =&gt; {
@@ -183,7 +183,7 @@
 <a href=#183 id=183 data-nosnippet>183</a>                <span class="kw-2">*</span>v <span class="kw">as </span>f64 * scale + offset
 <a href=#184 id=184 data-nosnippet>184</a>            };
 <a href=#185 id=185 data-nosnippet>185</a>            <span class="kw">let </span>out = <span class="kw">match </span>target_type {
-<a href=#186 id=186 data-nosnippet>186</a>                casa_types::PrimitiveType::Float32 =&gt; ScalarValue::Float32(result <span class="kw">as </span>f32),
+<a href=#186 id=186 data-nosnippet>186</a>                casa_core::PrimitiveType::Float32 =&gt; ScalarValue::Float32(result <span class="kw">as </span>f32),
 <a href=#187 id=187 data-nosnippet>187</a>                <span class="kw">_ </span>=&gt; ScalarValue::Float64(result),
 <a href=#188 id=188 data-nosnippet>188</a>            };
 <a href=#189 id=189 data-nosnippet>189</a>            <span class="prelude-val">Ok</span>(Value::Scalar(out))
@@ -197,7 +197,7 @@
 <a href=#197 id=197 data-nosnippet>197</a>                }
 <a href=#198 id=198 data-nosnippet>198</a>            });
 <a href=#199 id=199 data-nosnippet>199</a>            <span class="kw">let </span>out = <span class="kw">match </span>target_type {
-<a href=#200 id=200 data-nosnippet>200</a>                casa_types::PrimitiveType::Float32 =&gt; {
+<a href=#200 id=200 data-nosnippet>200</a>                casa_core::PrimitiveType::Float32 =&gt; {
 <a href=#201 id=201 data-nosnippet>201</a>                    ArrayValue::Float32(decompressed.mapv(|x| x <span class="kw">as </span>f32))
 <a href=#202 id=202 data-nosnippet>202</a>                }
 <a href=#203 id=203 data-nosnippet>203</a>                <span class="kw">_ </span>=&gt; ArrayValue::Float64(decompressed),
@@ -309,7 +309,7 @@
 <a href=#309 id=309 data-nosnippet>309</a>        value: ArrayValue,
 <a href=#310 id=310 data-nosnippet>310</a>        scale: f32,
 <a href=#311 id=311 data-nosnippet>311</a>        offset: f32,
-<a href=#312 id=312 data-nosnippet>312</a>        target_type: casa_types::PrimitiveType,
+<a href=#312 id=312 data-nosnippet>312</a>        target_type: casa_core::PrimitiveType,
 <a href=#313 id=313 data-nosnippet>313</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;ArrayValue, StorageError&gt; {
 <a href=#314 id=314 data-nosnippet>314</a>        <span class="kw">if </span><span class="self">self</span>.casa_layout
 <a href=#315 id=315 data-nosnippet>315</a>            &amp;&amp; <span class="kw">let </span>ArrayValue::Int32(array) = <span class="kw-2">&amp;</span>value
@@ -490,7 +490,7 @@
 <a href=#490 id=490 data-nosnippet>490</a>    variant: CompressComplexVariant,
 <a href=#491 id=491 data-nosnippet>491</a>    scale: f32,
 <a href=#492 id=492 data-nosnippet>492</a>    offset: f32,
-<a href=#493 id=493 data-nosnippet>493</a>    target_type: casa_types::PrimitiveType,
+<a href=#493 id=493 data-nosnippet>493</a>    target_type: casa_core::PrimitiveType,
 <a href=#494 id=494 data-nosnippet>494</a>) -&gt; ArrayValue {
 <a href=#495 id=495 data-nosnippet>495</a>    <span class="kw">let </span>decoded = stored.mapv(|packed| {
 <a href=#496 id=496 data-nosnippet>496</a>        <span class="kw">if </span><span class="macro">matches!</span>(variant, CompressComplexVariant::SingleDish) &amp;&amp; packed &amp; <span class="number">1 </span>== <span class="number">0 </span>{
@@ -515,7 +515,7 @@
 <a href=#515 id=515 data-nosnippet>515</a>        Complex32::new(real <span class="kw">as </span>f32 * scale + offset, imag)
 <a href=#516 id=516 data-nosnippet>516</a>    });
 <a href=#517 id=517 data-nosnippet>517</a>    <span class="kw">match </span>target_type {
-<a href=#518 id=518 data-nosnippet>518</a>        casa_types::PrimitiveType::Complex64 =&gt; ArrayValue::Complex64(
+<a href=#518 id=518 data-nosnippet>518</a>        casa_core::PrimitiveType::Complex64 =&gt; ArrayValue::Complex64(
 <a href=#519 id=519 data-nosnippet>519</a>            decoded.mapv(|value| Complex64::new(value.re.into(), value.im.into())),
 <a href=#520 id=520 data-nosnippet>520</a>        ),
 <a href=#521 id=521 data-nosnippet>521</a>        <span class="kw">_ </span>=&gt; ArrayValue::Complex32(decoded),
@@ -659,7 +659,7 @@
 <a href=#659 id=659 data-nosnippet>659</a>    stored: <span class="kw-2">&amp;</span>Value,
 <a href=#660 id=660 data-nosnippet>660</a>    scale: f64,
 <a href=#661 id=661 data-nosnippet>661</a>    offset: f64,
-<a href=#662 id=662 data-nosnippet>662</a>    target_type: casa_types::PrimitiveType,
+<a href=#662 id=662 data-nosnippet>662</a>    target_type: casa_core::PrimitiveType,
 <a href=#663 id=663 data-nosnippet>663</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Value, StorageError&gt; {
 <a href=#664 id=664 data-nosnippet>664</a>    <span class="kw">match </span>stored {
 <a href=#665 id=665 data-nosnippet>665</a>        Value::Scalar(ScalarValue::Int32(v)) =&gt; {
@@ -702,7 +702,7 @@
 <a href=#702 id=702 data-nosnippet>702</a>    arr: <span class="kw-2">&amp;</span>ArrayD&lt;i32&gt;,
 <a href=#703 id=703 data-nosnippet>703</a>    scale: f64,
 <a href=#704 id=704 data-nosnippet>704</a>    offset: f64,
-<a href=#705 id=705 data-nosnippet>705</a>    target_type: casa_types::PrimitiveType,
+<a href=#705 id=705 data-nosnippet>705</a>    target_type: casa_core::PrimitiveType,
 <a href=#706 id=706 data-nosnippet>706</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ArrayValue, StorageError&gt; {
 <a href=#707 id=707 data-nosnippet>707</a>    <span class="kw">let </span>complexes: Vec&lt;Complex64&gt; = arr
 <a href=#708 id=708 data-nosnippet>708</a>        .iter()
@@ -710,7 +710,7 @@
 <a href=#710 id=710 data-nosnippet>710</a>        .collect();
 <a href=#711 id=711 data-nosnippet>711</a>    <span class="kw">let </span>shape = arr.shape().to_vec();
 <a href=#712 id=712 data-nosnippet>712</a>    <span class="kw">match </span>target_type {
-<a href=#713 id=713 data-nosnippet>713</a>        casa_types::PrimitiveType::Complex32 =&gt; {
+<a href=#713 id=713 data-nosnippet>713</a>        casa_core::PrimitiveType::Complex32 =&gt; {
 <a href=#714 id=714 data-nosnippet>714</a>            <span class="kw">let </span>c32: Vec&lt;Complex32&gt; = complexes
 <a href=#715 id=715 data-nosnippet>715</a>                .iter()
 <a href=#716 id=716 data-nosnippet>716</a>                .map(|c| Complex32::new(c.re <span class="kw">as </span>f32, c.im <span class="kw">as </span>f32))
@@ -737,7 +737,7 @@
 <a href=#737 id=737 data-nosnippet>737</a>    stored: <span class="kw-2">&amp;</span>Value,
 <a href=#738 id=738 data-nosnippet>738</a>    scale: f64,
 <a href=#739 id=739 data-nosnippet>739</a>    offset: f64,
-<a href=#740 id=740 data-nosnippet>740</a>    target_type: casa_types::PrimitiveType,
+<a href=#740 id=740 data-nosnippet>740</a>    target_type: casa_core::PrimitiveType,
 <a href=#741 id=741 data-nosnippet>741</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Value, StorageError&gt; {
 <a href=#742 id=742 data-nosnippet>742</a>    <span class="kw">match </span>stored {
 <a href=#743 id=743 data-nosnippet>743</a>        Value::Scalar(ScalarValue::Int32(v)) =&gt; {
@@ -752,7 +752,7 @@
 <a href=#752 id=752 data-nosnippet>752</a>                .collect();
 <a href=#753 id=753 data-nosnippet>753</a>            <span class="kw">let </span>shape = arr.shape().to_vec();
 <a href=#754 id=754 data-nosnippet>754</a>            <span class="kw">let </span>out = <span class="kw">match </span>target_type {
-<a href=#755 id=755 data-nosnippet>755</a>                casa_types::PrimitiveType::Complex32 =&gt; {
+<a href=#755 id=755 data-nosnippet>755</a>                casa_core::PrimitiveType::Complex32 =&gt; {
 <a href=#756 id=756 data-nosnippet>756</a>                    <span class="kw">let </span>c32: Vec&lt;Complex32&gt; = complexes
 <a href=#757 id=757 data-nosnippet>757</a>                        .iter()
 <a href=#758 id=758 data-nosnippet>758</a>                        .map(|c| Complex32::new(c.re <span class="kw">as </span>f32, c.im <span class="kw">as </span>f32))
@@ -799,9 +799,9 @@
 <a href=#799 id=799 data-nosnippet>799</a>}
 <a href=#800 id=800 data-nosnippet>800</a>
 <a href=#801 id=801 data-nosnippet>801</a><span class="doccomment">/// Convert Complex64 to appropriate scalar value based on target type.
-<a href=#802 id=802 data-nosnippet>802</a></span><span class="kw">fn </span>to_complex_scalar(c: Complex64, target_type: casa_types::PrimitiveType) -&gt; ScalarValue {
+<a href=#802 id=802 data-nosnippet>802</a></span><span class="kw">fn </span>to_complex_scalar(c: Complex64, target_type: casa_core::PrimitiveType) -&gt; ScalarValue {
 <a href=#803 id=803 data-nosnippet>803</a>    <span class="kw">match </span>target_type {
-<a href=#804 id=804 data-nosnippet>804</a>        casa_types::PrimitiveType::Complex32 =&gt; {
+<a href=#804 id=804 data-nosnippet>804</a>        casa_core::PrimitiveType::Complex32 =&gt; {
 <a href=#805 id=805 data-nosnippet>805</a>            ScalarValue::Complex32(Complex32::new(c.re <span class="kw">as </span>f32, c.im <span class="kw">as </span>f32))
 <a href=#806 id=806 data-nosnippet>806</a>        }
 <a href=#807 id=807 data-nosnippet>807</a>        <span class="kw">_ </span>=&gt; ScalarValue::Complex64(c),
@@ -858,7 +858,7 @@
 <a href=#858 id=858 data-nosnippet>858</a></span><span class="attr">#[cfg(test)]
 <a href=#859 id=859 data-nosnippet>859</a></span><span class="kw">mod </span>tests {
 <a href=#860 id=860 data-nosnippet>860</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#861 id=861 data-nosnippet>861</a>    <span class="kw">use </span>casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+<a href=#861 id=861 data-nosnippet>861</a>    <span class="kw">use </span>casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 <a href=#862 id=862 data-nosnippet>862</a>    <span class="kw">use </span>ndarray::ArrayD;
 <a href=#863 id=863 data-nosnippet>863</a>
 <a href=#864 id=864 data-nosnippet>864</a>    <span class="kw">fn </span>make_context&lt;<span class="lifetime">'a</span>&gt;(

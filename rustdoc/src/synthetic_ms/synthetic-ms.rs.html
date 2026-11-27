@@ -8,11 +8,11 @@
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>std::str::FromStr;
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>std::sync::Arc;
 <a href=#10 id=10 data-nosnippet>10</a>
-<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>casa_logging::{
-<a href=#12 id=12 data-nosnippet>12</a>    CasaLogLayer, CasaLogSink, CasaPriority, CasaTableLogSink, CompositeSink, NullSink, StderrSink,
-<a href=#13 id=13 data-nosnippet>13</a>    TableLogOpenMode,
-<a href=#14 id=14 data-nosnippet>14</a>};
-<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>casa_simulation::synthetic::task::Request;
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>casa_simulation::synthetic::task::Request;
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>casa_tables::log_table::{
+<a href=#13 id=13 data-nosnippet>13</a>    CasaLogLayer, CasaLogSink, CasaPriority, CasaTableLogSink, CompositeSink, NullSink, StderrSink,
+<a href=#14 id=14 data-nosnippet>14</a>    TableLogOpenMode,
+<a href=#15 id=15 data-nosnippet>15</a>};
 <a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>tracing_subscriber::Registry;
 <a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>tracing_subscriber::layer::SubscriberExt;
 <a href=#18 id=18 data-nosnippet>18</a>

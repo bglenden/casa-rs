@@ -717,10 +717,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#application-catalog-and-launching" class="md-nav__link">
+  <a href="#application-catalog" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Application Catalog and Launching
+        Application Catalog
       
     </span>
   </a>
@@ -987,42 +987,15 @@ parameter surfaces. Provider crates supply only their typed domain schemas and
 operations. The common validator rejects wrong surface kinds, missing
 parameter surfaces, noncanonical actions, duplicate operations, protocol
 metadata errors, and semantic/flattened schema drift.</p>
-<h2 id="application-catalog-and-launching">Application Catalog and Launching<a class="headerlink" href="#application-catalog-and-launching" title="Permanent link">&para;</a></h2>
-<p><code>casa-provider-contracts</code> also owns the single <code>ApplicationCatalog</code>. Every
-parameter surface has exactly one task-application entry that references the
-surface by stable ID, and every application is a task: each catalog entry is
-one task surface. Display name, category, and protocol
-family are projected from the referenced surface rather than copied into
-another inventory. Each application adds only executable/package identity
-(<code>launch</code>), its explicit override variable, the kinds of dataset it reads,
-and packaging visibility (<code>include_in_suite</code>); an entry carrying any other
-field is refused. Several
-surfaces may share one executable, a family whose first word
-names the surface: <code>imhead</code> and <code>imstat</code> run <code>imexplore</code>; <code>plotms</code> runs
-<code>msexplore</code>; <code>split</code> runs <code>mstransform</code>; and <code>gaincal</code>, <code>bandpass</code>,
-<code>applycal</code>, <code>fluxscale</code>, and <code>gencal</code> run <code>calibrate</code>, whose own <code>calibrate</code>
-surface is its default.</p>
-<p><code>casa_provider_contracts::resolve_task_executable</code> is the one search for the
-file a task runs; Python reaches it through <code>casars._core</code>. The first step
-that applies decides:</p>
-<ol>
-<li>the task's override variable (<code>override_env</code>, <code>CASARS_&lt;APP&gt;_BIN</code>, such as
-   <code>CASARS_IMAGER_BIN</code> or <code>CASARS_CALIBRATE_BIN</code>);</li>
-<li>a suite root, <code>CASARS_SUITE_ROOT</code> or else the installed suite the Python
-   package belongs to (the installer's environment is <code>&lt;suite&gt;/python</code>,
-   beside <code>&lt;suite&gt;/bin</code> and <code>bundle-manifest.json</code>), whose <code>bin/</code> holds the
-   executable;</li>
-<li>a development checkout: the newest <code>debug</code> or <code>release</code> build of the
-   executable under the workspace the package was built from, in
-   <code>$CARGO_TARGET_DIR</code> or <code>target/</code>.</li>
-</ol>
-<p>A step that applies but lacks the file is an error naming what it lacked, and
-never falls through to a later step, so an installed suite never runs a
-checkout's build. A missing development build is reported with the
-<code>cargo build -p &lt;package&gt; --bin &lt;executable&gt;</code> that makes it. Nothing is run
-through <code>cargo</code>, <code>PATH</code> is not searched, and the caller's own path
-(<code>current_exe</code>) is not consulted. Python, packaging scripts, and the suite
-inventory all project from this catalog.</p>
+<h2 id="application-catalog">Application Catalog<a class="headerlink" href="#application-catalog" title="Permanent link">&para;</a></h2>
+<p><code>casa-contracts</code> owns the CLI and suite's <code>ApplicationCatalog</code>. Each entry
+references one task surface by stable ID and describes its executable, Cargo
+package, dataset kinds, and suite inclusion. Display name, category, and
+protocol family come from the referenced surface. A CLI command can host
+multiple tasks: <code>imexplore</code> hosts <code>imhead</code> and <code>imstat</code>, and <code>calibrate</code> hosts
+<code>gaincal</code>, <code>bandpass</code>, <code>applycal</code>, <code>fluxscale</code>, and <code>gencal</code> alongside its own
+default surface.</p>
+<p>Both the CLI and the Python extension call the task adapters in <code>casa-tasks</code>.</p>
 <h2 id="parameter-catalog-and-surface-definitions">Parameter Catalog and Surface Definitions<a class="headerlink" href="#parameter-catalog-and-surface-definitions" title="Permanent link">&para;</a></h2>
 <p>ADR-0006 defines the common parameter model and current-only profiles.</p>
 <p><code>ParameterCatalog</code> entries describe reusable concepts:</p>
@@ -1150,20 +1123,14 @@ provider result (<code>calibration-report-v1</code>, <code>imager-run-v1</code>,
 <code>simobserve-run-v1</code>): the reply's <code>result</code> is that result, from which the
 completion decoder projects products and the summary. Nothing is injected
 into the binary's arguments to ask for it.</p>
-<p>Last has one owner on each path: a command line run of a binary records Last
-before the callback and Last Successful only after success, unless
-<code>--no-save-last</code>; <code>--json-run</code> reads and writes neither, so Python task calls
-save none. Every Python task call is one invocation shape: the executable the
-resolver names, the surface's <code>fixed_args</code>, then <code>--json-run -</code> with the
-values the call set on stdin. Python passes the task's log lines to
-<code>sys.stderr</code> as they arrive and classifies the reply through <code>casars._core</code>.
-A success returns a <code>TaskCompletion</code> carrying the reply's <code>value</code> and the
-products the decoder projects. A <code>validation</code> reply raises
-<code>TaskParameterError</code>, a <code>ValueError</code> whose completion's <code>status</code> is
-<code>refused</code>; anything else raises <code>TaskExecutionError</code>, whose completion's
-<code>status</code> is <code>failed</code>, <code>interrupted</code>, <code>signalled</code> or <code>malformed_reply</code>. A
-value the contract refuses when Python resolves the call raises <code>ValueError</code>
-before anything starts, or <code>TypeError</code> for a value of the wrong type.</p>
+<p>A command-line run records Last before the callback and Last Successful
+after success, unless <code>--no-save-last</code> is set. Both <code>--json-run</code> and in-process
+Python tasks leave managed profiles alone. Python resolves the task with
+<code>casars._core</code>, executes it in the supplied workspace, and relays task logs
+as they arrive. A success returns a <code>TaskCompletion</code> carrying CASA's value,
+logs and declared products. A refusal raises <code>TaskParameterError</code> with a
+<code>refused</code> completion. An execution failure raises <code>TaskExecutionError</code>.
+Ctrl-C requests cancellation and raises <code>KeyboardInterrupt</code> after cleanup.</p>
 <p>A succeeded reply's <code>value</code> is CASA's return value as a tagged <code>CasaValue</code>
 (<code>casa-provider-contracts</code>): <code>none</code>, <code>bool</code>, <code>int</code>, <code>float</code> (non-finite
 values as <code>"nan"</code>, <code>"-nan"</code>, <code>"inf"</code> and <code>"-inf"</code>), <code>complex</code> (with real and imaginary

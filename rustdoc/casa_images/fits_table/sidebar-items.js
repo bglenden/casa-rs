@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["FitsTableError"],"fn":["read_fits_table"]};
+window.SIDEBAR_ITEMS = {"enum":["FitsTableError"],"fn":["read_fits_table"],"mod":["listing"]};

@@ -32,10 +32,10 @@
 <a href=#32 id=32 data-nosnippet>32</a><span class="kw">use </span>std::path::{Path, PathBuf};
 <a href=#33 id=33 data-nosnippet>33</a><span class="kw">use </span>std::sync::atomic::{AtomicU64, Ordering};
 <a href=#34 id=34 data-nosnippet>34</a>
-<a href=#35 id=35 data-nosnippet>35</a><span class="kw">use </span>casa_tables::{
-<a href=#36 id=36 data-nosnippet>36</a>    ColumnType, EndianFormat, LockMode, LockOptions, Table, TableOptions, TableSchema,
-<a href=#37 id=37 data-nosnippet>37</a>};
-<a href=#38 id=38 data-nosnippet>38</a><span class="kw">use </span>casa_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
+<a href=#35 id=35 data-nosnippet>35</a><span class="kw">use </span>casa_core::{ArrayValue, PrimitiveType, ScalarValue, Value};
+<a href=#36 id=36 data-nosnippet>36</a><span class="kw">use </span>casa_tables::{
+<a href=#37 id=37 data-nosnippet>37</a>    ColumnType, EndianFormat, LockMode, LockOptions, Table, TableOptions, TableSchema,
+<a href=#38 id=38 data-nosnippet>38</a>};
 <a href=#39 id=39 data-nosnippet>39</a>
 <a href=#40 id=40 data-nosnippet>40</a><span class="kw">use </span><span class="kw">super</span>::cell_convert;
 <a href=#41 id=41 data-nosnippet>41</a><span class="kw">use </span><span class="kw">super</span>::housekeeping::has_subtables;
@@ -161,7 +161,7 @@
 <a href=#161 id=161 data-nosnippet>161</a>/// directory into itself or remove the table it copies. The places are
 <a href=#162 id=162 data-nosnippet>162</a>/// compared with their symbolic links resolved, so that a link to the table
 <a href=#163 id=163 data-nosnippet>163</a>/// (or to a directory it lies in) cannot hide the nesting.
-<a href=#164 id=164 data-nosnippet>164</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>refuse_nested(target: <span class="kw-2">&amp;</span>Path, source: <span class="kw-2">&amp;</span>Path) -&gt; <span class="prelude-ty">Result</span>&lt;(), Fail&gt; {
+<a href=#164 id=164 data-nosnippet>164</a></span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::tools) <span class="kw">fn </span>refuse_nested(target: <span class="kw-2">&amp;</span>Path, source: <span class="kw-2">&amp;</span>Path) -&gt; <span class="prelude-ty">Result</span>&lt;(), Fail&gt; {
 <a href=#165 id=165 data-nosnippet>165</a>    <span class="kw">let </span>(real_target, real_source) = (resolved(target)<span class="question-mark">?</span>, resolved(source)<span class="question-mark">?</span>);
 <a href=#166 id=166 data-nosnippet>166</a>    <span class="kw">if </span>real_target.starts_with(<span class="kw-2">&amp;</span>real_source) || real_source.starts_with(<span class="kw-2">&amp;</span>real_target) {
 <a href=#167 id=167 data-nosnippet>167</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Fail::Runtime(<span class="macro">format!</span>(
@@ -177,7 +177,7 @@
 <a href=#177 id=177 data-nosnippet>177</a>/// table (a directory with a `table.dat`) or an empty directory. casacore
 <a href=#178 id=178 data-nosnippet>178</a>/// removes any directory there; casa-rs refuses anything else, so that a slip
 <a href=#179 id=179 data-nosnippet>179</a>/// of the name does not delete a directory of other files.
-<a href=#180 id=180 data-nosnippet>180</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>check_target(target: <span class="kw-2">&amp;</span>Path) -&gt; <span class="prelude-ty">Result</span>&lt;(), Fail&gt; {
+<a href=#180 id=180 data-nosnippet>180</a></span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::tools) <span class="kw">fn </span>check_target(target: <span class="kw-2">&amp;</span>Path) -&gt; <span class="prelude-ty">Result</span>&lt;(), Fail&gt; {
 <a href=#181 id=181 data-nosnippet>181</a>    <span class="kw">let </span>refusal = || {
 <a href=#182 id=182 data-nosnippet>182</a>        Fail::Runtime(<span class="macro">format!</span>(
 <a href=#183 id=183 data-nosnippet>183</a>            <span class="string">"Table {} already exists (and is not a true table directory)"</span>,

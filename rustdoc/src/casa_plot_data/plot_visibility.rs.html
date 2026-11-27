@@ -3,8 +3,8 @@
 <a href=#3 id=3 data-nosnippet>3</a>
 <a href=#4 id=4 data-nosnippet>4</a></span><span class="kw">use </span>std::collections::BTreeMap;
 <a href=#5 id=5 data-nosnippet>5</a>
-<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_tables::Table;
-<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_types::{ArrayValue, Complex64};
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_core::{ArrayValue, Complex64};
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_tables::Table;
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>ndarray::Ix2;
 <a href=#9 id=9 data-nosnippet>9</a>
 <a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span><span class="kw">crate</span>::plot::{
@@ -12,9 +12,9 @@
 <a href=#12 id=12 data-nosnippet>12</a>    VisibilityScatterSeries,
 <a href=#13 id=13 data-nosnippet>13</a>};
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>casa_ms::columns::{main_ids, time_columns::TimeColumn, uvw_column::UvwColumn};
-<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>casa_ms::listobs::{<span class="self">self</span>, ListObsOptions};
-<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>casa_ms::selection::parser::parse_correlation_selector;
-<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>casa_ms::selection::{MsSelection, resolve_row_indices_with_system_budget};
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>casa_ms::selection::parser::parse_correlation_selector;
+<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>casa_ms::selection::{MsSelection, resolve_row_indices_with_system_budget};
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>casa_ms::{<span class="self">self</span>, ListObsOptions};
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>casa_ms::{MeasurementSet, subtables};
 <a href=#19 id=19 data-nosnippet>19</a>
 <a href=#20 id=20 data-nosnippet>20</a><span class="attr">#[derive(Debug, Default)]
@@ -412,7 +412,7 @@
 <a href=#412 id=412 data-nosnippet>412</a>    <span class="kw">for </span>corr_index <span class="kw">in </span><span class="number">0</span>..corr_count {
 <a href=#413 id=413 data-nosnippet>413</a>        <span class="kw">let </span>corr_label = corr_types
 <a href=#414 id=414 data-nosnippet>414</a>            .get(corr_index)
-<a href=#415 id=415 data-nosnippet>415</a>            .map(|code| listobs::stokes_name(<span class="kw-2">*</span>code).to_string())
+<a href=#415 id=415 data-nosnippet>415</a>            .map(|code| casa_ms::stokes_name(<span class="kw-2">*</span>code).to_string())
 <a href=#416 id=416 data-nosnippet>416</a>            .unwrap_or_else(|| <span class="macro">format!</span>(<span class="string">"corr-{corr_index}"</span>));
 <a href=#417 id=417 data-nosnippet>417</a>        <span class="kw">let </span>corr_code = corr_types.get(corr_index).copied();
 <a href=#418 id=418 data-nosnippet>418</a>        <span class="kw">if </span>requested_corr_codes.is_empty()

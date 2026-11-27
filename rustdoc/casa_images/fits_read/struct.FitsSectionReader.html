@@ -3,7 +3,7 @@
     path: &amp;<a class="struct" href="https://doc.rust-lang.org/1.100.0/std/path/struct.Path.html" title="struct std::path::Path">Path</a>,
     hdu_index: <a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.usize.html">usize</a>,
     shape: &amp;[<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.usize.html">usize</a>],
-) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.100.0/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Self, <a class="enum" href="../error/enum.ImageError.html" title="enum casa_images::error::ImageError">ImageError</a>&gt;</h4></section></summary><div class="docblock"><p>Open one image HDU and retain it for successive reads. <code>shape</code> is
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.100.0/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Self, <a class="enum" href="../enum.ImageError.html" title="enum casa_images::ImageError">ImageError</a>&gt;</h4></section></summary><div class="docblock"><p>Open one image HDU and retain it for successive reads. <code>shape</code> is
 the logical image shape, in FITS pixel axis order.</p>
 <h5 id="errors"><a class="doc-anchor" href="#errors">§</a>Errors</h5>
 <p>Returns an error for missing or incompatible image data, including
@@ -13,7 +13,7 @@ a source whose shape changed since its metadata was read.</p>
     start: &amp;[<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.usize.html">usize</a>],
     count: &amp;[<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.usize.html">usize</a>],
     stride: &amp;[<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.usize.html">usize</a>],
-) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.100.0/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="type" href="https://docs.rs/ndarray/0.15/ndarray/aliases/type.ArrayD.html" title="type ndarray::aliases::ArrayD">ArrayD</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.f32.html">f32</a>&gt;, <a class="enum" href="../error/enum.ImageError.html" title="enum casa_images::error::ImageError">ImageError</a>&gt;</h4></section></summary><div class="docblock"><p>Read a strided section as <code>f32</code>, converting integer blanks to NaN.
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.100.0/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="type" href="https://docs.rs/ndarray/0.15/ndarray/aliases/type.ArrayD.html" title="type ndarray::aliases::ArrayD">ArrayD</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.f32.html">f32</a>&gt;, <a class="enum" href="../enum.ImageError.html" title="enum casa_images::ImageError">ImageError</a>&gt;</h4></section></summary><div class="docblock"><p>Read a strided section as <code>f32</code>, converting integer blanks to NaN.
 Only the requested region is allocated.</p>
 <h5 id="errors-1"><a class="doc-anchor" href="#errors-1">§</a>Errors</h5>
 <p>Returns an error if reading fails or the slice is outside the image.</p>

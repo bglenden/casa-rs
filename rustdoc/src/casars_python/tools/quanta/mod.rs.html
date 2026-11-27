@@ -70,7 +70,7 @@
 <a href=#70 id=70 data-nosnippet>70</a>
 <a href=#71 id=71 data-nosnippet>71</a><span class="doccomment">/// Runs `work` with the GIL released and returns its value as Python.
 <a href=#72 id=72 data-nosnippet>72</a></span><span class="kw">fn </span>call(py: Python&lt;<span class="lifetime">'_</span>&gt;, work: <span class="kw">impl </span>Fn() -&gt; ConvertResult&lt;CasaValue&gt; + Send) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#73 id=73 data-nosnippet>73</a>    py.detach(|| casa_types::quanta::registry::global_registry().with_stable_units(work))<span class="question-mark">?
+<a href=#73 id=73 data-nosnippet>73</a>    py.detach(|| casa_core::quanta::registry::global_registry().with_stable_units(work))<span class="question-mark">?
 <a href=#74 id=74 data-nosnippet>74</a>        </span>.into_python(py)
 <a href=#75 id=75 data-nosnippet>75</a>}
 <a href=#76 id=76 data-nosnippet>76</a>
@@ -367,7 +367,7 @@
 <a href=#367 id=367 data-nosnippet>367</a>
 <a href=#368 id=368 data-nosnippet>368</a>    <span class="doccomment">/// Register CASA's process-wide FITS unit aliases.
 <a href=#369 id=369 data-nosnippet>369</a>    </span><span class="kw">fn </span>fits(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;) -&gt; bool {
-<a href=#370 id=370 data-nosnippet>370</a>        py.detach(|| casa_types::quanta::registry::global_registry().add_fits_units());
+<a href=#370 id=370 data-nosnippet>370</a>        py.detach(|| casa_core::quanta::registry::global_registry().add_fits_units());
 <a href=#371 id=371 data-nosnippet>371</a>        <span class="bool-val">true
 <a href=#372 id=372 data-nosnippet>372</a>    </span>}
 <a href=#373 id=373 data-nosnippet>373</a>
@@ -391,7 +391,7 @@
 <a href=#391 id=391 data-nosnippet>391</a>        prec: i64,
 <a href=#392 id=392 data-nosnippet>392</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
 <a href=#393 id=393 data-nosnippet>393</a>        <span class="kw">let </span>written = py.detach(|| {
-<a href=#394 id=394 data-nosnippet>394</a>            casa_types::quanta::registry::global_registry()
+<a href=#394 id=394 data-nosnippet>394</a>            casa_core::quanta::registry::global_registry()
 <a href=#395 id=395 data-nosnippet>395</a>                .with_stable_units(|| ops::formxxx(<span class="kw-2">&amp;</span>v, <span class="kw-2">&amp;</span>format, prec))
 <a href=#396 id=396 data-nosnippet>396</a>        })<span class="question-mark">?</span>;
 <a href=#397 id=397 data-nosnippet>397</a>        <span class="kw">if </span>written.is_none() {

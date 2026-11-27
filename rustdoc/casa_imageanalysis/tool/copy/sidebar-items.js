@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CopyRegion"],"fn":["copy_image"],"struct":["CopyImageRequest"]};

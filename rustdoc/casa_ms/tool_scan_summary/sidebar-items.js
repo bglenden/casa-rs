@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["tool_scan_summary"],"struct":["ToolScanSummary"]};

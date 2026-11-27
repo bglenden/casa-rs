@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-simulation/src/session/from_ms.rs`."><title>from_ms.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="casa_simulation" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_simulation/session/</div>from_ms.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `libs/casa/casa-simulation/src/session/from_ms.rs`."><title>from_ms.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="casa_simulation" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_simulation/session/</div>from_ms.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! `sm.openfromms`: a session on a MeasurementSet that already exists.
 <a href=#3 id=3 data-nosnippet>3</a>//!
 <a href=#4 id=4 data-nosnippet>4</a>//! CASA's `Simulator(MeasurementSet&amp;)` reads the array, the spectral
@@ -33,12 +33,12 @@
 <a href=#33 id=33 data-nosnippet>33</a></span><span class="kw">use </span>std::collections::HashMap;
 <a href=#34 id=34 data-nosnippet>34</a><span class="kw">use </span>std::path::Path;
 <a href=#35 id=35 data-nosnippet>35</a>
-<a href=#36 id=36 data-nosnippet>36</a><span class="kw">use </span>casa_ms::MeasurementSet;
-<a href=#37 id=37 data-nosnippet>37</a><span class="kw">use </span>casa_ms::derived::engine::raw_field_phase_direction;
-<a href=#38 id=38 data-nosnippet>38</a><span class="kw">use </span>casa_tables::{
-<a href=#39 id=39 data-nosnippet>39</a>    RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, Table, TableOptions,
-<a href=#40 id=40 data-nosnippet>40</a>};
-<a href=#41 id=41 data-nosnippet>41</a><span class="kw">use </span>casa_types::ArrayValue;
+<a href=#36 id=36 data-nosnippet>36</a><span class="kw">use </span>casa_core::ArrayValue;
+<a href=#37 id=37 data-nosnippet>37</a><span class="kw">use </span>casa_ms::MeasurementSet;
+<a href=#38 id=38 data-nosnippet>38</a><span class="kw">use </span>casa_ms::derived::engine::raw_field_phase_direction;
+<a href=#39 id=39 data-nosnippet>39</a><span class="kw">use </span>casa_tables::{
+<a href=#40 id=40 data-nosnippet>40</a>    RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, Table, TableOptions,
+<a href=#41 id=41 data-nosnippet>41</a>};
 <a href=#42 id=42 data-nosnippet>42</a>
 <a href=#43 id=43 data-nosnippet>43</a><span class="kw">use </span><span class="kw">super</span>::array::Antenna;
 <a href=#44 id=44 data-nosnippet>44</a><span class="kw">use </span><span class="kw">super</span>::error::{SimulatorError, SimulatorResult};
@@ -552,263 +552,265 @@
 <a href=#552 id=552 data-nosnippet>552</a>    )
 <a href=#553 id=553 data-nosnippet>553</a>    .map_err(SimulatorError::admission)<span class="question-mark">?</span>;
 <a href=#554 id=554 data-nosnippet>554</a>    <span class="kw">let _ </span>= <span class="kw-2">&amp;</span>memory;
-<a href=#555 id=555 data-nosnippet>555</a>    <span class="kw">let </span>frame = casa_tables::table_measures::TableMeasDesc::reconstruct(<span class="kw-2">&amp;</span>pointing, <span class="string">"DIRECTION"</span>)
-<a href=#556 id=556 data-nosnippet>556</a>        .ok_or_else(|| SimulatorError::raised(<span class="string">"POINTING.DIRECTION has no measure descriptor"</span>))<span class="question-mark">?</span>;
-<a href=#557 id=557 data-nosnippet>557</a>    <span class="kw">if </span>!<span class="macro">matches!</span>(frame.ref_desc(), casa_tables::table_measures::MeasRefDesc::Fixed { refer } <span class="kw">if </span>refer == <span class="string">"J2000"</span>)
-<a href=#558 id=558 data-nosnippet>558</a>        || frame.offset_desc().is_some()
-<a href=#559 id=559 data-nosnippet>559</a>    {
-<a href=#560 id=560 data-nosnippet>560</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(
-<a href=#561 id=561 data-nosnippet>561</a>            <span class="string">"POINTING frame/measure offsets are not yet implemented (#1294)"</span>,
-<a href=#562 id=562 data-nosnippet>562</a>        ));
-<a href=#563 id=563 data-nosnippet>563</a>    }
-<a href=#564 id=564 data-nosnippet>564</a>    <span class="kw">let </span>by_time = ScansByTime::new(times_s);
-<a href=#565 id=565 data-nosnippet>565</a>    <span class="kw">let </span><span class="kw-2">mut </span>centres = <span class="macro">vec!</span>[<span class="prelude-val">None</span>; scans.len()];
-<a href=#566 id=566 data-nosnippet>566</a>    <span class="kw">let </span><span class="kw-2">mut </span>coverage = <span class="macro">vec!</span>[<span class="number">0u64</span>; scans.len() * words];
-<a href=#567 id=567 data-nosnippet>567</a>    <span class="kw">let </span><span class="kw-2">mut </span>validity = Validity::default();
-<a href=#568 id=568 data-nosnippet>568</a>    <span class="kw">let </span>(<span class="kw-2">mut </span>antennas, <span class="kw-2">mut </span>times, <span class="kw-2">mut </span>intervals, <span class="kw-2">mut </span>rows) =
-<a href=#569 id=569 data-nosnippet>569</a>        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-<a href=#570 id=570 data-nosnippet>570</a>    <span class="kw">let </span><span class="kw-2">mut </span>valid = Vec::new();
-<a href=#571 id=571 data-nosnippet>571</a>    <span class="kw">let </span>count = pointing.row_count();
-<a href=#572 id=572 data-nosnippet>572</a>    <span class="kw">for </span>first <span class="kw">in </span>(<span class="number">0</span>..count).step_by(<span class="number">256</span>) {
-<a href=#573 id=573 data-nosnippet>573</a>        rows.clear();
-<a href=#574 id=574 data-nosnippet>574</a>        rows.extend(first..count.min(first + <span class="number">256</span>));
-<a href=#575 id=575 data-nosnippet>575</a>        antennas.clear();
-<a href=#576 id=576 data-nosnippet>576</a>        times.clear();
-<a href=#577 id=577 data-nosnippet>577</a>        intervals.clear();
-<a href=#578 id=578 data-nosnippet>578</a>        pointing
-<a href=#579 id=579 data-nosnippet>579</a>            .required_scalar_columns_for_rows_into(
-<a href=#580 id=580 data-nosnippet>580</a>                <span class="kw-2">&amp;</span>rows,
-<a href=#581 id=581 data-nosnippet>581</a>                <span class="kw-2">&amp;mut </span>[
-<a href=#582 id=582 data-nosnippet>582</a>                    RequiredScalarColumnDestination::new(
-<a href=#583 id=583 data-nosnippet>583</a>                        <span class="string">"ANTENNA_ID"</span>,
-<a href=#584 id=584 data-nosnippet>584</a>                        RequiredScalarColumnValuesMut::Int32(<span class="kw-2">&amp;mut </span>antennas),
-<a href=#585 id=585 data-nosnippet>585</a>                    ),
-<a href=#586 id=586 data-nosnippet>586</a>                    RequiredScalarColumnDestination::new(
-<a href=#587 id=587 data-nosnippet>587</a>                        <span class="string">"TIME"</span>,
-<a href=#588 id=588 data-nosnippet>588</a>                        RequiredScalarColumnValuesMut::Float64(<span class="kw-2">&amp;mut </span>times),
-<a href=#589 id=589 data-nosnippet>589</a>                    ),
-<a href=#590 id=590 data-nosnippet>590</a>                    RequiredScalarColumnDestination::new(
-<a href=#591 id=591 data-nosnippet>591</a>                        <span class="string">"INTERVAL"</span>,
-<a href=#592 id=592 data-nosnippet>592</a>                        RequiredScalarColumnValuesMut::Float64(<span class="kw-2">&amp;mut </span>intervals),
-<a href=#593 id=593 data-nosnippet>593</a>                    ),
-<a href=#594 id=594 data-nosnippet>594</a>                ],
-<a href=#595 id=595 data-nosnippet>595</a>            )
-<a href=#596 id=596 data-nosnippet>596</a>            .map_err(error)<span class="question-mark">?</span>;
-<a href=#597 id=597 data-nosnippet>597</a>        <span class="comment">// Cell by cell, which every data manager serves: CASA keeps
-<a href=#598 id=598 data-nosnippet>598</a>        // DIRECTION in a StandardStMan.
-<a href=#599 id=599 data-nosnippet>599</a>        </span><span class="kw">let </span>column = pointing.column_accessor(<span class="string">"DIRECTION"</span>).map_err(error)<span class="question-mark">?</span>;
-<a href=#600 id=600 data-nosnippet>600</a>        <span class="kw">for </span>shape <span class="kw">in </span>column.array_shapes_uncached(<span class="kw-2">&amp;</span>rows).map_err(error)<span class="question-mark">? </span>{
-<a href=#601 id=601 data-nosnippet>601</a>            <span class="kw">if </span>shape.as_deref() != <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>[<span class="number">2</span>, <span class="number">1</span>]) {
-<a href=#602 id=602 data-nosnippet>602</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(
-<a href=#603 id=603 data-nosnippet>603</a>                    <span class="string">"POINTING polynomials are not yet implemented (#1294)"</span>,
-<a href=#604 id=604 data-nosnippet>604</a>                ));
-<a href=#605 id=605 data-nosnippet>605</a>            }
-<a href=#606 id=606 data-nosnippet>606</a>        }
-<a href=#607 id=607 data-nosnippet>607</a>        <span class="kw">let </span>directions = column.array_cells_owned_uncached(<span class="kw-2">&amp;</span>rows).map_err(error)<span class="question-mark">?</span>;
-<a href=#608 id=608 data-nosnippet>608</a>        <span class="kw">for </span>(((<span class="kw-2">&amp;</span>antenna, <span class="kw-2">&amp;</span>time_s), <span class="kw-2">&amp;</span>interval_s), direction) <span class="kw">in
-<a href=#609 id=609 data-nosnippet>609</a>            </span>antennas.iter().zip(<span class="kw-2">&amp;</span>times).zip(<span class="kw-2">&amp;</span>intervals).zip(<span class="kw-2">&amp;</span>directions)
-<a href=#610 id=610 data-nosnippet>610</a>        {
-<a href=#611 id=611 data-nosnippet>611</a>            <span class="kw">let </span>direction = fixed_direction(direction.as_ref());
-<a href=#612 id=612 data-nosnippet>612</a>            validity.push((antenna, time_s, interval_s), direction, <span class="kw-2">&amp;mut </span>valid);
-<a href=#613 id=613 data-nosnippet>613</a>            by_time.assign(<span class="kw-2">&amp;mut </span>valid, <span class="kw-2">&amp;mut </span>centres, <span class="kw-2">&amp;mut </span>coverage, antenna_count)<span class="question-mark">?</span>;
-<a href=#614 id=614 data-nosnippet>614</a>        }
-<a href=#615 id=615 data-nosnippet>615</a>    }
-<a href=#616 id=616 data-nosnippet>616</a>    validity.finish(<span class="kw-2">&amp;mut </span>valid);
-<a href=#617 id=617 data-nosnippet>617</a>    by_time.assign(<span class="kw-2">&amp;mut </span>valid, <span class="kw-2">&amp;mut </span>centres, <span class="kw-2">&amp;mut </span>coverage, antenna_count)<span class="question-mark">?</span>;
-<a href=#618 id=618 data-nosnippet>618</a>    <span class="kw">for </span>(index, direction) <span class="kw">in </span>centres.iter().enumerate() {
-<a href=#619 id=619 data-nosnippet>619</a>        <span class="kw">if </span>direction.is_some_and(|direction| {
-<a href=#620 id=620 data-nosnippet>620</a>            separation_rad(direction, scans[index].phase_center_rad) &gt;= SAME_DIRECTION_RAD
-<a href=#621 id=621 data-nosnippet>621</a>        }) &amp;&amp; coverage[index * words..(index + <span class="number">1</span>) * words]
-<a href=#622 id=622 data-nosnippet>622</a>            .iter()
-<a href=#623 id=623 data-nosnippet>623</a>            .map(|word| word.count_ones() <span class="kw">as </span>usize)
-<a href=#624 id=624 data-nosnippet>624</a>            .sum::&lt;usize&gt;()
-<a href=#625 id=625 data-nosnippet>625</a>            != antenna_count
-<a href=#626 id=626 data-nosnippet>626</a>        {
-<a href=#627 id=627 data-nosnippet>627</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(
-<a href=#628 id=628 data-nosnippet>628</a>                <span class="string">"offset POINTING without coverage for every antenna is not yet implemented (#1294)"</span>,
-<a href=#629 id=629 data-nosnippet>629</a>            ));
-<a href=#630 id=630 data-nosnippet>630</a>        }
-<a href=#631 id=631 data-nosnippet>631</a>    }
-<a href=#632 id=632 data-nosnippet>632</a>    <span class="prelude-val">Ok</span>(centres)
-<a href=#633 id=633 data-nosnippet>633</a>}
-<a href=#634 id=634 data-nosnippet>634</a>
-<a href=#635 id=635 data-nosnippet>635</a><span class="doccomment">/// A POINTING row's DIRECTION, as (longitude, latitude), radians: its
-<a href=#636 id=636 data-nosnippet>636</a>/// first polynomial term, `None` when a later term moves it or the cell is
-<a href=#637 id=637 data-nosnippet>637</a>/// not a direction, which no scan's phase centre matches.
-<a href=#638 id=638 data-nosnippet>638</a></span><span class="kw">fn </span>fixed_direction(cell: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>ArrayValue&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt; {
-<a href=#639 id=639 data-nosnippet>639</a>    <span class="kw">match </span>cell {
-<a href=#640 id=640 data-nosnippet>640</a>        <span class="prelude-val">Some</span>(ArrayValue::Float64(direction))
-<a href=#641 id=641 data-nosnippet>641</a>            <span class="kw">if </span>direction.ndim() == <span class="number">2 </span>&amp;&amp; direction.shape()[<span class="number">0</span>] == <span class="number">2 </span>&amp;&amp; direction.shape()[<span class="number">1</span>] &gt; <span class="number">0 </span>=&gt;
-<a href=#642 id=642 data-nosnippet>642</a>        {
-<a href=#643 id=643 data-nosnippet>643</a>            <span class="kw">let </span>moves = direction
-<a href=#644 id=644 data-nosnippet>644</a>                .indexed_iter()
-<a href=#645 id=645 data-nosnippet>645</a>                .any(|(index, <span class="kw-2">&amp;</span>term)| index[<span class="number">1</span>] &gt; <span class="number">0 </span>&amp;&amp; term != <span class="number">0.0</span>);
-<a href=#646 id=646 data-nosnippet>646</a>            (!moves).then(|| [direction[[<span class="number">0</span>, <span class="number">0</span>]], direction[[<span class="number">1</span>, <span class="number">0</span>]]])
-<a href=#647 id=647 data-nosnippet>647</a>        }
-<a href=#648 id=648 data-nosnippet>648</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#649 id=649 data-nosnippet>649</a>    }
-<a href=#650 id=650 data-nosnippet>650</a>}
-<a href=#651 id=651 data-nosnippet>651</a>
-<a href=#652 id=652 data-nosnippet>652</a><span class="doccomment">/// A POINTING row's direction ([`fixed_direction`]) and the times it is
-<a href=#653 id=653 data-nosnippet>653</a>/// valid for, seconds.
-<a href=#654 id=654 data-nosnippet>654</a></span><span class="kw">type </span>ValidPointing = (i32, <span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt;, [f64; <span class="number">2</span>]);
-<a href=#655 id=655 data-nosnippet>655</a>
-<a href=#656 id=656 data-nosnippet>656</a><span class="doccomment">/// The times POINTING rows are valid for, found in table order as
-<a href=#657 id=657 data-nosnippet>657</a>/// casacore's `MSPointingColumns::pointingIndex` finds them. A row is
-<a href=#658 id=658 data-nosnippet>658</a>/// valid within half its INTERVAL of its TIME; with INTERVAL 0, within half
-<a href=#659 id=659 data-nosnippet>659</a>/// the gap to its antenna's next row at another TIME, else to its previous
-<a href=#660 id=660 data-nosnippet>660</a>/// one, else at every time; and with a negative INTERVAL at every time.
-<a href=#661 id=661 data-nosnippet>661</a></span><span class="attr">#[derive(Debug, Default)]
-<a href=#662 id=662 data-nosnippet>662</a></span><span class="kw">struct </span>Validity {
-<a href=#663 id=663 data-nosnippet>663</a>    antennas: HashMap&lt;i32, AntennaPointings&gt;,
-<a href=#664 id=664 data-nosnippet>664</a>}
-<a href=#665 id=665 data-nosnippet>665</a>
-<a href=#666 id=666 data-nosnippet>666</a><span class="doccomment">/// One antenna's rows so far.
-<a href=#667 id=667 data-nosnippet>667</a></span><span class="attr">#[derive(Debug)]
-<a href=#668 id=668 data-nosnippet>668</a></span><span class="kw">struct </span>AntennaPointings {
-<a href=#669 id=669 data-nosnippet>669</a>    <span class="doccomment">/// The TIME of its last row.
-<a href=#670 id=670 data-nosnippet>670</a>    </span>last_s: f64,
-<a href=#671 id=671 data-nosnippet>671</a>    <span class="doccomment">/// The TIME of its last row at another TIME before that.
-<a href=#672 id=672 data-nosnippet>672</a>    </span>earlier_s: <span class="prelude-ty">Option</span>&lt;f64&gt;,
-<a href=#673 id=673 data-nosnippet>673</a>    <span class="doccomment">/// The directions of its rows of INTERVAL 0 at `last_s`, which the next
-<a href=#674 id=674 data-nosnippet>674</a>    /// row at another TIME bounds.
-<a href=#675 id=675 data-nosnippet>675</a>    </span>waiting: Vec&lt;<span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt;&gt;,
-<a href=#676 id=676 data-nosnippet>676</a>}
-<a href=#677 id=677 data-nosnippet>677</a>
-<a href=#678 id=678 data-nosnippet>678</a><span class="kw">impl </span>Validity {
-<a href=#679 id=679 data-nosnippet>679</a>    <span class="doccomment">/// Take the next row, of `antenna` at `time_s` with `interval_s`,
-<a href=#680 id=680 data-nosnippet>680</a>    /// pointing at `direction`: onto `valid` go the rows whose times are
-<a href=#681 id=681 data-nosnippet>681</a>    /// now known.
-<a href=#682 id=682 data-nosnippet>682</a>    </span><span class="kw">fn </span>push(
-<a href=#683 id=683 data-nosnippet>683</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#684 id=684 data-nosnippet>684</a>        (antenna, time_s, interval_s): (i32, f64, f64),
-<a href=#685 id=685 data-nosnippet>685</a>        direction: <span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt;,
-<a href=#686 id=686 data-nosnippet>686</a>        valid: <span class="kw-2">&amp;mut </span>Vec&lt;ValidPointing&gt;,
-<a href=#687 id=687 data-nosnippet>687</a>    ) {
-<a href=#688 id=688 data-nosnippet>688</a>        <span class="kw">let </span>rows = <span class="self">self
-<a href=#689 id=689 data-nosnippet>689</a>            </span>.antennas
-<a href=#690 id=690 data-nosnippet>690</a>            .entry(antenna)
-<a href=#691 id=691 data-nosnippet>691</a>            .or_insert_with(|| AntennaPointings {
-<a href=#692 id=692 data-nosnippet>692</a>                last_s: time_s,
-<a href=#693 id=693 data-nosnippet>693</a>                earlier_s: <span class="prelude-val">None</span>,
-<a href=#694 id=694 data-nosnippet>694</a>                waiting: Vec::new(),
-<a href=#695 id=695 data-nosnippet>695</a>            });
-<a href=#696 id=696 data-nosnippet>696</a>        <span class="kw">if </span>rows.last_s != time_s {
-<a href=#697 id=697 data-nosnippet>697</a>            <span class="kw">let </span>half = (time_s - rows.last_s).abs() / <span class="number">2.0</span>;
-<a href=#698 id=698 data-nosnippet>698</a>            <span class="kw">let </span>span = [rows.last_s - half, rows.last_s + half];
-<a href=#699 id=699 data-nosnippet>699</a>            valid.extend(
-<a href=#700 id=700 data-nosnippet>700</a>                rows.waiting
-<a href=#701 id=701 data-nosnippet>701</a>                    .drain(..)
-<a href=#702 id=702 data-nosnippet>702</a>                    .map(|direction| (antenna, direction, span)),
-<a href=#703 id=703 data-nosnippet>703</a>            );
-<a href=#704 id=704 data-nosnippet>704</a>            rows.earlier_s = <span class="prelude-val">Some</span>(rows.last_s);
-<a href=#705 id=705 data-nosnippet>705</a>            rows.last_s = time_s;
-<a href=#706 id=706 data-nosnippet>706</a>        }
-<a href=#707 id=707 data-nosnippet>707</a>        <span class="kw">if </span>interval_s == <span class="number">0.0 </span>{
-<a href=#708 id=708 data-nosnippet>708</a>            rows.waiting.push(direction);
-<a href=#709 id=709 data-nosnippet>709</a>        } <span class="kw">else if </span>interval_s &gt; <span class="number">0.0 </span>{
-<a href=#710 id=710 data-nosnippet>710</a>            <span class="kw">let </span>half = interval_s / <span class="number">2.0</span>;
-<a href=#711 id=711 data-nosnippet>711</a>            valid.push((antenna, direction, [time_s - half, time_s + half]));
-<a href=#712 id=712 data-nosnippet>712</a>        } <span class="kw">else </span>{
-<a href=#713 id=713 data-nosnippet>713</a>            valid.push((antenna, direction, [f64::NEG_INFINITY, f64::INFINITY]));
-<a href=#714 id=714 data-nosnippet>714</a>        }
-<a href=#715 id=715 data-nosnippet>715</a>    }
-<a href=#716 id=716 data-nosnippet>716</a>
-<a href=#717 id=717 data-nosnippet>717</a>    <span class="doccomment">/// Onto `valid` go the rows of INTERVAL 0 no later row bounds: by the
-<a href=#718 id=718 data-nosnippet>718</a>    /// antenna's earlier TIME, else at every time.
-<a href=#719 id=719 data-nosnippet>719</a>    </span><span class="kw">fn </span>finish(<span class="kw-2">&amp;mut </span><span class="self">self</span>, valid: <span class="kw-2">&amp;mut </span>Vec&lt;ValidPointing&gt;) {
-<a href=#720 id=720 data-nosnippet>720</a>        <span class="kw">for </span>(<span class="kw-2">&amp;</span>antenna, rows) <span class="kw">in </span><span class="kw-2">&amp;mut </span><span class="self">self</span>.antennas {
-<a href=#721 id=721 data-nosnippet>721</a>            <span class="kw">let </span>span = rows
-<a href=#722 id=722 data-nosnippet>722</a>                .earlier_s
-<a href=#723 id=723 data-nosnippet>723</a>                .map_or([f64::NEG_INFINITY, f64::INFINITY], |earlier| {
-<a href=#724 id=724 data-nosnippet>724</a>                    <span class="kw">let </span>half = (rows.last_s - earlier).abs() / <span class="number">2.0</span>;
-<a href=#725 id=725 data-nosnippet>725</a>                    [rows.last_s - half, rows.last_s + half]
-<a href=#726 id=726 data-nosnippet>726</a>                });
-<a href=#727 id=727 data-nosnippet>727</a>            valid.extend(
-<a href=#728 id=728 data-nosnippet>728</a>                rows.waiting
-<a href=#729 id=729 data-nosnippet>729</a>                    .drain(..)
-<a href=#730 id=730 data-nosnippet>730</a>                    .map(|direction| (antenna, direction, span)),
-<a href=#731 id=731 data-nosnippet>731</a>            );
-<a href=#732 id=732 data-nosnippet>732</a>        }
-<a href=#733 id=733 data-nosnippet>733</a>    }
-<a href=#734 id=734 data-nosnippet>734</a>}
-<a href=#735 id=735 data-nosnippet>735</a>
-<a href=#736 id=736 data-nosnippet>736</a><span class="doccomment">/// The scans by their first TIME, with the latest last TIME so far, to
-<a href=#737 id=737 data-nosnippet>737</a>/// find those a span of time overlaps.
-<a href=#738 id=738 data-nosnippet>738</a></span><span class="kw">struct </span>ScansByTime&lt;<span class="lifetime">'t</span>&gt; {
-<a href=#739 id=739 data-nosnippet>739</a>    times_s: <span class="kw-2">&amp;</span><span class="lifetime">'t </span>[[f64; <span class="number">2</span>]],
-<a href=#740 id=740 data-nosnippet>740</a>    by_start: Vec&lt;usize&gt;,
-<a href=#741 id=741 data-nosnippet>741</a>    latest_end: Vec&lt;f64&gt;,
-<a href=#742 id=742 data-nosnippet>742</a>}
-<a href=#743 id=743 data-nosnippet>743</a>
-<a href=#744 id=744 data-nosnippet>744</a><span class="kw">impl</span>&lt;<span class="lifetime">'t</span>&gt; ScansByTime&lt;<span class="lifetime">'t</span>&gt; {
-<a href=#745 id=745 data-nosnippet>745</a>    <span class="kw">fn </span>new(times_s: <span class="kw-2">&amp;</span><span class="lifetime">'t </span>[[f64; <span class="number">2</span>]]) -&gt; <span class="self">Self </span>{
-<a href=#746 id=746 data-nosnippet>746</a>        <span class="kw">let </span><span class="kw-2">mut </span>by_start: Vec&lt;usize&gt; = (<span class="number">0</span>..times_s.len()).collect();
-<a href=#747 id=747 data-nosnippet>747</a>        by_start.sort_by(|<span class="kw-2">&amp;</span>a, <span class="kw-2">&amp;</span>b| times_s[a][<span class="number">0</span>].total_cmp(<span class="kw-2">&amp;</span>times_s[b][<span class="number">0</span>]));
-<a href=#748 id=748 data-nosnippet>748</a>        <span class="kw">let </span><span class="kw-2">mut </span>latest_end = Vec::with_capacity(by_start.len());
-<a href=#749 id=749 data-nosnippet>749</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>scan <span class="kw">in </span><span class="kw-2">&amp;</span>by_start {
-<a href=#750 id=750 data-nosnippet>750</a>            <span class="kw">let </span>end = latest_end
-<a href=#751 id=751 data-nosnippet>751</a>                .last()
-<a href=#752 id=752 data-nosnippet>752</a>                .map_or(f64::NEG_INFINITY, |<span class="kw-2">&amp;</span>end: <span class="kw-2">&amp;</span>f64| end);
-<a href=#753 id=753 data-nosnippet>753</a>            latest_end.push(end.max(times_s[scan][<span class="number">1</span>]));
-<a href=#754 id=754 data-nosnippet>754</a>        }
-<a href=#755 id=755 data-nosnippet>755</a>        <span class="self">Self </span>{
-<a href=#756 id=756 data-nosnippet>756</a>            times_s,
-<a href=#757 id=757 data-nosnippet>757</a>            by_start,
-<a href=#758 id=758 data-nosnippet>758</a>            latest_end,
-<a href=#759 id=759 data-nosnippet>759</a>        }
-<a href=#760 id=760 data-nosnippet>760</a>    }
-<a href=#761 id=761 data-nosnippet>761</a>
-<a href=#762 id=762 data-nosnippet>762</a>    <span class="doccomment">/// Assign valid directions and preserve their per-antenna coverage.
-<a href=#763 id=763 data-nosnippet>763</a>    </span><span class="kw">fn </span>assign(
-<a href=#764 id=764 data-nosnippet>764</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#765 id=765 data-nosnippet>765</a>        valid: <span class="kw-2">&amp;mut </span>Vec&lt;ValidPointing&gt;,
-<a href=#766 id=766 data-nosnippet>766</a>        centres: <span class="kw-2">&amp;mut </span>[<span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt;],
-<a href=#767 id=767 data-nosnippet>767</a>        coverage: <span class="kw-2">&amp;mut </span>[u64],
-<a href=#768 id=768 data-nosnippet>768</a>        antenna_count: usize,
-<a href=#769 id=769 data-nosnippet>769</a>    ) -&gt; SimulatorResult&lt;()&gt; {
-<a href=#770 id=770 data-nosnippet>770</a>        <span class="kw">let </span>words = antenna_count.div_ceil(<span class="number">64</span>);
-<a href=#771 id=771 data-nosnippet>771</a>        <span class="kw">for </span>(antenna, direction, [from_s, to_s]) <span class="kw">in </span>valid.drain(..) {
-<a href=#772 id=772 data-nosnippet>772</a>            <span class="kw">if </span>antenna &lt; <span class="number">0 </span>|| antenna <span class="kw">as </span>usize &gt;= antenna_count {
-<a href=#773 id=773 data-nosnippet>773</a>                <span class="kw">continue</span>;
-<a href=#774 id=774 data-nosnippet>774</a>            }
-<a href=#775 id=775 data-nosnippet>775</a>            <span class="kw">let </span>antenna = antenna <span class="kw">as </span>usize;
-<a href=#776 id=776 data-nosnippet>776</a>            <span class="kw">let </span>started = <span class="self">self
-<a href=#777 id=777 data-nosnippet>777</a>                </span>.by_start
-<a href=#778 id=778 data-nosnippet>778</a>                .partition_point(|<span class="kw-2">&amp;</span>scan| <span class="self">self</span>.times_s[scan][<span class="number">0</span>] &lt;= to_s);
-<a href=#779 id=779 data-nosnippet>779</a>            <span class="kw">for </span>position <span class="kw">in </span>(<span class="number">0</span>..started).rev() {
-<a href=#780 id=780 data-nosnippet>780</a>                <span class="kw">if </span><span class="self">self</span>.latest_end[position] &lt; from_s {
-<a href=#781 id=781 data-nosnippet>781</a>                    <span class="kw">break</span>;
-<a href=#782 id=782 data-nosnippet>782</a>                }
-<a href=#783 id=783 data-nosnippet>783</a>                <span class="kw">let </span>scan = <span class="self">self</span>.by_start[position];
-<a href=#784 id=784 data-nosnippet>784</a>                <span class="kw">if </span><span class="self">self</span>.times_s[scan][<span class="number">1</span>] &lt; from_s {
-<a href=#785 id=785 data-nosnippet>785</a>                    <span class="kw">continue</span>;
-<a href=#786 id=786 data-nosnippet>786</a>                }
-<a href=#787 id=787 data-nosnippet>787</a>                <span class="kw">let </span><span class="prelude-val">Some</span>(direction) = direction <span class="kw">else </span>{
-<a href=#788 id=788 data-nosnippet>788</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(
-<a href=#789 id=789 data-nosnippet>789</a>                        <span class="string">"POINTING direction is not constant (#1294)"</span>,
-<a href=#790 id=790 data-nosnippet>790</a>                    ));
-<a href=#791 id=791 data-nosnippet>791</a>                };
-<a href=#792 id=792 data-nosnippet>792</a>                <span class="kw">if </span>centres[scan]
-<a href=#793 id=793 data-nosnippet>793</a>                    .is_some_and(|known| separation_rad(known, direction) &gt;= SAME_DIRECTION_RAD)
-<a href=#794 id=794 data-nosnippet>794</a>                {
-<a href=#795 id=795 data-nosnippet>795</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(
-<a href=#796 id=796 data-nosnippet>796</a>                        <span class="string">"POINTING changes within a scan or between antennas (#1294)"</span>,
-<a href=#797 id=797 data-nosnippet>797</a>                    ));
-<a href=#798 id=798 data-nosnippet>798</a>                }
-<a href=#799 id=799 data-nosnippet>799</a>                centres[scan] = <span class="prelude-val">Some</span>(direction);
-<a href=#800 id=800 data-nosnippet>800</a>                coverage[scan * words + antenna / <span class="number">64</span>] |= <span class="number">1 </span>&lt;&lt; (antenna % <span class="number">64</span>);
-<a href=#801 id=801 data-nosnippet>801</a>            }
-<a href=#802 id=802 data-nosnippet>802</a>        }
-<a href=#803 id=803 data-nosnippet>803</a>        <span class="prelude-val">Ok</span>(())
-<a href=#804 id=804 data-nosnippet>804</a>    }
-<a href=#805 id=805 data-nosnippet>805</a>}
-<a href=#806 id=806 data-nosnippet>806</a>
-<a href=#807 id=807 data-nosnippet>807</a><span class="doccomment">/// The angle between two directions given as (longitude, latitude),
-<a href=#808 id=808 data-nosnippet>808</a>/// radians.
-<a href=#809 id=809 data-nosnippet>809</a></span><span class="kw">fn </span>separation_rad([lon1, lat1]: [f64; <span class="number">2</span>], [lon2, lat2]: [f64; <span class="number">2</span>]) -&gt; f64 {
-<a href=#810 id=810 data-nosnippet>810</a>    <span class="kw">let </span>haversine = ((lat2 - lat1) / <span class="number">2.0</span>).sin().powi(<span class="number">2</span>)
-<a href=#811 id=811 data-nosnippet>811</a>        + lat1.cos() * lat2.cos() * ((lon2 - lon1) / <span class="number">2.0</span>).sin().powi(<span class="number">2</span>);
-<a href=#812 id=812 data-nosnippet>812</a>    <span class="number">2.0 </span>* haversine.sqrt().min(<span class="number">1.0</span>).asin()
-<a href=#813 id=813 data-nosnippet>813</a>}
+<a href=#555 id=555 data-nosnippet>555</a>    <span class="kw">let </span>frame = casa_measures::table_measures::TableMeasDesc::reconstruct(<span class="kw-2">&amp;</span>pointing, <span class="string">"DIRECTION"</span>)
+<a href=#556 id=556 data-nosnippet>556</a>        .ok_or_else(|| {
+<a href=#557 id=557 data-nosnippet>557</a>        SimulatorError::raised(<span class="string">"POINTING.DIRECTION has no measure descriptor"</span>)
+<a href=#558 id=558 data-nosnippet>558</a>    })<span class="question-mark">?</span>;
+<a href=#559 id=559 data-nosnippet>559</a>    <span class="kw">if </span>!<span class="macro">matches!</span>(frame.ref_desc(), casa_measures::table_measures::MeasRefDesc::Fixed { refer } <span class="kw">if </span>refer == <span class="string">"J2000"</span>)
+<a href=#560 id=560 data-nosnippet>560</a>        || frame.offset_desc().is_some()
+<a href=#561 id=561 data-nosnippet>561</a>    {
+<a href=#562 id=562 data-nosnippet>562</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(
+<a href=#563 id=563 data-nosnippet>563</a>            <span class="string">"POINTING frame/measure offsets are not yet implemented (#1294)"</span>,
+<a href=#564 id=564 data-nosnippet>564</a>        ));
+<a href=#565 id=565 data-nosnippet>565</a>    }
+<a href=#566 id=566 data-nosnippet>566</a>    <span class="kw">let </span>by_time = ScansByTime::new(times_s);
+<a href=#567 id=567 data-nosnippet>567</a>    <span class="kw">let </span><span class="kw-2">mut </span>centres = <span class="macro">vec!</span>[<span class="prelude-val">None</span>; scans.len()];
+<a href=#568 id=568 data-nosnippet>568</a>    <span class="kw">let </span><span class="kw-2">mut </span>coverage = <span class="macro">vec!</span>[<span class="number">0u64</span>; scans.len() * words];
+<a href=#569 id=569 data-nosnippet>569</a>    <span class="kw">let </span><span class="kw-2">mut </span>validity = Validity::default();
+<a href=#570 id=570 data-nosnippet>570</a>    <span class="kw">let </span>(<span class="kw-2">mut </span>antennas, <span class="kw-2">mut </span>times, <span class="kw-2">mut </span>intervals, <span class="kw-2">mut </span>rows) =
+<a href=#571 id=571 data-nosnippet>571</a>        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+<a href=#572 id=572 data-nosnippet>572</a>    <span class="kw">let </span><span class="kw-2">mut </span>valid = Vec::new();
+<a href=#573 id=573 data-nosnippet>573</a>    <span class="kw">let </span>count = pointing.row_count();
+<a href=#574 id=574 data-nosnippet>574</a>    <span class="kw">for </span>first <span class="kw">in </span>(<span class="number">0</span>..count).step_by(<span class="number">256</span>) {
+<a href=#575 id=575 data-nosnippet>575</a>        rows.clear();
+<a href=#576 id=576 data-nosnippet>576</a>        rows.extend(first..count.min(first + <span class="number">256</span>));
+<a href=#577 id=577 data-nosnippet>577</a>        antennas.clear();
+<a href=#578 id=578 data-nosnippet>578</a>        times.clear();
+<a href=#579 id=579 data-nosnippet>579</a>        intervals.clear();
+<a href=#580 id=580 data-nosnippet>580</a>        pointing
+<a href=#581 id=581 data-nosnippet>581</a>            .required_scalar_columns_for_rows_into(
+<a href=#582 id=582 data-nosnippet>582</a>                <span class="kw-2">&amp;</span>rows,
+<a href=#583 id=583 data-nosnippet>583</a>                <span class="kw-2">&amp;mut </span>[
+<a href=#584 id=584 data-nosnippet>584</a>                    RequiredScalarColumnDestination::new(
+<a href=#585 id=585 data-nosnippet>585</a>                        <span class="string">"ANTENNA_ID"</span>,
+<a href=#586 id=586 data-nosnippet>586</a>                        RequiredScalarColumnValuesMut::Int32(<span class="kw-2">&amp;mut </span>antennas),
+<a href=#587 id=587 data-nosnippet>587</a>                    ),
+<a href=#588 id=588 data-nosnippet>588</a>                    RequiredScalarColumnDestination::new(
+<a href=#589 id=589 data-nosnippet>589</a>                        <span class="string">"TIME"</span>,
+<a href=#590 id=590 data-nosnippet>590</a>                        RequiredScalarColumnValuesMut::Float64(<span class="kw-2">&amp;mut </span>times),
+<a href=#591 id=591 data-nosnippet>591</a>                    ),
+<a href=#592 id=592 data-nosnippet>592</a>                    RequiredScalarColumnDestination::new(
+<a href=#593 id=593 data-nosnippet>593</a>                        <span class="string">"INTERVAL"</span>,
+<a href=#594 id=594 data-nosnippet>594</a>                        RequiredScalarColumnValuesMut::Float64(<span class="kw-2">&amp;mut </span>intervals),
+<a href=#595 id=595 data-nosnippet>595</a>                    ),
+<a href=#596 id=596 data-nosnippet>596</a>                ],
+<a href=#597 id=597 data-nosnippet>597</a>            )
+<a href=#598 id=598 data-nosnippet>598</a>            .map_err(error)<span class="question-mark">?</span>;
+<a href=#599 id=599 data-nosnippet>599</a>        <span class="comment">// Cell by cell, which every data manager serves: CASA keeps
+<a href=#600 id=600 data-nosnippet>600</a>        // DIRECTION in a StandardStMan.
+<a href=#601 id=601 data-nosnippet>601</a>        </span><span class="kw">let </span>column = pointing.column_accessor(<span class="string">"DIRECTION"</span>).map_err(error)<span class="question-mark">?</span>;
+<a href=#602 id=602 data-nosnippet>602</a>        <span class="kw">for </span>shape <span class="kw">in </span>column.array_shapes_uncached(<span class="kw-2">&amp;</span>rows).map_err(error)<span class="question-mark">? </span>{
+<a href=#603 id=603 data-nosnippet>603</a>            <span class="kw">if </span>shape.as_deref() != <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>[<span class="number">2</span>, <span class="number">1</span>]) {
+<a href=#604 id=604 data-nosnippet>604</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(
+<a href=#605 id=605 data-nosnippet>605</a>                    <span class="string">"POINTING polynomials are not yet implemented (#1294)"</span>,
+<a href=#606 id=606 data-nosnippet>606</a>                ));
+<a href=#607 id=607 data-nosnippet>607</a>            }
+<a href=#608 id=608 data-nosnippet>608</a>        }
+<a href=#609 id=609 data-nosnippet>609</a>        <span class="kw">let </span>directions = column.array_cells_owned_uncached(<span class="kw-2">&amp;</span>rows).map_err(error)<span class="question-mark">?</span>;
+<a href=#610 id=610 data-nosnippet>610</a>        <span class="kw">for </span>(((<span class="kw-2">&amp;</span>antenna, <span class="kw-2">&amp;</span>time_s), <span class="kw-2">&amp;</span>interval_s), direction) <span class="kw">in
+<a href=#611 id=611 data-nosnippet>611</a>            </span>antennas.iter().zip(<span class="kw-2">&amp;</span>times).zip(<span class="kw-2">&amp;</span>intervals).zip(<span class="kw-2">&amp;</span>directions)
+<a href=#612 id=612 data-nosnippet>612</a>        {
+<a href=#613 id=613 data-nosnippet>613</a>            <span class="kw">let </span>direction = fixed_direction(direction.as_ref());
+<a href=#614 id=614 data-nosnippet>614</a>            validity.push((antenna, time_s, interval_s), direction, <span class="kw-2">&amp;mut </span>valid);
+<a href=#615 id=615 data-nosnippet>615</a>            by_time.assign(<span class="kw-2">&amp;mut </span>valid, <span class="kw-2">&amp;mut </span>centres, <span class="kw-2">&amp;mut </span>coverage, antenna_count)<span class="question-mark">?</span>;
+<a href=#616 id=616 data-nosnippet>616</a>        }
+<a href=#617 id=617 data-nosnippet>617</a>    }
+<a href=#618 id=618 data-nosnippet>618</a>    validity.finish(<span class="kw-2">&amp;mut </span>valid);
+<a href=#619 id=619 data-nosnippet>619</a>    by_time.assign(<span class="kw-2">&amp;mut </span>valid, <span class="kw-2">&amp;mut </span>centres, <span class="kw-2">&amp;mut </span>coverage, antenna_count)<span class="question-mark">?</span>;
+<a href=#620 id=620 data-nosnippet>620</a>    <span class="kw">for </span>(index, direction) <span class="kw">in </span>centres.iter().enumerate() {
+<a href=#621 id=621 data-nosnippet>621</a>        <span class="kw">if </span>direction.is_some_and(|direction| {
+<a href=#622 id=622 data-nosnippet>622</a>            separation_rad(direction, scans[index].phase_center_rad) &gt;= SAME_DIRECTION_RAD
+<a href=#623 id=623 data-nosnippet>623</a>        }) &amp;&amp; coverage[index * words..(index + <span class="number">1</span>) * words]
+<a href=#624 id=624 data-nosnippet>624</a>            .iter()
+<a href=#625 id=625 data-nosnippet>625</a>            .map(|word| word.count_ones() <span class="kw">as </span>usize)
+<a href=#626 id=626 data-nosnippet>626</a>            .sum::&lt;usize&gt;()
+<a href=#627 id=627 data-nosnippet>627</a>            != antenna_count
+<a href=#628 id=628 data-nosnippet>628</a>        {
+<a href=#629 id=629 data-nosnippet>629</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(
+<a href=#630 id=630 data-nosnippet>630</a>                <span class="string">"offset POINTING without coverage for every antenna is not yet implemented (#1294)"</span>,
+<a href=#631 id=631 data-nosnippet>631</a>            ));
+<a href=#632 id=632 data-nosnippet>632</a>        }
+<a href=#633 id=633 data-nosnippet>633</a>    }
+<a href=#634 id=634 data-nosnippet>634</a>    <span class="prelude-val">Ok</span>(centres)
+<a href=#635 id=635 data-nosnippet>635</a>}
+<a href=#636 id=636 data-nosnippet>636</a>
+<a href=#637 id=637 data-nosnippet>637</a><span class="doccomment">/// A POINTING row's DIRECTION, as (longitude, latitude), radians: its
+<a href=#638 id=638 data-nosnippet>638</a>/// first polynomial term, `None` when a later term moves it or the cell is
+<a href=#639 id=639 data-nosnippet>639</a>/// not a direction, which no scan's phase centre matches.
+<a href=#640 id=640 data-nosnippet>640</a></span><span class="kw">fn </span>fixed_direction(cell: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>ArrayValue&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt; {
+<a href=#641 id=641 data-nosnippet>641</a>    <span class="kw">match </span>cell {
+<a href=#642 id=642 data-nosnippet>642</a>        <span class="prelude-val">Some</span>(ArrayValue::Float64(direction))
+<a href=#643 id=643 data-nosnippet>643</a>            <span class="kw">if </span>direction.ndim() == <span class="number">2 </span>&amp;&amp; direction.shape()[<span class="number">0</span>] == <span class="number">2 </span>&amp;&amp; direction.shape()[<span class="number">1</span>] &gt; <span class="number">0 </span>=&gt;
+<a href=#644 id=644 data-nosnippet>644</a>        {
+<a href=#645 id=645 data-nosnippet>645</a>            <span class="kw">let </span>moves = direction
+<a href=#646 id=646 data-nosnippet>646</a>                .indexed_iter()
+<a href=#647 id=647 data-nosnippet>647</a>                .any(|(index, <span class="kw-2">&amp;</span>term)| index[<span class="number">1</span>] &gt; <span class="number">0 </span>&amp;&amp; term != <span class="number">0.0</span>);
+<a href=#648 id=648 data-nosnippet>648</a>            (!moves).then(|| [direction[[<span class="number">0</span>, <span class="number">0</span>]], direction[[<span class="number">1</span>, <span class="number">0</span>]]])
+<a href=#649 id=649 data-nosnippet>649</a>        }
+<a href=#650 id=650 data-nosnippet>650</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#651 id=651 data-nosnippet>651</a>    }
+<a href=#652 id=652 data-nosnippet>652</a>}
+<a href=#653 id=653 data-nosnippet>653</a>
+<a href=#654 id=654 data-nosnippet>654</a><span class="doccomment">/// A POINTING row's direction ([`fixed_direction`]) and the times it is
+<a href=#655 id=655 data-nosnippet>655</a>/// valid for, seconds.
+<a href=#656 id=656 data-nosnippet>656</a></span><span class="kw">type </span>ValidPointing = (i32, <span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt;, [f64; <span class="number">2</span>]);
+<a href=#657 id=657 data-nosnippet>657</a>
+<a href=#658 id=658 data-nosnippet>658</a><span class="doccomment">/// The times POINTING rows are valid for, found in table order as
+<a href=#659 id=659 data-nosnippet>659</a>/// casacore's `MSPointingColumns::pointingIndex` finds them. A row is
+<a href=#660 id=660 data-nosnippet>660</a>/// valid within half its INTERVAL of its TIME; with INTERVAL 0, within half
+<a href=#661 id=661 data-nosnippet>661</a>/// the gap to its antenna's next row at another TIME, else to its previous
+<a href=#662 id=662 data-nosnippet>662</a>/// one, else at every time; and with a negative INTERVAL at every time.
+<a href=#663 id=663 data-nosnippet>663</a></span><span class="attr">#[derive(Debug, Default)]
+<a href=#664 id=664 data-nosnippet>664</a></span><span class="kw">struct </span>Validity {
+<a href=#665 id=665 data-nosnippet>665</a>    antennas: HashMap&lt;i32, AntennaPointings&gt;,
+<a href=#666 id=666 data-nosnippet>666</a>}
+<a href=#667 id=667 data-nosnippet>667</a>
+<a href=#668 id=668 data-nosnippet>668</a><span class="doccomment">/// One antenna's rows so far.
+<a href=#669 id=669 data-nosnippet>669</a></span><span class="attr">#[derive(Debug)]
+<a href=#670 id=670 data-nosnippet>670</a></span><span class="kw">struct </span>AntennaPointings {
+<a href=#671 id=671 data-nosnippet>671</a>    <span class="doccomment">/// The TIME of its last row.
+<a href=#672 id=672 data-nosnippet>672</a>    </span>last_s: f64,
+<a href=#673 id=673 data-nosnippet>673</a>    <span class="doccomment">/// The TIME of its last row at another TIME before that.
+<a href=#674 id=674 data-nosnippet>674</a>    </span>earlier_s: <span class="prelude-ty">Option</span>&lt;f64&gt;,
+<a href=#675 id=675 data-nosnippet>675</a>    <span class="doccomment">/// The directions of its rows of INTERVAL 0 at `last_s`, which the next
+<a href=#676 id=676 data-nosnippet>676</a>    /// row at another TIME bounds.
+<a href=#677 id=677 data-nosnippet>677</a>    </span>waiting: Vec&lt;<span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt;&gt;,
+<a href=#678 id=678 data-nosnippet>678</a>}
+<a href=#679 id=679 data-nosnippet>679</a>
+<a href=#680 id=680 data-nosnippet>680</a><span class="kw">impl </span>Validity {
+<a href=#681 id=681 data-nosnippet>681</a>    <span class="doccomment">/// Take the next row, of `antenna` at `time_s` with `interval_s`,
+<a href=#682 id=682 data-nosnippet>682</a>    /// pointing at `direction`: onto `valid` go the rows whose times are
+<a href=#683 id=683 data-nosnippet>683</a>    /// now known.
+<a href=#684 id=684 data-nosnippet>684</a>    </span><span class="kw">fn </span>push(
+<a href=#685 id=685 data-nosnippet>685</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#686 id=686 data-nosnippet>686</a>        (antenna, time_s, interval_s): (i32, f64, f64),
+<a href=#687 id=687 data-nosnippet>687</a>        direction: <span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt;,
+<a href=#688 id=688 data-nosnippet>688</a>        valid: <span class="kw-2">&amp;mut </span>Vec&lt;ValidPointing&gt;,
+<a href=#689 id=689 data-nosnippet>689</a>    ) {
+<a href=#690 id=690 data-nosnippet>690</a>        <span class="kw">let </span>rows = <span class="self">self
+<a href=#691 id=691 data-nosnippet>691</a>            </span>.antennas
+<a href=#692 id=692 data-nosnippet>692</a>            .entry(antenna)
+<a href=#693 id=693 data-nosnippet>693</a>            .or_insert_with(|| AntennaPointings {
+<a href=#694 id=694 data-nosnippet>694</a>                last_s: time_s,
+<a href=#695 id=695 data-nosnippet>695</a>                earlier_s: <span class="prelude-val">None</span>,
+<a href=#696 id=696 data-nosnippet>696</a>                waiting: Vec::new(),
+<a href=#697 id=697 data-nosnippet>697</a>            });
+<a href=#698 id=698 data-nosnippet>698</a>        <span class="kw">if </span>rows.last_s != time_s {
+<a href=#699 id=699 data-nosnippet>699</a>            <span class="kw">let </span>half = (time_s - rows.last_s).abs() / <span class="number">2.0</span>;
+<a href=#700 id=700 data-nosnippet>700</a>            <span class="kw">let </span>span = [rows.last_s - half, rows.last_s + half];
+<a href=#701 id=701 data-nosnippet>701</a>            valid.extend(
+<a href=#702 id=702 data-nosnippet>702</a>                rows.waiting
+<a href=#703 id=703 data-nosnippet>703</a>                    .drain(..)
+<a href=#704 id=704 data-nosnippet>704</a>                    .map(|direction| (antenna, direction, span)),
+<a href=#705 id=705 data-nosnippet>705</a>            );
+<a href=#706 id=706 data-nosnippet>706</a>            rows.earlier_s = <span class="prelude-val">Some</span>(rows.last_s);
+<a href=#707 id=707 data-nosnippet>707</a>            rows.last_s = time_s;
+<a href=#708 id=708 data-nosnippet>708</a>        }
+<a href=#709 id=709 data-nosnippet>709</a>        <span class="kw">if </span>interval_s == <span class="number">0.0 </span>{
+<a href=#710 id=710 data-nosnippet>710</a>            rows.waiting.push(direction);
+<a href=#711 id=711 data-nosnippet>711</a>        } <span class="kw">else if </span>interval_s &gt; <span class="number">0.0 </span>{
+<a href=#712 id=712 data-nosnippet>712</a>            <span class="kw">let </span>half = interval_s / <span class="number">2.0</span>;
+<a href=#713 id=713 data-nosnippet>713</a>            valid.push((antenna, direction, [time_s - half, time_s + half]));
+<a href=#714 id=714 data-nosnippet>714</a>        } <span class="kw">else </span>{
+<a href=#715 id=715 data-nosnippet>715</a>            valid.push((antenna, direction, [f64::NEG_INFINITY, f64::INFINITY]));
+<a href=#716 id=716 data-nosnippet>716</a>        }
+<a href=#717 id=717 data-nosnippet>717</a>    }
+<a href=#718 id=718 data-nosnippet>718</a>
+<a href=#719 id=719 data-nosnippet>719</a>    <span class="doccomment">/// Onto `valid` go the rows of INTERVAL 0 no later row bounds: by the
+<a href=#720 id=720 data-nosnippet>720</a>    /// antenna's earlier TIME, else at every time.
+<a href=#721 id=721 data-nosnippet>721</a>    </span><span class="kw">fn </span>finish(<span class="kw-2">&amp;mut </span><span class="self">self</span>, valid: <span class="kw-2">&amp;mut </span>Vec&lt;ValidPointing&gt;) {
+<a href=#722 id=722 data-nosnippet>722</a>        <span class="kw">for </span>(<span class="kw-2">&amp;</span>antenna, rows) <span class="kw">in </span><span class="kw-2">&amp;mut </span><span class="self">self</span>.antennas {
+<a href=#723 id=723 data-nosnippet>723</a>            <span class="kw">let </span>span = rows
+<a href=#724 id=724 data-nosnippet>724</a>                .earlier_s
+<a href=#725 id=725 data-nosnippet>725</a>                .map_or([f64::NEG_INFINITY, f64::INFINITY], |earlier| {
+<a href=#726 id=726 data-nosnippet>726</a>                    <span class="kw">let </span>half = (rows.last_s - earlier).abs() / <span class="number">2.0</span>;
+<a href=#727 id=727 data-nosnippet>727</a>                    [rows.last_s - half, rows.last_s + half]
+<a href=#728 id=728 data-nosnippet>728</a>                });
+<a href=#729 id=729 data-nosnippet>729</a>            valid.extend(
+<a href=#730 id=730 data-nosnippet>730</a>                rows.waiting
+<a href=#731 id=731 data-nosnippet>731</a>                    .drain(..)
+<a href=#732 id=732 data-nosnippet>732</a>                    .map(|direction| (antenna, direction, span)),
+<a href=#733 id=733 data-nosnippet>733</a>            );
+<a href=#734 id=734 data-nosnippet>734</a>        }
+<a href=#735 id=735 data-nosnippet>735</a>    }
+<a href=#736 id=736 data-nosnippet>736</a>}
+<a href=#737 id=737 data-nosnippet>737</a>
+<a href=#738 id=738 data-nosnippet>738</a><span class="doccomment">/// The scans by their first TIME, with the latest last TIME so far, to
+<a href=#739 id=739 data-nosnippet>739</a>/// find those a span of time overlaps.
+<a href=#740 id=740 data-nosnippet>740</a></span><span class="kw">struct </span>ScansByTime&lt;<span class="lifetime">'t</span>&gt; {
+<a href=#741 id=741 data-nosnippet>741</a>    times_s: <span class="kw-2">&amp;</span><span class="lifetime">'t </span>[[f64; <span class="number">2</span>]],
+<a href=#742 id=742 data-nosnippet>742</a>    by_start: Vec&lt;usize&gt;,
+<a href=#743 id=743 data-nosnippet>743</a>    latest_end: Vec&lt;f64&gt;,
+<a href=#744 id=744 data-nosnippet>744</a>}
+<a href=#745 id=745 data-nosnippet>745</a>
+<a href=#746 id=746 data-nosnippet>746</a><span class="kw">impl</span>&lt;<span class="lifetime">'t</span>&gt; ScansByTime&lt;<span class="lifetime">'t</span>&gt; {
+<a href=#747 id=747 data-nosnippet>747</a>    <span class="kw">fn </span>new(times_s: <span class="kw-2">&amp;</span><span class="lifetime">'t </span>[[f64; <span class="number">2</span>]]) -&gt; <span class="self">Self </span>{
+<a href=#748 id=748 data-nosnippet>748</a>        <span class="kw">let </span><span class="kw-2">mut </span>by_start: Vec&lt;usize&gt; = (<span class="number">0</span>..times_s.len()).collect();
+<a href=#749 id=749 data-nosnippet>749</a>        by_start.sort_by(|<span class="kw-2">&amp;</span>a, <span class="kw-2">&amp;</span>b| times_s[a][<span class="number">0</span>].total_cmp(<span class="kw-2">&amp;</span>times_s[b][<span class="number">0</span>]));
+<a href=#750 id=750 data-nosnippet>750</a>        <span class="kw">let </span><span class="kw-2">mut </span>latest_end = Vec::with_capacity(by_start.len());
+<a href=#751 id=751 data-nosnippet>751</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>scan <span class="kw">in </span><span class="kw-2">&amp;</span>by_start {
+<a href=#752 id=752 data-nosnippet>752</a>            <span class="kw">let </span>end = latest_end
+<a href=#753 id=753 data-nosnippet>753</a>                .last()
+<a href=#754 id=754 data-nosnippet>754</a>                .map_or(f64::NEG_INFINITY, |<span class="kw-2">&amp;</span>end: <span class="kw-2">&amp;</span>f64| end);
+<a href=#755 id=755 data-nosnippet>755</a>            latest_end.push(end.max(times_s[scan][<span class="number">1</span>]));
+<a href=#756 id=756 data-nosnippet>756</a>        }
+<a href=#757 id=757 data-nosnippet>757</a>        <span class="self">Self </span>{
+<a href=#758 id=758 data-nosnippet>758</a>            times_s,
+<a href=#759 id=759 data-nosnippet>759</a>            by_start,
+<a href=#760 id=760 data-nosnippet>760</a>            latest_end,
+<a href=#761 id=761 data-nosnippet>761</a>        }
+<a href=#762 id=762 data-nosnippet>762</a>    }
+<a href=#763 id=763 data-nosnippet>763</a>
+<a href=#764 id=764 data-nosnippet>764</a>    <span class="doccomment">/// Assign valid directions and preserve their per-antenna coverage.
+<a href=#765 id=765 data-nosnippet>765</a>    </span><span class="kw">fn </span>assign(
+<a href=#766 id=766 data-nosnippet>766</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#767 id=767 data-nosnippet>767</a>        valid: <span class="kw-2">&amp;mut </span>Vec&lt;ValidPointing&gt;,
+<a href=#768 id=768 data-nosnippet>768</a>        centres: <span class="kw-2">&amp;mut </span>[<span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt;],
+<a href=#769 id=769 data-nosnippet>769</a>        coverage: <span class="kw-2">&amp;mut </span>[u64],
+<a href=#770 id=770 data-nosnippet>770</a>        antenna_count: usize,
+<a href=#771 id=771 data-nosnippet>771</a>    ) -&gt; SimulatorResult&lt;()&gt; {
+<a href=#772 id=772 data-nosnippet>772</a>        <span class="kw">let </span>words = antenna_count.div_ceil(<span class="number">64</span>);
+<a href=#773 id=773 data-nosnippet>773</a>        <span class="kw">for </span>(antenna, direction, [from_s, to_s]) <span class="kw">in </span>valid.drain(..) {
+<a href=#774 id=774 data-nosnippet>774</a>            <span class="kw">if </span>antenna &lt; <span class="number">0 </span>|| antenna <span class="kw">as </span>usize &gt;= antenna_count {
+<a href=#775 id=775 data-nosnippet>775</a>                <span class="kw">continue</span>;
+<a href=#776 id=776 data-nosnippet>776</a>            }
+<a href=#777 id=777 data-nosnippet>777</a>            <span class="kw">let </span>antenna = antenna <span class="kw">as </span>usize;
+<a href=#778 id=778 data-nosnippet>778</a>            <span class="kw">let </span>started = <span class="self">self
+<a href=#779 id=779 data-nosnippet>779</a>                </span>.by_start
+<a href=#780 id=780 data-nosnippet>780</a>                .partition_point(|<span class="kw-2">&amp;</span>scan| <span class="self">self</span>.times_s[scan][<span class="number">0</span>] &lt;= to_s);
+<a href=#781 id=781 data-nosnippet>781</a>            <span class="kw">for </span>position <span class="kw">in </span>(<span class="number">0</span>..started).rev() {
+<a href=#782 id=782 data-nosnippet>782</a>                <span class="kw">if </span><span class="self">self</span>.latest_end[position] &lt; from_s {
+<a href=#783 id=783 data-nosnippet>783</a>                    <span class="kw">break</span>;
+<a href=#784 id=784 data-nosnippet>784</a>                }
+<a href=#785 id=785 data-nosnippet>785</a>                <span class="kw">let </span>scan = <span class="self">self</span>.by_start[position];
+<a href=#786 id=786 data-nosnippet>786</a>                <span class="kw">if </span><span class="self">self</span>.times_s[scan][<span class="number">1</span>] &lt; from_s {
+<a href=#787 id=787 data-nosnippet>787</a>                    <span class="kw">continue</span>;
+<a href=#788 id=788 data-nosnippet>788</a>                }
+<a href=#789 id=789 data-nosnippet>789</a>                <span class="kw">let </span><span class="prelude-val">Some</span>(direction) = direction <span class="kw">else </span>{
+<a href=#790 id=790 data-nosnippet>790</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(
+<a href=#791 id=791 data-nosnippet>791</a>                        <span class="string">"POINTING direction is not constant (#1294)"</span>,
+<a href=#792 id=792 data-nosnippet>792</a>                    ));
+<a href=#793 id=793 data-nosnippet>793</a>                };
+<a href=#794 id=794 data-nosnippet>794</a>                <span class="kw">if </span>centres[scan]
+<a href=#795 id=795 data-nosnippet>795</a>                    .is_some_and(|known| separation_rad(known, direction) &gt;= SAME_DIRECTION_RAD)
+<a href=#796 id=796 data-nosnippet>796</a>                {
+<a href=#797 id=797 data-nosnippet>797</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(
+<a href=#798 id=798 data-nosnippet>798</a>                        <span class="string">"POINTING changes within a scan or between antennas (#1294)"</span>,
+<a href=#799 id=799 data-nosnippet>799</a>                    ));
+<a href=#800 id=800 data-nosnippet>800</a>                }
+<a href=#801 id=801 data-nosnippet>801</a>                centres[scan] = <span class="prelude-val">Some</span>(direction);
+<a href=#802 id=802 data-nosnippet>802</a>                coverage[scan * words + antenna / <span class="number">64</span>] |= <span class="number">1 </span>&lt;&lt; (antenna % <span class="number">64</span>);
+<a href=#803 id=803 data-nosnippet>803</a>            }
+<a href=#804 id=804 data-nosnippet>804</a>        }
+<a href=#805 id=805 data-nosnippet>805</a>        <span class="prelude-val">Ok</span>(())
+<a href=#806 id=806 data-nosnippet>806</a>    }
+<a href=#807 id=807 data-nosnippet>807</a>}
+<a href=#808 id=808 data-nosnippet>808</a>
+<a href=#809 id=809 data-nosnippet>809</a><span class="doccomment">/// The angle between two directions given as (longitude, latitude),
+<a href=#810 id=810 data-nosnippet>810</a>/// radians.
+<a href=#811 id=811 data-nosnippet>811</a></span><span class="kw">fn </span>separation_rad([lon1, lat1]: [f64; <span class="number">2</span>], [lon2, lat2]: [f64; <span class="number">2</span>]) -&gt; f64 {
+<a href=#812 id=812 data-nosnippet>812</a>    <span class="kw">let </span>haversine = ((lat2 - lat1) / <span class="number">2.0</span>).sin().powi(<span class="number">2</span>)
+<a href=#813 id=813 data-nosnippet>813</a>        + lat1.cos() * lat2.cos() * ((lon2 - lon1) / <span class="number">2.0</span>).sin().powi(<span class="number">2</span>);
+<a href=#814 id=814 data-nosnippet>814</a>    <span class="number">2.0 </span>* haversine.sqrt().min(<span class="number">1.0</span>).asin()
+<a href=#815 id=815 data-nosnippet>815</a>}
 </code></pre></div></section></main></body></html>

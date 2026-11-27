@@ -11,9 +11,9 @@
 <a href=#11 id=11 data-nosnippet>11</a>
 <a href=#12 id=12 data-nosnippet>12</a></span><span class="kw">use </span>std::str::FromStr;
 <a href=#13 id=13 data-nosnippet>13</a>
-<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>casa_types::measures::direction::{DirectionRef, MDirection};
-<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>casa_types::measures::frequency::FrequencyRef;
-<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>casa_types::measures::{EpochRef, MEpoch, MeasFrame, PositionRef};
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>casa_core::measures::direction::{DirectionRef, MDirection};
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>casa_core::measures::frequency::FrequencyRef;
+<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>casa_core::measures::{EpochRef, MEpoch, MeasFrame, PositionRef};
 <a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>pyo3::PyResult;
 <a href=#18 id=18 data-nosnippet>18</a>
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">use super</span>::{FrameValue, State, no_measures, record};
@@ -190,7 +190,7 @@
 <a href=#190 id=190 data-nosnippet>190</a>        &amp;&amp; source == destination
 <a href=#191 id=191 data-nosnippet>191</a>    {
 <a href=#192 id=192 data-nosnippet>192</a>        <span class="kw">let </span>value = <span class="kw">if </span>raze {
-<a href=#193 id=193 data-nosnippet>193</a>            casa_types::measures::MjdHighPrec::new(value.day(), <span class="number">0.0</span>)
+<a href=#193 id=193 data-nosnippet>193</a>            casa_core::measures::MjdHighPrec::new(value.day(), <span class="number">0.0</span>)
 <a href=#194 id=194 data-nosnippet>194</a>        } <span class="kw">else </span>{
 <a href=#195 id=195 data-nosnippet>195</a>            value
 <a href=#196 id=196 data-nosnippet>196</a>        };
@@ -205,7 +205,7 @@
 <a href=#205 id=205 data-nosnippet>205</a>        <span class="kw">return </span><span class="kw">super</span>::geometry::convert(state, measure, target);
 <a href=#206 id=206 data-nosnippet>206</a>    }
 <a href=#207 id=207 data-nosnippet>207</a>    <span class="kw">if let </span>MeasureValue::Doppler(value) = measure.value {
-<a href=#208 id=208 data-nosnippet>208</a>        <span class="kw">let </span>converted = casa_types::measures::doppler::MDoppler::new(
+<a href=#208 id=208 data-nosnippet>208</a>        <span class="kw">let </span>converted = casa_core::measures::doppler::MDoppler::new(
 <a href=#209 id=209 data-nosnippet>209</a>            value,
 <a href=#210 id=210 data-nosnippet>210</a>            <span class="kw">crate</span>::convert::holder::doppler_ref(measure.refer)
 <a href=#211 id=211 data-nosnippet>211</a>                .map_err(pyo3::exceptions::PyRuntimeError::new_err)<span class="question-mark">?</span>,
@@ -250,14 +250,14 @@
 <a href=#250 id=250 data-nosnippet>250</a>        <span class="kw-2">&amp;</span>MDirection,
 <a href=#251 id=251 data-nosnippet>251</a>        DirectionRef,
 <a href=#252 id=252 data-nosnippet>252</a>    )
-<a href=#253 id=253 data-nosnippet>253</a>        -&gt; <span class="prelude-ty">Result</span>&lt;MDirection, casa_types::measures::MeasureError&gt;,
+<a href=#253 id=253 data-nosnippet>253</a>        -&gt; <span class="prelude-ty">Result</span>&lt;MDirection, casa_core::measures::MeasureError&gt;,
 <a href=#254 id=254 data-nosnippet>254</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Measure, String&gt; {
 <a href=#255 id=255 data-nosnippet>255</a>    <span class="kw">if </span>measure.refer == target &amp;&amp; !target.starts_with(<span class="string">"R_"</span>) {
 <a href=#256 id=256 data-nosnippet>256</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(measure);
 <a href=#257 id=257 data-nosnippet>257</a>    }
 <a href=#258 id=258 data-nosnippet>258</a>    <span class="kw">let </span>unsupported =
 <a href=#259 id=259 data-nosnippet>259</a>        |kind: <span class="kw-2">&amp;</span>str| <span class="macro">format!</span>(<span class="string">"the {target} {kind} frame is not yet implemented in casa-rs"</span>);
-<a href=#260 id=260 data-nosnippet>260</a>    <span class="kw">let </span>error = |error: casa_types::measures::MeasureError| error.to_string();
+<a href=#260 id=260 data-nosnippet>260</a>    <span class="kw">let </span>error = |error: casa_core::measures::MeasureError| error.to_string();
 <a href=#261 id=261 data-nosnippet>261</a>    <span class="kw">let </span>converted = <span class="kw">match </span>measure.to_casa()<span class="question-mark">? </span>{
 <a href=#262 id=262 data-nosnippet>262</a>        CasaMeasure::Epoch(epoch) =&gt; {
 <a href=#263 id=263 data-nosnippet>263</a>            <span class="kw">let </span>(reference, raze) = epoch_ref(target).map_err(|<span class="kw">_</span>| unsupported(<span class="string">"epoch"</span>))<span class="question-mark">?</span>;
@@ -321,7 +321,7 @@
 <a href=#321 id=321 data-nosnippet>321</a>    direction: <span class="kw-2">&amp;</span>MDirection,
 <a href=#322 id=322 data-nosnippet>322</a>    target: DirectionRef,
 <a href=#323 id=323 data-nosnippet>323</a>    frame: <span class="kw-2">&amp;</span>MeasFrame,
-<a href=#324 id=324 data-nosnippet>324</a>) -&gt; <span class="prelude-ty">Result</span>&lt;MDirection, casa_types::measures::MeasureError&gt; {
+<a href=#324 id=324 data-nosnippet>324</a>) -&gt; <span class="prelude-ty">Result</span>&lt;MDirection, casa_core::measures::MeasureError&gt; {
 <a href=#325 id=325 data-nosnippet>325</a>    <span class="kw">if </span>direction.refer() == target {
 <a href=#326 id=326 data-nosnippet>326</a>        <span class="kw">return </span>direction.convert_to(target, frame);
 <a href=#327 id=327 data-nosnippet>327</a>    }
@@ -333,9 +333,9 @@
 <a href=#333 id=333 data-nosnippet>333</a>    state: <span class="kw-2">&amp;mut </span>State,
 <a href=#334 id=334 data-nosnippet>334</a>    direction: <span class="kw-2">&amp;</span>MDirection,
 <a href=#335 id=335 data-nosnippet>335</a>    frame: <span class="kw-2">&amp;</span>MeasFrame,
-<a href=#336 id=336 data-nosnippet>336</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(MDirection, f64), casa_types::measures::MeasureError&gt; {
-<a href=#337 id=337 data-nosnippet>337</a>    <span class="kw">use </span>casa_measures_data::PlanetaryTable;
-<a href=#338 id=338 data-nosnippet>338</a>    <span class="kw">use </span>casa_types::measures::MeasureError;
+<a href=#336 id=336 data-nosnippet>336</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(MDirection, f64), casa_core::measures::MeasureError&gt; {
+<a href=#337 id=337 data-nosnippet>337</a>    <span class="kw">use </span>casa_core::measures::MeasureError;
+<a href=#338 id=338 data-nosnippet>338</a>    <span class="kw">use </span>casa_measures::PlanetaryTable;
 <a href=#339 id=339 data-nosnippet>339</a>
 <a href=#340 id=340 data-nosnippet>340</a>    <span class="kw">let </span>refer = direction.refer();
 <a href=#341 id=341 data-nosnippet>341</a>    <span class="kw">if </span>refer == DirectionRef::COMET {
@@ -347,7 +347,7 @@
 <a href=#347 id=347 data-nosnippet>347</a>    <span class="kw">if </span>frame.epoch().is_none() {
 <a href=#348 id=348 data-nosnippet>348</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(MeasureError::MissingFrameData { what: <span class="string">"epoch" </span>});
 <a href=#349 id=349 data-nosnippet>349</a>    }
-<a href=#350 id=350 data-nosnippet>350</a>    <span class="kw">let </span>model_error = |error: casa_measures_data::MeasuresDataError| MeasureError::ModelError {
+<a href=#350 id=350 data-nosnippet>350</a>    <span class="kw">let </span>model_error = |error: casa_measures::MeasuresDataError| MeasureError::ModelError {
 <a href=#351 id=351 data-nosnippet>351</a>        model: <span class="string">"DE200"</span>,
 <a href=#352 id=352 data-nosnippet>352</a>        reason: error.to_string(),
 <a href=#353 id=353 data-nosnippet>353</a>    };

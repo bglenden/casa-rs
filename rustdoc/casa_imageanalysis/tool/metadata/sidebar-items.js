@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["brightness_unit","coordinate_record","coordsys_for_axes","has_mask","image_history","image_shape","image_type","misc_info","misc_info_casa","pixel_type_name","set_brightness_unit","set_coordinate_record","set_history_casa","set_misc_info"]};

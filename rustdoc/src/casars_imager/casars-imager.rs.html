@@ -10,26 +10,25 @@
 <a href=#10 id=10 data-nosnippet>10</a><span class="doccomment">/// Freed working buffers leave the process at once, so a run's footprint
 <a href=#11 id=11 data-nosnippet>11</a>/// follows the memory its phases admit.
 <a href=#12 id=12 data-nosnippet>12</a></span><span class="attr">#[global_allocator]
-<a href=#13 id=13 data-nosnippet>13</a></span><span class="kw">static </span>ALLOCATOR: casa_imaging_application::ReturningAllocator =
-<a href=#14 id=14 data-nosnippet>14</a>    casa_imaging_application::ReturningAllocator;
-<a href=#15 id=15 data-nosnippet>15</a>
-<a href=#16 id=16 data-nosnippet>16</a><span class="kw">fn </span>main() -&gt; ExitCode {
-<a href=#17 id=17 data-nosnippet>17</a>    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = casars_cli::interrupt::install() {
-<a href=#18 id=18 data-nosnippet>18</a>        <span class="macro">eprintln!</span>(<span class="string">"casars-imager: install interrupt handler: {error}"</span>);
-<a href=#19 id=19 data-nosnippet>19</a>        <span class="kw">return </span>ExitCode::FAILURE;
-<a href=#20 id=20 data-nosnippet>20</a>    }
-<a href=#21 id=21 data-nosnippet>21</a>    <span class="kw">let </span><span class="kw-2">mut </span>options = ImagingExecutionOptions::from_env();
-<a href=#22 id=22 data-nosnippet>22</a>    options.cancel = casars_cli::interrupt::token().clone();
-<a href=#23 id=23 data-nosnippet>23</a>    options.write_run_summary =
-<a href=#24 id=24 data-nosnippet>24</a>        std::env::var_os(RUN_SUMMARY_VARIABLE).is_some_and(|value| value == <span class="string">"1"</span>);
-<a href=#25 id=25 data-nosnippet>25</a>    <span class="kw">let </span>front_end = task_front_end_with_options(options);
-<a href=#26 id=26 data-nosnippet>26</a>    casars_cli::logging::run_front_end(
-<a href=#27 id=27 data-nosnippet>27</a>        <span class="kw-2">&amp;</span>front_end,
-<a href=#28 id=28 data-nosnippet>28</a>        std::env::args_os().skip(<span class="number">1</span>),
-<a href=#29 id=29 data-nosnippet>29</a>        casars_cli::logging::CasaLoggingConfig::from_env(),
-<a href=#30 id=30 data-nosnippet>30</a>        std::env::set_current_dir,
-<a href=#31 id=31 data-nosnippet>31</a>        <span class="kw-2">&amp;mut </span>std::io::stdout(),
-<a href=#32 id=32 data-nosnippet>32</a>        std::io::stderr(),
-<a href=#33 id=33 data-nosnippet>33</a>    )
-<a href=#34 id=34 data-nosnippet>34</a>}
+<a href=#13 id=13 data-nosnippet>13</a></span><span class="kw">static </span>ALLOCATOR: casa_imaging::ReturningAllocator = casa_imaging::ReturningAllocator;
+<a href=#14 id=14 data-nosnippet>14</a>
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">fn </span>main() -&gt; ExitCode {
+<a href=#16 id=16 data-nosnippet>16</a>    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = casars_cli::interrupt::install() {
+<a href=#17 id=17 data-nosnippet>17</a>        <span class="macro">eprintln!</span>(<span class="string">"casars-imager: install interrupt handler: {error}"</span>);
+<a href=#18 id=18 data-nosnippet>18</a>        <span class="kw">return </span>ExitCode::FAILURE;
+<a href=#19 id=19 data-nosnippet>19</a>    }
+<a href=#20 id=20 data-nosnippet>20</a>    <span class="kw">let </span><span class="kw-2">mut </span>options = ImagingExecutionOptions::from_env();
+<a href=#21 id=21 data-nosnippet>21</a>    options.cancel = casars_cli::interrupt::token().clone();
+<a href=#22 id=22 data-nosnippet>22</a>    options.write_run_summary =
+<a href=#23 id=23 data-nosnippet>23</a>        std::env::var_os(RUN_SUMMARY_VARIABLE).is_some_and(|value| value == <span class="string">"1"</span>);
+<a href=#24 id=24 data-nosnippet>24</a>    <span class="kw">let </span>front_end = task_front_end_with_options(options);
+<a href=#25 id=25 data-nosnippet>25</a>    casars_cli::logging::run_front_end(
+<a href=#26 id=26 data-nosnippet>26</a>        <span class="kw-2">&amp;</span>front_end,
+<a href=#27 id=27 data-nosnippet>27</a>        std::env::args_os().skip(<span class="number">1</span>),
+<a href=#28 id=28 data-nosnippet>28</a>        casars_cli::logging::CasaLoggingConfig::from_env(),
+<a href=#29 id=29 data-nosnippet>29</a>        std::env::set_current_dir,
+<a href=#30 id=30 data-nosnippet>30</a>        <span class="kw-2">&amp;mut </span>std::io::stdout(),
+<a href=#31 id=31 data-nosnippet>31</a>        std::io::stderr(),
+<a href=#32 id=32 data-nosnippet>32</a>    )
+<a href=#33 id=33 data-nosnippet>33</a>}
 </code></pre></div></section></main></body></html>

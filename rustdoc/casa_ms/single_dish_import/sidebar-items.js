@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["read_asap","read_nro"],"struct":["ImportedScanTable"]};

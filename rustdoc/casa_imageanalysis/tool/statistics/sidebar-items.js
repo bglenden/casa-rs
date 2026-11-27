@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["image_statistics","parse_cursor_axes","parse_pixel_range","parse_statistics_algorithm","stats_logs"],"struct":["StatisticsRequest"]};

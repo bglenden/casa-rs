@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["beam_for_convolved_size","deconvolve_attached_beam_context","deconvolve_beam_context","deconvolve_component_beam","deconvolve_from_beam","deconvolve_gaussian_source","effective_image_info","format_beam_record_history","rotate_beam_quantity","set_restoring_beam_full"],"struct":["DeconvolveBeamResult","FullSetBeamRequest"]};

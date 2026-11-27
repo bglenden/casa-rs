@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Destination","Loss","LossKind","PaddingRows"],"fn":["default_memory_bytes"],"struct":["CreationInput","CreationOptions","CreationPlan","CreationReport","HistoryRow","MemoryCharges","Replacement"]};
+window.SIDEBAR_ITEMS = {"enum":["Destination","Loss","LossKind","PaddingRows"],"fn":["default_memory_bytes"],"mod":["lockstep","losses","pointing_plan"],"struct":["CreationInput","CreationOptions","CreationPlan","CreationReport","HistoryRow","MemoryCharges","Replacement","Stage"]};

@@ -1,43 +1,43 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `frontends/casars-python/src/tools/image/deconvolve_components.rs`."><title>deconvolve_components.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="casars_python" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../../static.files/src-script-813739b1.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casars_python/tools/image/</div>deconvolve_components.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a>
-<a href=#3 id=3 data-nosnippet>3</a></span><span class="kw">use </span>casa_components::ShapeType;
-<a href=#4 id=4 data-nosnippet>4</a><span class="kw">use </span>casa_coordinates::CoordinateSystem;
-<a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>casa_images::{BeamComponent, GaussianBeam};
-<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_types::RecordValue;
-<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_types::quanta::{Quantity, Unit, casacore};
-<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>pyo3::exceptions::{PySystemError, PyTypeError};
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>pyo3::prelude::<span class="kw-2">*</span>;
-<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>pyo3::types::{PyBytes, PyDict, PyFloat, PyList, PyString};
-<a href=#11 id=11 data-nosnippet>11</a>
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span><span class="kw">crate</span>::convert::value::CasaValue;
-<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span><span class="kw">crate</span>::tools::{LogLine, componentlist::image_component_records, emit, table::casa_record};
-<a href=#14 id=14 data-nosnippet>14</a>
-<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span><span class="kw">super</span>::PyImageTool;
-<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span><span class="kw">super</span>::beam_edit::beam_for_units;
-<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span><span class="kw">super</span>::beam_view::BeamView;
-<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span><span class="kw">super</span>::handle::{ImageHandle, raised};
-<a href=#19 id=19 data-nosnippet>19</a>
-<a href=#20 id=20 data-nosnippet>20</a><span class="kw">fn </span>supplied&lt;<span class="lifetime">'py</span>&gt;(value: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'py</span>, PyAny&gt;) -&gt; PyResult&lt;<span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'py</span>, PyAny&gt;&gt;&gt; {
-<a href=#21 id=21 data-nosnippet>21</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(value.clone()))
-<a href=#22 id=22 data-nosnippet>22</a>}
-<a href=#23 id=23 data-nosnippet>23</a>
-<a href=#24 id=24 data-nosnippet>24</a><span class="kw">fn </span>plane_index(value: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;, name: <span class="kw-2">&amp;</span>str) -&gt; PyResult&lt;(i64, bool)&gt; {
-<a href=#25 id=25 data-nosnippet>25</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(value) = value <span class="kw">else </span>{
-<a href=#26 id=26 data-nosnippet>26</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((-<span class="number">1</span>, <span class="bool-val">false</span>));
-<a href=#27 id=27 data-nosnippet>27</a>    };
-<a href=#28 id=28 data-nosnippet>28</a>    <span class="kw">if </span>value.is_instance_of::&lt;PyFloat&gt;()
-<a href=#29 id=29 data-nosnippet>29</a>        || value.is_instance_of::&lt;PyString&gt;()
-<a href=#30 id=30 data-nosnippet>30</a>        || value.is_instance_of::&lt;PyBytes&gt;()
-<a href=#31 id=31 data-nosnippet>31</a>        || value.is_instance_of::&lt;PyList&gt;()
-<a href=#32 id=32 data-nosnippet>32</a>        || value.is_instance_of::&lt;PyDict&gt;()
-<a href=#33 id=33 data-nosnippet>33</a>    {
-<a href=#34 id=34 data-nosnippet>34</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(<span class="macro">format!</span>(
-<a href=#35 id=35 data-nosnippet>35</a>            <span class="string">"argument _{name} must be an integer"
-<a href=#36 id=36 data-nosnippet>36</a>        </span>)));
-<a href=#37 id=37 data-nosnippet>37</a>    }
-<a href=#38 id=38 data-nosnippet>38</a>    <span class="comment">// The original binding invokes image metadata validation even when
-<a href=#39 id=39 data-nosnippet>39</a>    // conversion sets a Python error and returns the sentinel -1.
-<a href=#40 id=40 data-nosnippet>40</a>    </span><span class="prelude-val">Ok</span>(value
+<a href=#3 id=3 data-nosnippet>3</a></span><span class="doccomment">//! Thin PyO3 `ia.deconvolvecomponentlist` wrapper delegating to [`casa_imageanalysis::tool::beam_ops`].
+<a href=#4 id=4 data-nosnippet>4</a>
+<a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use </span>casa_components::ShapeType;
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_core::RecordValue;
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_imageanalysis::tool::attachment::AttachedImage;
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>casa_imageanalysis::tool::beam_ops::{
+<a href=#9 id=9 data-nosnippet>9</a>    deconvolve_attached_beam_context, deconvolve_gaussian_source,
+<a href=#10 id=10 data-nosnippet>10</a>};
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>casa_images::GaussianBeam;
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>pyo3::exceptions::{PySystemError, PyTypeError};
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>pyo3::prelude::<span class="kw-2">*</span>;
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>pyo3::types::{PyBytes, PyDict, PyFloat, PyList, PyString};
+<a href=#15 id=15 data-nosnippet>15</a>
+<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span><span class="kw">crate</span>::convert::value::CasaValue;
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span><span class="kw">crate</span>::tools::{LogLine, componentlist::image_component_records, emit, table::casa_record};
+<a href=#18 id=18 data-nosnippet>18</a>
+<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span><span class="kw">super</span>::PyImageTool;
+<a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span><span class="kw">super</span>::handle::raised;
+<a href=#21 id=21 data-nosnippet>21</a>
+<a href=#22 id=22 data-nosnippet>22</a><span class="kw">fn </span>supplied&lt;<span class="lifetime">'py</span>&gt;(value: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'py</span>, PyAny&gt;) -&gt; PyResult&lt;<span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'py</span>, PyAny&gt;&gt;&gt; {
+<a href=#23 id=23 data-nosnippet>23</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(value.clone()))
+<a href=#24 id=24 data-nosnippet>24</a>}
+<a href=#25 id=25 data-nosnippet>25</a>
+<a href=#26 id=26 data-nosnippet>26</a><span class="kw">fn </span>plane_index(value: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;, name: <span class="kw-2">&amp;</span>str) -&gt; PyResult&lt;(i64, bool)&gt; {
+<a href=#27 id=27 data-nosnippet>27</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(value) = value <span class="kw">else </span>{
+<a href=#28 id=28 data-nosnippet>28</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((-<span class="number">1</span>, <span class="bool-val">false</span>));
+<a href=#29 id=29 data-nosnippet>29</a>    };
+<a href=#30 id=30 data-nosnippet>30</a>    <span class="kw">if </span>value.is_instance_of::&lt;PyFloat&gt;()
+<a href=#31 id=31 data-nosnippet>31</a>        || value.is_instance_of::&lt;PyString&gt;()
+<a href=#32 id=32 data-nosnippet>32</a>        || value.is_instance_of::&lt;PyBytes&gt;()
+<a href=#33 id=33 data-nosnippet>33</a>        || value.is_instance_of::&lt;PyList&gt;()
+<a href=#34 id=34 data-nosnippet>34</a>        || value.is_instance_of::&lt;PyDict&gt;()
+<a href=#35 id=35 data-nosnippet>35</a>    {
+<a href=#36 id=36 data-nosnippet>36</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(<span class="macro">format!</span>(
+<a href=#37 id=37 data-nosnippet>37</a>            <span class="string">"argument _{name} must be an integer"
+<a href=#38 id=38 data-nosnippet>38</a>        </span>)));
+<a href=#39 id=39 data-nosnippet>39</a>    }
+<a href=#40 id=40 data-nosnippet>40</a>    <span class="prelude-val">Ok</span>(value
 <a href=#41 id=41 data-nosnippet>41</a>        .extract::&lt;i64&gt;()
 <a href=#42 id=42 data-nosnippet>42</a>        .map_or((-<span class="number">1</span>, <span class="bool-val">true</span>), |index| (i64::from(index <span class="kw">as </span>i32), <span class="bool-val">false</span>)))
 <a href=#43 id=43 data-nosnippet>43</a>}
@@ -80,153 +80,74 @@
 <a href=#80 id=80 data-nosnippet>80</a>    <span class="prelude-val">Ok</span>(())
 <a href=#81 id=81 data-nosnippet>81</a>}
 <a href=#82 id=82 data-nosnippet>82</a>
-<a href=#83 id=83 data-nosnippet>83</a><span class="kw">fn </span>source_beam(axes: <span class="kw-2">&amp;</span>[Quantity; <span class="number">3</span>], rad: <span class="kw-2">&amp;</span>Unit) -&gt; PyResult&lt;GaussianBeam&gt; {
-<a href=#84 id=84 data-nosnippet>84</a>    <span class="kw">let </span>[major, minor, pa] = axes;
-<a href=#85 id=85 data-nosnippet>85</a>    <span class="kw">let </span>radians = |quantity| casacore::get_conformant_value(quantity, rad).map_err(raised);
-<a href=#86 id=86 data-nosnippet>86</a>    <span class="kw">let </span>major_rad = radians(major)<span class="question-mark">?</span>;
-<a href=#87 id=87 data-nosnippet>87</a>    <span class="kw">let </span>minor_rad = radians(minor)<span class="question-mark">?</span>;
-<a href=#88 id=88 data-nosnippet>88</a>    <span class="kw">let </span>angle_rad = radians(pa)<span class="question-mark">?</span>;
-<a href=#89 id=89 data-nosnippet>89</a>    <span class="kw">if </span>angle_rad.abs() &gt; std::f64::consts::TAU {
-<a href=#90 id=90 data-nosnippet>90</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
-<a href=#91 id=91 data-nosnippet>91</a>            <span class="string">"Gaussian2DParam&lt;T&gt;::setPA(const T &amp;pa) - PA must be in radians and between -2pi and 2pi"</span>,
-<a href=#92 id=92 data-nosnippet>92</a>        ));
-<a href=#93 id=93 data-nosnippet>93</a>    }
-<a href=#94 id=94 data-nosnippet>94</a>    <span class="comment">// GaussianShape starts at one arcminute and stores an axial ratio.
-<a href=#95 id=95 data-nosnippet>95</a>    // setWidth narrows the minor axis first for a smaller source major axis.
-<a href=#96 id=96 data-nosnippet>96</a>    // Preserve both ratio operations and TwoSidedShape's unit round trip:
-<a href=#97 id=97 data-nosnippet>97</a>    // a rounding bit can change an unresolved source into a resolved fit.
-<a href=#98 id=98 data-nosnippet>98</a>    </span><span class="kw">let </span>default_width = Quantity::new(<span class="number">1.0</span>, <span class="string">"arcmin"</span>).expect(<span class="string">"built-in angular unit"</span>);
-<a href=#99 id=99 data-nosnippet>99</a>    <span class="kw">let </span>default_width = radians(<span class="kw-2">&amp;</span>default_width)<span class="question-mark">?</span>;
-<a href=#100 id=100 data-nosnippet>100</a>    <span class="kw">let </span>minor_rad = <span class="kw">if </span>major_rad &lt;= default_width {
-<a href=#101 id=101 data-nosnippet>101</a>        default_width * (minor_rad / default_width)
-<a href=#102 id=102 data-nosnippet>102</a>    } <span class="kw">else </span>{
-<a href=#103 id=103 data-nosnippet>103</a>        minor_rad
-<a href=#104 id=104 data-nosnippet>104</a>    };
-<a href=#105 id=105 data-nosnippet>105</a>    <span class="kw">let </span>minor_rad = major_rad * (minor_rad / major_rad);
-<a href=#106 id=106 data-nosnippet>106</a>    <span class="kw">let </span>in_record_units = |value, unit| {
-<a href=#107 id=107 data-nosnippet>107</a>        casacore::convert(<span class="kw-2">&amp;</span>Quantity::with_unit(value, rad.clone()), <span class="prelude-val">Some</span>(unit)).map_err(raised)
-<a href=#108 id=108 data-nosnippet>108</a>    };
-<a href=#109 id=109 data-nosnippet>109</a>    <span class="kw">let </span>angle_rad = angle_rad % std::f64::consts::PI;
-<a href=#110 id=110 data-nosnippet>110</a>    <span class="kw">let </span>angle_rad = <span class="kw">if </span>angle_rad &lt; <span class="number">0.0 </span>{
-<a href=#111 id=111 data-nosnippet>111</a>        angle_rad + std::f64::consts::PI
-<a href=#112 id=112 data-nosnippet>112</a>    } <span class="kw">else </span>{
-<a href=#113 id=113 data-nosnippet>113</a>        angle_rad
-<a href=#114 id=114 data-nosnippet>114</a>    };
-<a href=#115 id=115 data-nosnippet>115</a>    <span class="kw">let </span>angle = in_record_units(angle_rad, pa.unit())<span class="question-mark">?</span>;
-<a href=#116 id=116 data-nosnippet>116</a>    <span class="kw">let </span>angle = casa_images::beam::wrap_position_angle(<span class="kw-2">&amp;</span>angle).map_err(raised)<span class="question-mark">?</span>;
-<a href=#117 id=117 data-nosnippet>117</a>    <span class="prelude-val">Ok</span>(GaussianBeam::new(
-<a href=#118 id=118 data-nosnippet>118</a>        radians(<span class="kw-2">&amp;</span>in_record_units(major_rad, major.unit())<span class="question-mark">?</span>)<span class="question-mark">?</span>,
-<a href=#119 id=119 data-nosnippet>119</a>        radians(<span class="kw-2">&amp;</span>in_record_units(minor_rad, minor.unit())<span class="question-mark">?</span>)<span class="question-mark">?</span>,
-<a href=#120 id=120 data-nosnippet>120</a>        radians(<span class="kw-2">&amp;</span>angle)<span class="question-mark">?</span>,
-<a href=#121 id=121 data-nosnippet>121</a>    ))
-<a href=#122 id=122 data-nosnippet>122</a>}
-<a href=#123 id=123 data-nosnippet>123</a>
-<a href=#124 id=124 data-nosnippet>124</a><span class="kw">fn </span>deconvolved_record(
-<a href=#125 id=125 data-nosnippet>125</a>    image: <span class="kw-2">&amp;</span>ImageHandle,
-<a href=#126 id=126 data-nosnippet>126</a>    beam_view: <span class="kw-2">&amp;</span>BeamView,
-<a href=#127 id=127 data-nosnippet>127</a>    input: <span class="kw-2">&amp;</span>RecordValue,
-<a href=#128 id=128 data-nosnippet>128</a>    channel: i64,
-<a href=#129 id=129 data-nosnippet>129</a>    polarization: i64,
-<a href=#130 id=130 data-nosnippet>130</a>    logs: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
-<a href=#131 id=131 data-nosnippet>131</a>) -&gt; PyResult&lt;CasaValue&gt; {
-<a href=#132 id=132 data-nosnippet>132</a>    image.check_single_precision(<span class="string">"deconvolvecomponentlist"</span>)<span class="question-mark">?</span>;
-<a href=#133 id=133 data-nosnippet>133</a>    <span class="kw">let </span>components = image_component_records(input, logs)<span class="question-mark">?</span>;
-<a href=#134 id=134 data-nosnippet>134</a>    <span class="kw">let </span>missing_beam = || raised(<span class="string">"Exception: This image does not have a restoring beam."</span>);
-<a href=#135 id=135 data-nosnippet>135</a>    <span class="kw">if </span>beam_view.beam_set().map_err(raised)<span class="question-mark">?</span>.is_empty() {
-<a href=#136 id=136 data-nosnippet>136</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(missing_beam());
-<a href=#137 id=137 data-nosnippet>137</a>    }
-<a href=#138 id=138 data-nosnippet>138</a>    <span class="kw">if </span>CoordinateSystem::first_direction_in_record(<span class="kw-2">&amp;</span>image.coordinate_record())
-<a href=#139 id=139 data-nosnippet>139</a>        .map_err(raised)<span class="question-mark">?
-<a href=#140 id=140 data-nosnippet>140</a>        </span>.is_none()
-<a href=#141 id=141 data-nosnippet>141</a>    {
-<a href=#142 id=142 data-nosnippet>142</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
-<a href=#143 id=143 data-nosnippet>143</a>            <span class="string">"Exception: This image does not contain a direction coordinate."</span>,
-<a href=#144 id=144 data-nosnippet>144</a>        ));
-<a href=#145 id=145 data-nosnippet>145</a>    }
-<a href=#146 id=146 data-nosnippet>146</a>    <span class="kw">let </span>stored_beam = beam_for_units(beam_view, channel, polarization)<span class="question-mark">?</span>.ok_or_else(missing_beam)<span class="question-mark">?</span>;
-<a href=#147 id=147 data-nosnippet>147</a>    <span class="kw">let </span>rad = Unit::new(<span class="string">"rad"</span>).expect(<span class="string">"built-in radians unit"</span>);
-<a href=#148 id=148 data-nosnippet>148</a>    <span class="kw">let </span>radians =
-<a href=#149 id=149 data-nosnippet>149</a>        |quantity: <span class="kw-2">&amp;</span>Quantity| casacore::get_conformant_value(quantity, <span class="kw-2">&amp;</span>rad).map_err(raised);
-<a href=#150 id=150 data-nosnippet>150</a>    <span class="kw">let </span>beam = GaussianBeam::new(
-<a href=#151 id=151 data-nosnippet>151</a>        radians(stored_beam.component(BeamComponent::Major))<span class="question-mark">?</span>,
-<a href=#152 id=152 data-nosnippet>152</a>        radians(stored_beam.component(BeamComponent::Minor))<span class="question-mark">?</span>,
-<a href=#153 id=153 data-nosnippet>153</a>        radians(<span class="kw-2">&amp;</span>stored_beam.wrapped_position_angle().map_err(raised)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
-<a href=#154 id=154 data-nosnippet>154</a>    );
-<a href=#155 id=155 data-nosnippet>155</a>    <span class="kw">let </span><span class="kw-2">mut </span>fields = <span class="macro">vec!</span>[(<span class="string">"nelements"</span>.into(), CasaValue::Int(components.len() <span class="kw">as </span>i64))];
-<a href=#156 id=156 data-nosnippet>156</a>    <span class="kw">for </span>(index, component) <span class="kw">in </span>components.enumerate() {
-<a href=#157 id=157 data-nosnippet>157</a>        <span class="kw">let </span><span class="kw-2">mut </span>component = component<span class="question-mark">?</span>;
-<a href=#158 id=158 data-nosnippet>158</a>        <span class="kw">match </span>component.shape {
-<a href=#159 id=159 data-nosnippet>159</a>            ShapeType::Point =&gt; {}
-<a href=#160 id=160 data-nosnippet>160</a>            ShapeType::Gaussian =&gt; {
-<a href=#161 id=161 data-nosnippet>161</a>                <span class="kw">let </span>source = source_beam(
-<a href=#162 id=162 data-nosnippet>162</a>                    component
-<a href=#163 id=163 data-nosnippet>163</a>                        .gaussian_axes
-<a href=#164 id=164 data-nosnippet>164</a>                        .as_ref()
-<a href=#165 id=165 data-nosnippet>165</a>                        .expect(<span class="string">"Gaussian record axes"</span>),
-<a href=#166 id=166 data-nosnippet>166</a>                    <span class="kw-2">&amp;</span>rad,
-<a href=#167 id=167 data-nosnippet>167</a>                )<span class="question-mark">?</span>;
-<a href=#168 id=168 data-nosnippet>168</a>                <span class="kw">let </span>(fit, <span class="kw">_</span>) = source.fitted_deconvolution(beam).ok_or_else(|| {
-<a href=#169 id=169 data-nosnippet>169</a>                    raised(<span class="string">"Source may be only (slightly) resolved in one direction"</span>)
-<a href=#170 id=170 data-nosnippet>170</a>                })<span class="question-mark">?</span>;
-<a href=#171 id=171 data-nosnippet>171</a>                <span class="kw">if </span>fit.minor == <span class="number">0.0 </span>{
-<a href=#172 id=172 data-nosnippet>172</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
-<a href=#173 id=173 data-nosnippet>173</a>                        <span class="string">"Gaussian2DParam&lt;T&gt;::setAxialRatio(const T &amp;axialRatio) - axialRatio must be between (0,1]"</span>,
-<a href=#174 id=174 data-nosnippet>174</a>                    ));
-<a href=#175 id=175 data-nosnippet>175</a>                }
-<a href=#176 id=176 data-nosnippet>176</a>                replace_shape(<span class="kw-2">&amp;mut </span>component.value, fit)<span class="question-mark">?</span>;
-<a href=#177 id=177 data-nosnippet>177</a>            }
-<a href=#178 id=178 data-nosnippet>178</a>            other =&gt; {
-<a href=#179 id=179 data-nosnippet>179</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(
-<a href=#180 id=180 data-nosnippet>180</a>                    <span class="string">"Cannot deconvolve components of type {}"</span>,
-<a href=#181 id=181 data-nosnippet>181</a>                    other.casa_name()
-<a href=#182 id=182 data-nosnippet>182</a>                )));
-<a href=#183 id=183 data-nosnippet>183</a>            }
-<a href=#184 id=184 data-nosnippet>184</a>        }
-<a href=#185 id=185 data-nosnippet>185</a>        fields.push((<span class="macro">format!</span>(<span class="string">"component{index}"</span>), component.value));
-<a href=#186 id=186 data-nosnippet>186</a>    }
-<a href=#187 id=187 data-nosnippet>187</a>    <span class="prelude-val">Ok</span>(CasaValue::record(fields))
-<a href=#188 id=188 data-nosnippet>188</a>}
-<a href=#189 id=189 data-nosnippet>189</a>
-<a href=#190 id=190 data-nosnippet>190</a><span class="attr">#[pymethods]
-<a href=#191 id=191 data-nosnippet>191</a></span><span class="kw">impl </span>PyImageTool {
-<a href=#192 id=192 data-nosnippet>192</a>    <span class="doccomment">/// Remove the selected restoring beam from the Gaussian components of a CASA list.
-<a href=#193 id=193 data-nosnippet>193</a>    </span><span class="attr">#[pyo3(signature = (complist, channel = <span class="prelude-val">None</span>, polarization = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, complist, channel=-1, polarization=-1)"</span>)]
-<a href=#194 id=194 data-nosnippet>194</a>    </span><span class="kw">fn </span>deconvolvecomponentlist(
-<a href=#195 id=195 data-nosnippet>195</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#196 id=196 data-nosnippet>196</a>        py: Python&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#197 id=197 data-nosnippet>197</a>        complist: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#198 id=198 data-nosnippet>198</a>        <span class="attr">#[pyo3(from_py_with = supplied)] </span>channel: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#199 id=199 data-nosnippet>199</a>        <span class="attr">#[pyo3(from_py_with = supplied)] </span>polarization: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#200 id=200 data-nosnippet>200</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#201 id=201 data-nosnippet>201</a>        <span class="kw">let </span>dictionary = complist
-<a href=#202 id=202 data-nosnippet>202</a>            .cast::&lt;PyDict&gt;()
-<a href=#203 id=203 data-nosnippet>203</a>            .map_err(|<span class="kw">_</span>| PyTypeError::new_err(<span class="string">"_complist is not a dictionary"</span>))<span class="question-mark">?</span>;
-<a href=#204 id=204 data-nosnippet>204</a>        <span class="kw">let </span>record = casa_record(py, <span class="prelude-val">Some</span>(dictionary))<span class="question-mark">?</span>;
-<a href=#205 id=205 data-nosnippet>205</a>        <span class="kw">let </span>(channel, pending_channel) = plane_index(channel, <span class="string">"channel"</span>)<span class="question-mark">?</span>;
-<a href=#206 id=206 data-nosnippet>206</a>        <span class="kw">let </span>(polarization, pending_polarization) = plane_index(polarization, <span class="string">"polarization"</span>)<span class="question-mark">?</span>;
-<a href=#207 id=207 data-nosnippet>207</a>        <span class="kw">let </span><span class="kw-2">mut </span>logs = Vec::new();
-<a href=#208 id=208 data-nosnippet>208</a>        <span class="kw">let </span>result = py.detach(|| {
-<a href=#209 id=209 data-nosnippet>209</a>            <span class="kw">let </span>state = <span class="self">self</span>.state();
-<a href=#210 id=210 data-nosnippet>210</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(attachment) = <span class="kw-2">&amp;</span>state.image <span class="kw">else </span>{
-<a href=#211 id=211 data-nosnippet>211</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(CasaValue::empty_record());
-<a href=#212 id=212 data-nosnippet>212</a>            };
-<a href=#213 id=213 data-nosnippet>213</a>            deconvolved_record(
-<a href=#214 id=214 data-nosnippet>214</a>                <span class="kw-2">&amp;</span>attachment.lock(),
-<a href=#215 id=215 data-nosnippet>215</a>                <span class="kw-2">&amp;</span>attachment.beam_view(),
-<a href=#216 id=216 data-nosnippet>216</a>                <span class="kw-2">&amp;</span>record,
-<a href=#217 id=217 data-nosnippet>217</a>                channel,
-<a href=#218 id=218 data-nosnippet>218</a>                polarization,
-<a href=#219 id=219 data-nosnippet>219</a>                <span class="kw-2">&amp;mut </span>logs,
-<a href=#220 id=220 data-nosnippet>220</a>            )
-<a href=#221 id=221 data-nosnippet>221</a>        });
-<a href=#222 id=222 data-nosnippet>222</a>        emit(py, <span class="string">"casars.tools.image"</span>, <span class="kw-2">&amp;</span>logs)<span class="question-mark">?</span>;
-<a href=#223 id=223 data-nosnippet>223</a>        <span class="kw">let </span>result = result<span class="question-mark">?</span>;
-<a href=#224 id=224 data-nosnippet>224</a>        <span class="kw">if </span>pending_channel || pending_polarization {
-<a href=#225 id=225 data-nosnippet>225</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PySystemError::new_err(
-<a href=#226 id=226 data-nosnippet>226</a>                <span class="string">"&lt;built-in function image_deconvolvecomponentlist&gt; returned a result with an exception set"</span>,
-<a href=#227 id=227 data-nosnippet>227</a>            ));
-<a href=#228 id=228 data-nosnippet>228</a>        }
-<a href=#229 id=229 data-nosnippet>229</a>        result.into_python(py)
-<a href=#230 id=230 data-nosnippet>230</a>    }
-<a href=#231 id=231 data-nosnippet>231</a>}
+<a href=#83 id=83 data-nosnippet>83</a><span class="kw">fn </span>deconvolved_record(
+<a href=#84 id=84 data-nosnippet>84</a>    attachment: <span class="kw-2">&amp;</span>AttachedImage,
+<a href=#85 id=85 data-nosnippet>85</a>    input: <span class="kw-2">&amp;</span>RecordValue,
+<a href=#86 id=86 data-nosnippet>86</a>    channel: i64,
+<a href=#87 id=87 data-nosnippet>87</a>    polarization: i64,
+<a href=#88 id=88 data-nosnippet>88</a>    logs: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
+<a href=#89 id=89 data-nosnippet>89</a>) -&gt; PyResult&lt;CasaValue&gt; {
+<a href=#90 id=90 data-nosnippet>90</a>    <span class="kw">let </span>beam =
+<a href=#91 id=91 data-nosnippet>91</a>        deconvolve_attached_beam_context(attachment, channel, polarization).map_err(raised)<span class="question-mark">?</span>;
+<a href=#92 id=92 data-nosnippet>92</a>    <span class="kw">let </span>components = image_component_records(input, logs)<span class="question-mark">?</span>;
+<a href=#93 id=93 data-nosnippet>93</a>    <span class="kw">let </span><span class="kw-2">mut </span>fields = <span class="macro">vec!</span>[(<span class="string">"nelements"</span>.into(), CasaValue::Int(components.len() <span class="kw">as </span>i64))];
+<a href=#94 id=94 data-nosnippet>94</a>    <span class="kw">for </span>(index, component) <span class="kw">in </span>components.enumerate() {
+<a href=#95 id=95 data-nosnippet>95</a>        <span class="kw">let </span><span class="kw-2">mut </span>component = component<span class="question-mark">?</span>;
+<a href=#96 id=96 data-nosnippet>96</a>        <span class="kw">match </span>component.shape {
+<a href=#97 id=97 data-nosnippet>97</a>            ShapeType::Point =&gt; {}
+<a href=#98 id=98 data-nosnippet>98</a>            ShapeType::Gaussian =&gt; {
+<a href=#99 id=99 data-nosnippet>99</a>                <span class="kw">let </span>axes = component
+<a href=#100 id=100 data-nosnippet>100</a>                    .gaussian_axes
+<a href=#101 id=101 data-nosnippet>101</a>                    .as_ref()
+<a href=#102 id=102 data-nosnippet>102</a>                    .expect(<span class="string">"Gaussian record axes"</span>);
+<a href=#103 id=103 data-nosnippet>103</a>                <span class="kw">let </span>fit = deconvolve_gaussian_source(axes, beam).map_err(raised)<span class="question-mark">?</span>;
+<a href=#104 id=104 data-nosnippet>104</a>                replace_shape(<span class="kw-2">&amp;mut </span>component.value, fit)<span class="question-mark">?</span>;
+<a href=#105 id=105 data-nosnippet>105</a>            }
+<a href=#106 id=106 data-nosnippet>106</a>            other =&gt; {
+<a href=#107 id=107 data-nosnippet>107</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(
+<a href=#108 id=108 data-nosnippet>108</a>                    <span class="string">"Cannot deconvolve components of type {}"</span>,
+<a href=#109 id=109 data-nosnippet>109</a>                    other.casa_name()
+<a href=#110 id=110 data-nosnippet>110</a>                )));
+<a href=#111 id=111 data-nosnippet>111</a>            }
+<a href=#112 id=112 data-nosnippet>112</a>        }
+<a href=#113 id=113 data-nosnippet>113</a>        fields.push((<span class="macro">format!</span>(<span class="string">"component{index}"</span>), component.value));
+<a href=#114 id=114 data-nosnippet>114</a>    }
+<a href=#115 id=115 data-nosnippet>115</a>    <span class="prelude-val">Ok</span>(CasaValue::record(fields))
+<a href=#116 id=116 data-nosnippet>116</a>}
+<a href=#117 id=117 data-nosnippet>117</a>
+<a href=#118 id=118 data-nosnippet>118</a><span class="attr">#[pymethods]
+<a href=#119 id=119 data-nosnippet>119</a></span><span class="kw">impl </span>PyImageTool {
+<a href=#120 id=120 data-nosnippet>120</a>    <span class="doccomment">/// Remove the selected restoring beam from the Gaussian components of a CASA list.
+<a href=#121 id=121 data-nosnippet>121</a>    </span><span class="attr">#[pyo3(signature = (complist, channel = <span class="prelude-val">None</span>, polarization = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, complist, channel=-1, polarization=-1)"</span>)]
+<a href=#122 id=122 data-nosnippet>122</a>    </span><span class="kw">fn </span>deconvolvecomponentlist(
+<a href=#123 id=123 data-nosnippet>123</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#124 id=124 data-nosnippet>124</a>        py: Python&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#125 id=125 data-nosnippet>125</a>        complist: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#126 id=126 data-nosnippet>126</a>        <span class="attr">#[pyo3(from_py_with = supplied)] </span>channel: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#127 id=127 data-nosnippet>127</a>        <span class="attr">#[pyo3(from_py_with = supplied)] </span>polarization: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#128 id=128 data-nosnippet>128</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#129 id=129 data-nosnippet>129</a>        <span class="kw">let </span>dictionary = complist
+<a href=#130 id=130 data-nosnippet>130</a>            .cast::&lt;PyDict&gt;()
+<a href=#131 id=131 data-nosnippet>131</a>            .map_err(|<span class="kw">_</span>| PyTypeError::new_err(<span class="string">"_complist is not a dictionary"</span>))<span class="question-mark">?</span>;
+<a href=#132 id=132 data-nosnippet>132</a>        <span class="kw">let </span>record = casa_record(py, <span class="prelude-val">Some</span>(dictionary))<span class="question-mark">?</span>;
+<a href=#133 id=133 data-nosnippet>133</a>        <span class="kw">let </span>(channel, pending_channel) = plane_index(channel, <span class="string">"channel"</span>)<span class="question-mark">?</span>;
+<a href=#134 id=134 data-nosnippet>134</a>        <span class="kw">let </span>(polarization, pending_polarization) = plane_index(polarization, <span class="string">"polarization"</span>)<span class="question-mark">?</span>;
+<a href=#135 id=135 data-nosnippet>135</a>        <span class="kw">let </span><span class="kw-2">mut </span>logs = Vec::new();
+<a href=#136 id=136 data-nosnippet>136</a>        <span class="kw">let </span>result = py.detach(|| {
+<a href=#137 id=137 data-nosnippet>137</a>            <span class="kw">let </span>state = <span class="self">self</span>.state();
+<a href=#138 id=138 data-nosnippet>138</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(attachment) = <span class="kw-2">&amp;</span>state.image <span class="kw">else </span>{
+<a href=#139 id=139 data-nosnippet>139</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(CasaValue::empty_record());
+<a href=#140 id=140 data-nosnippet>140</a>            };
+<a href=#141 id=141 data-nosnippet>141</a>            deconvolved_record(attachment, <span class="kw-2">&amp;</span>record, channel, polarization, <span class="kw-2">&amp;mut </span>logs)
+<a href=#142 id=142 data-nosnippet>142</a>        });
+<a href=#143 id=143 data-nosnippet>143</a>        emit(py, <span class="string">"casars.tools.image"</span>, <span class="kw-2">&amp;</span>logs)<span class="question-mark">?</span>;
+<a href=#144 id=144 data-nosnippet>144</a>        <span class="kw">let </span>result = result<span class="question-mark">?</span>;
+<a href=#145 id=145 data-nosnippet>145</a>        <span class="kw">if </span>pending_channel || pending_polarization {
+<a href=#146 id=146 data-nosnippet>146</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PySystemError::new_err(
+<a href=#147 id=147 data-nosnippet>147</a>                <span class="string">"&lt;built-in function image_deconvolvecomponentlist&gt; returned a result with an exception set"</span>,
+<a href=#148 id=148 data-nosnippet>148</a>            ));
+<a href=#149 id=149 data-nosnippet>149</a>        }
+<a href=#150 id=150 data-nosnippet>150</a>        result.into_python(py)
+<a href=#151 id=151 data-nosnippet>151</a>    }
+<a href=#152 id=152 data-nosnippet>152</a>}
 </code></pre></div></section></main></body></html>

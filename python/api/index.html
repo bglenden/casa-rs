@@ -805,17 +805,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#casars.tasks.TaskBinaryNotFoundError" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        TaskBinaryNotFoundError
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#casars.tasks.TaskCompletion" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -870,17 +859,6 @@
     <span class="md-ellipsis">
       
         TaskExecutionError
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#casars.tasks.TaskInvocationError" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        TaskInvocationError
       
     </span>
   </a>
@@ -1357,6 +1335,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="plotms">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#casars.tasks.plotms--1032" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1032).
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1903,17 +1898,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#casars.tasks.TaskBinaryNotFoundError" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        TaskBinaryNotFoundError
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#casars.tasks.TaskCompletion" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1968,17 +1952,6 @@
     <span class="md-ellipsis">
       
         TaskExecutionError
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#casars.tasks.TaskInvocationError" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        TaskInvocationError
       
     </span>
   </a>
@@ -2456,6 +2429,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="plotms">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#casars.tasks.plotms--1032" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1032).
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2802,18 +2792,15 @@
 <span class="n">casars</span><span class="o">.</span><span class="n">tasks</span><span class="o">.&lt;</span><span class="n">task</span><span class="o">&gt;</span><span class="p">(</span><span class="o">**</span><span class="n">parameters</span><span class="p">)</span>
 </code></pre></div>
 
-<p>A task call starts the task's own executable. <code>tasks.run</code> returns a
-<code>TaskCompletion</code> (<code>task</code>, <code>command</code>, <code>workspace</code>, <code>returncode</code>, <code>stdout</code>, the
-reply; <code>stderr</code>, the log; <code>provider_invocation</code>, <code>status</code>, <code>message</code>,
-<code>parameter</code>, <code>value</code>, CASA's return value; and <code>result</code>, the declared
-products). A wrapper whose surface names its CASA task (every task but the
-casa-rs tasks <code>calibrate</code>, <code>msexplore</code> and <code>msconvert</code>, and <code>plotms</code>) has
-CASA's signature, positional or by keyword with
-CASA's defaults, then casa-rs's own controls, keyword-only, and returns
-CASA's value, with NumPy arrays where CASA returns them. A parameter casa-rs
-does not implement yet is taken only at CASA's default; its docstring names
-the issue. The other wrappers take keyword arguments and return the
-<code>TaskCompletion</code>.</p>
+<p>A task call runs in process. <code>tasks.run</code> returns a <code>TaskCompletion</code> with the
+task, workspace, logs, status, message, parameter, CASA return value, and
+declared products. Wrappers for CASA tasks, including <code>plotms</code>, use CASA's
+parameter order, argument kinds, and defaults. Additional casa-rs controls
+are keyword-only. These wrappers return CASA's value, including NumPy arrays
+where CASA returns them. Wrapper docstrings identify parameters limited to
+their CASA defaults and cite the relevant issues. The casa-rs tasks
+<code>calibrate</code>, <code>msexplore</code>, and <code>msconvert</code> take keyword arguments and return
+the <code>TaskCompletion</code>.</p>
 <p>On a single MeasurementSet, <code>split</code> and <code>mstransform</code> accept named fields
 and spectral windows, antenna baselines, scan predicates, calendar times,
 observation IDs and intents, array IDs, UV distances, and feed pairs.
@@ -2830,11 +2817,9 @@ selected source into <code>DATA</code>. Combined layouts retain the named column
 <p>A value the contract refuses raises <code>ValueError</code> before anything starts, or
 <code>TypeError</code> for a value of the wrong type. A task that refuses its
 parameters raises <code>TaskParameterError</code>, a <code>ValueError</code>, and one that starts
-and does not succeed <code>TaskExecutionError</code>, a <code>RuntimeError</code>; the
-<code>.completion</code> of either says how it ended. <code>TaskBinaryNotFoundError</code> (a
-<code>FileNotFoundError</code>) names what the executable search lacked;
-<code>TaskInvocationError</code> means the process could not start; <code>TaskResultError</code>
-means a success's result was malformed.</p>
+and does not succeed <code>TaskExecutionError</code>, a <code>RuntimeError</code>. The
+<code>.completion</code> of either says how it ended. <code>TaskResultError</code> means a task
+succeeded but its result could not be decoded or rendered.</p>
 <p>A Python task call saves no Last or Last Successful profile; those record
 command-line runs. The CASA-named wrappers take the surface's parameters. A
 profile runs through one as <code>tasks.gaincal(**parameters.load(path))</code>, since
@@ -3613,60 +3598,6 @@ builds a typed plot document; render it with :func:<code>plot_matplotlib</code>.
 
 
 
-<h2 id="casars.tasks.TaskBinaryNotFoundError" class="doc doc-heading">
-            <code>TaskBinaryNotFoundError</code>
-
-
-<a href="#casars.tasks.TaskBinaryNotFoundError" class="headerlink" title="Permanent link">&para;</a></h2>
-
-
-    <div class="doc doc-contents ">
-            <p class="doc doc-class-bases">
-              Bases: <code><span title="FileNotFoundError">FileNotFoundError</span></code></p>
-
-
-
-        <p>Raised when a task's executable cannot be found.</p>
-<p>The message names the step of the search that applied and what it
-lacked: the task's <code>CASARS_&lt;APP&gt;_BIN</code> override, the suite at
-<code>CASARS_SUITE_ROOT</code> or the installed suite, or a development
-checkout's build.</p>
-
-
-
-
-
-
-
-
-              <details class="mkdocstrings-source">
-                <summary>Source code in <code>frontends/casars-python/python/casars/tasks/_runner.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">48</span>
-<span class="normal">49</span>
-<span class="normal">50</span>
-<span class="normal">51</span>
-<span class="normal">52</span>
-<span class="normal">53</span>
-<span class="normal">54</span>
-<span class="normal">55</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskBinaryNotFoundError</span><span class="p">(</span><span class="ne">FileNotFoundError</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">"""Raised when a task's executable cannot be found.</span>
-
-<span class="sd">    The message names the step of the search that applied and what it</span>
-<span class="sd">    lacked: the task's ``CASARS_&lt;APP&gt;_BIN`` override, the suite at</span>
-<span class="sd">    ``CASARS_SUITE_ROOT`` or the installed suite, or a development</span>
-<span class="sd">    checkout's build.</span>
-<span class="sd">    """</span>
-</code></pre></div></td></tr></table></div>
-              </details>
-
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-class">
-
-
-
 <h2 id="casars.tasks.TaskCompletion" class="doc doc-heading">
             <code>TaskCompletion</code>
 
@@ -3682,12 +3613,9 @@ checkout's build.</p>
 
 
 
-        <p>One finished task process: how it ended and what it wrote.</p>
-<p><code>status</code> is the task's outcome: <code>succeeded</code>, <code>refused</code> (its
-parameters, before it changed anything), <code>failed</code>, <code>interrupted</code>,
-<code>signalled</code>, or <code>malformed_reply</code>. <code>stdout</code> is the task's reply and
-<code>stderr</code> its log, which was also written to <code>sys.stderr</code> as the task
-ran.</p>
+        <p>The outcome of a native task and its declared products.</p>
+<p>The task's live log is also available in <code>logs</code>. Its CASA return value is
+<code>value</code>, and <code>status</code> describes success, refusal, failure or interruption.</p>
 
 
 
@@ -3698,7 +3626,31 @@ ran.</p>
 
               <details class="mkdocstrings-source">
                 <summary>Source code in <code>frontends/casars-python/python/casars/tasks/_runner.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 98</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 74</span>
+<span class="normal"> 75</span>
+<span class="normal"> 76</span>
+<span class="normal"> 77</span>
+<span class="normal"> 78</span>
+<span class="normal"> 79</span>
+<span class="normal"> 80</span>
+<span class="normal"> 81</span>
+<span class="normal"> 82</span>
+<span class="normal"> 83</span>
+<span class="normal"> 84</span>
+<span class="normal"> 85</span>
+<span class="normal"> 86</span>
+<span class="normal"> 87</span>
+<span class="normal"> 88</span>
+<span class="normal"> 89</span>
+<span class="normal"> 90</span>
+<span class="normal"> 91</span>
+<span class="normal"> 92</span>
+<span class="normal"> 93</span>
+<span class="normal"> 94</span>
+<span class="normal"> 95</span>
+<span class="normal"> 96</span>
+<span class="normal"> 97</span>
+<span class="normal"> 98</span>
 <span class="normal"> 99</span>
 <span class="normal">100</span>
 <span class="normal">101</span>
@@ -3718,62 +3670,23 @@ ran.</p>
 <span class="normal">115</span>
 <span class="normal">116</span>
 <span class="normal">117</span>
-<span class="normal">118</span>
-<span class="normal">119</span>
-<span class="normal">120</span>
-<span class="normal">121</span>
-<span class="normal">122</span>
-<span class="normal">123</span>
-<span class="normal">124</span>
-<span class="normal">125</span>
-<span class="normal">126</span>
-<span class="normal">127</span>
-<span class="normal">128</span>
-<span class="normal">129</span>
-<span class="normal">130</span>
-<span class="normal">131</span>
-<span class="normal">132</span>
-<span class="normal">133</span>
-<span class="normal">134</span>
-<span class="normal">135</span>
-<span class="normal">136</span>
-<span class="normal">137</span>
-<span class="normal">138</span>
-<span class="normal">139</span>
-<span class="normal">140</span>
-<span class="normal">141</span>
-<span class="normal">142</span>
-<span class="normal">143</span>
-<span class="normal">144</span>
-<span class="normal">145</span>
-<span class="normal">146</span>
-<span class="normal">147</span>
-<span class="normal">148</span>
-<span class="normal">149</span>
-<span class="normal">150</span>
-<span class="normal">151</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="normal">118</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">TaskCompletion</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">"""One finished task process: how it ended and what it wrote.</span>
+<span class="w">    </span><span class="sd">"""The outcome of a native task and its declared products.</span>
 
-<span class="sd">    ``status`` is the task's outcome: ``succeeded``, ``refused`` (its</span>
-<span class="sd">    parameters, before it changed anything), ``failed``, ``interrupted``,</span>
-<span class="sd">    ``signalled``, or ``malformed_reply``. ``stdout`` is the task's reply and</span>
-<span class="sd">    ``stderr`` its log, which was also written to ``sys.stderr`` as the task</span>
-<span class="sd">    ran.</span>
+<span class="sd">    The task's live log is also available in ``logs``. Its CASA return value is</span>
+<span class="sd">    ``value``, and ``status`` describes success, refusal, failure or interruption.</span>
 <span class="sd">    """</span>
 
     <span class="n">task</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">command</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>
     <span class="n">workspace</span><span class="p">:</span> <span class="n">Path</span>
-    <span class="n">returncode</span><span class="p">:</span> <span class="nb">int</span>
-    <span class="n">stdout</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">stderr</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">provider_invocation</span><span class="p">:</span> <span class="n">ProviderInvocation</span>
+    <span class="n">logs</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">status</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">message</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span>
     <span class="n">parameter</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span>
     <span class="n">value</span><span class="p">:</span> <span class="n">Any</span>
     <span class="n">result</span><span class="p">:</span> <span class="nb">object</span> <span class="o">|</span> <span class="kc">None</span>
+    <span class="n">_details</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">,</span> <span class="nb">repr</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">compare</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
 
     <span class="nd">@property</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">successful</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
@@ -3801,10 +3714,7 @@ ran.</p>
             <span class="k">return</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">task</span><span class="si">}</span><span class="s2"> failed</span><span class="si">{</span><span class="n">at</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">message</span><span class="si">}</span><span class="s2">"</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="s2">"interrupted"</span><span class="p">:</span>
             <span class="k">return</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">task</span><span class="si">}</span><span class="s2"> was interrupted: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">message</span><span class="si">}</span><span class="s2">"</span>
-        <span class="n">detail</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">stderr</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()[</span><span class="o">-</span><span class="mi">1</span><span class="p">:]</span> <span class="ow">or</span> <span class="p">[</span><span class="s2">"no log output"</span><span class="p">]</span>
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="s2">"signalled"</span><span class="p">:</span>
-            <span class="k">return</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">task</span><span class="si">}</span><span class="s2"> was ended by signal </span><span class="si">{</span><span class="o">-</span><span class="bp">self</span><span class="o">.</span><span class="n">returncode</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">detail</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span>
-        <span class="k">return</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">task</span><span class="si">}</span><span class="s2"> gave no valid reply (</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">message</span><span class="si">}</span><span class="s2">): </span><span class="si">{</span><span class="n">detail</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">task</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">status</span><span class="si">}</span><span class="s2">"</span>
 </code></pre></div></td></tr></table></div>
               </details>
 
@@ -3881,22 +3791,19 @@ ran.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>frontends/casars-python/python/casars/tasks/_runner.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">136</span>
-<span class="normal">137</span>
-<span class="normal">138</span>
-<span class="normal">139</span>
-<span class="normal">140</span>
-<span class="normal">141</span>
-<span class="normal">142</span>
-<span class="normal">143</span>
-<span class="normal">144</span>
-<span class="normal">145</span>
-<span class="normal">146</span>
-<span class="normal">147</span>
-<span class="normal">148</span>
-<span class="normal">149</span>
-<span class="normal">150</span>
-<span class="normal">151</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">describe</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">106</span>
+<span class="normal">107</span>
+<span class="normal">108</span>
+<span class="normal">109</span>
+<span class="normal">110</span>
+<span class="normal">111</span>
+<span class="normal">112</span>
+<span class="normal">113</span>
+<span class="normal">114</span>
+<span class="normal">115</span>
+<span class="normal">116</span>
+<span class="normal">117</span>
+<span class="normal">118</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">describe</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">"""One line saying how the task ended."""</span>
 
     <span class="n">at</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">" (parameter </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">parameter</span><span class="si">!r}</span><span class="s2">)"</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">parameter</span> <span class="k">else</span> <span class="s2">""</span>
@@ -3908,10 +3815,7 @@ ran.</p>
         <span class="k">return</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">task</span><span class="si">}</span><span class="s2"> failed</span><span class="si">{</span><span class="n">at</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">message</span><span class="si">}</span><span class="s2">"</span>
     <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="s2">"interrupted"</span><span class="p">:</span>
         <span class="k">return</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">task</span><span class="si">}</span><span class="s2"> was interrupted: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">message</span><span class="si">}</span><span class="s2">"</span>
-    <span class="n">detail</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">stderr</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()[</span><span class="o">-</span><span class="mi">1</span><span class="p">:]</span> <span class="ow">or</span> <span class="p">[</span><span class="s2">"no log output"</span><span class="p">]</span>
-    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="s2">"signalled"</span><span class="p">:</span>
-        <span class="k">return</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">task</span><span class="si">}</span><span class="s2"> was ended by signal </span><span class="si">{</span><span class="o">-</span><span class="bp">self</span><span class="o">.</span><span class="n">returncode</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">detail</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span>
-    <span class="k">return</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">task</span><span class="si">}</span><span class="s2"> gave no valid reply (</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">message</span><span class="si">}</span><span class="s2">): </span><span class="si">{</span><span class="n">detail</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">task</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">status</span><span class="si">}</span><span class="s2">"</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -3955,13 +3859,13 @@ how it ended.</p>
 
               <details class="mkdocstrings-source">
                 <summary>Source code in <code>frontends/casars-python/python/casars/tasks/_runner.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">66</span>
-<span class="normal">67</span>
-<span class="normal">68</span>
-<span class="normal">69</span>
-<span class="normal">70</span>
-<span class="normal">71</span>
-<span class="normal">72</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskExecutionError</span><span class="p">(</span><span class="ne">RuntimeError</span><span class="p">):</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">42</span>
+<span class="normal">43</span>
+<span class="normal">44</span>
+<span class="normal">45</span>
+<span class="normal">46</span>
+<span class="normal">47</span>
+<span class="normal">48</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskExecutionError</span><span class="p">(</span><span class="ne">RuntimeError</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">"""Raised when a task starts and does not succeed; ``completion`` says</span>
 <span class="sd">    how it ended."""</span>
 
@@ -3987,44 +3891,6 @@ how it ended.</p>
 
 
   </div>
-
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-class">
-
-
-
-<h2 id="casars.tasks.TaskInvocationError" class="doc doc-heading">
-            <code>TaskInvocationError</code>
-
-
-<a href="#casars.tasks.TaskInvocationError" class="headerlink" title="Permanent link">&para;</a></h2>
-
-
-    <div class="doc doc-contents ">
-            <p class="doc doc-class-bases">
-              Bases: <code><span title="RuntimeError">RuntimeError</span></code></p>
-
-
-
-        <p>Raised when a task's executable was found but could not be started.</p>
-
-
-
-
-
-
-
-
-              <details class="mkdocstrings-source">
-                <summary>Source code in <code>frontends/casars-python/python/casars/tasks/_runner.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">58</span>
-<span class="normal">59</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskInvocationError</span><span class="p">(</span><span class="ne">RuntimeError</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">"""Raised when a task's executable was found but could not be started."""</span>
-</code></pre></div></td></tr></table></div>
-              </details>
 
     </div>
 
@@ -4064,27 +3930,27 @@ generated parameter checker in both cases.</p>
 
               <details class="mkdocstrings-source">
                 <summary>Source code in <code>frontends/casars-python/python/casars/tasks/_runner.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">75</span>
-<span class="normal">76</span>
-<span class="normal">77</span>
-<span class="normal">78</span>
-<span class="normal">79</span>
-<span class="normal">80</span>
-<span class="normal">81</span>
-<span class="normal">82</span>
-<span class="normal">83</span>
-<span class="normal">84</span>
-<span class="normal">85</span>
-<span class="normal">86</span>
-<span class="normal">87</span>
-<span class="normal">88</span>
-<span class="normal">89</span>
-<span class="normal">90</span>
-<span class="normal">91</span>
-<span class="normal">92</span>
-<span class="normal">93</span>
-<span class="normal">94</span>
-<span class="normal">95</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskParameterError</span><span class="p">(</span><span class="ne">ValueError</span><span class="p">):</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">51</span>
+<span class="normal">52</span>
+<span class="normal">53</span>
+<span class="normal">54</span>
+<span class="normal">55</span>
+<span class="normal">56</span>
+<span class="normal">57</span>
+<span class="normal">58</span>
+<span class="normal">59</span>
+<span class="normal">60</span>
+<span class="normal">61</span>
+<span class="normal">62</span>
+<span class="normal">63</span>
+<span class="normal">64</span>
+<span class="normal">65</span>
+<span class="normal">66</span>
+<span class="normal">67</span>
+<span class="normal">68</span>
+<span class="normal">69</span>
+<span class="normal">70</span>
+<span class="normal">71</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskParameterError</span><span class="p">(</span><span class="ne">ValueError</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">"""Raised when a task refuses its parameters before it changes anything;</span>
 <span class="sd">    ``completion`` says why (#931).</span>
 
@@ -4157,8 +4023,8 @@ generated parameter checker in both cases.</p>
 
               <details class="mkdocstrings-source">
                 <summary>Source code in <code>frontends/casars-python/python/casars/tasks/_runner.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">62</span>
-<span class="normal">63</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskResultError</span><span class="p">(</span><span class="ne">RuntimeError</span><span class="p">):</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">38</span>
+<span class="normal">39</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskResultError</span><span class="p">(</span><span class="ne">RuntimeError</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">"""Raised when Rust rejects a successful task's result."""</span>
 </code></pre></div></td></tr></table></div>
               </details>
@@ -4832,8 +4698,8 @@ generated parameter checker in both cases.</p>
 
         <p>Concatenate simulated interferometric MeasurementSets with per-input weights.</p>
 <p>CASA's <code>concat</code>: its parameters, defaults and return value.
-Accepted only at CASA's default, where CASA reads them, until #939:
-<code>respectname</code>, <code>timesort</code>, <code>forcesingleephemfield</code>.</p>
+Only CASA's defaults are accepted for <code>respectname</code>, <code>timesort</code>,
+<code>forcesingleephemfield</code> where CASA reads them (see #939).</p>
 
 
             <details class="mkdocstrings-source">
@@ -4869,8 +4735,8 @@ Accepted only at CASA's default, where CASA reads them, until #939:
 <span class="w">    </span><span class="sd">"""Concatenate simulated interferometric MeasurementSets with per-input weights.</span>
 
 <span class="sd">    CASA's ``concat``: its parameters, defaults and return value.</span>
-<span class="sd">    Accepted only at CASA's default, where CASA reads them, until #939:</span>
-<span class="sd">    ``respectname``, ``timesort``, ``forcesingleephemfield``.</span>
+<span class="sd">    Only CASA's defaults are accepted for ``respectname``, ``timesort``,</span>
+<span class="sd">    ``forcesingleephemfield`` where CASA reads them (see #939).</span>
 <span class="sd">    """</span>
     <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">concat</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
 </code></pre></div></td></tr></table></div>
@@ -7218,9 +7084,9 @@ Accepted only at CASA's default, where CASA reads them, until #939:
 
         <p>Plot selected MeasurementSet or calibration table data.</p>
 <p>CASA's <code>plotms</code>: its parameters, defaults and return value.
-Accepted only at CASA's default, where CASA reads them, until #1032:
-<code>plotindex</code>, <code>extendflag</code>, <code>extcorr</code>, <code>extchannel</code>,
-<code>clearplots</code>.</p>
+Only CASA's defaults are accepted for <code>plotindex</code>, <code>extendflag</code>,
+<code>extcorr</code>, <code>extchannel</code>, <code>clearplots</code> where CASA reads them (see</p>
+<h3 id="casars.tasks.plotms--1032">1032).<a class="headerlink" href="#casars.tasks.plotms--1032" title="Permanent link">&para;</a></h3>
 
 
             <details class="mkdocstrings-source">
@@ -7443,9 +7309,9 @@ Accepted only at CASA's default, where CASA reads them, until #1032:
 <span class="w">    </span><span class="sd">"""Plot selected MeasurementSet or calibration table data.</span>
 
 <span class="sd">    CASA's ``plotms``: its parameters, defaults and return value.</span>
-<span class="sd">    Accepted only at CASA's default, where CASA reads them, until #1032:</span>
-<span class="sd">    ``plotindex``, ``extendflag``, ``extcorr``, ``extchannel``,</span>
-<span class="sd">    ``clearplots``.</span>
+<span class="sd">    Only CASA's defaults are accepted for ``plotindex``, ``extendflag``,</span>
+<span class="sd">    ``extcorr``, ``extchannel``, ``clearplots`` where CASA reads them (see</span>
+<span class="sd">    #1032).</span>
 <span class="sd">    """</span>
     <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">plotms</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
 </code></pre></div></td></tr></table></div>
@@ -7769,39 +7635,39 @@ explicit. CASA's own parameters, such as <code>overwrite</code>, are the consent
 to replace or change data. A task that refuses its parameters raises
 :class:<code>TaskParameterError</code>, a <code>ValueError</code>, and one that starts and
 does not succeed :class:<code>TaskExecutionError</code>, a <code>RuntimeError</code>; an
-interrupt (Ctrl-C) is passed to the task, which is given time to stop,
-and then raised here.</p>
+interrupt (Ctrl-C) requests cancellation and is raised after the
+native call has cleaned up.</p>
 
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>frontends/casars-python/python/casars/tasks/_runner.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">154</span>
-<span class="normal">155</span>
-<span class="normal">156</span>
-<span class="normal">157</span>
-<span class="normal">158</span>
-<span class="normal">159</span>
-<span class="normal">160</span>
-<span class="normal">161</span>
-<span class="normal">162</span>
-<span class="normal">163</span>
-<span class="normal">164</span>
-<span class="normal">165</span>
-<span class="normal">166</span>
-<span class="normal">167</span>
-<span class="normal">168</span>
-<span class="normal">169</span>
-<span class="normal">170</span>
-<span class="normal">171</span>
-<span class="normal">172</span>
-<span class="normal">173</span>
-<span class="normal">174</span>
-<span class="normal">175</span>
-<span class="normal">176</span>
-<span class="normal">177</span>
-<span class="normal">178</span>
-<span class="normal">179</span>
-<span class="normal">180</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">121</span>
+<span class="normal">122</span>
+<span class="normal">123</span>
+<span class="normal">124</span>
+<span class="normal">125</span>
+<span class="normal">126</span>
+<span class="normal">127</span>
+<span class="normal">128</span>
+<span class="normal">129</span>
+<span class="normal">130</span>
+<span class="normal">131</span>
+<span class="normal">132</span>
+<span class="normal">133</span>
+<span class="normal">134</span>
+<span class="normal">135</span>
+<span class="normal">136</span>
+<span class="normal">137</span>
+<span class="normal">138</span>
+<span class="normal">139</span>
+<span class="normal">140</span>
+<span class="normal">141</span>
+<span class="normal">142</span>
+<span class="normal">143</span>
+<span class="normal">144</span>
+<span class="normal">145</span>
+<span class="normal">146</span>
+<span class="normal">147</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span>
     <span class="n">task</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">parameters</span><span class="p">:</span> <span class="n">SurfaceParameters</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="o">/</span><span class="p">,</span>
@@ -7823,8 +7689,8 @@ and then raised here.</p>
 <span class="sd">    to replace or change data. A task that refuses its parameters raises</span>
 <span class="sd">    :class:`TaskParameterError`, a ``ValueError``, and one that starts and</span>
 <span class="sd">    does not succeed :class:`TaskExecutionError`, a ``RuntimeError``; an</span>
-<span class="sd">    interrupt (Ctrl-C) is passed to the task, which is given time to stop,</span>
-<span class="sd">    and then raised here.</span>
+<span class="sd">    interrupt (Ctrl-C) requests cancellation and is raised after the</span>
+<span class="sd">    native call has cleaned up.</span>
 <span class="sd">    """</span>
 
     <span class="k">return</span> <span class="n">_run_task</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">parameters</span><span class="p">,</span> <span class="n">workspace</span><span class="p">,</span> <span class="n">values</span><span class="p">)</span>
@@ -8507,8 +8373,8 @@ and then raised here.</p>
 
         <p>Image and analyze a simulated observation: CASA's simanalyze</p>
 <p>CASA's <code>simanalyze</code>: its parameters, defaults and return value.
-Accepted only at CASA's default, where CASA reads them, until #980:
-<code>interactive</code>.</p>
+Only CASA's defaults are accepted for <code>interactive</code> where CASA reads
+them (see #980).</p>
 
 
             <details class="mkdocstrings-source">
@@ -8590,8 +8456,8 @@ Accepted only at CASA's default, where CASA reads them, until #980:
 <span class="w">    </span><span class="sd">"""Image and analyze a simulated observation: CASA's simanalyze</span>
 
 <span class="sd">    CASA's ``simanalyze``: its parameters, defaults and return value.</span>
-<span class="sd">    Accepted only at CASA's default, where CASA reads them, until #980:</span>
-<span class="sd">    ``interactive``.</span>
+<span class="sd">    Only CASA's defaults are accepted for ``interactive`` where CASA reads</span>
+<span class="sd">    them (see #980).</span>
 <span class="sd">    """</span>
     <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">simanalyze</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
 </code></pre></div></td></tr></table></div>
@@ -8939,10 +8805,10 @@ Accepted only at CASA's default, where CASA reads them, until #980:
 
         <p>Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.</p>
 <p>CASA's <code>tclean</code>: its parameters, defaults and return value.
-Accepted only at CASA's default, where CASA reads them, until #980:
-<code>interactive</code>.
-Accepted only at CASA's default, where CASA reads them, until #1070:
-<code>computepastep</code>, <code>rotatepastep</code>.</p>
+Only CASA's defaults are accepted for <code>interactive</code> where CASA reads
+them (see #980).
+Only CASA's defaults are accepted for <code>computepastep</code>,
+<code>rotatepastep</code> where CASA reads them (see #1070).</p>
 
 
             <details class="mkdocstrings-source">
@@ -9192,10 +9058,10 @@ Accepted only at CASA's default, where CASA reads them, until #1070:
 <span class="w">    </span><span class="sd">"""Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.</span>
 
 <span class="sd">    CASA's ``tclean``: its parameters, defaults and return value.</span>
-<span class="sd">    Accepted only at CASA's default, where CASA reads them, until #980:</span>
-<span class="sd">    ``interactive``.</span>
-<span class="sd">    Accepted only at CASA's default, where CASA reads them, until #1070:</span>
-<span class="sd">    ``computepastep``, ``rotatepastep``.</span>
+<span class="sd">    Only CASA's defaults are accepted for ``interactive`` where CASA reads</span>
+<span class="sd">    them (see #980).</span>
+<span class="sd">    Only CASA's defaults are accepted for ``computepastep``,</span>
+<span class="sd">    ``rotatepastep`` where CASA reads them (see #1070).</span>
 <span class="sd">    """</span>
     <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">tclean</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
 </code></pre></div></td></tr></table></div>
@@ -9217,10 +9083,10 @@ Accepted only at CASA's default, where CASA reads them, until #1070:
 
         <p>Grid total-power spectra by pointing into a CASA image and weight image.</p>
 <p>CASA's <code>tsdimaging</code>: its parameters, defaults and return value.
-Accepted only at CASA's default, where CASA reads them, until #938:
-<code>field</code>, <code>scan</code>, <code>timerange</code>, <code>outframe</code>, <code>mode</code>, <code>veltype</code>,
-<code>specmode</code>, <code>interpolation</code>, <code>pointingcolumn</code>, <code>convertfirst</code>,
-<code>projection</code>, <code>stokes</code>, <code>clipminmax</code>.</p>
+Only CASA's defaults are accepted for <code>field</code>, <code>scan</code>,
+<code>timerange</code>, <code>outframe</code>, <code>mode</code>, <code>veltype</code>, <code>specmode</code>,
+<code>interpolation</code>, <code>pointingcolumn</code>, <code>convertfirst</code>, <code>projection</code>,
+<code>stokes</code>, <code>clipminmax</code> where CASA reads them (see #938).</p>
 
 
             <details class="mkdocstrings-source">
@@ -9306,10 +9172,10 @@ Accepted only at CASA's default, where CASA reads them, until #938:
 <span class="w">    </span><span class="sd">"""Grid total-power spectra by pointing into a CASA image and weight image.</span>
 
 <span class="sd">    CASA's ``tsdimaging``: its parameters, defaults and return value.</span>
-<span class="sd">    Accepted only at CASA's default, where CASA reads them, until #938:</span>
-<span class="sd">    ``field``, ``scan``, ``timerange``, ``outframe``, ``mode``, ``veltype``,</span>
-<span class="sd">    ``specmode``, ``interpolation``, ``pointingcolumn``, ``convertfirst``,</span>
-<span class="sd">    ``projection``, ``stokes``, ``clipminmax``.</span>
+<span class="sd">    Only CASA's defaults are accepted for ``field``, ``scan``,</span>
+<span class="sd">    ``timerange``, ``outframe``, ``mode``, ``veltype``, ``specmode``,</span>
+<span class="sd">    ``interpolation``, ``pointingcolumn``, ``convertfirst``, ``projection``,</span>
+<span class="sd">    ``stokes``, ``clipminmax`` where CASA reads them (see #938).</span>
 <span class="sd">    """</span>
     <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">tsdimaging</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
 </code></pre></div></td></tr></table></div>

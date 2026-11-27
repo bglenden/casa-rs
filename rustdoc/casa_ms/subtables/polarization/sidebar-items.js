@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["MsPolarization","MsPolarizationMut"]};
+window.SIDEBAR_ITEMS = {"fn":["stokes_i_row"],"struct":["MsPolarization","MsPolarizationMut"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["BandpassFrequencyInterval","BandpassSolveError","BandpassType"],"struct":["BandpassSolveCombine","BandpassSolveCuts","BandpassSolveReport","BandpassSolveRequest"]};

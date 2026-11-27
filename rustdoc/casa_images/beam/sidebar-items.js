@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["BeamComponent"],"fn":["wrap_position_angle"],"struct":["GaussianBeam","ImageBeamSet","StoredGaussianBeam"]};

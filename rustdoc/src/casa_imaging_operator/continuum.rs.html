@@ -1,9 +1,9 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-imaging-operator/src/continuum.rs`."><title>continuum.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_imaging_operator" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_imaging_operator/</div>continuum.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `libs/imaging/casa-imaging-operator/src/continuum.rs`."><title>continuum.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_imaging_operator" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_imaging_operator/</div>continuum.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a>
 <a href=#3 id=3 data-nosnippet>3</a></span><span class="doccomment">//! CASA-compatible visibility-domain continuum fitting and subtraction.
 <a href=#4 id=4 data-nosnippet>4</a>
 <a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use </span>casa_imaging_model::ContinuumChannelUse;
-<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_numerics::solve_weighted_least_squares;
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_numerics::continuum::{RowWeights, fit_polynomial_row};
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>num_complex::Complex64;
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>thiserror::Error;
 <a href=#9 id=9 data-nosnippet>9</a>
@@ -239,93 +239,81 @@
 <a href=#239 id=239 data-nosnippet>239</a>        .requested_order
 <a href=#240 id=240 data-nosnippet>240</a>        .min(u8::try_from(valid_indices.len() - <span class="number">1</span>).unwrap_or(u8::MAX));
 <a href=#241 id=241 data-nosnippet>241</a>    <span class="kw">let </span>coefficient_count = usize::from(effective_order) + <span class="number">1</span>;
-<a href=#242 id=242 data-nosnippet>242</a>    <span class="kw">let </span>rows = |component: <span class="kw">fn</span>(Complex64) -&gt; f64| {
-<a href=#243 id=243 data-nosnippet>243</a>        valid_indices
-<a href=#244 id=244 data-nosnippet>244</a>            .iter()
-<a href=#245 id=245 data-nosnippet>245</a>            .map(|<span class="kw-2">&amp;</span>index| {
-<a href=#246 id=246 data-nosnippet>246</a>                (
-<a href=#247 id=247 data-nosnippet>247</a>                    monomial_basis(normalized[index], coefficient_count),
-<a href=#248 id=248 data-nosnippet>248</a>                    component(input.samples[index].visibility),
-<a href=#249 id=249 data-nosnippet>249</a>                    input.samples[index].weight,
-<a href=#250 id=250 data-nosnippet>250</a>                )
-<a href=#251 id=251 data-nosnippet>251</a>            })
-<a href=#252 id=252 data-nosnippet>252</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#242 id=242 data-nosnippet>242</a>    <span class="kw">let </span>fit_component = |component: <span class="kw">fn</span>(Complex64) -&gt; f64| {
+<a href=#243 id=243 data-nosnippet>243</a>        <span class="kw">let </span>samples = valid_indices.iter().map(|<span class="kw-2">&amp;</span>index| {
+<a href=#244 id=244 data-nosnippet>244</a>            <span class="kw">let </span>sample = input.samples[index];
+<a href=#245 id=245 data-nosnippet>245</a>            (
+<a href=#246 id=246 data-nosnippet>246</a>                normalized[index],
+<a href=#247 id=247 data-nosnippet>247</a>                component(sample.visibility),
+<a href=#248 id=248 data-nosnippet>248</a>                sample.weight,
+<a href=#249 id=249 data-nosnippet>249</a>            )
+<a href=#250 id=250 data-nosnippet>250</a>        });
+<a href=#251 id=251 data-nosnippet>251</a>        fit_polynomial_row(samples, coefficient_count, RowWeights::Supplied)
+<a href=#252 id=252 data-nosnippet>252</a>            .ok_or(ContinuumFitError::SingularFit)
 <a href=#253 id=253 data-nosnippet>253</a>    };
-<a href=#254 id=254 data-nosnippet>254</a>    <span class="kw">let </span>real = solve_weighted_least_squares(<span class="kw-2">&amp;</span>rows(|value| value.re), coefficient_count)
-<a href=#255 id=255 data-nosnippet>255</a>        .ok_or(ContinuumFitError::SingularFit)<span class="question-mark">?</span>;
-<a href=#256 id=256 data-nosnippet>256</a>    <span class="kw">let </span>imaginary = solve_weighted_least_squares(<span class="kw-2">&amp;</span>rows(|value| value.im), coefficient_count)
-<a href=#257 id=257 data-nosnippet>257</a>        .ok_or(ContinuumFitError::SingularFit)<span class="question-mark">?</span>;
-<a href=#258 id=258 data-nosnippet>258</a>    <span class="kw">let </span>coefficients = real
-<a href=#259 id=259 data-nosnippet>259</a>        .into_iter()
-<a href=#260 id=260 data-nosnippet>260</a>        .zip(imaginary)
-<a href=#261 id=261 data-nosnippet>261</a>        .map(|(real, imaginary)| Complex64::new(real, imaginary))
-<a href=#262 id=262 data-nosnippet>262</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#263 id=263 data-nosnippet>263</a>    <span class="kw">let </span>prediction = normalized
-<a href=#264 id=264 data-nosnippet>264</a>        .iter()
-<a href=#265 id=265 data-nosnippet>265</a>        .map(|<span class="kw-2">&amp;</span>x| evaluate_polynomial(<span class="kw-2">&amp;</span>coefficients, x))
-<a href=#266 id=266 data-nosnippet>266</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#267 id=267 data-nosnippet>267</a>    <span class="kw">let </span>residual = input
-<a href=#268 id=268 data-nosnippet>268</a>        .samples
-<a href=#269 id=269 data-nosnippet>269</a>        .iter()
-<a href=#270 id=270 data-nosnippet>270</a>        .zip(<span class="kw-2">&amp;</span>prediction)
-<a href=#271 id=271 data-nosnippet>271</a>        .map(|(sample, model)| sample.visibility - model)
-<a href=#272 id=272 data-nosnippet>272</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#273 id=273 data-nosnippet>273</a>    <span class="kw">let </span><span class="kw-2">mut </span>chi_squared = [<span class="number">0.0_f64</span>; <span class="number">2</span>];
-<a href=#274 id=274 data-nosnippet>274</a>    <span class="kw">for </span><span class="kw-2">&amp;</span>index <span class="kw">in </span><span class="kw-2">&amp;</span>valid_indices {
-<a href=#275 id=275 data-nosnippet>275</a>        chi_squared[<span class="number">0</span>] += input.samples[index].weight * residual[index].re.powi(<span class="number">2</span>);
-<a href=#276 id=276 data-nosnippet>276</a>        chi_squared[<span class="number">1</span>] += input.samples[index].weight * residual[index].im.powi(<span class="number">2</span>);
-<a href=#277 id=277 data-nosnippet>277</a>    }
-<a href=#278 id=278 data-nosnippet>278</a>    <span class="prelude-val">Ok</span>(ContinuumRowResult {
-<a href=#279 id=279 data-nosnippet>279</a>        samples: input.samples.to_vec(),
-<a href=#280 id=280 data-nosnippet>280</a>        normalized_frequencies: normalized,
-<a href=#281 id=281 data-nosnippet>281</a>        fit_sample_indices: valid_indices,
-<a href=#282 id=282 data-nosnippet>282</a>        coefficients,
-<a href=#283 id=283 data-nosnippet>283</a>        prediction,
-<a href=#284 id=284 data-nosnippet>284</a>        residual,
-<a href=#285 id=285 data-nosnippet>285</a>        status: ContinuumFitStatus::Fitted { effective_order },
-<a href=#286 id=286 data-nosnippet>286</a>        chi_squared,
-<a href=#287 id=287 data-nosnippet>287</a>    })
-<a href=#288 id=288 data-nosnippet>288</a>}
-<a href=#289 id=289 data-nosnippet>289</a>
-<a href=#290 id=290 data-nosnippet>290</a><span class="kw">fn </span>casa_normalized_frequency_axis(frequencies_hz: <span class="kw-2">&amp;</span>[f64]) -&gt; Vec&lt;f64&gt; {
-<a href=#291 id=291 data-nosnippet>291</a>    <span class="kw">let </span>minimum = frequencies_hz
-<a href=#292 id=292 data-nosnippet>292</a>        .iter()
-<a href=#293 id=293 data-nosnippet>293</a>        .copied()
-<a href=#294 id=294 data-nosnippet>294</a>        .min_by(f64::total_cmp)
-<a href=#295 id=295 data-nosnippet>295</a>        .expect(<span class="string">"validated nonempty frequencies"</span>);
-<a href=#296 id=296 data-nosnippet>296</a>    <span class="kw">let </span>maximum = frequencies_hz
-<a href=#297 id=297 data-nosnippet>297</a>        .iter()
-<a href=#298 id=298 data-nosnippet>298</a>        .copied()
-<a href=#299 id=299 data-nosnippet>299</a>        .max_by(f64::total_cmp)
-<a href=#300 id=300 data-nosnippet>300</a>        .expect(<span class="string">"validated nonempty frequencies"</span>);
-<a href=#301 id=301 data-nosnippet>301</a>    <span class="kw">let </span>midpoint = <span class="number">0.5 </span>* (minimum + maximum);
-<a href=#302 id=302 data-nosnippet>302</a>    <span class="kw">let </span>denominator = minimum - midpoint;
-<a href=#303 id=303 data-nosnippet>303</a>    <span class="kw">if </span>denominator == <span class="number">0.0 </span>{
-<a href=#304 id=304 data-nosnippet>304</a>        <span class="macro">vec!</span>[<span class="number">0.0</span>; frequencies_hz.len()]
-<a href=#305 id=305 data-nosnippet>305</a>    } <span class="kw">else </span>{
-<a href=#306 id=306 data-nosnippet>306</a>        frequencies_hz
-<a href=#307 id=307 data-nosnippet>307</a>            .iter()
-<a href=#308 id=308 data-nosnippet>308</a>            .map(|frequency| (frequency - midpoint) / denominator)
-<a href=#309 id=309 data-nosnippet>309</a>            .collect()
-<a href=#310 id=310 data-nosnippet>310</a>    }
-<a href=#311 id=311 data-nosnippet>311</a>}
-<a href=#312 id=312 data-nosnippet>312</a>
-<a href=#313 id=313 data-nosnippet>313</a><span class="kw">fn </span>monomial_basis(x: f64, count: usize) -&gt; Vec&lt;f64&gt; {
-<a href=#314 id=314 data-nosnippet>314</a>    <span class="kw">let </span><span class="kw-2">mut </span>terms = Vec::with_capacity(count);
-<a href=#315 id=315 data-nosnippet>315</a>    <span class="kw">let </span><span class="kw-2">mut </span>value = <span class="number">1.0</span>;
-<a href=#316 id=316 data-nosnippet>316</a>    <span class="kw">for _ in </span><span class="number">0</span>..count {
-<a href=#317 id=317 data-nosnippet>317</a>        terms.push(value);
-<a href=#318 id=318 data-nosnippet>318</a>        value <span class="kw-2">*</span>= x;
-<a href=#319 id=319 data-nosnippet>319</a>    }
-<a href=#320 id=320 data-nosnippet>320</a>    terms
-<a href=#321 id=321 data-nosnippet>321</a>}
-<a href=#322 id=322 data-nosnippet>322</a>
-<a href=#323 id=323 data-nosnippet>323</a><span class="kw">fn </span>evaluate_polynomial(coefficients: <span class="kw-2">&amp;</span>[Complex64], x: f64) -&gt; Complex64 {
-<a href=#324 id=324 data-nosnippet>324</a>    coefficients
-<a href=#325 id=325 data-nosnippet>325</a>        .iter()
-<a href=#326 id=326 data-nosnippet>326</a>        .rev()
-<a href=#327 id=327 data-nosnippet>327</a>        .fold(Complex64::new(<span class="number">0.0</span>, <span class="number">0.0</span>), |value, coefficient| {
-<a href=#328 id=328 data-nosnippet>328</a>            value * x + coefficient
-<a href=#329 id=329 data-nosnippet>329</a>        })
-<a href=#330 id=330 data-nosnippet>330</a>}
+<a href=#254 id=254 data-nosnippet>254</a>    <span class="kw">let </span>real = fit_component(|value| value.re)<span class="question-mark">?</span>;
+<a href=#255 id=255 data-nosnippet>255</a>    <span class="kw">let </span>imaginary = fit_component(|value| value.im)<span class="question-mark">?</span>;
+<a href=#256 id=256 data-nosnippet>256</a>    <span class="kw">let </span>coefficients = real
+<a href=#257 id=257 data-nosnippet>257</a>        .into_iter()
+<a href=#258 id=258 data-nosnippet>258</a>        .zip(imaginary)
+<a href=#259 id=259 data-nosnippet>259</a>        .map(|(real, imaginary)| Complex64::new(real, imaginary))
+<a href=#260 id=260 data-nosnippet>260</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#261 id=261 data-nosnippet>261</a>    <span class="kw">let </span>prediction = normalized
+<a href=#262 id=262 data-nosnippet>262</a>        .iter()
+<a href=#263 id=263 data-nosnippet>263</a>        .map(|<span class="kw-2">&amp;</span>x| evaluate_polynomial(<span class="kw-2">&amp;</span>coefficients, x))
+<a href=#264 id=264 data-nosnippet>264</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#265 id=265 data-nosnippet>265</a>    <span class="kw">let </span>residual = input
+<a href=#266 id=266 data-nosnippet>266</a>        .samples
+<a href=#267 id=267 data-nosnippet>267</a>        .iter()
+<a href=#268 id=268 data-nosnippet>268</a>        .zip(<span class="kw-2">&amp;</span>prediction)
+<a href=#269 id=269 data-nosnippet>269</a>        .map(|(sample, model)| sample.visibility - model)
+<a href=#270 id=270 data-nosnippet>270</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#271 id=271 data-nosnippet>271</a>    <span class="kw">let </span><span class="kw-2">mut </span>chi_squared = [<span class="number">0.0_f64</span>; <span class="number">2</span>];
+<a href=#272 id=272 data-nosnippet>272</a>    <span class="kw">for </span><span class="kw-2">&amp;</span>index <span class="kw">in </span><span class="kw-2">&amp;</span>valid_indices {
+<a href=#273 id=273 data-nosnippet>273</a>        chi_squared[<span class="number">0</span>] += input.samples[index].weight * residual[index].re.powi(<span class="number">2</span>);
+<a href=#274 id=274 data-nosnippet>274</a>        chi_squared[<span class="number">1</span>] += input.samples[index].weight * residual[index].im.powi(<span class="number">2</span>);
+<a href=#275 id=275 data-nosnippet>275</a>    }
+<a href=#276 id=276 data-nosnippet>276</a>    <span class="prelude-val">Ok</span>(ContinuumRowResult {
+<a href=#277 id=277 data-nosnippet>277</a>        samples: input.samples.to_vec(),
+<a href=#278 id=278 data-nosnippet>278</a>        normalized_frequencies: normalized,
+<a href=#279 id=279 data-nosnippet>279</a>        fit_sample_indices: valid_indices,
+<a href=#280 id=280 data-nosnippet>280</a>        coefficients,
+<a href=#281 id=281 data-nosnippet>281</a>        prediction,
+<a href=#282 id=282 data-nosnippet>282</a>        residual,
+<a href=#283 id=283 data-nosnippet>283</a>        status: ContinuumFitStatus::Fitted { effective_order },
+<a href=#284 id=284 data-nosnippet>284</a>        chi_squared,
+<a href=#285 id=285 data-nosnippet>285</a>    })
+<a href=#286 id=286 data-nosnippet>286</a>}
+<a href=#287 id=287 data-nosnippet>287</a>
+<a href=#288 id=288 data-nosnippet>288</a><span class="kw">fn </span>casa_normalized_frequency_axis(frequencies_hz: <span class="kw-2">&amp;</span>[f64]) -&gt; Vec&lt;f64&gt; {
+<a href=#289 id=289 data-nosnippet>289</a>    <span class="kw">let </span>minimum = frequencies_hz
+<a href=#290 id=290 data-nosnippet>290</a>        .iter()
+<a href=#291 id=291 data-nosnippet>291</a>        .copied()
+<a href=#292 id=292 data-nosnippet>292</a>        .min_by(f64::total_cmp)
+<a href=#293 id=293 data-nosnippet>293</a>        .expect(<span class="string">"validated nonempty frequencies"</span>);
+<a href=#294 id=294 data-nosnippet>294</a>    <span class="kw">let </span>maximum = frequencies_hz
+<a href=#295 id=295 data-nosnippet>295</a>        .iter()
+<a href=#296 id=296 data-nosnippet>296</a>        .copied()
+<a href=#297 id=297 data-nosnippet>297</a>        .max_by(f64::total_cmp)
+<a href=#298 id=298 data-nosnippet>298</a>        .expect(<span class="string">"validated nonempty frequencies"</span>);
+<a href=#299 id=299 data-nosnippet>299</a>    <span class="kw">let </span>midpoint = <span class="number">0.5 </span>* (minimum + maximum);
+<a href=#300 id=300 data-nosnippet>300</a>    <span class="kw">let </span>denominator = minimum - midpoint;
+<a href=#301 id=301 data-nosnippet>301</a>    <span class="kw">if </span>denominator == <span class="number">0.0 </span>{
+<a href=#302 id=302 data-nosnippet>302</a>        <span class="macro">vec!</span>[<span class="number">0.0</span>; frequencies_hz.len()]
+<a href=#303 id=303 data-nosnippet>303</a>    } <span class="kw">else </span>{
+<a href=#304 id=304 data-nosnippet>304</a>        frequencies_hz
+<a href=#305 id=305 data-nosnippet>305</a>            .iter()
+<a href=#306 id=306 data-nosnippet>306</a>            .map(|frequency| (frequency - midpoint) / denominator)
+<a href=#307 id=307 data-nosnippet>307</a>            .collect()
+<a href=#308 id=308 data-nosnippet>308</a>    }
+<a href=#309 id=309 data-nosnippet>309</a>}
+<a href=#310 id=310 data-nosnippet>310</a>
+<a href=#311 id=311 data-nosnippet>311</a><span class="kw">fn </span>evaluate_polynomial(coefficients: <span class="kw-2">&amp;</span>[Complex64], x: f64) -&gt; Complex64 {
+<a href=#312 id=312 data-nosnippet>312</a>    coefficients
+<a href=#313 id=313 data-nosnippet>313</a>        .iter()
+<a href=#314 id=314 data-nosnippet>314</a>        .rev()
+<a href=#315 id=315 data-nosnippet>315</a>        .fold(Complex64::new(<span class="number">0.0</span>, <span class="number">0.0</span>), |value, coefficient| {
+<a href=#316 id=316 data-nosnippet>316</a>            value * x + coefficient
+<a href=#317 id=317 data-nosnippet>317</a>        })
+<a href=#318 id=318 data-nosnippet>318</a>}
 </code></pre></div></section></main></body></html>

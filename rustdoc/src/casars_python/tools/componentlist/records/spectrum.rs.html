@@ -2,7 +2,7 @@
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Required spectral fields: table loading tolerates failures, cl imports do not.
 <a href=#3 id=3 data-nosnippet>3</a></span><span class="kw">use super</span>::{numbers, scalar};
 <a href=#4 id=4 data-nosnippet>4</a><span class="kw">use </span>casa_components::SpectralType;
-<a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>casa_types::{ArrayValue, RecordValue, Value};
+<a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>casa_core::{ArrayValue, RecordValue, Value};
 <a href=#6 id=6 data-nosnippet>6</a>
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>validate(record: <span class="kw-2">&amp;</span>RecordValue, kind: SpectralType) -&gt; <span class="prelude-ty">Result</span>&lt;(), String&gt; {
 <a href=#8 id=8 data-nosnippet>8</a>    <span class="kw">match </span>kind {

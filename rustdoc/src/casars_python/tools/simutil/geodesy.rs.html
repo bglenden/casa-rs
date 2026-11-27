@@ -19,11 +19,11 @@
 <a href=#19 id=19 data-nosnippet>19</a>//! CASA's `utm2long` with `verbose` also logs the position it found; casa-rs
 <a href=#20 id=20 data-nosnippet>20</a>//! does not.
 <a href=#21 id=21 data-nosnippet>21</a>
-<a href=#22 id=22 data-nosnippet>22</a></span><span class="kw">use </span>casa_simulation::readantenna::geodesy::{
-<a href=#23 id=23 data-nosnippet>23</a>    <span class="self">self</span>, Datum, geodetic_to_xyz, grid_to_geodetic, local_to_itrf, utm_to_geodetic, utm_to_xyz,
-<a href=#24 id=24 data-nosnippet>24</a>    xyz_to_geodetic, xyz_to_geodetic_old, zone_constants,
-<a href=#25 id=25 data-nosnippet>25</a>};
-<a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span>casa_types::measures::{MPosition, PositionRef};
+<a href=#22 id=22 data-nosnippet>22</a></span><span class="kw">use </span>casa_core::measures::{MPosition, PositionRef};
+<a href=#23 id=23 data-nosnippet>23</a><span class="kw">use </span>casa_simulation::readantenna::geodesy::{
+<a href=#24 id=24 data-nosnippet>24</a>    <span class="self">self</span>, Datum, geodetic_to_xyz, grid_to_geodetic, local_to_itrf, utm_to_geodetic, utm_to_xyz,
+<a href=#25 id=25 data-nosnippet>25</a>    xyz_to_geodetic, xyz_to_geodetic_old, zone_constants,
+<a href=#26 id=26 data-nosnippet>26</a>};
 <a href=#27 id=27 data-nosnippet>27</a><span class="kw">use </span>pyo3::exceptions::PyRuntimeError;
 <a href=#28 id=28 data-nosnippet>28</a><span class="kw">use </span>pyo3::prelude::<span class="kw-2">*</span>;
 <a href=#29 id=29 data-nosnippet>29</a>

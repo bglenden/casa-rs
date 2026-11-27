@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["RegridMethod"],"fn":["check_regrid","check_regrid_along_frequency","direction_affine","linear_sample","regrid","regrid_along_frequency","regrid_complex_plane"],"struct":["DirectionAffine","RegridTemplate","Regridded"],"trait":["RegridPixel"]};

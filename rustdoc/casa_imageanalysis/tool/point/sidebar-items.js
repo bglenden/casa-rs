@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["MakeArrayError","PixelScalar"],"fn":["make_constant_array","pixel_position","pixel_sample","pixel_value_casa"],"struct":["PixelValueResult"]};

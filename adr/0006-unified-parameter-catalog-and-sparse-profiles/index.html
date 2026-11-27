@@ -682,8 +682,8 @@ owns resolution and any managed Last state; ordinary Python task calls isolate
 Last state from CLI runs.</p>
 <p><code>ProviderContractEnvelope</code>, <code>build.rs</code> JSON-fingerprinting probes (such as
 <code>IMAGE_PROVIDER_PROBES</code>), and the mandatory 24-binary <code>ApplicationCatalog</code>
-subprocess launcher are retired (the executable resolver is deleted once
-<code>casars.tasks</code> cuts over to in-process execution per ADR-0017).</p>
+subprocess launcher and executable resolver are retired. Python executes the
+task adapters in-process (ADR-0017).</p>
 <p>A profile must name the current task and use the current file format and task
 profile version. Refuse stale files and tell the user to recreate them. Bump
 the marker only when an existing profile can no longer be interpreted as

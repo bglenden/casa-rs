@@ -16,7 +16,7 @@ f64, Complex, DComplex, String) are valid lattice elements.</p>
 (zero/empty) value for initializing lattice storage.</p>
 <h2 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h2>
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>casa_lattices::LatticeElement;
-<span class="kw">use </span>casa_types::PrimitiveType;
+<span class="kw">use </span>casa_core::PrimitiveType;
 
 <span class="macro">assert_eq!</span>(f64::PRIMITIVE_TYPE, PrimitiveType::Float64);
 <span class="macro">assert_eq!</span>(f64::default_value(), <span class="number">0.0</span>);</code></pre></div></div></details><h2 id="required-associated-consts" class="section-header">Required Associated Constants<a href="#required-associated-consts" class="anchor">§</a></h2><div class="methods"><details class="toggle" open><summary><section id="associatedconstant.PRIMITIVE_TYPE" class="method"><a class="src rightside" href="../src/casa_lattices/element.rs.html#27">Source</a><h4 class="code-header">const <a href="#associatedconstant.PRIMITIVE_TYPE" class="constant">PRIMITIVE_TYPE</a>: PrimitiveType</h4></section></summary><div class="docblock"><p>The [<code>PrimitiveType</code>] tag for this element type.</p>

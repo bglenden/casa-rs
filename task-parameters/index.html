@@ -1095,30 +1095,19 @@ request stdin.</p>
 every catalog task. It starts from the draft, or Defaults, sets <code>values</code>,
 and runs in <code>workspace</code>: the draft's, or the current directory. The
 CASA-named wrappers take the surface's parameters and run in the current
-directory. Each call starts the task's own executable, found by the resolver
-(<a href="../install/">Install</a>), with <code>--json-run -</code>, and passes its log lines to
-<code>sys.stderr</code> as they arrive. The log reaches stderr at the logging
-configuration's threshold, WARN by default;
-<code>CASA_RS_LOG_STDERR_PRIORITY=INFO</code> also shows a task's INFO lines, such as
-its start and completion. Ctrl-C (<code>KeyboardInterrupt</code>) is passed to the task
-as SIGINT; the task has ten seconds to stop before it is killed, and the
-<code>KeyboardInterrupt</code> is then raised again.</p>
-<p>A value the contract refuses, such as a parameter its gridder does not read,
-raises <code>ValueError</code> before anything starts, or <code>TypeError</code> when the value
-has the wrong type. A task that refuses its parameters itself, such as an
-input that does not exist, raises <code>casars.tasks.TaskParameterError</code>, a
-<code>ValueError</code>; one that starts and does not succeed raises
-<code>casars.tasks.TaskExecutionError</code>, a <code>RuntimeError</code>. Both carry the
-<code>.completion</code>, whose <code>status</code> is <code>refused</code>, <code>failed</code>, <code>interrupted</code>,
-<code>signalled</code> or <code>malformed_reply</code>, with its <code>message</code> and the <code>parameter</code> it
-names. <code>TaskBinaryNotFoundError</code>, a <code>FileNotFoundError</code>, says what the
-resolver lacked; <code>TaskInvocationError</code> means the executable could not be
-started, and <code>TaskResultError</code> that a success's result was malformed.
-<code>tasks.run</code> returns a <code>TaskCompletion</code> with the <code>command</code> run, its
-<code>workspace</code>, <code>returncode</code>, <code>stdout</code> (the reply), <code>stderr</code> (the log), the
-<code>provider_invocation</code>, CASA's return <code>value</code> from the reply, and the
-declared products (<code>result</code>, <code>products</code>); result projection remains
-Rust-owned.</p>
+directory. The extension executes the task in-process and resolves relative
+task paths in the selected workspace. It streams logs to <code>sys.stderr</code> at the
+configured threshold, WARN by default. <code>CASA_RS_LOG_STDERR_PRIORITY=INFO</code>
+also shows INFO lines such as task start and completion. Ctrl-C requests
+cancellation. Python raises <code>KeyboardInterrupt</code> after the task worker exits.</p>
+<p>The runner raises <code>ValueError</code> for contract validation failures and
+<code>TypeError</code> for values of the wrong type. A task that refuses its parameters
+raises <code>TaskParameterError</code> (a <code>ValueError</code>). A task that fails during
+execution raises <code>TaskExecutionError</code> (a <code>RuntimeError</code>). Both errors carry
+a <code>completion</code> with the status, message and related parameter when known.
+<code>TaskResultError</code> indicates a result that could not be projected.</p>
+<p><code>tasks.run</code> returns a <code>TaskCompletion</code> with its <code>workspace</code>, <code>logs</code>, CASA
+return <code>value</code>, and the contract-declared products (<code>result</code>, <code>products</code>).</p>
 <p>The CASA-named wrappers and their type stubs are generated from the catalog,
 under <code>casars.tasks</code>; there is no second provider-specific task API. A
 surface that names its CASA task (<code>casa_task</code>; every surface but the casa-rs

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["add_noise","insert_image","put_region","replace_masked_pixels","set_pixels_and_mask"]};

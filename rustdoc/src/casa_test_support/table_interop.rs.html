@@ -2,8 +2,8 @@
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="kw">use </span><span class="kw">crate</span>::TableOracle;
 <a href=#3 id=3 data-nosnippet>3</a><span class="kw">use </span>std::path::Path;
 <a href=#4 id=4 data-nosnippet>4</a>
-<a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>casa_tables::{ColumnBinding, EndianFormat, Table, TableError, TableOptions, TableSchema};
-<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_types::{RecordValue, Value};
+<a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>casa_core::{RecordValue, Value};
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_tables::{ColumnBinding, EndianFormat, Table, TableError, TableOptions, TableSchema};
 <a href=#7 id=7 data-nosnippet>7</a>
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span><span class="kw">crate</span>::CppTableFixture;
 <a href=#9 id=9 data-nosnippet>9</a>
@@ -480,7 +480,7 @@
 <a href=#480 id=480 data-nosnippet>480</a>
 <a href=#481 id=481 data-nosnippet>481</a>    <span class="comment">// Copy table keywords
 <a href=#482 id=482 data-nosnippet>482</a>    </span><span class="kw">for </span>field <span class="kw">in </span>fixture.table_keywords.fields() {
-<a href=#483 id=483 data-nosnippet>483</a>        table.keywords_mut().push(casa_types::RecordField::new(
+<a href=#483 id=483 data-nosnippet>483</a>        table.keywords_mut().push(casa_core::RecordField::new(
 <a href=#484 id=484 data-nosnippet>484</a>            field.name.clone(),
 <a href=#485 id=485 data-nosnippet>485</a>            field.value.clone(),
 <a href=#486 id=486 data-nosnippet>486</a>        ));
@@ -629,7 +629,7 @@
 <a href=#629 id=629 data-nosnippet>629</a><span class="attr">#[cfg(test)]
 <a href=#630 id=630 data-nosnippet>630</a></span><span class="kw">mod </span>tests {
 <a href=#631 id=631 data-nosnippet>631</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#632 id=632 data-nosnippet>632</a>    <span class="kw">use </span>casa_types::{PrimitiveType, RecordField, ScalarValue};
+<a href=#632 id=632 data-nosnippet>632</a>    <span class="kw">use </span>casa_core::{PrimitiveType, RecordField, ScalarValue};
 <a href=#633 id=633 data-nosnippet>633</a>
 <a href=#634 id=634 data-nosnippet>634</a>    <span class="kw">fn </span>scalar_fixture() -&gt; TableFixture {
 <a href=#635 id=635 data-nosnippet>635</a>        <span class="kw">let </span>schema = TableSchema::new(<span class="macro">vec!</span>[

@@ -794,34 +794,10 @@ independent migration or default table.</p>
 resolution. An explicit source profile
 is never overwritten without an explicit save.</p>
 <h2 id="task-runner-compatibility">Task-runner compatibility<a class="headerlink" href="#task-runner-compatibility" title="Permanent link">&para;</a></h2>
-<p>Python has one task transport: every generated <code>casars.tasks.&lt;task&gt;</code> callable
-and <code>casars.tasks.run</code> start the task's own executable, named by the
-canonical application catalog, with its surface's fixed arguments and
-<code>--json-run -</code>. One Rust resolver
-(<code>casa_provider_contracts::resolve_task_executable</code>, through <code>casars._core</code>)
-finds that executable. The first step that applies decides:</p>
-<ol>
-<li>the task's catalog override variable, <code>CASARS_&lt;APP&gt;_BIN</code> (for example
-   <code>CASARS_IMAGER_BIN</code> or <code>CASARS_CALIBRATE_BIN</code>), names the file;</li>
-<li>a suite root holds it at <code>&lt;root&gt;/bin/&lt;executable&gt;</code>: <code>CASARS_SUITE_ROOT</code>,
-   or else the installed suite the Python package belongs to (the
-   installer's environment is <code>&lt;suite&gt;/python</code>, beside <code>&lt;suite&gt;/bin</code> and
-   <code>bundle-manifest.json</code>);</li>
-<li>a development checkout: the newest <code>debug</code> or <code>release</code> build of the
-   executable under the workspace the package was built from, in
-   <code>$CARGO_TARGET_DIR</code> or <code>target/</code>.</li>
-</ol>
-<p>A step that applies but lacks the file raises <code>TaskBinaryNotFoundError</code>
-naming what it lacked; it never falls through to a later step, so an
-installed suite never runs a checkout's build. A missing development build is
-reported with the <code>cargo build -p &lt;package&gt; --bin &lt;executable&gt;</code> that makes
-it. Python does not search the current directory or <code>PATH</code>, and nothing runs
-through <code>cargo</code>. A wheel installed outside a suite, such as one from PyPI,
-runs tasks only with <code>CASARS_SUITE_ROOT</code> or the task's override set; its
-in-process <code>casars.data</code>, <code>casars.tools</code> and <code>casars.simutil</code> need no
-executables. The executable validates the provider contract and request
-before execution; Python does not maintain a second protocol descriptor,
-provider schema, or compatibility handshake.</p>
+<p>The generated <code>casars.tasks</code> functions and <code>casars.tasks.run</code> execute through
+the wheel's <code>casars._core</code> extension. The Python package and the standalone CLI
+share the Rust parameters, task adapters and product contracts at the
+published casa-rs revision.</p>
 <p>Release tags also build and publish Python package artifacts separately from the
 Rust binaries:</p>
 <ul>
@@ -829,12 +805,6 @@ Rust binaries:</p>
   suite bundles, standalone binary bundles, and installer script.</li>
 <li>PyPI publication is attempted from the same workflow when <code>PYPI_API_TOKEN</code> is configured.</li>
 </ul>
-<p>That means Python package compatibility has two layers:</p>
-<ol>
-<li>package-version compatibility with the published wheel or sdist</li>
-<li>runtime contract compatibility with the resolved suite and its
-   catalog-owned task executables</li>
-</ol>
 <p>The direct object-surface contract published by <code>casars.data.protocol_info()</code>
 and <code>casars.data.schema_bundle()</code> is currently:</p>
 <ul>

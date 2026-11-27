@@ -44,7 +44,7 @@ the consumer’s.</li>
 <li>A batch is whole times of the partition’s time × baseline grid:
 sample <code>t × B + b</code>, with the field and scan per time, its times,
 frequencies and UVW in native Measures views
-(<a href="struct.EpochView.html" title="struct casa_observation::EpochView"><code>casa_types::measures::EpochView</code></a> and friends), the payload as
+(<a href="struct.EpochView.html" title="struct casa_observation::EpochView"><code>casa_core::measures::EpochView</code></a> and friends), the payload as
 <a href="https://docs.rs/ndarray/0.15/ndarray/index.html" title="mod ndarray"><code>ndarray</code></a> views in the <strong>payload order</strong> <code>[sample, channel, correlation]</code>, and one <a href="struct.Validity.html" title="struct casa_observation::Validity"><code>Validity</code></a> rule over its flags, values and
 weights. A grid cell no acquisition filled is padding: flagged in
 every store (the MSv4 adapter folds XRADIO’s NaN weight into the

@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-calibration/src/ft/image.rs`."><title>image.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="casa_calibration" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_calibration/ft/</div>image.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `libs/casa/casa-calibration/src/ft/image.rs`."><title>image.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="casa_calibration" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_calibration/ft/</div>image.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Prepare image models with the existing gridder for CASA's legacy imager.
 <a href=#3 id=3 data-nosnippet>3</a>
 <a href=#4 id=4 data-nosnippet>4</a></span><span class="kw">use </span>std::collections::{BTreeMap, BTreeSet};
@@ -8,29 +8,29 @@
 <a href=#8 id=8 data-nosnippet>8</a>    Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate, ObsInfo,
 <a href=#9 id=9 data-nosnippet>9</a>    SpectralCoordinate, StokesCoordinate, StokesType,
 <a href=#10 id=10 data-nosnippet>10</a>};
-<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>casa_images::PagedImage;
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>casa_imaging_model::PolarizationCoordinate;
-<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>casa_imaging_operator::{
-<a href=#14 id=14 data-nosnippet>14</a>    Basis, Boxcar, ConvolutionFunctionSet, GridGeometry, GridPadding, GridPolarization,
-<a href=#15 id=15 data-nosnippet>15</a>    GridPrecision, ImageCorrection, ImageExtent, MOSAIC_OVERSAMPLING, MeasurementOperator,
-<a href=#16 id=16 data-nosnippet>16</a>    ModelImages, ModelPlane, ModelPrescale, MosaicPb, PaddingFactor, PolarizationRouting,
-<a href=#17 id=17 data-nosnippet>17</a>    PreparedModelGrids, SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, WPlaneCount,
-<a href=#18 id=18 data-nosnippet>18</a>    WPlanes, grid_planning_bytes,
-<a href=#19 id=19 data-nosnippet>19</a>};
-<a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>casa_imaging_runtime::pass::{WORKER_STACK_BYTES, WorkerTeam};
-<a href=#21 id=21 data-nosnippet>21</a><span class="kw">use </span>casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
-<a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span>casa_ms::derived::engine::MsCalEngine;
-<a href=#23 id=23 data-nosnippet>23</a><span class="kw">use </span>casa_ms::virtual_model::ft_record::{
-<a href=#24 id=24 data-nosnippet>24</a>    FirstBuffer, GridFt, casa_spectral, legacy_common_mosaic, legacy_image_mosaic, legacy_mosaic,
-<a href=#25 id=25 data-nosnippet>25</a>    legacy_multi_term, set_grid_motion, set_grid_tangent,
-<a href=#26 id=26 data-nosnippet>26</a>};
-<a href=#27 id=27 data-nosnippet>27</a><span class="kw">use </span>casa_ms::{
-<a href=#28 id=28 data-nosnippet>28</a>    MeasurementSet, MsResult, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
-<a href=#29 id=29 data-nosnippet>29</a>    convert_frequency_to_frame_with_frame, virtual_model_image_path,
-<a href=#30 id=30 data-nosnippet>30</a>};
-<a href=#31 id=31 data-nosnippet>31</a><span class="kw">use </span>casa_types::measures::frequency::FrequencyRef;
-<a href=#32 id=32 data-nosnippet>32</a><span class="kw">use </span>casa_types::measures::record::direction_from_record;
-<a href=#33 id=33 data-nosnippet>33</a><span class="kw">use </span>casa_types::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>casa_core::measures::frequency::FrequencyRef;
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>casa_core::measures::record::direction_from_record;
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>casa_core::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>casa_images::PagedImage;
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>casa_imaging_model::PolarizationCoordinate;
+<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>casa_imaging_operator::{
+<a href=#17 id=17 data-nosnippet>17</a>    Basis, Boxcar, ConvolutionFunctionSet, GridGeometry, GridPadding, GridPolarization,
+<a href=#18 id=18 data-nosnippet>18</a>    GridPrecision, ImageCorrection, ImageExtent, MOSAIC_OVERSAMPLING, MeasurementOperator,
+<a href=#19 id=19 data-nosnippet>19</a>    ModelImages, ModelPlane, ModelPrescale, MosaicPb, PaddingFactor, PolarizationRouting,
+<a href=#20 id=20 data-nosnippet>20</a>    PreparedModelGrids, SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, WPlaneCount,
+<a href=#21 id=21 data-nosnippet>21</a>    WPlanes, grid_planning_bytes,
+<a href=#22 id=22 data-nosnippet>22</a>};
+<a href=#23 id=23 data-nosnippet>23</a><span class="kw">use </span>casa_imaging_runtime::pass::{WORKER_STACK_BYTES, WorkerTeam};
+<a href=#24 id=24 data-nosnippet>24</a><span class="kw">use </span>casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
+<a href=#25 id=25 data-nosnippet>25</a><span class="kw">use </span>casa_ms::derived::engine::MsCalEngine;
+<a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span>casa_ms::schema::ft_record::{
+<a href=#27 id=27 data-nosnippet>27</a>    FirstBuffer, GridFt, casa_spectral, legacy_common_mosaic, legacy_image_mosaic, legacy_mosaic,
+<a href=#28 id=28 data-nosnippet>28</a>    legacy_multi_term, set_grid_motion, set_grid_tangent,
+<a href=#29 id=29 data-nosnippet>29</a>};
+<a href=#30 id=30 data-nosnippet>30</a><span class="kw">use </span>casa_ms::{
+<a href=#31 id=31 data-nosnippet>31</a>    MeasurementSet, MsResult, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
+<a href=#32 id=32 data-nosnippet>32</a>    convert_frequency_to_frame_with_frame, virtual_model_image_path,
+<a href=#33 id=33 data-nosnippet>33</a>};
 <a href=#34 id=34 data-nosnippet>34</a><span class="kw">use </span>ndarray::{Array2, ArrayD, IxDyn, ShapeBuilder};
 <a href=#35 id=35 data-nosnippet>35</a>
 <a href=#36 id=36 data-nosnippet>36</a><span class="kw">use </span><span class="kw">super</span>::moving_source::MovingSourceAnchor;

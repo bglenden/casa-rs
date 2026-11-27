@@ -150,7 +150,7 @@
 <a href=#150 id=150 data-nosnippet>150</a>    <span class="kw">let </span>result = source
 <a href=#151 id=151 data-nosnippet>151</a>        .map(|value| {
 <a href=#152 id=152 data-nosnippet>152</a>            <span class="kw">let </span>vector =
-<a href=#153 id=153 data-nosnippet>153</a>                casa_types::measures::baseline::j2000_baseline_uvw(cartesian(value)<span class="question-mark">?</span>, <span class="kw-2">&amp;</span>direction);
+<a href=#153 id=153 data-nosnippet>153</a>                casa_core::measures::baseline::j2000_baseline_uvw(cartesian(value)<span class="question-mark">?</span>, <span class="kw-2">&amp;</span>direction);
 <a href=#154 id=154 data-nosnippet>154</a>            xyz.extend(vector);
 <a href=#155 id=155 data-nosnippet>155</a>            dot.extend([
 <a href=#156 id=156 data-nosnippet>156</a>                (-sd * vector[<span class="number">1</span>] + cd * vector[<span class="number">2</span>]) * rate,
@@ -170,10 +170,10 @@
 <a href=#170 id=170 data-nosnippet>170</a>    ]))
 <a href=#171 id=171 data-nosnippet>171</a>}
 <a href=#172 id=172 data-nosnippet>172</a>
-<a href=#173 id=173 data-nosnippet>173</a><span class="kw">use </span>casa_types::measures::MeasFrame;
-<a href=#174 id=174 data-nosnippet>174</a><span class="kw">use </span>casa_types::measures::baseline::baseline_rotation;
-<a href=#175 id=175 data-nosnippet>175</a><span class="kw">use </span>casa_types::measures::direction::DirectionRef;
-<a href=#176 id=176 data-nosnippet>176</a><span class="kw">use </span>casa_types::measures::earth_magnetic::{EarthMagneticRef, MEarthMagnetic};
+<a href=#173 id=173 data-nosnippet>173</a><span class="kw">use </span>casa_core::measures::MeasFrame;
+<a href=#174 id=174 data-nosnippet>174</a><span class="kw">use </span>casa_core::measures::baseline::baseline_rotation;
+<a href=#175 id=175 data-nosnippet>175</a><span class="kw">use </span>casa_core::measures::direction::DirectionRef;
+<a href=#176 id=176 data-nosnippet>176</a><span class="kw">use </span>casa_core::measures::earth_magnetic::{EarthMagneticRef, MEarthMagnetic};
 <a href=#177 id=177 data-nosnippet>177</a>
 <a href=#178 id=178 data-nosnippet>178</a><span class="kw">enum </span>Operator {
 <a href=#179 id=179 data-nosnippet>179</a>    Matrix([[f64; <span class="number">3</span>]; <span class="number">3</span>]),
@@ -200,7 +200,7 @@
 <a href=#200 id=200 data-nosnippet>200</a>                    Box::new(frame),
 <a href=#201 id=201 data-nosnippet>201</a>                    target
 <a href=#202 id=202 data-nosnippet>202</a>                        .parse()
-<a href=#203 id=203 data-nosnippet>203</a>                        .map_err(|e: casa_types::measures::MeasureError| e.to_string())<span class="question-mark">?</span>,
+<a href=#203 id=203 data-nosnippet>203</a>                        .map_err(|e: casa_core::measures::MeasureError| e.to_string())<span class="question-mark">?</span>,
 <a href=#204 id=204 data-nosnippet>204</a>                )
 <a href=#205 id=205 data-nosnippet>205</a>            } <span class="kw">else </span>{
 <a href=#206 id=206 data-nosnippet>206</a>                <span class="kw">let </span>from = input
@@ -228,7 +228,7 @@
 <a href=#228 id=228 data-nosnippet>228</a>                <span class="kw">let </span>from = input
 <a href=#229 id=229 data-nosnippet>229</a>                    .refer
 <a href=#230 id=230 data-nosnippet>230</a>                    .parse()
-<a href=#231 id=231 data-nosnippet>231</a>                    .map_err(|e: casa_types::measures::MeasureError| e.to_string())<span class="question-mark">?</span>;
+<a href=#231 id=231 data-nosnippet>231</a>                    .map_err(|e: casa_core::measures::MeasureError| e.to_string())<span class="question-mark">?</span>;
 <a href=#232 id=232 data-nosnippet>232</a>                <span class="kw">let </span>value = MEarthMagnetic::from_xyz_nt(v[<span class="number">0</span>], v[<span class="number">1</span>], v[<span class="number">2</span>], from)
 <a href=#233 id=233 data-nosnippet>233</a>                    .convert_to(<span class="kw-2">*</span>target, frame)
 <a href=#234 id=234 data-nosnippet>234</a>                    .map_err(|e| e.to_string())<span class="question-mark">?</span>;
@@ -256,7 +256,7 @@
 <a href=#256 id=256 data-nosnippet>256</a>    std::array::from_fn(|i| (<span class="number">0</span>..<span class="number">3</span>).map(|j| m[i][j] * v[j]).sum())
 <a href=#257 id=257 data-nosnippet>257</a>}
 <a href=#258 id=258 data-nosnippet>258</a><span class="kw">use </span><span class="kw">crate</span>::convert::quantum::quantum_holder;
-<a href=#259 id=259 data-nosnippet>259</a><span class="kw">use </span>casa_types::quanta::Quantity;
+<a href=#259 id=259 data-nosnippet>259</a><span class="kw">use </span>casa_core::quanta::Quantity;
 <a href=#260 id=260 data-nosnippet>260</a>
 <a href=#261 id=261 data-nosnippet>261</a><span class="kw">fn </span>failure(lines: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;, error: <span class="kw">impl </span>Into&lt;String&gt;) -&gt; CasaValue {
 <a href=#262 id=262 data-nosnippet>262</a>    lines.push(LogLine::error(error));
@@ -329,7 +329,7 @@
 <a href=#329 id=329 data-nosnippet>329</a>        triples.push(q);
 <a href=#330 id=330 data-nosnippet>330</a>    }
 <a href=#331 id=331 data-nosnippet>331</a>    <span class="kw">if </span>kind == MeasureKind::EarthMagnetic {
-<a href=#332 id=332 data-nosnippet>332</a>        <span class="kw">use </span>casa_types::quanta::{Dimension, UnitDim};
+<a href=#332 id=332 data-nosnippet>332</a>        <span class="kw">use </span>casa_core::quanta::{Dimension, UnitDim};
 <a href=#333 id=333 data-nosnippet>333</a>        <span class="kw">let </span>angle = UnitDim::basis(Dimension::Angle);
 <a href=#334 id=334 data-nosnippet>334</a>        <span class="kw">if </span>triples[<span class="number">0</span>][<span class="number">1</span>..].iter().any(|q| q.unit().val().dim != angle) {
 <a href=#335 id=335 data-nosnippet>335</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(failure(

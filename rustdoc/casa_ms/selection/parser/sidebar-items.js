@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["parse_correlation_selector","resolve_field_selector_rows"],"struct":["FieldSelectorRow"]};
+window.SIDEBAR_ITEMS = {"fn":["parse_correlation_selector","parse_state_selector","resolve_field_selector_rows"],"struct":["FieldSelectorRow"]};

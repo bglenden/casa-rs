@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["initialize_continuum_scratch_holding"],"struct":["ContinuumScratchFit","ContinuumScratchOptions","LegacyContinuumTransform"]};

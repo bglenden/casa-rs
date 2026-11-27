@@ -173,7 +173,7 @@
 <a href=#173 id=173 data-nosnippet>173</a>            .map_err(fail);
 <a href=#174 id=174 data-nosnippet>174</a>        <span class="self">self</span>.dirty = <span class="bool-val">false</span>;
 <a href=#175 id=175 data-nosnippet>175</a>        PENDING.fetch_sub(<span class="number">1</span>, Ordering::Release);
-<a href=#176 id=176 data-nosnippet>176</a>        <span class="kw">crate</span>::tools::table::component_keyword_published(path);
+<a href=#176 id=176 data-nosnippet>176</a>        <span class="kw">crate</span>::tools::table::notify_keyword_change(path);
 <a href=#177 id=177 data-nosnippet>177</a>        result
 <a href=#178 id=178 data-nosnippet>178</a>    }
 <a href=#179 id=179 data-nosnippet>179</a>}

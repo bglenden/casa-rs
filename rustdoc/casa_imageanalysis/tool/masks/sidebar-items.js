@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["has_region_or_mask","mask_handler_casa","validate_mask_name"]};

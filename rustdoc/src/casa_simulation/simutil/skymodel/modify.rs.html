@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-simulation/src/simutil/skymodel/modify.rs`."><title>modify.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="casa_simulation" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../../static.files/src-script-813739b1.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_simulation/simutil/skymodel/</div>modify.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `libs/casa/casa-simulation/src/simutil/skymodel/modify.rs`."><title>modify.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="casa_simulation" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../../static.files/src-script-813739b1.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_simulation/simutil/skymodel/</div>modify.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! `simutil.modifymodel`: a model image fitted into the four axes
 <a href=#3 id=3 data-nosnippet>3</a>//! `simobserve` predicts from, `[direction, direction, Stokes, spectral]`,
 <a href=#4 id=4 data-nosnippet>4</a>//! with its brightness, direction, cell, centre frequency and channel width
@@ -26,8 +26,8 @@
 <a href=#26 id=26 data-nosnippet>26</a>    Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate, Projection,
 <a href=#27 id=27 data-nosnippet>27</a>    ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
 <a href=#28 id=28 data-nosnippet>28</a>};
-<a href=#29 id=29 data-nosnippet>29</a><span class="kw">use </span>casa_types::measures::frequency::FrequencyRef;
-<a href=#30 id=30 data-nosnippet>30</a><span class="kw">use </span>casa_types::quanta::Quantity;
+<a href=#29 id=29 data-nosnippet>29</a><span class="kw">use </span>casa_core::measures::frequency::FrequencyRef;
+<a href=#30 id=30 data-nosnippet>30</a><span class="kw">use </span>casa_core::quanta::Quantity;
 <a href=#31 id=31 data-nosnippet>31</a><span class="kw">use </span>ndarray::{ArrayD, Axis, IxDyn, ShapeBuilder};
 <a href=#32 id=32 data-nosnippet>32</a>
 <a href=#33 id=33 data-nosnippet>33</a><span class="kw">use super</span>::{
@@ -597,9 +597,9 @@
 <a href=#597 id=597 data-nosnippet>597</a>}
 <a href=#598 id=598 data-nosnippet>598</a>
 <a href=#599 id=599 data-nosnippet>599</a><span class="doccomment">/// casacore's unit `name`.
-<a href=#600 id=600 data-nosnippet>600</a></span><span class="kw">fn </span>unit(name: <span class="kw-2">&amp;</span>str) -&gt; casa_types::quanta::Unit {
-<a href=#601 id=601 data-nosnippet>601</a>    casa_types::quanta::casacore::casacore_unit(name)
-<a href=#602 id=602 data-nosnippet>602</a>        .unwrap_or_else(|<span class="kw">_</span>| casa_types::quanta::Unit::dimensionless())
+<a href=#600 id=600 data-nosnippet>600</a></span><span class="kw">fn </span>unit(name: <span class="kw-2">&amp;</span>str) -&gt; casa_core::quanta::Unit {
+<a href=#601 id=601 data-nosnippet>601</a>    casa_core::quanta::casacore::casacore_unit(name)
+<a href=#602 id=602 data-nosnippet>602</a>        .unwrap_or_else(|<span class="kw">_</span>| casa_core::quanta::Unit::dimensionless())
 <a href=#603 id=603 data-nosnippet>603</a>}
 <a href=#604 id=604 data-nosnippet>604</a>
 <a href=#605 id=605 data-nosnippet>605</a><span class="attr">#[cfg(test)]
@@ -613,7 +613,7 @@
 <a href=#613 id=613 data-nosnippet>613</a>        <span class="kw">let </span>pixels = ArrayD::from_elem(IxDyn(<span class="kw-2">&amp;</span>[<span class="number">4</span>, <span class="number">1</span>, <span class="number">2</span>]), <span class="number">1.0_f32</span>);
 <a href=#614 id=614 data-nosnippet>614</a>        <span class="kw">let </span><span class="kw-2">mut </span>coordinates = CoordinateSystem::new();
 <a href=#615 id=615 data-nosnippet>615</a>        coordinates.add_coordinate(DirectionCoordinate::new(
-<a href=#616 id=616 data-nosnippet>616</a>            casa_types::measures::direction::DirectionRef::J2000,
+<a href=#616 id=616 data-nosnippet>616</a>            casa_core::measures::direction::DirectionRef::J2000,
 <a href=#617 id=617 data-nosnippet>617</a>            Projection::new(ProjectionType::SIN),
 <a href=#618 id=618 data-nosnippet>618</a>            [<span class="number">1.0</span>, -<span class="number">0.5</span>],
 <a href=#619 id=619 data-nosnippet>619</a>            [-<span class="number">0.001</span>, <span class="number">0.001</span>],
@@ -621,7 +621,7 @@
 <a href=#621 id=621 data-nosnippet>621</a>        ));
 <a href=#622 id=622 data-nosnippet>622</a>        coordinates.add_coordinate(StokesCoordinate::new(<span class="macro">vec!</span>[StokesType::I]));
 <a href=#623 id=623 data-nosnippet>623</a>        coordinates.add_coordinate(SpectralCoordinate::new(
-<a href=#624 id=624 data-nosnippet>624</a>            casa_types::measures::frequency::FrequencyRef::LSRK,
+<a href=#624 id=624 data-nosnippet>624</a>            casa_core::measures::frequency::FrequencyRef::LSRK,
 <a href=#625 id=625 data-nosnippet>625</a>            <span class="number">1.4e9</span>,
 <a href=#626 id=626 data-nosnippet>626</a>            <span class="number">1e6</span>,
 <a href=#627 id=627 data-nosnippet>627</a>            <span class="number">0.0</span>,
@@ -655,7 +655,7 @@
 <a href=#655 id=655 data-nosnippet>655</a>        <span class="kw">let </span>output = scratch.path().join(<span class="string">"four-axes.image"</span>);
 <a href=#656 id=656 data-nosnippet>656</a>        <span class="kw">let </span><span class="kw-2">mut </span>coordinates = CoordinateSystem::new();
 <a href=#657 id=657 data-nosnippet>657</a>        coordinates.add_coordinate(DirectionCoordinate::new(
-<a href=#658 id=658 data-nosnippet>658</a>            casa_types::measures::direction::DirectionRef::J2000,
+<a href=#658 id=658 data-nosnippet>658</a>            casa_core::measures::direction::DirectionRef::J2000,
 <a href=#659 id=659 data-nosnippet>659</a>            Projection::new(ProjectionType::SIN),
 <a href=#660 id=660 data-nosnippet>660</a>            [<span class="number">1.</span>, -<span class="number">0.5</span>],
 <a href=#661 id=661 data-nosnippet>661</a>            [-<span class="number">1e-6</span>, <span class="number">1e-6</span>],

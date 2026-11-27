@@ -4,14 +4,14 @@
 <a href=#4 id=4 data-nosnippet>4</a>//! `QuantumHolder` reads them and written as its records.
 <a href=#5 id=5 data-nosnippet>5</a>//!
 <a href=#6 id=6 data-nosnippet>6</a>//! The arithmetic is casacore's, not [`Quantity`]'s operators
-<a href=#7 id=7 data-nosnippet>7</a>//! ([`casa_types::quanta::casacore`]): conversions scale by the ratio of
+<a href=#7 id=7 data-nosnippet>7</a>//! ([`casa_core::quanta::casacore`]): conversions scale by the ratio of
 <a href=#8 id=8 data-nosnippet>8</a>//! the unit factors (at 360 degrees a day between angles and times, keeping
 <a href=#9 id=9 data-nosnippet>9</a>//! the remaining SI dimensions otherwise); sums take the first unit; products
 <a href=#10 id=10 data-nosnippet>10</a>//! and quotients name their unit `km.s`, `km/(s)` and `(s)-1`. Frequencies
 <a href=#11 id=11 data-nosnippet>11</a>//! and wavelengths do not convert to each other.
 <a href=#12 id=12 data-nosnippet>12</a>
-<a href=#13 id=13 data-nosnippet>13</a></span><span class="kw">use </span>casa_types::quanta::casacore::{<span class="self">self</span>, QuantumError, conversion};
-<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>casa_types::quanta::{Quantity, Unit};
+<a href=#13 id=13 data-nosnippet>13</a></span><span class="kw">use </span>casa_core::quanta::casacore::{<span class="self">self</span>, QuantumError, conversion};
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>casa_core::quanta::{Quantity, Unit};
 <a href=#15 id=15 data-nosnippet>15</a>
 <a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span><span class="kw">super</span>::value::CasaValue;
 <a href=#17 id=17 data-nosnippet>17</a><span class="kw">use super</span>::{

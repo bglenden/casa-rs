@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["FitsListingMessage"],"fn":["list_fits"]};

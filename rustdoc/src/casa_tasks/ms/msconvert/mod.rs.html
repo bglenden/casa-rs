@@ -6,8 +6,8 @@
 <a href=#6 id=6 data-nosnippet>6</a>//!
 <a href=#7 id=7 data-nosnippet>7</a>//! The task is casa-rs's own: CASA has none, and XRADIO's
 <a href=#8 id=8 data-nosnippet>8</a>//! `convert_msv2_to_processing_set` converts one way only. It is a surface
-<a href=#9 id=9 data-nosnippet>9</a>//! over casa-ms's converter
-<a href=#10 id=10 data-nosnippet>10</a>//! ([`casa_ms::observation_io::convert`]), which reads the source through
+<a href=#9 id=9 data-nosnippet>9</a>//! over the MS transform converter
+<a href=#10 id=10 data-nosnippet>10</a>//! ([`casa_mstransform::convert`]), which reads the source through
 <a href=#11 id=11 data-nosnippet>11</a>//! the observation boundary as any consumer reads it and creates the
 <a href=#12 id=12 data-nosnippet>12</a>//! destination from those batches: every acquisition and every selected
 <a href=#13 id=13 data-nosnippet>13</a>//! data group, flags, weights, UVW and time auxiliaries are carried
@@ -34,7 +34,7 @@
 <a href=#34 id=34 data-nosnippet>34</a>//! its pointing converted unless `withpointing` is off (`with_pointing`),
 <a href=#35 id=35 data-nosnippet>35</a>//! and by default each dataset chunked as
 <a href=#36 id=36 data-nosnippet>36</a>//! XRADIO chunks it
-<a href=#37 id=37 data-nosnippet>37</a>//! ([`xradio_chunks`](casa_ms::observation_io::convert::xradio_chunks)).
+<a href=#37 id=37 data-nosnippet>37</a>//! ([`xradio_chunks`](casa_mstransform::convert::xradio_chunks)).
 <a href=#38 id=38 data-nosnippet>38</a>//! Its partitions are converted `nthreads` at a time, by default as many as
 <a href=#39 id=39 data-nosnippet>39</a>//! the cores and the memory allow. An MSv2 destination is written by one
 <a href=#40 id=40 data-nosnippet>40</a>//! thread.
@@ -78,7 +78,7 @@
 <a href=#78 id=78 data-nosnippet>78</a>}
 <a href=#79 id=79 data-nosnippet>79</a>
 <a href=#80 id=80 data-nosnippet>80</a><span class="doccomment">/// Run one resolved msconvert request.
-<a href=#81 id=81 data-nosnippet>81</a></span><span class="kw">fn </span>run_task(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt; {
+<a href=#81 id=81 data-nosnippet>81</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>run_task(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt; {
 <a href=#82 id=82 data-nosnippet>82</a>    <span class="kw">let </span>request = request_from(task)<span class="question-mark">?</span>;
 <a href=#83 id=83 data-nosnippet>83</a>    <span class="kw">let </span>result = msconvert(<span class="kw-2">&amp;</span>request)<span class="question-mark">?</span>;
 <a href=#84 id=84 data-nosnippet>84</a>    <span class="comment">// Each loss is logged as a warning when it is taken.

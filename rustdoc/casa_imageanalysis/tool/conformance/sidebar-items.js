@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["check_conformance","coordinates_conform","is_conform","require_conformance"],"struct":["ConformanceResult"]};

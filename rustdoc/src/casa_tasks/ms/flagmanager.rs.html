@@ -4,12 +4,12 @@
 <a href=#4 id=4 data-nosnippet>4</a>
 <a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use crate</span>::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_contracts::CasaValue;
-<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_ms::flagging::save_disk_flag_version;
-<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>casa_ms::{
-<a href=#9 id=9 data-nosnippet>9</a>    FlaggingError, MeasurementSet, delete_flag_version, flag_version_ms_path,
-<a href=#10 id=10 data-nosnippet>10</a>    initialize_flag_versions, list_flag_versions, rename_flag_version,
-<a href=#11 id=11 data-nosnippet>11</a>    rename_flag_version_for_task, restore_flag_version,
-<a href=#12 id=12 data-nosnippet>12</a>};
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_flagging::save_disk_flag_version;
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>casa_flagging::{
+<a href=#9 id=9 data-nosnippet>9</a>    FlaggingError, delete_flag_version, flag_version_ms_path, initialize_flag_versions,
+<a href=#10 id=10 data-nosnippet>10</a>    list_flag_versions, rename_flag_version, rename_flag_version_for_task, restore_flag_version,
+<a href=#11 id=11 data-nosnippet>11</a>};
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>casa_ms::MeasurementSet;
 <a href=#13 id=13 data-nosnippet>13</a>
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span><span class="kw">super</span>::casa_return::flagmanager_list_record;
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span><span class="kw">super</span>::front_end::{ms_task_success, task_flag_merge};
@@ -30,7 +30,7 @@
 <a href=#30 id=30 data-nosnippet>30</a>    .expect(<span class="string">"the flagmanager contract carries its surface"</span>)
 <a href=#31 id=31 data-nosnippet>31</a>}
 <a href=#32 id=32 data-nosnippet>32</a>
-<a href=#33 id=33 data-nosnippet>33</a><span class="kw">fn </span>run(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt; {
+<a href=#33 id=33 data-nosnippet>33</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>run(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt; {
 <a href=#34 id=34 data-nosnippet>34</a>    <span class="kw">let </span>vis = task.path(<span class="string">"vis"</span>)<span class="question-mark">?</span>;
 <a href=#35 id=35 data-nosnippet>35</a>    <span class="kw">let </span>request = FlagManagerTaskRequest {
 <a href=#36 id=36 data-nosnippet>36</a>        vis: vis.clone(),
@@ -50,7 +50,7 @@
 <a href=#50 id=50 data-nosnippet>50</a>}
 <a href=#51 id=51 data-nosnippet>51</a>
 <a href=#52 id=52 data-nosnippet>52</a><span class="kw">fn </span>execute(request: FlagManagerTaskRequest) -&gt; <span class="prelude-ty">Result</span>&lt;FlagManagerTaskResult, TaskFailure&gt; {
-<a href=#53 id=53 data-nosnippet>53</a>    <span class="kw">let </span>failed = |error: casa_ms::FlaggingError| TaskFailure::execution(error.to_string());
+<a href=#53 id=53 data-nosnippet>53</a>    <span class="kw">let </span>failed = |error: casa_flagging::FlaggingError| TaskFailure::execution(error.to_string());
 <a href=#54 id=54 data-nosnippet>54</a>    <span class="kw">let </span>require_version = |message| {
 <a href=#55 id=55 data-nosnippet>55</a>        request
 <a href=#56 id=56 data-nosnippet>56</a>            .versionname
@@ -94,13 +94,13 @@
 <a href=#94 id=94 data-nosnippet>94</a>                .skip(<span class="number">1</span>)
 <a href=#95 id=95 data-nosnippet>95</a>                .any(|entry| entry.name == name)
 <a href=#96 id=96 data-nosnippet>96</a>            {
-<a href=#97 id=97 data-nosnippet>97</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(
-<a href=#98 id=98 data-nosnippet>98</a>                    failed(casa_ms::FlaggingError::MissingFlagVersion { version: name })
-<a href=#99 id=99 data-nosnippet>99</a>                        .at(<span class="string">"versionname"</span>),
-<a href=#100 id=100 data-nosnippet>100</a>                );
+<a href=#97 id=97 data-nosnippet>97</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(failed(casa_flagging::FlaggingError::MissingFlagVersion {
+<a href=#98 id=98 data-nosnippet>98</a>                    version: name,
+<a href=#99 id=99 data-nosnippet>99</a>                })
+<a href=#100 id=100 data-nosnippet>100</a>                .at(<span class="string">"versionname"</span>));
 <a href=#101 id=101 data-nosnippet>101</a>            }
 <a href=#102 id=102 data-nosnippet>102</a>            restore_flag_version(<span class="kw-2">&amp;mut </span>ms, <span class="kw-2">&amp;</span>name, request.merge).map_err(|error| <span class="kw">match </span>error {
-<a href=#103 id=103 data-nosnippet>103</a>                casa_ms::FlaggingError::MissingFlagVersion { .. } =&gt; {
+<a href=#103 id=103 data-nosnippet>103</a>                casa_flagging::FlaggingError::MissingFlagVersion { .. } =&gt; {
 <a href=#104 id=104 data-nosnippet>104</a>                    failed(error).at(<span class="string">"versionname"</span>)
 <a href=#105 id=105 data-nosnippet>105</a>                }
 <a href=#106 id=106 data-nosnippet>106</a>                error =&gt; failed(error),
@@ -143,7 +143,7 @@
 <a href=#143 id=143 data-nosnippet>143</a>/// the new comment onto the renamed version; casa-rs keeps its own (see
 <a href=#144 id=144 data-nosnippet>144</a>/// `docs/CASA (C++) bugs.md`).
 <a href=#145 id=145 data-nosnippet>145</a></span><span class="kw">fn </span>keep_existing_version(ms: <span class="kw-2">&amp;</span>MeasurementSet, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;(), TaskFailure&gt; {
-<a href=#146 id=146 data-nosnippet>146</a>    <span class="kw">let </span>failed = |error: casa_ms::FlaggingError| TaskFailure::execution(error.to_string());
+<a href=#146 id=146 data-nosnippet>146</a>    <span class="kw">let </span>failed = |error: casa_flagging::FlaggingError| TaskFailure::execution(error.to_string());
 <a href=#147 id=147 data-nosnippet>147</a>    <span class="comment">// `main`, the working copy, is listed but is no saved version.
 <a href=#148 id=148 data-nosnippet>148</a>    </span><span class="kw">let </span><span class="prelude-val">Some</span>(existing) = list_flag_versions(ms)
 <a href=#149 id=149 data-nosnippet>149</a>        .map_err(failed)<span class="question-mark">?

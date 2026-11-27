@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ConvolveKernelInput"],"fn":["convolve_2d_gaussian","convolve_image","fft_image","sepconvolve_image","smooth_axis"]};

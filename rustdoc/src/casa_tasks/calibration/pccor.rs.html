@@ -25,7 +25,7 @@
 <a href=#25 id=25 data-nosnippet>25</a>        spw: task.required_text(<span class="string">"spw"</span>)<span class="question-mark">?</span>,
 <a href=#26 id=26 data-nosnippet>26</a>        antenna: task.required_text(<span class="string">"antenna"</span>)<span class="question-mark">?</span>,
 <a href=#27 id=27 data-nosnippet>27</a>        cable: task.flag(<span class="string">"cablecal_correction"</span>)<span class="question-mark">?</span>,
-<a href=#28 id=28 data-nosnippet>28</a>        fringe_table: (fringe != <span class="string">"none"</span>).then(|| PathBuf::from(fringe)),
+<a href=#28 id=28 data-nosnippet>28</a>        fringe_table: (fringe != <span class="string">"none"</span>).then(|| task.io_path(fringe)),
 <a href=#29 id=29 data-nosnippet>29</a>    };
 <a href=#30 id=30 data-nosnippet>30</a>    <span class="kw">let </span>report = run_pccor(<span class="kw-2">&amp;</span>request).map_err(|error| <span class="kw">match </span>error {
 <a href=#31 id=31 data-nosnippet>31</a>        PccorError::Selection(message) =&gt; TaskFailure::execution(message).at(<span class="string">"selection"</span>),
