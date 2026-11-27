@@ -46,7 +46,7 @@ impl PyMsTool {
         py.detach(|| {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
             match attached.as_mut() {
-                Some(ms) => ms.initialize_legacy_iteration(
+                Some(ms) => ms.legacy_view_mut().initialize_legacy_iteration(
                     &columns,
                     interval,
                     maxrows,
@@ -78,7 +78,7 @@ impl PyMsTool {
         py.detach(|| {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
             match attached.as_mut() {
-                Some(ms) => ms.position_legacy_iteration(movement),
+                Some(ms) => ms.legacy_view_mut().position_legacy_iteration(movement),
                 None => Ok(false),
             }
         })

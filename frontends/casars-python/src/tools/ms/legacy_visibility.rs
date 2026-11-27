@@ -28,6 +28,18 @@ pub(super) struct LegacyAxes {
     pub(super) baseline_read: Option<LegacyBaselineRead>,
 }
 
+impl LegacyAxes {
+    pub(super) fn without_baseline_read(&self) -> Self {
+        Self {
+            channels: self.channels,
+            polarization: self.polarization.clone(),
+            noncanonical_complex_polarization: self.noncanonical_complex_polarization,
+            labels: self.labels.clone(),
+            baseline_read: None,
+        }
+    }
+}
+
 impl LegacySelection {
     pub(super) fn visibility_options(&self) -> VisibilityReadOptions<'_> {
         VisibilityReadOptions {
@@ -102,7 +114,8 @@ impl PyMsTool {
             let Some(ms) = attached.as_mut() else {
                 return Ok(CasaValue::empty_record());
             };
-            ms.read_legacy_visibility(&items, increment, options)
+            ms.legacy_view_mut()
+                .read_legacy_visibility(&items, increment, options)
         })?;
         result.into_python(py)
     }
@@ -122,6 +135,7 @@ impl PyMsTool {
             let Some(ms) = attached.as_mut() else {
                 return Ok(false);
             };
+            let ms = ms.legacy_view_mut();
             if !ms.prepare_legacy_filter()? {
                 return Ok(false);
             }
@@ -153,6 +167,7 @@ impl PyMsTool {
             let Some(ms) = attached.as_mut() else {
                 return Ok(false);
             };
+            let ms = ms.legacy_view_mut();
             ms.initialize_legacy_selection(None)?;
             if !ms.prepare_legacy_filter()? {
                 return Ok(false);

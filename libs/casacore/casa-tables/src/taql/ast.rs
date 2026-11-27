@@ -181,6 +181,8 @@ pub struct GivingClause {
     pub table_name: String,
     /// Optional output type (e.g., "MEMORY", "PLAIN", "SCRATCH").
     pub output_type: Option<String>,
+    /// Ordered fields from the optional `AS [name=value, ...]` record.
+    pub output_options: Option<Vec<(String, Literal)>>,
 }
 
 /// A `COUNT [(cols)] FROM table [WHERE expr]` statement.
@@ -868,10 +870,22 @@ impl fmt::Display for SelectStatement {
             write!(f, " OFFSET {o}")?;
         }
         if let Some(ref g) = self.giving {
-            write!(f, " GIVING ")?;
-            fmt_table_name(f, &g.table_name)?;
+            write!(f, " GIVING")?;
+            if !g.table_name.is_empty() {
+                write!(f, " ")?;
+                fmt_table_name(f, &g.table_name)?;
+            }
             if let Some(ref ot) = g.output_type {
                 write!(f, " AS {ot}")?;
+            } else if let Some(ref options) = g.output_options {
+                write!(f, " AS [")?;
+                for (index, (key, value)) in options.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{key}={value}")?;
+                }
+                write!(f, "]")?;
             }
         } else if let Some(ref expr) = self.giving_expr {
             write!(f, " GIVING [{expr}]")?;

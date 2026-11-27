@@ -230,9 +230,8 @@ def test_legacy_taql_giving_persists_an_ordered_reference(native_dataset, tmp_pa
     with pytest.raises(RuntimeError, match="not a true table directory"):
         reader.selecttaqlold(f'True GIVING "{protected}"')
     assert (protected / "sentinel").read_text() == "preserve"
-    for kind in ("MEMORY", "PLAIN"):
-        with pytest.raises(NotImplementedError, match=r"GIVING.*#1030"):
-            reader.selecttaqlold(f'True GIVING "{tmp_path / "typed.ms"}" AS {kind}')
+    with pytest.raises(NotImplementedError, match=r"GIVING.*#1030"):
+        reader.selecttaqlold(f'True GIVING "{tmp_path / "typed.ms"}" AS MEMORY')
     np.testing.assert_array_equal(reader.rangeold("rows")["rows"], order)
     assert reader.done()
 
@@ -244,4 +243,69 @@ def test_legacy_taql_sort_assigns_each_duplicate_its_own_row_id(native_dataset):
     assert reader.selectold({"rows": order})
     assert reader.selecttaqlold("True ORDERBY ROWID() DESC")
     np.testing.assert_array_equal(reader.rangeold("rows")["rows"], order[::-1])
+    assert reader.done()
+
+
+@pytest.mark.parametrize("mode", ["PLAIN", "PLAIN_BIG", "PLAIN_LITTLE", "SCRATCH"])
+def test_legacy_taql_explicit_disk_output(native_dataset, tmp_path, mode):
+    casa = pinned_casa()
+    source_table = casa.table()
+    assert source_table.open(str(native_dataset))
+    selected = [7, 3, 8, 3]
+    expected = source_table.getcol("UVW")[:, selected[::-1][:3]]
+    source_rows = source_table.nrows()
+    assert source_table.close()
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(str(native_dataset), nomodify=False)
+        assert reader.selectold({"rows": selected})
+        output = tmp_path / f"{mode}-{api.__name__}.ms"
+        command = f'True ORDERBY ROWID() DESC LIMIT 3 GIVING "{output}" AS {mode}'
+        assert reader.selecttaqlold(command)
+        assert reader.name() == str(native_dataset)
+        assert reader.nrow() == source_rows and reader.nrowold(False) == source_rows
+        assert reader.nrowold(True) == 3
+        np.testing.assert_array_equal(reader.rangeold("rows")["rows"], [0, 1, 2])
+        np.testing.assert_array_equal(reader.getdataold(["uvw"])["uvw"], expected, strict=True)
+        assert reader.putdataold({"flag_row": np.ones(3, dtype=bool)}) is False
+        assert reader.selecttaqlold("ROWID() == 1")
+        np.testing.assert_array_equal(reader.rangeold("rows")["rows"], [1])
+        assert reader.selectinitold(reset=True)
+        assert reader.nrowold(True) == source_rows
+        assert reader.done()
+        for disk_api in (casa, tools):
+            saved = disk_api.table()
+            assert saved.open(str(output))
+            assert saved.nrows() == 3
+            np.testing.assert_array_equal(saved.getcol("UVW"), expected, strict=True)
+            if mode in {"PLAIN_BIG", "PLAIN_LITTLE"}:
+                assert saved.endianformat() == mode.split("_")[1].lower()
+            assert saved.close()
+
+
+def test_legacy_taql_output_options_record(native_dataset, tmp_path):
+    casa = pinned_casa()
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(str(native_dataset))
+        target = tmp_path / f"{api.__name__}-record.ms"
+        query = (f'True LIMIT 3 GIVING "{target}" '
+                 'AS [type="plain", endian="big", storage="sepfile", overwrite=false]')
+        assert reader.selecttaqlold(query)
+        assert reader.selectinitold(reset=True)
+        with pytest.raises(RuntimeError):
+            reader.selecttaqlold(query)
+        assert reader.nrowold(True) == reader.nrow()
+        assert reader.done()
+        for disk_api in (casa, tools):
+            saved = disk_api.table()
+            assert saved.open(str(target))
+            assert saved.endianformat() == "big" and saved.nrows() == 3
+            assert saved.close()
+    reader = tools.ms()
+    assert reader.open(str(native_dataset))
+    target = tmp_path / "blocked.ms"
+    with pytest.raises(NotImplementedError, match=r"MultiFile.*#1030"):
+        reader.selecttaqlold(f'True GIVING "{target}" AS [type="plain", storage="multifile"]')
+    assert not target.exists()
     assert reader.done()

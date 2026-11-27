@@ -49,6 +49,7 @@ impl PyMsTool {
             let Some(ms) = attached.as_mut() else {
                 return Ok(CasaValue::empty_record());
             };
+            let ms = ms.legacy_view_mut();
             let link = ms.working_metadata_link();
             let base = link.selected_rows().map_err(runtime_error)?;
             let rows = compose_rows(base.as_deref(), ms.legacy_selection.rows());

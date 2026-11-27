@@ -176,6 +176,7 @@ pub(in crate::tools) fn save_ms_query_selection(
     protected: &[PathBuf],
     rows: &[usize],
     target: &Path,
+    overwrite: bool,
 ) -> PyResult<()> {
     let save = || {
         let path = source
@@ -191,7 +192,19 @@ pub(in crate::tools) fn save_ms_query_selection(
                 target.display()
             )));
         }
-        save_select_result(source, rows, &[], target)
+        if overwrite {
+            return save_select_result(source, rows, &[], target);
+        }
+        let parent = target
+            .parent()
+            .ok_or_else(|| Fail::Runtime("missing destination parent".into()))?;
+        let temp =
+            tempfile::tempdir_in(parent).map_err(|error| Fail::Runtime(error.to_string()))?;
+        source
+            .select_rows(rows)?
+            .save(TableOptions::new(temp.path()))?;
+        casa_tables::publication::rename_without_replacing(temp.path(), target)
+            .map_err(|error| Fail::Runtime(error.to_string()))
     };
     save().map_err(PyErr::from)
 }
@@ -626,6 +639,11 @@ impl State {
         let (table_name_opt, giving_opt, mutating) = stmt_table_and_giving(&stmt)?;
 
         let giving_target = if let Some(giving) = giving_opt {
+            if giving.output_options.is_some() || giving.table_name.is_empty() {
+                return Err(Fail::Runtime(
+                    "This table TaQL output form is not implemented in casa-rs (#1037)".into(),
+                ));
+            }
             let is_memory = giving
                 .output_type
                 .as_deref()

@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use casa_core::ScalarValue;
-use casa_tables::{ColumnOverrides, ColumnType, Table, TableOptions};
+use casa_tables::{ColumnOverrides, ColumnType, EndianFormat, Table, TableOptions};
 
 use crate::transform::task_history::append_history_messages;
 use casa_ms::{MeasurementSet, MsError, MsResult};
@@ -33,26 +33,13 @@ pub fn write_sorted_measurement_set(
         |columns| columns.iter().map(String::as_str).collect(),
     );
     let rows = ordered_rows(main, &keys)?;
-    let projection = main.select_rows(&rows)?;
-    let view_path = scratch.join("ordered.ref");
-    projection.save(TableOptions::new(&view_path))?;
-    let mut ordered = Table::open(TableOptions::new(&view_path))?;
-    // These optional iterator caches refer to the input's row order.
-    let mut keywords = main.keywords().clone();
-    keywords.remove("SORTED_TABLE");
-    subtables::copy_links(
+    write_selected_measurement_set_rows(
         main,
-        &mut keywords,
-        &mut ordered,
+        &rows,
+        scratch,
         staged_output,
+        EndianFormat::default(),
         held_tables,
-    )?;
-    *ordered.keywords_mut() = keywords;
-    let bindings = measurement_set_main_table_bindings(&ordered);
-    ordered.prepare_write().save_with_column_overrides(
-        measurement_set_table_options(staged_output),
-        &bindings,
-        &ColumnOverrides::default(),
     )?;
     let (origin, names) = match columns {
         None => ("ms::timesort()", "TIME".to_string()),
@@ -73,6 +60,45 @@ pub fn write_sorted_measurement_set(
     };
     append_history_messages(staged_output, origin, [message])
         .map_err(|error| MsError::InvalidInput(error.to_string()))
+}
+
+/// Write an independent MeasurementSet with the specified MAIN row order.
+///
+/// The caller owns publication. Keep `scratch` available until this returns,
+/// together with the guards for any locks identified by `held_tables`.
+///
+/// # Errors
+/// Returns an error if the projected rows or linked subtables cannot be saved.
+pub fn write_selected_measurement_set_rows(
+    main: &Table,
+    rows: &[usize],
+    scratch: &Path,
+    staged_output: &Path,
+    endian: EndianFormat,
+    held_tables: &BTreeSet<PathBuf>,
+) -> MsResult<()> {
+    let projection = main.select_rows(rows)?;
+    let view_path = scratch.join("ordered.ref");
+    projection.save(TableOptions::new(&view_path))?;
+    let mut ordered = Table::open(TableOptions::new(&view_path))?;
+    // These optional iterator caches refer to the input's row order.
+    let mut keywords = main.keywords().clone();
+    keywords.remove("SORTED_TABLE");
+    subtables::copy_links(
+        main,
+        &mut keywords,
+        &mut ordered,
+        staged_output,
+        held_tables,
+    )?;
+    *ordered.keywords_mut() = keywords;
+    let bindings = measurement_set_main_table_bindings(&ordered);
+    ordered.prepare_write().save_with_column_overrides(
+        measurement_set_table_options(staged_output).with_endian_format(endian),
+        &bindings,
+        &ColumnOverrides::default(),
+    )?;
+    Ok(())
 }
 
 /// Reject a named output that would replace or be staged inside a backing

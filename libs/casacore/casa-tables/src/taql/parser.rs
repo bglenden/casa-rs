@@ -273,16 +273,7 @@ impl<'src> Parser<'src> {
                 self.lexer.expect(&Token::RBracket)?;
                 giving_expr = Some(expr);
             } else {
-                let table_name = self.parse_table_name()?;
-                let output_type = if self.lexer.eat_if(&Token::As).is_some() {
-                    Some(self.parse_ident_string()?)
-                } else {
-                    None
-                };
-                giving = Some(GivingClause {
-                    table_name,
-                    output_type,
-                });
+                giving = Some(self.parse_giving_destination()?);
             }
         }
 
@@ -302,6 +293,54 @@ impl<'src> Parser<'src> {
             giving,
             giving_expr,
         })
+    }
+
+    fn parse_giving_destination(&mut self) -> Result<GivingClause, TaqlError> {
+        let table_name = if self.lexer.peek() == Some(&Token::As) {
+            String::new()
+        } else {
+            self.parse_table_name()?
+        };
+        let mut clause = GivingClause {
+            table_name,
+            output_type: None,
+            output_options: None,
+        };
+        if self.lexer.eat_if(&Token::As).is_none() {
+            return Ok(clause);
+        }
+        if self.lexer.eat_if(&Token::LBracket).is_none() {
+            clause.output_type = Some(self.parse_ident_string()?);
+            return Ok(clause);
+        }
+        let mut fields = Vec::new();
+        if self.lexer.peek() != Some(&Token::RBracket) {
+            loop {
+                let name = self.parse_ident_string()?;
+                let value = if self.lexer.eat_if(&Token::Eq).is_some() {
+                    let position = self
+                        .lexer
+                        .peek_with_span()
+                        .map_or(0, |(_, span)| span.start);
+                    let Expr::Literal(value) = self.parse_expr()? else {
+                        return Err(TaqlError::parse(
+                            self.lexer.position(position),
+                            "expected a constant TaQL output option",
+                        ));
+                    };
+                    value
+                } else {
+                    Literal::Bool(true)
+                };
+                fields.push((name, value));
+                if self.lexer.eat_if(&Token::Comma).is_none() {
+                    break;
+                }
+            }
+        }
+        self.lexer.expect(&Token::RBracket)?;
+        clause.output_options = Some(fields);
+        Ok(clause)
     }
 
     fn parse_select_columns(&mut self) -> Result<Vec<SelectColumn>, TaqlError> {
