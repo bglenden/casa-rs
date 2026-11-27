@@ -41,6 +41,7 @@ pub use set::Msv4ProcessingSetWriter;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use casa_core::measures::frequency::MFrequency;
 use casa_core::measures::position::PositionRef;
 use casa_core::measures::{EpochView, MjdHighPrec};
 use casa_core::quanta::{Quantity, Unit};
@@ -57,7 +58,7 @@ use zarrs::filesystem::FilesystemStore;
 use zarrs::group::{Group, GroupMetadata};
 use zarrs::metadata::v3::{ArrayMetadataV3, GroupMetadataV3};
 
-use super::metadata::{SCHEMA_VERSION, UNIX_EPOCH_MJD, storage};
+use super::metadata::{SCHEMA_VERSION, UNIX_EPOCH_MJD, WindowMetadata, storage};
 
 /// The bytes-to-bytes codec of the payload variables. Coordinates always
 /// use Zstandard, as XRADIO's converter does.
@@ -458,6 +459,26 @@ impl Msv4Writer {
         options: &Msv4StorageOptions,
     ) -> Result<Self, ObservationError> {
         let (target, unix_times) = destination(catalogue, partition, data_groups, grid)?;
+        let entry = &target.entry;
+        // XRADIO's schema requires a reference frequency. Use the source's
+        // value and frame when finite, or the middle channel when unstated
+        // or nonfinite. Admission checks the same value we will write.
+        let reference = catalogue
+            .windows
+            .get(entry.window.0 as usize)
+            .and_then(|window| window.reference_frequency.as_ref())
+            .filter(|frequency| frequency.hz().is_finite())
+            .cloned()
+            .unwrap_or_else(|| {
+                MFrequency::new(
+                    entry.frequencies_hz[entry.frequencies_hz.len() / 2],
+                    entry.frequency_frame,
+                )
+            });
+        registry.admit_window(
+            &entry.spectral_window,
+            WindowMetadata::new(entry, entry.channel_widths_hz[0], Some(&reference)),
+        )?;
         let chunk_times = usize::try_from(options.chunks[0].max(1))
             .map_err(|_| request_error("a chunk of more times than a usize holds"))?;
         let mut writer = Self {
@@ -483,7 +504,7 @@ impl Msv4Writer {
         let fields_xds = format!("field_and_source_{}_xds", data_groups[0]);
         let observation = catalogue.observation(writer.target.entry.observation);
         writer.write_main_group(store, &root, observation, options, &fields_xds)?;
-        writer.write_coordinates(store, &root, catalogue, &unix_times)?;
+        writer.write_coordinates(store, &root, catalogue, &unix_times, &reference)?;
         write_antennas(
             store,
             &format!("{root}/antenna_xds"),
@@ -561,6 +582,7 @@ impl Msv4Writer {
         root: &str,
         catalogue: &Catalogue,
         unix_times: &[f64],
+        reference: &MFrequency,
     ) -> Result<(), ObservationError> {
         let grid = &self.target.grid;
         let entry = &self.target.entry;
@@ -608,26 +630,7 @@ impl Msv4Writer {
             )?;
         }
         let observer = super::metadata::frequency_observer(entry.frequency_frame);
-        // MSv4 requires a reference frequency (XRADIO's schema): the
-        // window's own as its source states it (MSv2 `REF_FREQUENCY`, an
-        // MSv4's `reference_frequency`), in its frame, as XRADIO's
-        // converter writes it; the middle channel only where the source
-        // states none, or none that is finite (JSON holds no NaN).
-        let (reference, reference_observer) = match catalogue
-            .windows
-            .get(entry.window.0 as usize)
-            .and_then(|window| window.reference_frequency.as_ref())
-            .filter(|frequency| frequency.hz().is_finite())
-        {
-            Some(frequency) => (
-                frequency.hz(),
-                super::metadata::frequency_observer(frequency.refer()),
-            ),
-            None => (
-                entry.frequencies_hz[entry.frequencies_hz.len() / 2],
-                observer,
-            ),
-        };
+        let reference_observer = super::metadata::frequency_observer(reference.refer());
         coordinate(
             store,
             &format!("{root}/frequency"),
@@ -641,7 +644,7 @@ impl Msv4Writer {
                 "observer": observer,
                 "spectral_window_name": entry.spectral_window,
                 "spectral_window_intents": ["UNSPECIFIED"],
-                "reference_frequency": {"data": reference, "dims": [], "attrs": {"units": "Hz", "observer": reference_observer, "type": "spectral_coord"}},
+                "reference_frequency": {"data": reference.hz(), "dims": [], "attrs": {"units": "Hz", "observer": reference_observer, "type": "spectral_coord"}},
                 "channel_width": quantity(entry.channel_widths_hz[0], "Hz"),
             }),
         )?;

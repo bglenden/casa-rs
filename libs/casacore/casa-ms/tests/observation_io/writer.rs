@@ -4,6 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
+use casa_ms::observation_io::Msv2Observation;
 use casa_ms::observation_io::{
     Msv4Codec, Msv4Observation, Msv4ProcessingSetWriter, Msv4StorageOptions, Msv4Writer,
 };
@@ -71,13 +73,177 @@ pub(crate) fn publish(
 
 /// Write every batch of `observation` at `times` whole times per batch.
 pub(crate) fn write_all(writer: &mut Msv4Writer, observation: &dyn Observation, times: usize) {
+    write_partition(writer, observation, PartitionId(0), times);
+}
+
+fn write_partition(
+    writer: &mut Msv4Writer,
+    observation: &dyn Observation,
+    id: PartitionId,
+    times: usize,
+) {
+    let channels = observation.catalogue().partition(id).frequencies_hz.len();
+    let access = casa_observation::AccessRequest {
+        partitions: vec![id],
+        ..request(0..channels, 0)
+    };
     let mut traversal = observation
-        .bind_read(&per_times(observation, request(0..8, 0), times))
+        .bind_read(&per_times(observation, access, times))
         .expect("bind");
     let mut buffers = BatchBuffers::default();
     while let Some(ReadEvent::Batch(batch)) = traversal.next(&mut buffers).expect("read") {
         writer.write_batch(&batch).expect("write");
     }
+}
+
+/// Split the fixture's times between two SPECTRAL_WINDOW rows of the
+/// same name, preserving every channel's metadata except for an optional
+/// change to the second row's REF_FREQUENCY.
+#[cfg(unix)]
+fn same_name_msv2_windows(root: &Path, second_reference: f64) -> Msv2Observation {
+    use casa_core::{ScalarValue, Value};
+    use casa_ms::{MeasurementSet, SubtableId};
+
+    let path = super::fixture(root, "ms_trial.ms");
+    let mut ms = MeasurementSet::open(&path).expect("read MSv2");
+    let windows = ms
+        .subtable_mut(SubtableId::SpectralWindow)
+        .expect("windows");
+    let mut row = windows.row_accessor().row(0).expect("window").clone();
+    row.upsert(
+        "REF_FREQUENCY",
+        Value::Scalar(ScalarValue::Float64(second_reference)),
+    );
+    windows.add_row(row).expect("second window");
+    let descriptions = ms
+        .subtable_mut(SubtableId::DataDescription)
+        .expect("data descriptions");
+    let mut row = descriptions
+        .row_accessor()
+        .row(0)
+        .expect("description")
+        .clone();
+    row.upsert("SPECTRAL_WINDOW_ID", Value::Scalar(ScalarValue::Int32(1)));
+    descriptions.add_row(row).expect("second description");
+    let main = ms.main_table_mut();
+    let rows = main.row_count();
+    main.fill_column_range(
+        "DATA_DESC_ID",
+        casa_tables::RowRange::new(rows / 2, rows),
+        Value::Scalar(ScalarValue::Int32(1)),
+    )
+    .expect("use the second description");
+    ms.save().expect("save MSv2");
+    drop(ms);
+    let opened = Msv2Observation::open(path).expect("open MSv2");
+    let catalogue = opened.catalogue();
+    assert_eq!(catalogue.partitions.len(), 2);
+    assert_eq!(catalogue.windows.len(), 2);
+    let [first, second] = catalogue.partitions.as_slice() else {
+        unreachable!()
+    };
+    assert_ne!(first.window, second.window);
+    assert_eq!(first.spectral_window, "trial");
+    assert_eq!(first.spectral_window, second.spectral_window);
+    assert_eq!(first.frequencies_hz, second.frequencies_hz);
+    assert_eq!(first.channel_widths_hz, second.channel_widths_hz);
+    assert_eq!(first.frequency_frame, second.frequency_frame);
+    let reference = |id| {
+        catalogue
+            .window(id)
+            .reference_frequency
+            .as_ref()
+            .expect("reference")
+            .hz()
+    };
+    assert_eq!(reference(first.window), 44_512_000_000.0);
+    assert_eq!(reference(second.window), second_reference);
+    opened
+}
+
+#[cfg(unix)]
+#[test]
+fn msv4_writer_refuses_conflicting_raw_msv2_windows_before_publication() {
+    let root = tempfile::tempdir().expect("root");
+    let v2 = same_name_msv2_windows(root.path(), 44_513_000_000.0);
+    let out = root.path().join("conflict.ps.zarr");
+    let (set, mut first) = create(&out, &v2, false);
+    write_all(&mut first, &v2, 4);
+    first.finish().expect("first dataset complete");
+
+    let id = PartitionId(1);
+    let options = Msv4StorageOptions {
+        dataset_name: "ms_trial_1".into(),
+        ..storage()
+    };
+    let grid = v2.grid(id, "base").expect("grid");
+    match set.dataset(v2.catalogue(), id, &["base"], &grid, &options) {
+        Err(ObservationError::InvalidRequest { reason }) => {
+            assert!(
+                reason.contains("\"trial\"") && reason.contains("reference_frequency"),
+                "{reason}"
+            );
+        }
+        Err(other) => panic!("refused otherwise: {other}"),
+        Ok(mut writer) => {
+            write_partition(&mut writer, &v2, id, 4);
+            let published = publish(set, writer).expect("finish after accepting the conflict");
+            panic!(
+                "published a conflicting store: {:?}",
+                Msv4Observation::open(published).err()
+            );
+        }
+    }
+    assert!(
+        set.finish().is_err(),
+        "a failed declaration prevents publication"
+    );
+    assert!(!out.exists(), "no processing set published");
+    assert!(
+        std::fs::read_dir(root.path())
+            .unwrap()
+            .all(|entry| entry.unwrap().file_name() == "ms_trial.ms"),
+        "staging removed"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn msv4_writer_reopens_compatible_raw_msv2_windows_as_one() {
+    let root = tempfile::tempdir().expect("root");
+    let v2 = same_name_msv2_windows(root.path(), 44_512_000_000.0);
+    let out = root.path().join("compatible.ps.zarr");
+    let (set, mut first) = create(&out, &v2, false);
+    write_all(&mut first, &v2, 4);
+    first.finish().expect("first dataset complete");
+
+    let id = PartitionId(1);
+    let options = Msv4StorageOptions {
+        dataset_name: "ms_trial_1".into(),
+        ..storage()
+    };
+    let grid = v2.grid(id, "base").expect("grid");
+    let mut second = set
+        .dataset(v2.catalogue(), id, &["base"], &grid, &options)
+        .expect("compatible declaration");
+    write_partition(&mut second, &v2, id, 4);
+    let reopened = Msv4Observation::open(publish(set, second).expect("publish")).expect("reopen");
+    let catalogue = reopened.catalogue();
+    assert_eq!(catalogue.partitions.len(), 2);
+    assert_eq!(catalogue.windows.len(), 1);
+    assert_eq!(
+        catalogue.partitions[0].window,
+        catalogue.partitions[1].window
+    );
+    assert_eq!(catalogue.windows[0].name, "trial");
+    assert_eq!(
+        catalogue.windows[0]
+            .reference_frequency
+            .as_ref()
+            .unwrap()
+            .hz(),
+        44_512_000_000.0
+    );
 }
 
 /// The trial writer creates a fresh MSv4 from either store's batches that

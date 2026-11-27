@@ -3,13 +3,14 @@
 //! filled with one dataset per partition ([`Msv4Writer`]), and published
 //! whole once every dataset is complete.
 //!
-//! The datasets write disjoint parts of the staging store and share nothing
-//! else, so a producer may write them one after another or from a thread
-//! each. Publication renames the staging directory to the destination and
-//! refuses to replace anything there; a writer dropped or failing before it
-//! removes its staging directory, and a crash leaves it under a name no
-//! later writer reuses.
+//! The datasets write disjoint parts of the staging store and agree on
+//! the metadata of each shared spectral window. A producer may write them
+//! one after another or from a thread each. Publication renames the staging
+//! directory to the destination and refuses to replace anything there.
+//! A writer dropped or failing before publication removes its staging
+//! directory. A crash leaves it under a name no later writer reuses.
 
+use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -20,12 +21,13 @@ use serde_json::json;
 use zarrs::filesystem::FilesystemStore;
 
 use super::{Msv4StorageOptions, Msv4Writer, create_group, request_error};
-use crate::observation_io::msv4::metadata::storage;
+use crate::observation_io::msv4::metadata::{WindowMetadata, storage};
 
-/// The datasets a processing set declares, and which are complete.
+/// The datasets a processing set declares, their completion and their windows.
 #[derive(Debug, Default)]
 pub(super) struct Registry {
     datasets: Mutex<Vec<(String, bool)>>,
+    windows: Mutex<HashMap<String, WindowMetadata<'static>>>,
 }
 
 impl Registry {
@@ -38,6 +40,24 @@ impl Registry {
             )));
         }
         datasets.push((name.to_string(), false));
+        Ok(())
+    }
+
+    /// Admit the metadata a reserved dataset will write. On disagreement
+    /// the dataset stays incomplete, so the set cannot be published.
+    pub(super) fn admit_window(
+        &self,
+        name: &str,
+        window: WindowMetadata<'_>,
+    ) -> Result<(), ObservationError> {
+        let mut windows = self.windows.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(known) = windows.get(name) {
+            if let Some(reason) = known.conflict(&window, name) {
+                return Err(request_error(reason));
+            }
+        } else {
+            windows.insert(name.to_string(), window.into_owned());
+        }
         Ok(())
     }
 
@@ -107,8 +127,10 @@ impl Msv4ProcessingSetWriter {
     ///
     /// When the processing set already has a dataset of that name, the
     /// declaration is inconsistent (a group missing, declared twice, or
-    /// not sharing the first's flags, weights and UVW), or a frame, scale
-    /// or unit is outside the profile.
+    /// not sharing the first's flags, weights and UVW), a shared spectral
+    /// window has conflicting metadata, or a frame, scale or unit is
+    /// outside the profile. A conflict leaves the dataset incomplete and
+    /// prevents [`Self::finish`] from publishing the set.
     pub fn dataset(
         &self,
         catalogue: &Catalogue,
