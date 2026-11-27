@@ -752,6 +752,20 @@ mod tests {
             reference_values,
             [4, 0].map(|value| Some(ScalarValue::Int32(value)))
         );
+
+        let reference = Table::open(TableOptions::new(&view)).unwrap();
+        let plain_copy = base.to_memory_rows(&[1, 0, 1]).unwrap();
+        let reference_copy = reference.to_memory_rows(&[0, 1, 0]).unwrap();
+        for (row, expected) in [4, 0, 4].into_iter().enumerate() {
+            assert_eq!(
+                plain_copy.row(row).unwrap(),
+                reference_copy.row(row).unwrap()
+            );
+            assert_eq!(
+                plain_copy.cell(row, "probe").unwrap(),
+                Some(&Value::Scalar(ScalarValue::Int32(expected))),
+            );
+        }
     }
 
     #[test]
