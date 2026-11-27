@@ -125,6 +125,20 @@ pub fn named_keyword_output_staging_parent(
     subtables::check_named_output(input, output, Some((owner, keyword)))
 }
 
+/// Capture the filesystem dependencies to protect when writing a named
+/// result later. The flag identifies a linked subtable whose descendants
+/// are protected as well as its own path.
+#[doc(hidden)]
+pub fn capture_named_output_inputs(input: &Path) -> MsResult<Vec<(PathBuf, bool)>> {
+    let mut paths = std::collections::BTreeMap::new();
+    subtables::visit_source_tables(input, None, |path, subtable| {
+        let stored = paths.entry(path.to_owned()).or_insert(false);
+        *stored |= subtable;
+        Ok(())
+    })?;
+    Ok(paths.into_iter().collect())
+}
+
 fn ordered_rows(table: &Table, names: &[&str]) -> MsResult<Vec<usize>> {
     let mut rows = (0..table.row_count()).collect::<Vec<_>>();
     if names.is_empty() {

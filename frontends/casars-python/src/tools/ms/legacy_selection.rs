@@ -482,15 +482,16 @@ impl AttachedMs {
             let output = compose_rows(outer.as_deref(), Some(&selected)).expect("row projection");
             working.verify_directory().map_err(runtime_error)?;
             if options.memory {
-                QuerySubtable::resolve(
+                QuerySubtable::validate_memory_output(
                     &giving.table_name,
                     self.legacy_selection.query_parent(&self.path),
                     &self.path,
+                    self.memory_ms.as_ref(),
                 )?;
                 self.memory_ms
                     .is_none()
                     .then(|| {
-                        let mut memory = self.new_legacy_memory(&output)?;
+                        let mut memory = self.new_legacy_memory(&output, original_path)?;
                         memory.legacy_selection.query_parent = LegacyQueryParent::Transient;
                         Ok::<_, PyErr>(PreparedLegacyQuery::Memory(Box::new(memory)))
                     })

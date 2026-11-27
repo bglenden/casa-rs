@@ -249,6 +249,12 @@ impl AttachedMs {
             .transpose()?
             .or_else(|| self.memory_ms.as_ref().map(|_| QueryDiskFormat::default()));
         let active = self.legacy_selection.query_parent(&self.path);
+        if active.is_none() && self.memory_ms.is_some() && QuerySubtable::has_implicit_parent(name)?
+        {
+            return Err(runtime_error(
+                "the active TaQL view has no persisted directory",
+            ));
+        }
         let subtable = QuerySubtable::resolve(name, active, &self.path)?;
         let output = if let Some(subtable) = &subtable {
             subtable.output.clone()
@@ -288,7 +294,7 @@ impl AttachedMs {
             if let Some(memory) = &self.memory_ms {
                 memory
                     .to_memory_rows(rows)
-                    .and_then(|mut copy| copy.save_as_with_main_endian(&staged, format.endian))
+                    .and_then(|mut copy| copy.save_detached_in_stage(&staged, format.endian))
                     .map_err(runtime_error)?;
             } else {
                 write_selected_measurement_set_rows(
@@ -347,6 +353,22 @@ impl AttachedMs {
             .parent()
             .expect("validated output has a parent")
             .to_owned();
+        if self.memory_ms.is_some() {
+            for (source, linked) in &self.memory_source_paths {
+                if source.starts_with(output)
+                    || (*linked && output.starts_with(source) && subtable.is_none())
+                {
+                    return Err(runtime_error("TaQL output overlaps a source table"));
+                }
+                if *linked && parent.starts_with(source) {
+                    parent = source
+                        .parent()
+                        .ok_or_else(|| runtime_error("no staging parent outside the source table"))?
+                        .to_owned();
+                }
+            }
+            return Ok(parent);
+        }
         if let Some(link) = subtable {
             for input in inputs {
                 let outside =

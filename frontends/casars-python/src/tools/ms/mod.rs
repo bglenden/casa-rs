@@ -69,6 +69,7 @@ struct AttachedMs {
     main_stamp: Option<attachment_info::TableStamp>,
     asdm_index: Option<Option<Arc<casa_tables::AsdmBdfIndex>>>,
     memory_ms: Option<MeasurementSet>,
+    memory_source_paths: Vec<(PathBuf, bool)>,
     #[cfg(unix)]
     history_snapshot: Option<history::HistorySnapshot>,
     subtables: subtable_queries::Subtables,
@@ -151,6 +152,7 @@ impl AttachedMs {
             main_stamp,
             asdm_index: None,
             memory_ms: None,
+            memory_source_paths: Vec::new(),
             #[cfg(unix)]
             history_snapshot: None,
             subtables: subtable_queries::Subtables::default(),
