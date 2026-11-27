@@ -59,7 +59,7 @@
 //! formed them, and `close` holds no more beyond its admission for twice
 //! the components.
 //!
-//! Two more laws, in `session_memory/mosaic.rs`, predict through the
+//! Two more laws, in `session_memory_cases/mosaic/mod.rs`, predict through the
 //! simulator's mosaic machine (#841 Phase 2) for 12 m and 7 m dishes:
 //! `predict` holds no more than it is admitted while it builds every dish
 //! pair's beams on their screens, and keeps what its reservations keep (the
@@ -89,82 +89,82 @@
 //! process's, so each law runs alone in a process of its own ([`alone`]).
 
 mod predict_support;
-#[path = "session_memory/total_power.rs"]
+#[path = "session_memory_cases/total_power.rs"]
 mod total_power;
 
-#[path = "session_memory/single_dish_model.rs"]
+#[path = "session_memory_cases/single_dish_model.rs"]
 mod single_dish_model;
 
-#[path = "session_memory/simalma.rs"]
+#[path = "session_memory_cases/simalma.rs"]
 mod simalma;
-#[path = "session_memory/simanalyze.rs"]
+#[path = "session_memory_cases/simanalyze.rs"]
 mod simanalyze;
 
-#[path = "session_memory/apply.rs"]
+#[path = "session_memory_cases/apply.rs"]
 mod apply;
-#[path = "session_memory/apply_frequency.rs"]
+#[path = "session_memory_cases/apply_frequency.rs"]
 mod apply_frequency;
-#[path = "session_memory/captured_selection.rs"]
+#[path = "session_memory_cases/captured_selection.rs"]
 mod captured_selection;
-#[path = "session_memory/coverage.rs"]
+#[path = "session_memory_cases/coverage.rs"]
 mod coverage;
-#[path = "session_memory/data_descriptions.rs"]
+#[path = "session_memory_cases/data_descriptions.rs"]
 mod data_descriptions;
-#[path = "session_memory/existing_append.rs"]
+#[path = "session_memory_cases/existing_append.rs"]
 mod existing_append;
-#[path = "session_memory/feeds.rs"]
+#[path = "session_memory_cases/feeds.rs"]
 mod feeds;
-#[path = "session_memory/field_grids.rs"]
+#[path = "session_memory_cases/field_grids.rs"]
 mod field_grids;
-#[path = "session_memory/focus.rs"]
+#[path = "session_memory_cases/focus.rs"]
 mod focus;
-#[path = "session_memory/frequency_curves.rs"]
+#[path = "session_memory_cases/frequency_curves.rs"]
 mod frequency_curves;
-#[path = "session_memory/ft_modes.rs"]
+#[path = "session_memory_cases/ft_modes.rs"]
 mod ft_modes;
-#[path = "session_memory/gain_setters.rs"]
+#[path = "session_memory_cases/gain_setters.rs"]
 mod gain_setters;
-#[path = "session_memory/heap.rs"]
+#[path = "session_memory_cases/heap.rs"]
 mod heap;
-#[path = "session_memory/image_beams.rs"]
+#[path = "session_memory_cases/image_beams.rs"]
 mod image_beams;
-#[path = "session_memory/image_stokes.rs"]
+#[path = "session_memory_cases/image_stokes.rs"]
 mod image_stokes;
-#[path = "session_memory/irregular_channels.rs"]
+#[path = "session_memory_cases/irregular_channels.rs"]
 mod irregular_channels;
-#[path = "session_memory/jones.rs"]
+#[path = "session_memory_cases/jones.rs"]
 mod jones;
-#[path = "session_memory/mixed_correlations.rs"]
+#[path = "session_memory_cases/mixed_correlations.rs"]
 mod mixed_correlations;
-#[path = "session_memory/mixed_creation.rs"]
+#[path = "session_memory_cases/mixed_creation.rs"]
 mod mixed_creation;
 
-#[path = "session_memory/mosaic.rs"]
+#[path = "session_memory_cases/mosaic/mod.rs"]
 mod mosaic;
-#[path = "session_memory/noise_tables.rs"]
+#[path = "session_memory_cases/noise_tables.rs"]
 mod noise_tables;
-#[path = "session_memory/offline_noise.rs"]
+#[path = "session_memory_cases/offline_noise.rs"]
 mod offline_noise;
 mod pass_summary;
-#[path = "session_memory/patch.rs"]
+#[path = "session_memory_cases/patch.rs"]
 mod patch;
-#[path = "session_memory/pointings.rs"]
+#[path = "session_memory_cases/pointings.rs"]
 mod pointings;
-#[path = "session_memory/polynomial_fields.rs"]
+#[path = "session_memory_cases/polynomial_fields.rs"]
 mod polynomial_fields;
-#[path = "session_memory/saved_curves.rs"]
+#[path = "session_memory_cases/saved_curves.rs"]
 mod saved_curves;
-#[path = "session_memory/selection.rs"]
+#[path = "session_memory_cases/selection.rs"]
 mod selection;
 #[path = "selection/input.rs"]
 mod selection_input;
-#[path = "session_memory/squint.rs"]
+#[path = "session_memory_cases/squint.rs"]
 mod squint;
-#[path = "session_memory/troposphere.rs"]
+#[path = "session_memory_cases/troposphere.rs"]
 mod troposphere;
-#[path = "session_memory/tsys.rs"]
+#[path = "session_memory_cases/tsys.rs"]
 mod tsys;
-#[path = "session_memory/tsys_atm.rs"]
+#[path = "session_memory_cases/tsys_atm.rs"]
 mod tsys_atm;
 
 use std::path::{Path, PathBuf};

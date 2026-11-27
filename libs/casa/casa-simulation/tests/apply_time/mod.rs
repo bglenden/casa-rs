@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Time interpolation against independent CASA and dense-system spline controls.
 use crate::predict_support;
-#[path = "apply_time/regressions.rs"]
+#[path = "regressions.rs"]
 mod regressions;
 use crate::apply_support as support;
-#[path = "apply_time/support.rs"]
+#[path = "support.rs"]
 mod time_support;
 
 use flate2::read::GzDecoder;
@@ -13,7 +13,7 @@ use std::io::Read;
 
 fn fixture() -> Value {
     let mut text = String::new();
-    GzDecoder::new(&include_bytes!("data/sm_apply_time_casa.json.gz")[..])
+    GzDecoder::new(&include_bytes!("../data/sm_apply_time_casa.json.gz")[..])
         .read_to_string(&mut text)
         .unwrap();
     serde_json::from_str(&text).unwrap()
@@ -22,7 +22,7 @@ fn fixture() -> Value {
 #[test]
 fn phase_delay_and_scan_observation_modes_match_independent_casa_controls() {
     let mut text = String::new();
-    GzDecoder::new(&include_bytes!("data/sm_apply_time_modes_casa.json.gz")[..])
+    GzDecoder::new(&include_bytes!("../data/sm_apply_time_modes_casa.json.gz")[..])
         .read_to_string(&mut text)
         .unwrap();
     let fixture: Value = serde_json::from_str(&text).unwrap();

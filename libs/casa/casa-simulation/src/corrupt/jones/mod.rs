@@ -823,7 +823,7 @@ impl ScreenFft {
 }
 
 #[cfg(test)]
-#[path = "jones_tests.rs"]
+#[path = "../jones_tests.rs"]
 mod tests;
 
 fn apply_receptors(

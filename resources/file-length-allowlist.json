@@ -2,8 +2,6 @@
   "limit": 1500,
   "files": [
     "suites/casa-parity/tests/cases/calibration/casa_calibration_parity.rs",
-    "libs/casa/casa-vla/src/importer.rs",
-    "libs/casa/casa-vla/src/record.rs",
     "dev/casa-test-support/src/measures_interop.rs",
     "suites/casacore-interop/tests/measures_interop.rs",
     "suites/perf/tests/images_perf_vs_cpp.rs",
