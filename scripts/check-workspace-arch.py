@@ -817,7 +817,7 @@ def module_sources(entry: Path) -> set[Path]:
     reached = set()
     while pending:
         path = pending.pop()
-        if path in reached or not path.is_relative_to(REPO_ROOT):
+        if path in reached or not path.is_relative_to(REPO_ROOT) or not path.is_file():
             continue
         reached.add(path)
         for inline, name, _, attribute in module_declarations(path.read_text(encoding="utf-8")):
@@ -987,8 +987,15 @@ def check_workspace(policy: dict, metadata: dict) -> list[str]:
             for path in dual_modules(source_paths)
         )
         if tier in LIBRARY_TIERS | {"surfaces"}:
-            libraries = [Path(target["src_path"]) for target in package["targets"] if "lib" in target["kind"]]
-            if not libraries or not all(has_missing_docs_lint(path.read_text(encoding="utf-8")) for path in libraries):
+            library_kinds = {"lib", "rlib", "dylib", "cdylib", "staticlib", "proc-macro"}
+            libraries = [
+                Path(target["src_path"]) for target in package["targets"]
+                if library_kinds.intersection(target["kind"])
+            ]
+            if not libraries or not all(
+                path.is_file() and has_missing_docs_lint(path.read_text(encoding="utf-8"))
+                for path in libraries
+            ):
                 failures.append(f"{name} must enable #![warn(missing_docs)] at its library root without a crate-wide suppression")
             if any("bin" in target["kind"] for target in package["targets"]) or any(
                 (root / path).exists() for path in ("src/main.rs", "src/bin")
