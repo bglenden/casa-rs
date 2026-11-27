@@ -2,8 +2,8 @@
 //! Update packed manager data under the existing table write lock.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::File;
-use std::io;
+use std::fs::{self, File};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use super::write::{member_paths, pack_members};
@@ -15,9 +15,7 @@ use crate::storage::table_control::{TableDatContents, serialize_table_dat};
 pub(crate) struct PackedManagerEdit<'a> {
     stage: tempfile::TempDir,
     root: &'a Path,
-    block_size: usize,
-    counter: u64,
-    slots: Vec<String>,
+    original: MultiFile,
     descriptor: Box<[u8]>,
     sequences: BTreeSet<u32>,
 }
@@ -69,10 +67,7 @@ impl<'a> PackedManagerEdit<'a> {
         Ok(Some(Self {
             stage,
             root,
-            block_size: usize::try_from(archive.block_size)
-                .map_err(|_| format_error("MultiFile block size exceeds address space"))?,
-            counter: archive.header_counter.wrapping_add(1),
-            slots: archive.slots,
+            original: archive,
             descriptor: serialize_table_dat(descriptor)?,
             sequences,
         }))
@@ -91,13 +86,71 @@ impl<'a> PackedManagerEdit<'a> {
             ));
         }
         let archive = StagedEdit::for_shared_manager_files(self.root)?;
-        pack_members(
-            archive.staged.path(),
-            self.block_size,
-            self.counter,
-            self.ordered_members()?,
-        )?;
+        let stage = archive.staged.path();
+        let members = self.ordered_members()?;
+        if self.same_member_sizes(&members)? {
+            self.stage_existing_layout(stage, &members)?;
+        } else {
+            // Pinned casacore resyncs its managers without reloading their
+            // MultiFile block map. A changed layout needs fresh handles.
+            #[cfg(unix)]
+            if crate::lock::LockFile::create_or_open(self.root, false, 1.0, false)?.is_multi_used()
+            {
+                return Err(format_error(
+                    "MultiFile row edit changes the layout while the table is open elsewhere",
+                ));
+            }
+            pack_members(
+                stage,
+                usize::try_from(self.original.block_size)
+                    .map_err(|_| format_error("MultiFile block size exceeds address space"))?,
+                self.original.header_counter.wrapping_add(1),
+                members,
+            )?;
+        }
         archive.publish()
+    }
+
+    fn same_member_sizes(&self, members: &[(Option<PathBuf>, String)]) -> io::Result<bool> {
+        if members.len() != self.original.slots.len() {
+            return Ok(false);
+        }
+        for (path, name) in members {
+            if let Some(path) = path
+                && fs::metadata(path)?.len() != self.original.entries[name].byte_count
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn stage_existing_layout(
+        &self,
+        stage: &Path,
+        members: &[(Option<PathBuf>, String)],
+    ) -> Result<(), StorageError> {
+        let destination = stage.join("table.mf");
+        fs::copy(self.root.join("table.mf"), &destination)?;
+        let mut output = File::options().write(true).open(destination)?;
+        let block_size = self.original.block_size;
+        for (path, name) in members {
+            let Some(path) = path else {
+                continue;
+            };
+            let mut input = File::open(path)?;
+            let entry = &self.original.entries[name];
+            for run in &entry.runs {
+                let bytes =
+                    (entry.byte_count - run.logical_first * block_size).min(run.count * block_size);
+                output.seek(SeekFrom::Start(run.first * block_size))?;
+                if io::copy(&mut (&mut input).take(bytes), &mut output)? != bytes {
+                    return Err(format_error("staged MultiFile member ended early"));
+                }
+            }
+        }
+        output.sync_all()?;
+        Ok(())
     }
 
     fn ordered_members(&self) -> Result<Vec<(Option<PathBuf>, String)>, StorageError> {
@@ -107,8 +160,9 @@ impl<'a> PackedManagerEdit<'a> {
             .collect::<BTreeMap<_, _>>();
         // MFFileIO retains its numeric slot while a CASA reader unlocks and
         // reacquires the table lock. Keep every existing slot and its name.
-        let mut ordered = Vec::with_capacity(self.slots.len().max(files.len()));
-        for name in &self.slots {
+        let slots = &self.original.slots;
+        let mut ordered = Vec::with_capacity(slots.len().max(files.len()));
+        for name in slots {
             let path = if name.is_empty() {
                 None
             } else {

@@ -108,6 +108,7 @@ fn packed_row_edit_preserves_the_archive_and_refuses_mixed_manager_updates() {
     let archive = path.join("table.mf");
     let control = path.join("table.dat");
     let old_descriptor = fs::read(&control).unwrap();
+    let original_bytes = fs::read(&archive).unwrap();
     let mut table = Table::open(TableOptions::new(path)).unwrap();
     table
         .set_cell(0, "PACKED", Value::Scalar(ScalarValue::Int32(6)))
@@ -134,6 +135,8 @@ fn packed_row_edit_preserves_the_archive_and_refuses_mixed_manager_updates() {
         &ScalarValue::Int32(2)
     );
     let saved_bytes = fs::read(&archive).unwrap();
+    let header_size = u64_at(&original_bytes, 32) as usize;
+    assert_eq!(saved_bytes[..header_size], original_bytes[..header_size]);
     table
         .set_cell(0, "PACKED", Value::Scalar(ScalarValue::Int32(8)))
         .unwrap();
