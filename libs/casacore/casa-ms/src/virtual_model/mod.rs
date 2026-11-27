@@ -1276,5 +1276,5 @@ fn string(keywords: &RecordValue, name: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-#[path = "virtual_model_tests.rs"]
+#[path = "../virtual_model_tests.rs"]
 mod tests;
