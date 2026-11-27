@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+#![doc = include_str!("../README.md")]
+//!
+//! <details>
+//! <summary>API details</summary>
+//!
 //! Coordinate systems for astronomical images.
 //!
 //! This crate implements the coordinate system machinery used to map between
@@ -60,6 +65,8 @@
 //!
 //! assert_eq!(cs.n_pixel_axes(), 4); // 2 (direction) + 1 (spectral) + 1 (stokes)
 //! ```
+//!
+//! </details>
 
 mod coordinate;
 mod coordinate_system;

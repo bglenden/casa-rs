@@ -72,7 +72,7 @@ fn sample_intensity<T: ImagePixel>(
     }
 }
 
-/// Converts pixel coordinates to world coordinates using the attached image's [`CoordinateSystem`].
+/// Converts pixel coordinates to world coordinates using the attached image's [`CoordinateSystem`](casa_coordinates::CoordinateSystem).
 pub fn to_world(
     attached: &AttachedImage,
     value: &[f64],
@@ -116,7 +116,7 @@ pub fn to_world(
     Ok(coords.to_world(&pix)?)
 }
 
-/// Converts world coordinates to pixel coordinates using the attached image's [`CoordinateSystem`].
+/// Converts world coordinates to pixel coordinates using the attached image's [`CoordinateSystem`](casa_coordinates::CoordinateSystem).
 pub fn to_pixel(attached: &AttachedImage, value: &[f64]) -> ImageToolResult<Vec<f64>> {
     let mut image = attached.lock();
     attached.require_pixel_read_lock(&mut image)?;

@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
-
+#![doc = include_str!("../README.md")]
+//!
+//! <details>
+//! <summary>API details</summary>
+//!
 //! Shared observation contracts for MeasurementSet v2 and MSv4: the
 //! [`VisibilityBatch`] that storage adapters fill and numerical consumers
 //! read, the [`AccessRequest`] consumers estimate and bind, and the
@@ -92,6 +96,8 @@
 //!     Ok(total)
 //! }
 //! ```
+//!
+//! </details>
 
 mod batch;
 mod buffers;

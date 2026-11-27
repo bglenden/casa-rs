@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
+#![doc = include_str!("../README.md")]
+//!
+//! <details>
+//! <summary>API details</summary>
+//!
 //! Native helpers for disk-based VLA export archives.
 //!
 //! This crate starts the native Rust implementation of the CASA
@@ -14,6 +19,8 @@
 //! - logical-record reassembly for VLA disk export files
 //! - Record Control Area (RCA) decoding
 //! - archive scan summaries suitable for later importer planning/parity work
+//!
+//! </details>
 
 mod disk;
 mod error;

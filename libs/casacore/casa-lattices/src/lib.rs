@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+#![doc = include_str!("../README.md")]
+//!
+//! <details>
+//! <summary>API details</summary>
+//!
 //! N-dimensional lattice abstractions for casacore-compatible data.
 //!
 //! This crate provides the `Lattice<T>` and `LatticeMut<T>` traits for
@@ -37,6 +42,8 @@
 //! Only the 12 casacore-native types may be used as lattice elements,
 //! enforced by the [`LatticeElement`] trait. These correspond to the
 //! C++ template instantiations of `Lattice<T>`.
+//!
+//! </details>
 
 mod array_lattice;
 pub mod array_math;

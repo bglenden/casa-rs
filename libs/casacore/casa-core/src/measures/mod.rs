@@ -14,7 +14,7 @@
 //!   `casa::MPosition`.
 //! - [`MDirection`](direction::MDirection) — a sky direction in J2000, GALACTIC,
 //!   etc., equivalent to C++ `casa::MDirection`.
-//! - [`MEarthMagnetic`](earth_magnetic::MEarthMagnetic) — an Earth magnetic
+//! - [`MEarthMagnetic`] — an Earth magnetic
 //!   field vector tagged with a reference frame, equivalent to C++
 //!   `casa::MEarthMagnetic`.
 //! - [`MFrequency`](frequency::MFrequency) — a spectral frequency in LSRK,

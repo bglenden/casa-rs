@@ -46,7 +46,8 @@ version = "0.27.0"
 edition = "2024"
 license = "LGPL-3.0-or-later"
 rust-version = "1.99"
-description = "Rust implementation of casacore-compatible persistent data I/O"
+description = "Native Rust casacore & CASA radio astronomy libraries"
+homepage = "https://bglenden.github.io/casa-rs/"
 repository = "https://github.com/bglenden/casa-rs"
 
 [workspace.dependencies]

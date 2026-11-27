@@ -9,7 +9,7 @@
 //!   rows of every named antenna, its antennas grouped so that each read
 //!   fits the budget, or an MSv4 source's datasets whole.
 //!
-//! An MSv2 source's `POINTING` is scanned once ([`pointing_scan`]) for what
+//! An MSv2 source's `POINTING` is scanned once (`pointing_scan`) for what
 //! those reads cannot carry: rows nothing reads, rows a partition reads at
 //! the antenna and time of another (an MSv4 holds one sample there),
 //! polynomial terms beyond the direction (an MSv4 holds one term), and the

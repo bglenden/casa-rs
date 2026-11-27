@@ -8,6 +8,10 @@ license = "LGPL-3.0-or-later"
 rust-version.workspace = true
 description = "Shared FFTW execution boundary for CASA-compatible numerical kernels"
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["fftw", "fft", "numerics"]
+categories = ["mathematics"]
 build = "build.rs"
 
 [package.metadata.docs.rs]

@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
-
+#![doc = include_str!("../README.md")]
+//!
+//! <details>
+//! <summary>API details</summary>
+//!
 //! CASA-compatible MeasurementSet simulation.
 //!
 //! This crate is the Rust side of CASA's `simulator` tool (`sm`) and of the
@@ -33,6 +37,8 @@
 //! host's Metal device (on the CPU only through `WProjectFT`), and draws
 //! noise and applies gains and leakage on the CPU. Where the session departs
 //! from CASA is recorded in `docs/CASA (C++) bugs.md`.
+//!
+//! </details>
 
 mod corrupt;
 pub mod plot_sink;

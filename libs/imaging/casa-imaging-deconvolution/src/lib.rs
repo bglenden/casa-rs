@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
-
+#![doc = include_str!("../README.md")]
+//!
+//! <details>
+//! <summary>API details</summary>
+//!
 //! Image-domain reconstruction: the state a run reconstructs from and into,
 //! and the minor cycle that updates it.
 //!
@@ -24,6 +28,8 @@
 //! Every rule follows CASA's `tclean` (`synthesis/ImagerObjects` and
 //! `synthesis/MeasurementEquations`); each item names the function it
 //! follows. ADR-0016 (decision 3) records the design.
+//!
+//! </details>
 
 mod beam;
 mod clark;

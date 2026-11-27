@@ -15,12 +15,12 @@
 //! and main-dataset variables the writer does not write; and in either the
 //! data groups not selected; and, into an MSv4, antennas no partition's
 //! baselines name. What an MSv2 destination's subtables write as MSv2's
-//! default is found by writing them ([`super::msv2_tables::rehearse`]).
+//! default is found by writing them (`super::msv2_tables::rehearse`).
 //! What pointing carries is
 //! decided by [`super::pointing_plan`]. Columns of the subtables the
 //! catalogue does carry (an antenna's offset, a field's delay direction, a
 //! spectral window's resolution) are not inventoried, but an ephemeris
-//! table's are ([`ephemeris_tables`]), since the catalogue carries only the
+//! table's are (`ephemeris_tables`), since the catalogue carries only the
 //! body's directions, distances and velocities. Fields whose direction is a
 //! polynomial in time are refused: the catalogue would hold a constant term
 //! as the phase centre.

@@ -6,8 +6,15 @@ license.workspace = true
 rust-version.workspace = true
 description = "Image-domain reconstruction: normal and model state, masks, the major-cycle pairing, and the minor-cycle driver, controller and solvers"
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["deconvolution", "clean", "radio-astronomy"]
+categories = ["science"]
 publish = true
 autotests = false
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [lints]
 workspace = true

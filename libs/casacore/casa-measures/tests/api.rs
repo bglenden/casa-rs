@@ -1,11 +1,23 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::io::Write;
+use std::path::PathBuf;
+
 use casa_measures::{MeasuresRuntime, RuntimePolicy, install_packaged_snapshot};
+
+fn release_snapshot_path() -> PathBuf {
+    std::env::var_os("CASA_RS_PACKAGED_SNAPSHOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data/casa-measures-runtime.tar.gz")
+        })
+}
 
 #[test]
 fn packaged_runtime_reports_the_2017_leap_second() {
     let directory = tempfile::tempdir().unwrap();
-    let provenance = install_packaged_snapshot(directory.path()).unwrap();
+    let archive = release_snapshot_path();
+    let provenance = install_packaged_snapshot(&archive, directory.path()).unwrap();
     let runtime = MeasuresRuntime::open(
         directory.path().to_path_buf(),
         RuntimePolicy {
@@ -21,4 +33,46 @@ fn packaged_runtime_reports_the_2017_leap_second() {
     // The 2016-12-31 leap second raised TAI minus UTC from 36 s to 37 s.
     assert_eq!(runtime.tai_minus_utc_seconds(57_753.0).unwrap(), 36.0);
     assert_eq!(runtime.tai_minus_utc_seconds(57_754.0).unwrap(), 37.0);
+}
+
+#[test]
+fn mismatched_snapshot_bytes_leave_the_destination_unmodified() {
+    let directory = tempfile::tempdir().unwrap();
+    let archive = directory.path().join("invalid.tar.gz");
+    std::fs::write(&archive, b"not the release snapshot").unwrap();
+    let destination = directory.path().join("measures");
+    let error = install_packaged_snapshot(&archive, &destination).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("does not match the release snapshot size and SHA-256")
+    );
+    assert!(!destination.exists());
+}
+
+#[test]
+fn same_size_snapshot_with_an_altered_byte_is_refused_before_extraction() {
+    let directory = tempfile::tempdir().unwrap();
+    let archive = directory.path().join("altered.tar.gz");
+    let original = release_snapshot_path();
+    std::fs::copy(&original, &archive).unwrap();
+    // The gzip signature starts with 0x1f. Overwrite exactly one byte without truncating.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&archive)
+        .unwrap()
+        .write_all(&[0])
+        .unwrap();
+    assert_eq!(
+        archive.metadata().unwrap().len(),
+        original.metadata().unwrap().len()
+    );
+    let destination = directory.path().join("measures");
+    let error = install_packaged_snapshot(&archive, &destination).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("does not match the release snapshot size and SHA-256")
+    );
+    assert!(!destination.exists());
 }

@@ -6,7 +6,14 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["numerics", "least-squares", "astronomy"]
+categories = ["mathematics"]
 publish = true
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
 libm = "0.2"

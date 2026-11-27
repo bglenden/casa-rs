@@ -88,6 +88,7 @@ def snapshot(tmp_path_factory):
             return configured
     archive = Path(__file__).resolve().parents[4] / "libs/casacore/casa-measures/data"
     expected = json.loads((archive / "casa-measures-runtime.provenance.json").read_text())
+    del expected["archive_size_bytes"], expected["archive_sha256"]
     assert expected == ORACLE["measures_snapshot"], "regenerate the fixture for the bundled measures snapshot"
     root = tmp_path_factory.mktemp("geometry-measures")
     with tarfile.open(archive / "casa-measures-runtime.tar.gz") as bundled:

@@ -6,7 +6,14 @@ license.workspace = true
 rust-version.workspace = true
 description = "AipsIO binary serialization codec"
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["casacore", "serialization", "binary"]
+categories = ["encoding"]
 publish = true
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [lints]
 workspace = true

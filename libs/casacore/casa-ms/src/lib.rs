@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
+#![doc = include_str!("../README.md")]
+//!
+//! <details>
+//! <summary>API details</summary>
+//!
 //! Typed MeasurementSet (MS) API for radio interferometry data.
 //!
 //! This crate provides idiomatic Rust APIs for reading and writing
@@ -40,6 +45,8 @@
 //!     .expect("valid schema");
 //! assert_eq!(schema.columns().len(), 8);
 //! ```
+//!
+//! </details>
 
 mod asdm_table;
 mod builder;

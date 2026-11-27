@@ -6,8 +6,15 @@ license.workspace = true
 rust-version.workspace = true
 description = "Imaging execution: admission, the major-cycle pass, cancellation and the run summary"
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["imaging", "memory", "interferometry"]
+categories = ["science"]
 publish = true
 autotests = false
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [lints]
 workspace = true

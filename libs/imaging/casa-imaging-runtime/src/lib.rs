@@ -1,10 +1,17 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
+#![doc = include_str!("../README.md")]
+//!
+//! <details>
+//! <summary>API details</summary>
+//!
 //! Imaging execution: host resources and per-phase
 //! admission, the process allocator that keeps the footprint to what is
 //! admitted, the major-cycle pass on the bounded worker team, cooperative
 //! cancellation, the paged cube state, the minor-cycle adapter and the run
 //! summary.
+//!
+//! </details>
 
 mod allocator;
 mod cube_state;

@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
-
+#![doc = include_str!("../README.md")]
+//!
+//! <details>
+//! <summary>API details</summary>
+//!
 //! The products of an imaging run.
 //!
 //! This crate turns a major cycle's final normal state and model into the
@@ -8,6 +12,8 @@
 //! fitting, restoration, Taylor products, PB and pbcor, validity and
 //! metadata. It writes each member in bounded windows to private staging
 //! beside its CASA image target, then replaces each target atomically.
+//!
+//! </details>
 
 mod analytic_beam;
 mod beam;

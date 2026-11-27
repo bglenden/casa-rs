@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
-//! Direct, reusable two-dimensional FFTW plans for real and complex planes.
-//!
-//! The native FFTW library is GPL-2.0-or-later. Distributions linking these
-//! plans must satisfy GPLv3 terms for the combined program.
+#![doc = include_str!("../README.md")]
 
 use std::collections::{HashMap, VecDeque};
 use std::ffi::{c_int, c_uint, c_void};

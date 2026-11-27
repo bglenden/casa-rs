@@ -6,10 +6,17 @@ license.workspace = true
 rust-version.workspace = true
 description = "CASA-compatible MeasurementSet simulation: the simulator tool and the simobserve tasks"
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["simulation", "radio-astronomy", "measurementset"]
+categories = ["science"]
 publish = true
 # CASA reference fixtures are exercised in the workspace.
 exclude = ["/tests"]
 autotests = false
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [lints]
 workspace = true

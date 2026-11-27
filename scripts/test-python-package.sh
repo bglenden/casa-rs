@@ -29,13 +29,33 @@ cleanup() {
 trap cleanup EXIT
 
 # casars.tools.simulator loads a measures runtime at sm.open; unless one is
-# configured, test against the bundled snapshot, as the Rust tests in CI do.
+# configured, test against the source release snapshot, as the Rust tests in CI do.
 if [[ -z "${CASA_RS_MEASURESPATH:-}" ]]; then
   measures_root="$tmp_root/casa-measures"
   mkdir -p "$measures_root"
-  tar -xzf libs/casacore/casa-measures/data/casa-measures-runtime.tar.gz -C "$measures_root"
-  cp libs/casacore/casa-measures/data/casa-measures-runtime.provenance.json \
-    "$measures_root/.casa-rs-measures-provenance.json"
+  snapshot=libs/casacore/casa-measures/data/casa-measures-runtime.tar.gz
+  provenance=libs/casacore/casa-measures/data/casa-measures-runtime.provenance.json
+  "$python_bin" - "$snapshot" "$provenance" >"$tmp_root/verified-provenance.json" <<'PYTHON'
+import hashlib
+import json
+import pathlib
+import sys
+
+archive, provenance = map(pathlib.Path, sys.argv[1:])
+manifest = json.loads(provenance.read_text(encoding="utf-8"))
+if archive.stat().st_size != manifest["archive_size_bytes"]:
+    raise SystemExit(f"Wrong release snapshot size: {archive}")
+digest = hashlib.sha256()
+with archive.open("rb") as source:
+    for block in iter(lambda: source.read(65536), b""):
+        digest.update(block)
+if digest.hexdigest() != manifest["archive_sha256"]:
+    raise SystemExit(f"Wrong release snapshot SHA-256: {archive}")
+del manifest["archive_size_bytes"], manifest["archive_sha256"]
+print(json.dumps(manifest, indent=2))
+PYTHON
+  tar -xzf "$snapshot" -C "$measures_root"
+  mv "$tmp_root/verified-provenance.json" "$measures_root/.casa-rs-measures-provenance.json"
   export CASA_RS_MEASURESPATH="$measures_root"
 fi
 

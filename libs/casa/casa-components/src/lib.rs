@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+#![doc = include_str!("../README.md")]
+//!
+//! <details>
+//! <summary>API details</summary>
+//!
 //! CASA component lists: parameterised models of the sky brightness, and the
 //! casacore tables CASA keeps them in.
 //!
@@ -117,6 +122,8 @@
 //!   shape's axes in the units CASA gives one read from a table.
 //! - **Table keywords:** rewriting an existing list preserves its table
 //!   keywords. They are not exposed by the list or by `cl.putkeyword` yet.
+//!
+//! </details>
 
 mod component;
 mod component_type;

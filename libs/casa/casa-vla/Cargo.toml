@@ -7,7 +7,14 @@ license.workspace = true
 rust-version.workspace = true
 description = "Native VLA archive disk-reader support for importvla-style workflows"
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["vla", "measurementset", "radio-astronomy"]
+categories = ["science"]
 autotests = false
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
 default = []

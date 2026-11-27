@@ -6,8 +6,15 @@ license.workspace = true
 rust-version.workspace = true
 description = "Measurement operator: placement records, convolution functions, gridding backends and weighting"
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["gridding", "interferometry", "radio-astronomy"]
+categories = ["science"]
 publish = true
 autotests = false
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [lints]
 workspace = true

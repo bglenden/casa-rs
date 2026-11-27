@@ -86,8 +86,11 @@ with closing(import_module(sys.argv[1]).ms()) as selector:
 """
     for module in ("casatools", "casars.tools"):
         output = tmp_path / f"{module}.ms"
+        interpreter = sys.executable
+        if module == "casatools":
+            interpreter = os.environ.get("CASA_RS_CASA_PYTHON", interpreter)
         subprocess.run(
-            [sys.executable, "-c", runner, module, str(native_dataset), str(output)],
+            [interpreter, "-c", runner, module, str(native_dataset), str(output)],
             env=dict(os.environ, CASARCFILES=str(resources)),
             check=True,
         )

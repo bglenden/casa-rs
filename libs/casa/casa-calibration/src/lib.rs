@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! CASA-compatible calibration tables, solution generation, application, and
-//! visibility model prediction built on the native casacore table stack.
+#![doc = include_str!("../README.md")]
 
 mod accumulate;
 mod antpos_vla;

@@ -51,6 +51,17 @@ def test_invalid_overwrite_preserves_existing_product(workspace):
     assert (workspace / "out.im" / "table.dat").read_bytes() == before
 
 
+@pytest.mark.parametrize("case", ["same_frame", "galactic_frame"])
+def test_direction_template_with_explicit_workspace(tmp_path, case):
+    source = tmp_path / "workspace"
+    source.mkdir()
+    shutil.copytree(DATA / "cube.im", source / "cube.im", ignore=shutil.ignore_patterns("table.lock"))
+    request = EVIDENCE["cases"][case]["params"]
+    completion = tasks.run("imregrid", workspace=source, output="regridded.im", **request)
+    assert completion.successful, completion.describe()
+    assert (source / "regridded.im" / "table.dat").is_file()
+
+
 def test_casa_reopens_regrid_products(workspace):
     if not CASA_PYTHON.is_file():
         pytest.skip("CASA Python is unavailable")

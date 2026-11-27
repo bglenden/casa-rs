@@ -8,6 +8,13 @@ license.workspace = true
 rust-version.workspace = true
 description = "casacore-compatible table data system in Rust"
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["casacore", "tables", "taql"]
+categories = ["data-structures"]
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [lints]
 workspace = true

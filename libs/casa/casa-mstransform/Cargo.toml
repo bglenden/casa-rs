@@ -6,8 +6,15 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["measurementset", "averaging", "interferometry"]
+categories = ["science"]
 publish = true
 autotests = false
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [lints]
 workspace = true
@@ -52,7 +59,7 @@ required-features = ["msv4"]
 
 [dev-dependencies]
 casa-flagging.workspace = true
-casa-simulation.workspace = true
+casa-simulation = { path = "../casa-simulation" }
 casa-test-support = { path = "../../../dev/casa-test-support" }
 flate2 = "1"
 tar = "0.4"

@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+#![doc = include_str!("../README.md")]
+//!
+//! <details>
+//! <summary>API details</summary>
+//!
 //! Read and write casacore-compatible tables.
 //!
 //! This crate is the Rust implementation of the **Casacore Table Data System
@@ -244,6 +249,8 @@
 //! ```bash
 //! cargo run -p casa-tables --example t_table
 //! ```
+//!
+//! </details>
 
 mod concat_table;
 mod indexing;

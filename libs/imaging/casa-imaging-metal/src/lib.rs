@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
-
+#![doc = include_str!("../README.md")]
+//!
+//! <details>
+//! <summary>API details</summary>
+//!
 //! Metal implementation of the imaging gridding backend.
 //!
 //! This crate is the only place a device API appears in the imaging stack.
@@ -22,6 +26,8 @@
 //! [`DeviceFailure::Unavailable`](casa_imaging_operator::DeviceFailure).
 //!
 //! The design is ADR-0016, with the IF-4 deviations on #653.
+//!
+//! </details>
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 mod backend;

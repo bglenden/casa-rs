@@ -21,7 +21,7 @@ pub fn imregrid_front_end()
 
 pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let template = match task.value("template") {
-        Some(ParameterValue::String(template)) if template.eq_ignore_ascii_case("get") => {
+        Some(ParameterValue::String(template)) if ImregridTemplate::is_selector(template) => {
             ImregridTemplate::Image(template.into())
         }
         Some(ParameterValue::String(template)) if !template.is_empty() => {
