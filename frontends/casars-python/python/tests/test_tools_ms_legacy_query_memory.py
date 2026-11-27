@@ -260,7 +260,7 @@ from casatools import table
 from contextlib import closing
 import sys
 with closing(table()) as parent:
-    assert parent.open(sys.argv[1], nomodify=False, lockoptions='permanent')
+    assert parent.open(sys.argv[1], nomodify=False, lockoptions={'option': 'permanent'})
     parent.putcell('NAME', 0, 'FIRST')
     print('HELD', flush=True)
     sys.stdin.readline()
