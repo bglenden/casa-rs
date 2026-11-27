@@ -6,8 +6,15 @@ license.workspace = true
 rust-version.workspace = true
 description = "Normalization, restoration, Taylor and PB products, and their CASA image writer"
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["imaging", "radio-astronomy", "primary-beam"]
+categories = ["science"]
 publish = true
 autotests = false
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [lints]
 workspace = true

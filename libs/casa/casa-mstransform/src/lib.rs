@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
-//! MeasurementSet transformations, concatenation and format conversion.
+#![doc = include_str!("../README.md")]
 
 #[cfg(unix)]
 pub mod concat;

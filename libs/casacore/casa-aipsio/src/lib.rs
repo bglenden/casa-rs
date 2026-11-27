@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+#![doc = include_str!("../README.md")]
+//!
+//! <details>
+//! <summary>API details</summary>
+//!
 //! Rust implementation of casacore AipsIO persistent-object I/O.
 //!
 //! This crate provides two complementary layers:
@@ -33,6 +38,8 @@
 //!
 //! Detailed behavior and C++ mapping notes are in the [`aipsio`] module-level
 //! rustdoc.
+//!
+//! </details>
 
 use std::io::{Read, Write};
 

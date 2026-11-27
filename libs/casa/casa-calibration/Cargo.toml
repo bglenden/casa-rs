@@ -6,8 +6,15 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["calibration", "interferometry", "measurementset"]
+categories = ["science"]
 publish = true
 autotests = false
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
 casa-components.workspace = true
@@ -42,7 +49,7 @@ csv-core = "0.1.13"
 
 [dev-dependencies]
 casa-mstransform = { workspace = true, features = ["msv4"] }
-casa-simulation.workspace = true
+casa-simulation = { path = "../casa-simulation" }
 casa-ms = { workspace = true, features = ["msv4"] }
 casa-observation.workspace = true
 flate2 = "1"

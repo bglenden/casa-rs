@@ -6,8 +6,15 @@ license.workspace = true
 rust-version.workspace = true
 description = "Production composition seam for native CASA-RS imaging"
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["radio-astronomy", "interferometry", "imaging"]
+categories = ["science"]
 publish = true
 autotests = false
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [lints]
 workspace = true
@@ -38,7 +45,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 casa-mstransform = { workspace = true, features = ["msv4"] }
-casa-simulation.workspace = true
+casa-simulation = { path = "../../casa/casa-simulation" }
 base64 = "0.22"
 flate2 = "1"
 tar = "0.4"

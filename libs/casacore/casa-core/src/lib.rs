@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! CASA data values, quanta, measures and reference-frame conversions.
+#![doc = include_str!("../README.md")]
 
 pub mod correlation;
 pub mod measures;

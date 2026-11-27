@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
-
+#![doc = include_str!("../README.md")]
+//!
+//! <details>
+//! <summary>API details</summary>
+//!
 //! Single-dish image-plane gridding, as CASA's `SDGrid` does it for
 //! `tsdimaging` and for the simulator's total-power prediction.
 //!
@@ -31,6 +35,8 @@
 //! The gridder holds its two grids whole, as CASA does, under an admission
 //! of [`TotalPowerGrid::bytes`], and grids the image's channels in parallel
 //! on the imaging runtime's worker team.
+//!
+//! </details>
 
 mod beam;
 mod grid;

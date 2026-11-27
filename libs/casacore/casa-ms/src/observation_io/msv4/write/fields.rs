@@ -59,7 +59,7 @@ pub(super) fn write_fields(
     }
 }
 
-/// Refuse what [`write_fields`] cannot write of the fields `grid`'s times
+/// Refuse what `write_fields` cannot write of the fields `grid`'s times
 /// name (at `times_s`, Unix seconds) for data whose UVW is in `frame`, so
 /// that a conversion refuses it before anything is written.
 ///
@@ -141,7 +141,7 @@ fn plan<'a>(
     Ok(Plan::Moving(ephemeris))
 }
 
-/// The samples of an ephemeris a dataset keeps ([`kept`]), and the body's
+/// The samples of an ephemeris a dataset keeps (`kept`), and the body's
 /// direction and distance at each of the dataset's times, interpolated as
 /// XRADIO interpolates them.
 struct Bodies {
@@ -205,7 +205,7 @@ fn fixed_fields(
 /// `ephemeris`, which the field of each time (`per_time`, at `times_s`)
 /// follows (`field_and_source_ephemeris`): the samples on `time_ephemeris`
 /// from the last before the first time to the first at or after
-/// [`EVALUATION_REACH_S`] past the last ([`kept`]), and each time's phase
+/// [`EVALUATION_REACH_S`] past the last (`kept`), and each time's phase
 /// centre as XRADIO states it, the field's offset added to the body's
 /// direction interpolated linearly in angle, wrapped.
 fn moving_fields(
@@ -327,7 +327,7 @@ fn moving_fields(
 }
 
 /// The samples of `ephemeris` a dataset of `times_s` (Unix seconds) holds
-/// ([`kept`]).
+/// (`kept`).
 pub fn kept_samples(ephemeris: &FieldEphemeris, times_s: &[f64]) -> Range<usize> {
     kept(&unix_seconds(ephemeris), times_s)
 }

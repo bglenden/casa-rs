@@ -7,7 +7,14 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["measurementset", "casacore", "interferometry"]
+categories = ["science"]
 autotests = false
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
 default = []
@@ -47,7 +54,7 @@ zarrs_filesystem = { version = "=0.3.14", optional = true }
 quick-xml = { version = "0.42", default-features = false }
 
 [dev-dependencies]
-casa-simulation = { workspace = true }
+casa-simulation = { path = "../../casa/casa-simulation" }
 casa-observation.workspace = true
 casa-test-support = { path = "../../../dev/casa-test-support" }
 flate2 = "1"

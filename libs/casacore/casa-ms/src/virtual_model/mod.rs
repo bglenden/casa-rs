@@ -33,7 +33,7 @@
 //! against `indexcombination`; nothing reads `channelselection` back.
 //!
 //! Clearing follows `VisModelData::clearModel`: every field's model when
-//! no field is named ([`crate::scratch_columns`] holds that), else each
+//! no field is named (`crate::scratch_columns` holds that), else each
 //! named field's model, or only its entries' combinations of the named
 //! spectral windows ([`clear_virtual_model`]). As there, casa-rs deletes
 //! the `FT_MODEL*` image tables of a removed model, but only those in the
@@ -243,7 +243,7 @@ pub fn virtual_model(ms: &MeasurementSet, field: i32) -> MsResult<Option<Virtual
 /// after clearing the selected fields' models ([`clear_virtual_model`]).
 ///
 /// SOURCE and then MAIN are written in place under casacore's write lock,
-/// each only when it changes, as [`crate::scratch_columns`] writes them.
+/// each only when it changes, as `crate::scratch_columns` writes them.
 ///
 /// # Errors
 ///

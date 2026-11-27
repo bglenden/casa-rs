@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+#![doc = include_str!("../README.md")]
+//!
+//! <details>
+//! <summary>API details</summary>
+//!
 //! casacore-compatible typed images and related metadata.
 //!
 //! # Overview
@@ -58,6 +63,8 @@
 //! let _chunks = complex.traverse(TraversalSpec::chunks(vec![2, 2])).count();
 //! assert_eq!(ImageType::Velocity.to_string(), "Velocity");
 //! ```
+//!
+//! </details>
 
 mod beam;
 mod concat_file;

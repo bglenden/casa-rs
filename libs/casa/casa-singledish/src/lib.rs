@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Preparation, baseline fitting, atmospheric correction and instrument import
-//! for CASA-compatible single-dish MeasurementSets.
+#![doc = include_str!("../README.md")]
 
 pub mod preparation;
 mod single_dish_import;

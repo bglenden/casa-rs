@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
-//! Shared numerical algorithms, and CASA's common primary-beam patterns
-//! (`PBMath`'s Airy and EVLA beams, chosen by telescope name: [`PrimaryBeam`]),
-//! which the simulator's prediction and single-dish gridding both use.
+#![doc = include_str!("../README.md")]
 
 mod annular_aperture;
 pub mod cell_noise;

@@ -7,6 +7,13 @@ license.workspace = true
 rust-version.workspace = true
 description = "N-dimensional lattice abstractions for casacore-compatible data"
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["casacore", "arrays", "numerics"]
+categories = ["data-structures"]
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [lints]
 workspace = true

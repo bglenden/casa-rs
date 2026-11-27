@@ -6,7 +6,15 @@ license.workspace = true
 rust-version.workspace = true
 description = "Runtime data and table columns for casacore measures"
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["casacore", "astronomy", "ephemerides"]
+categories = ["science"]
 publish = true
+exclude = ["data/casa-measures-runtime.tar.gz"]
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [lints]
 workspace = true

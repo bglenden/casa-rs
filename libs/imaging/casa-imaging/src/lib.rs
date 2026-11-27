@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
+#![doc = include_str!("../README.md")]
+//!
+//! <details>
+//! <summary>API details</summary>
+//!
 //! Production composition owner for native imaging.
 //!
 //! This crate is the single application-layer seam: it compiles an
@@ -7,6 +12,8 @@
 //! implementation can run it, and runs it on the execution runtime.
 //! Frontends submit requests here; they do not compose native execution
 //! stages directly.
+//!
+//! </details>
 
 pub mod availability;
 mod compile;

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! CASA image analysis workflows and component-backed images.
+#![doc = include_str!("../README.md")]
 pub mod analysis;
 mod component_list_image;
 pub mod convolve2d;

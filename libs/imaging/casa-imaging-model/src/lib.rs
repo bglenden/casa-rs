@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
-//! Logical, backend-independent imaging problem compilation.
+#![doc = include_str!("../README.md")]
 
 mod aw_pointing;
 mod batch_geometry;

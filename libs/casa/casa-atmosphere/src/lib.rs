@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
+#![doc = include_str!("../README.md")]
+//!
+//! <details>
+//! <summary>API details</summary>
+//!
 //! A native port of ATM, the atmospheric transmission model in CASA.
 //!
 //! ATM (Pardo, Cernicharo & Serabyn 2001, *IEEE Trans. Antennas Propag.*
@@ -72,6 +77,8 @@
 //! (ATM's millibars), temperatures in kelvin, heights in metres unless the
 //! name says kilometres, frequencies in hertz in the spectral grid and in
 //! GHz in the refractivity functions (as in ATM).
+//!
+//! </details>
 
 pub mod absorption;
 mod profile;

@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
-
+#![doc = include_str!("../README.md")]
+//!
+//! <details>
+//! <summary>API details</summary>
+//!
 //! The shared radio-interferometric measurement operator.
 //!
 //! This crate owns the forward operator `A` (model image to predicted
@@ -30,6 +34,8 @@
 //! same spheroidal response), so `A*` is the exact adjoint of `A` up to the
 //! polarization basis, whose image-domain conversion follows CASA's
 //! `StokesImageUtil` including its `1/2` factors and `sumwt` rule.
+//!
+//! </details>
 
 mod accumulator;
 mod aw;

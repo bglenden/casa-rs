@@ -6,7 +6,14 @@ license.workspace = true
 rust-version.workspace = true
 description = "CASA image analysis, regridding and component-list images"
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["astronomy", "images", "regridding"]
+categories = ["science"]
 publish = true
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [lints]
 workspace = true

@@ -13,5 +13,7 @@
     "ephemerides/JPL-Horizons",
     "ephemerides/Sources",
     "ephemerides/Lines"
-  ]
+  ],
+  "archive_size_bytes": 52888850,
+  "archive_sha256": "873d1e6afc6f618b1302f676e9f7916d5fd442317ac6e866262e870c03bfb57d"
 }

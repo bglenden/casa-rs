@@ -386,10 +386,14 @@ CARGO_INCREMENTAL=0 cargo run --example update_measures \
 export CASA_RS_MEASURESPATH=/path/to/measures-data
 ```
 
-Omitting `--data-dir` selects `~/.casa/data`. A packaged snapshot can also be
-installed explicitly with `casa_measures::install_packaged_snapshot`;
-scientific calls do not silently install it. Maintainers regenerate the
-packaged archive and provenance with:
+Omitting `--data-dir` selects `~/.casa/data`. The corresponding source
+release contains `libs/casacore/casa-measures/data/casa-measures-runtime.tar.gz`.
+Pass that archive and a destination to
+`casa_measures::install_packaged_snapshot(archive, destination)`. It verifies
+the archive's size and SHA-256 before extracting the tables and recording their
+provenance. Python uses a prepared measures tree via `CASA_RS_MEASURESPATH`.
+
+To regenerate the archive and its verified manifest, run:
 
 ```bash
 CARGO_INCREMENTAL=0 cargo run -p casa-dev-tools --bin package_snapshot \

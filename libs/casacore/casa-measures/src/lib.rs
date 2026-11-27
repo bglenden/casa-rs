@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+#![doc = include_str!("../README.md")]
+//!
+//! <details>
+//! <summary>API details</summary>
+//!
 //! CASA-table-backed measures runtime data for astronomical conversions.
 //!
 //! [`MeasuresRuntime`] validates and lazily reads one explicit CASA measures
@@ -6,6 +11,8 @@
 //! bounded operation. Discovery and packaged-snapshot installation are
 //! separate, fallible operations; scientific calls never mutate a user's data
 //! directory.
+//!
+//! </details>
 
 use std::fmt;
 use std::mem::size_of;
@@ -21,10 +28,8 @@ use casa_core::measures::{
 };
 use casa_core::{ArrayValue, ScalarValue};
 use casa_tables::{Table, TableOptions};
-use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tar::Archive;
 
 mod comet;
 mod interp;
@@ -43,6 +48,7 @@ pub mod update;
 pub use comet::{CometDirection, CometTable};
 pub use observatory::{ObservatoryCatalog, ObservatoryEntry};
 pub use planet::{PlanetaryEphemeris, PlanetaryTable};
+pub use snapshot::{install_packaged_snapshot, packaged_snapshot_provenance};
 pub use source::{SourceCatalog, SourceEntry};
 pub use spectral_line::{SpectralLineCatalog, SpectralLineEntry};
 
@@ -53,9 +59,6 @@ fn path_heap_bytes(path: &PathBuf) -> usize {
 const DEFAULT_MEASURES_ENV: &str = "CASA_RS_MEASURESPATH";
 const DEFAULT_MEASURES_RELATIVE: &str = ".casa/data";
 const INSTALLED_PROVENANCE_FILE: &str = ".casa-rs-measures-provenance.json";
-const PACKAGED_SNAPSHOT_ARCHIVE: &[u8] = include_bytes!("../data/casa-measures-runtime.tar.gz");
-const PACKAGED_SNAPSHOT_PROVENANCE_JSON: &str =
-    include_str!("../data/casa-measures-runtime.provenance.json");
 /// One shared manifest for validation and packaged-snapshot installation.
 pub const REQUIRED_RELATIVE_PATHS: &[&str] = &[
     "geodetic/IERSeop97/table.dat",
@@ -475,8 +478,6 @@ impl TaiUtcTable {
         Ok(utc_mjd)
     }
 }
-
-static PACKAGED_PROVENANCE: OnceLock<Result<SnapshotProvenance, String>> = OnceLock::new();
 
 /// Validation policy applied when opening an explicit runtime root.
 #[derive(Debug, Clone, Copy, Default)]
@@ -949,16 +950,6 @@ impl MeasuresProvider for MeasuresRuntime {
     }
 }
 
-/// Return the packaged snapshot provenance.
-pub fn packaged_snapshot_provenance() -> Result<&'static SnapshotProvenance, MeasuresDataError> {
-    match PACKAGED_PROVENANCE.get_or_init(|| {
-        serde_json::from_str(PACKAGED_SNAPSHOT_PROVENANCE_JSON).map_err(|error| error.to_string())
-    }) {
-        Ok(provenance) => Ok(provenance),
-        Err(error) => Err(MeasuresDataError::Provenance(error.clone())),
-    }
-}
-
 fn configured_measures_path() -> Option<PathBuf> {
     std::env::var_os(DEFAULT_MEASURES_ENV).map(PathBuf::from)
 }
@@ -994,36 +985,6 @@ fn validate_measures_tree(root: &Path) -> Result<(), MeasuresDataError> {
             root.display().to_string(),
         ))
     }
-}
-
-/// Explicitly install the packaged snapshot at a caller-selected destination.
-pub fn install_packaged_snapshot(root: &Path) -> Result<SnapshotProvenance, MeasuresDataError> {
-    std::fs::create_dir_all(root).map_err(|error| {
-        MeasuresDataError::Bootstrap(format!("creating {}: {error}", root.display()))
-    })?;
-
-    let decoder = GzDecoder::new(PACKAGED_SNAPSHOT_ARCHIVE);
-    let mut archive = Archive::new(decoder);
-    archive.unpack(root).map_err(|error| {
-        MeasuresDataError::Bootstrap(format!(
-            "extracting packaged snapshot into {}: {error}",
-            root.display()
-        ))
-    })?;
-
-    if !measures_tree_complete(root) {
-        return Err(MeasuresDataError::Bootstrap(format!(
-            "packaged snapshot extracted into {} but required tables are still missing",
-            root.display()
-        )));
-    }
-    let provenance = packaged_snapshot_provenance()?.clone();
-    let provenance_bytes = serde_json::to_vec_pretty(&provenance)
-        .map_err(|error| MeasuresDataError::Provenance(error.to_string()))?;
-    std::fs::write(root.join(INSTALLED_PROVENANCE_FILE), provenance_bytes).map_err(|error| {
-        MeasuresDataError::Bootstrap(format!("writing installed provenance: {error}"))
-    })?;
-    Ok(provenance)
 }
 
 fn load_eop_from(root: &Path) -> Result<EopTable, MeasuresDataError> {
@@ -1217,7 +1178,9 @@ mod tests {
 
     fn installed_runtime() -> (TempDir, MeasuresRuntime) {
         let temp = TempDir::new().expect("tempdir");
-        install_packaged_snapshot(temp.path()).expect("install snapshot");
+        let archive =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("data/casa-measures-runtime.tar.gz");
+        install_packaged_snapshot(&archive, temp.path()).expect("install snapshot");
         let runtime = MeasuresRuntime::open(
             temp.path(),
             RuntimePolicy {
