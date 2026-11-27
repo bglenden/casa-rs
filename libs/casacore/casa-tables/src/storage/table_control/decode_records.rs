@@ -682,18 +682,30 @@ pub(super) fn read_array_record_field(
     for _ in 0..ndim {
         shape.push(io.get_u32()? as usize);
     }
-    let count = io.get_u32()? as usize;
-    if ndim == 0 {
-        // casacore's empty IPosition has no elements. A rank-zero ndarray
-        // would instead hold one element, so represent this as shape [0].
+    let count = if ndim == 0 {
+        // Older casa-rs omitted the count and value for this exact v3 frame.
+        // The declared frame boundary leaves the next record field intact.
+        let legacy_name = version == 3
+            && dt
+                .to_primitive_type()
+                .is_some_and(|primitive| type_name == record_array_object_name(primitive));
+        let count = match io.remaining_object_bytes()? {
+            Some(0) if legacy_name => 0,
+            Some(0..4) => return Err(casa_aipsio::AipsIoObjectError::ReadBeyondEndOfObject.into()),
+            _ => io.get_u32()?,
+        };
         if count != 0 {
             return Err(StorageError::FormatMismatch(format!(
                 "rank-zero record array has element count {count}, expected 0"
             )));
         }
+        // casacore's empty IPosition has zero elements. A rank-zero
+        // ndarray holds one element, so represent the empty shape as [0].
         shape.push(0);
-    }
-    let count = count.min(shape.iter().product());
+        0
+    } else {
+        (io.get_u32()? as usize).min(shape.iter().product())
+    };
 
     let av = match dt {
         CasacoreDataType::TpArrayBool => {

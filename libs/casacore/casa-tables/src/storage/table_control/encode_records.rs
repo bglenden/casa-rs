@@ -407,6 +407,21 @@ pub(super) fn write_record_field_value(io: &mut AipsIo, value: &Value) -> Result
     Ok(())
 }
 
+/// The version 3 array object names used by RecordRep and historical casa-rs.
+pub(super) fn record_array_object_name(primitive: PrimitiveType) -> &'static str {
+    match primitive {
+        PrimitiveType::Bool | PrimitiveType::Complex32 | PrimitiveType::Complex64 => "Array<void>",
+        PrimitiveType::UInt8 => "Array<uChar>",
+        PrimitiveType::Int16 | PrimitiveType::UInt16 => "Array<short>",
+        PrimitiveType::Int32 => "Array<Int>",
+        PrimitiveType::UInt32 => "Array<uInt>",
+        PrimitiveType::Int64 => "Array<Int64>",
+        PrimitiveType::Float32 => "Array<float>",
+        PrimitiveType::Float64 => "Array<double>",
+        PrimitiveType::String => "Array<String>",
+    }
+}
+
 /// Write an array-typed record field to AipsIO.
 ///
 /// The version 3 array object stores its rank and extents, followed by the
@@ -415,21 +430,7 @@ pub(super) fn write_array_record_field(
     io: &mut AipsIo,
     av: &ArrayValue,
 ) -> Result<(), StorageError> {
-    // C++ RecordRep uses type-specific AipsIO names for arrays.
-    let type_name = match av {
-        ArrayValue::Bool(_) => "Array<void>",
-        ArrayValue::UInt8(_) => "Array<uChar>",
-        ArrayValue::Int16(_) => "Array<short>",
-        ArrayValue::UInt16(_) => "Array<short>",
-        ArrayValue::Int32(_) => "Array<Int>",
-        ArrayValue::UInt32(_) => "Array<uInt>",
-        ArrayValue::Int64(_) => "Array<Int64>",
-        ArrayValue::Float32(_) => "Array<float>",
-        ArrayValue::Float64(_) => "Array<double>",
-        ArrayValue::Complex32(_) => "Array<void>",
-        ArrayValue::Complex64(_) => "Array<void>",
-        ArrayValue::String(_) => "Array<String>",
-    };
+    let type_name = record_array_object_name(av.primitive_type());
     io.putstart(type_name, 3)?;
 
     let shape = stored_shape_ref(av.shape());
