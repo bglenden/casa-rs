@@ -49,7 +49,7 @@ Imaging follows the stricter ADR-0016 layering:
 
 `resources/imaging-architecture/dependency-policy.json` lists each layer's
 crates and each native crate's exact workspace dependencies.
-`scripts/check-imaging-dependencies.py` (in `just arch-check`) enforces it and
+`scripts/check-workspace-arch.py` (in `just arch-check`) enforces it and
 rejects edges outside the layering, inexact dependency sets, definitional
 crates that reach beyond one another or do I/O, device APIs outside
 `casa-imaging-metal`, and environment reads, `eprintln!` and content hashing
@@ -139,6 +139,11 @@ decision 10). Adding a crate to that set is the owner's decision.
   a selected implementation's failure is terminal, with no alternate
   implementation, retry or stage-level delegation. Component presence alone
   never makes a route available.
+
+The workspace check also enforces physical crate tiers and registry dependency
+versions, tests and allocator isolation, UI-free libraries and surfaces, and
+in-process Python task execution. Its baseline of legacy dual module paths can
+only shrink.
 
 ## Runtime model
 

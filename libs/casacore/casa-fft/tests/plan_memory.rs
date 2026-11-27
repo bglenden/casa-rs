@@ -18,10 +18,34 @@
 //! Replanning a measured owned 4096² pair on four threads took 18 ms
 //! against 2.0 s the first time, from FFTW's wisdom.
 
-#![cfg(target_os = "macos")]
-
 use casa_fft::{Fft2, PLAN_PAIR_BYTES, RealFft2};
 use num_complex::Complex;
+
+// FFTW's C allocations are measured in a fresh process, even when libtest
+// runs the other API tests in parallel.
+fn measure_alone(name: &str, measure: impl FnOnce()) {
+    const CHILD: &str = "CASA_RS_FFT_PLAN_HEAP_CHILD";
+    const MEASURED: &str = "measured FFTW plan heap";
+    if std::env::var_os(CHILD).is_some() {
+        measure();
+        println!("{MEASURED}");
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args(["--exact", name, "--nocapture"])
+        .env(CHILD, "1")
+        .output()
+        .expect("run isolated FFTW heap measurement");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains(MEASURED),
+        "{name}: {}
+{stdout}
+{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
 #[repr(C)]
 struct Statistics {
@@ -60,6 +84,13 @@ const MEASURED_CELLS: usize = 2048 * 2048;
 
 #[test]
 fn a_plan_pair_keeps_at_most_its_bytes() {
+    measure_alone(
+        "plan_memory::a_plan_pair_keeps_at_most_its_bytes",
+        check_a_plan_pair_keeps_at_most_its_bytes,
+    );
+}
+
+fn check_a_plan_pair_keeps_at_most_its_bytes() {
     let complex32 = |shape: [usize; 2]| {
         kept(|| {
             let mut fft = Fft2::<f32>::with_threads(shape, 1).expect("plan");
@@ -139,6 +170,13 @@ fn owned(make: impl FnOnce() -> Box<dyn std::any::Any>) -> (usize, usize) {
 /// transforms on two and four threads and on every thread the host has.
 #[test]
 fn an_owned_threaded_plan_pair_keeps_at_most_its_bytes() {
+    measure_alone(
+        "plan_memory::an_owned_threaded_plan_pair_keeps_at_most_its_bytes",
+        check_an_owned_threaded_plan_pair_keeps_at_most_its_bytes,
+    );
+}
+
+fn check_an_owned_threaded_plan_pair_keeps_at_most_its_bytes() {
     let host = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
     let mut counts = vec![2, 4, host];
     counts.dedup();

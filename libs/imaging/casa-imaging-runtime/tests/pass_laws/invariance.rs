@@ -18,7 +18,7 @@ use casa_imaging_runtime::pass::{
 };
 use num_complex::Complex32;
 
-use crate::fixture::{
+use super::fixture::{
     CHANNELS, FIRST_HZ, IMAGE, INCREMENT_RAD, Rows, Run, WIDTH_HZ, keyed_weight_groups,
     keyed_weights_operator, nearest_cube, operator, panicking_weights_operator, planes, run,
     sparse_model, test_kernels_operator, try_run, try_run_on, window_of, worst_relative,
@@ -228,7 +228,7 @@ fn pipelined_owners_grid_what_one_set_grids() {
 
     let operator = operator(GridPrecision::F64, Basis::Constant);
     let weighted = test_kernels_operator(true, None);
-    let cube = crate::fixture::operator(GridPrecision::F64, Basis::ChannelLocal { planes: 3 });
+    let cube = super::fixture::operator(GridPrecision::F64, Basis::ChannelLocal { planes: 3 });
     let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
     let cube_resampler = nearest_cube();
     let mut rows = Rows::random(500, 13, operator.geometry());
@@ -597,7 +597,7 @@ fn balanced_regions_from_a_pass_row_work_match_one_owner() {
     let worst = worst_relative(&reference[0], &images[0]);
     assert!(worst <= 1.0e-6, "balanced regions: {worst}");
 
-    let cube = crate::fixture::operator(GridPrecision::F64, Basis::ChannelLocal { planes: 3 });
+    let cube = super::fixture::operator(GridPrecision::F64, Basis::ChannelLocal { planes: 3 });
     let cube_resampler = nearest_cube();
     let (_, summary) = try_run(
         &[planes(&cube, &cube_resampler, 2)],
@@ -734,7 +734,7 @@ fn the_row_work_pass_measures_what_a_first_pass_reports() {
     let mut wide_rows = Rows::random(500, 37, wproject.geometry());
     let half_support = |w_lambda: f64| {
         let cf = wproject.cf();
-        let key = cf.key(&crate::fixture::context(0), FIRST_HZ, w_lambda);
+        let key = cf.key(&super::fixture::context(0), FIRST_HZ, w_lambda);
         cf.taps(key, &mut CellHold::new()).half_support()
     };
     let widest_w = wide_rows
@@ -818,7 +818,7 @@ fn the_row_work_pass_measures_what_a_first_pass_reports() {
     }
     assert!(cache.filled(), "the Briggs pass kept its weights");
 
-    let cube = crate::fixture::operator(GridPrecision::F64, Basis::ChannelLocal { planes: 3 });
+    let cube = super::fixture::operator(GridPrecision::F64, Basis::ChannelLocal { planes: 3 });
     let cube_resampler = nearest_cube();
     assert!(!needs_row_work(&[planes(&cube, &cube_resampler, 2)]));
     assert!(!needs_row_work(&[PassDomain {

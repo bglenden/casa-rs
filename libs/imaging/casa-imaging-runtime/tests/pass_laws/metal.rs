@@ -8,7 +8,7 @@
 use casa_imaging_operator::{Basis, GridPrecision, ModeSet, PlaneRange, SpectralResampler};
 use casa_imaging_runtime::pass::{BackendChoice, Partition, PassDomain, PassError, Residency};
 
-use crate::fixture::{
+use super::fixture::{
     IMAGE, Rows, Run, TestKernels, nearest_cube, offset_linear_cube, operator, operator_with,
     planes, run, sparse_model, window_of, worst_relative,
 };

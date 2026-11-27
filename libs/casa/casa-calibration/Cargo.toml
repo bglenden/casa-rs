@@ -10,11 +10,9 @@ publish = true
 autotests = false
 
 [dependencies]
-casa-imageanalysis.workspace = true
 casa-components.workspace = true
 casa-flagging.workspace = true
 casa-mstransform.workspace = true
-casa-atmosphere.workspace = true
 casa-coordinates.workspace = true
 casa-images.workspace = true
 casa-lattices.workspace = true

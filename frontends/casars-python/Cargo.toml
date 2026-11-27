@@ -25,7 +25,6 @@ casa-singledish.workspace = true
 casa-components.workspace = true
 casa-coordinates.workspace = true
 casa-images.workspace = true
-casa-lattices.workspace = true
 casa-measures.workspace = true
 casa-ms.workspace = true
 casa-contracts = { path = "../../surfaces/casa-contracts" }

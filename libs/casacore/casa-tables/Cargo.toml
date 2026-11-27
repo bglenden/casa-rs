@@ -1,6 +1,7 @@
 [package]
 name = "casa-tables"
 publish = true
+autotests = false
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -51,3 +52,7 @@ harness = false
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[[test]]
+name = "api"
+path = "tests/api.rs"

@@ -4,7 +4,7 @@
 //! three pressure regimes, over 431 frequencies that straddle every kind of
 //! frequency-bin edge, line centre and cut-off ATM has.
 
-mod common;
+use crate::common;
 
 use casa_atmosphere::refractivity::{
     Species, density_refractivity, h2o_refractivity, o2_refractivity, specific_refractivity,

@@ -195,7 +195,7 @@ This decision is enforced by:
 - tests: the T0 laws (weighted adjoint, linearity, spectral identity and
   nonidentity, cycle invariants) and T1 end-to-end tests of `TESTING.md`
   "Imaging tiers and evidence"
-- lint/import/dependency rules: `scripts/check-imaging-dependencies.py`
+- lint/import/dependency rules: `scripts/check-workspace-arch.py`
   rejects forbidden frontend, backend, observation, reconstruction, and
   product dependencies (ADR-0016)
 - CI checks: `just arch-check`

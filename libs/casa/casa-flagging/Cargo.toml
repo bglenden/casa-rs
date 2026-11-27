@@ -32,4 +32,3 @@ name = "api"
 path = "tests/api.rs"
 
 [dev-dependencies]
-casa-test-support = { path = "../../../dev/casa-test-support" }

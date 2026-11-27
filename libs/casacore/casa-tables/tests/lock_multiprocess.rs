@@ -5,8 +5,6 @@
 //! fcntl-based table locking works correctly across OS processes.
 //! Because fcntl locks are per-process (not per-fd), single-process
 //! tests cannot exercise true contention.
-#![cfg(unix)]
-
 #[path = "lock_multiprocess/helper.rs"]
 mod helper;
 
@@ -47,7 +45,12 @@ fn lock_helper_child() {
 fn helper_command(args: &[&str]) -> Command {
     let exe = std::env::current_exe().expect("test binary path");
     let mut command = Command::new(exe);
-    command.args(["--exact", "--ignored", "--nocapture", "lock_helper_child"]);
+    command.args([
+        "--exact",
+        "--ignored",
+        "--nocapture",
+        "lock_multiprocess::lock_helper_child",
+    ]);
     command.env(HELPER_ARGC_ENV, args.len().to_string());
     for (index, arg) in args.iter().enumerate() {
         command.env(format!("{HELPER_ARG_PREFIX_ENV}{index}"), arg);

@@ -231,7 +231,6 @@ name = "casa-atmosphere"
 version = "0.27.0"
 dependencies = [
  "num-complex",
- "serde",
  "serde_json",
  "thiserror",
 ]
@@ -240,13 +239,11 @@ dependencies = [
 name = "casa-calibration"
 version = "0.27.0"
 dependencies = [
- "casa-atmosphere",
  "casa-components",
  "casa-coordinates",
  "casa-core",
  "casa-fft",
  "casa-flagging",
- "casa-imageanalysis",
  "casa-images",
  "casa-imaging-model",
  "casa-imaging-operator",
@@ -302,7 +299,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "tempfile",
 ]
 
 [[package]]
@@ -361,7 +357,6 @@ dependencies = [
  "casa-ms",
  "casa-numerics",
  "casa-tables",
- "casa-test-support",
  "libc",
  "ndarray",
  "schemars",
@@ -489,7 +484,6 @@ dependencies = [
  "casa-core",
  "casa-observation",
  "ndarray",
- "num-complex",
  "thiserror",
 ]
 
@@ -579,10 +573,7 @@ dependencies = [
  "casa-tables",
  "crossbeam-channel",
  "ndarray",
- "ndarray-stats",
- "noisy_float",
  "num-complex",
- "ordered-float",
  "tempfile",
  "thiserror",
 ]
@@ -599,7 +590,6 @@ dependencies = [
  "sha2",
  "tar",
  "tempfile",
- "thiserror",
  "time",
  "ureq",
 ]
@@ -629,7 +619,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "sofars",
  "tar",
  "tempfile",
  "thiserror",
@@ -700,7 +689,6 @@ dependencies = [
  "casa-imageanalysis",
  "casa-images",
  "casa-imaging",
- "casa-imaging-model",
  "casa-lattices",
  "casa-ms",
  "casa-simulation",
@@ -709,7 +697,6 @@ dependencies = [
  "flate2",
  "ndarray",
  "num-complex",
- "serde",
  "serde_json",
  "sha2",
  "tar",
@@ -868,7 +855,6 @@ dependencies = [
  "casa-simulation",
  "casa-singledish",
  "casa-tables",
- "casa-test-support",
  "casa-vla",
  "fs2",
  "ndarray",
@@ -889,7 +875,6 @@ name = "casa-test-support"
 version = "0.27.0"
 dependencies = [
  "casa-aipsio",
- "casa-coordinates",
  "casa-core",
  "casa-images",
  "casa-lattices",
@@ -899,7 +884,6 @@ dependencies = [
  "libc",
  "ndarray",
  "pkg-config",
- "sofars",
  "tempfile",
  "thiserror",
 ]
@@ -920,7 +904,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
- "tracing",
 ]
 
 [[package]]
@@ -1004,7 +987,6 @@ dependencies = [
  "casa-flagging",
  "casa-imageanalysis",
  "casa-images",
- "casa-lattices",
  "casa-measures",
  "casa-ms",
  "casa-mstransform",
@@ -1682,15 +1664,6 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
@@ -1973,30 +1946,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ndarray-stats"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b6e54a8b65764f71827a90ca1d56965ec0c67f069f996477bd493402a901d1f"
-dependencies = [
- "indexmap",
- "itertools 0.13.0",
- "ndarray",
- "noisy_float",
- "num-integer",
- "num-traits",
- "rand",
-]
-
-[[package]]
-name = "noisy_float"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c16843be85dd410c6a12251c4eca0dd1d3ee8c5725f746c4d5e0fdcec0a864b2"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2171,15 +2120,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
-name = "ordered-float"
-version = "5.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f4779c6901a562440c3786d08192c6fbda7c1c2060edd10006b05ee35d10f2d"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
 name = "page_size"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2285,15 +2225,6 @@ name = "powerfmt"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
-
-[[package]]
-name = "ppv-lite86"
-version = "0.2.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
-dependencies = [
- "zerocopy",
-]
 
 [[package]]
 name = "prettyplease"
@@ -2424,36 +2355,6 @@ name = "r-efi"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
-
-[[package]]
-name = "rand"
-version = "0.8.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
-dependencies = [
- "libc",
- "rand_chacha",
- "rand_core",
-]
-
-[[package]]
-name = "rand_chacha"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
-dependencies = [
- "ppv-lite86",
- "rand_core",
-]
-
-[[package]]
-name = "rand_core"
-version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
-dependencies = [
- "getrandom 0.2.17",
-]
 
 [[package]]
 name = "rawpointer"

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Enforce the ADR-0016 imaging crate layering and source rules.
+"""Enforce workspace tiers, publishability and the ADR-0016 imaging rules.
 
 Checks, from `resources/imaging-architecture/dependency-policy.json`:
 
@@ -28,12 +28,15 @@ source rule, in policy form.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
+from graphlib import CycleError, TopologicalSorter
 import re
 import subprocess
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -42,7 +45,7 @@ POLICY = REPO_ROOT / "resources/imaging-architecture/dependency-policy.json"
 
 def cargo_metadata() -> dict:
     output = subprocess.run(
-        ["cargo", "metadata", "--no-deps", "--format-version", "1"],
+        ["cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"],
         check=True,
         capture_output=True,
         text=True,
@@ -240,7 +243,7 @@ def self_test() -> int:
         found = pattern.search(strip_inline_tests(source)) is not None
         if found != expected:
             failures += 1
-            print(f"imaging-dependencies self-test failed: {name}", file=sys.stderr)
+            print(f"workspace-arch self-test failed: {name}", file=sys.stderr)
     for name, files, expected in MODULE_CASES:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -251,7 +254,7 @@ def self_test() -> int:
             if found != expected:
                 failures += 1
                 print(
-                    f"imaging-dependencies self-test failed: {name}: {sorted(found)}",
+                    f"workspace-arch self-test failed: {name}: {sorted(found)}",
                     file=sys.stderr,
                 )
     for name, changes, packages, expected in LAYERING_CASES:
@@ -261,9 +264,9 @@ def self_test() -> int:
         )
         if len(found) != expected:
             failures += 1
-            print(f"imaging-dependencies self-test failed: {name}: {found}", file=sys.stderr)
+            print(f"workspace-arch self-test failed: {name}: {found}", file=sys.stderr)
     if failures == 0:
-        print("imaging-dependencies: self-test ok")
+        print("workspace-arch: self-test ok")
     return 1 if failures else 0
 
 
@@ -525,11 +528,11 @@ def module_declarations(source: str) -> list[tuple[tuple[str, ...], str, bool, s
     return declarations
 
 
-def declared_file(declaring: Path, inline: tuple[str, ...], name: str, path: str | None) -> Path | None:
+def declared_file(declaring: Path, inline: tuple[str, ...], name: str, path: str | None, *, target_root: bool = False) -> Path | None:
     """The file a `mod name;` in `declaring`, inside the `inline` modules,
     loads (the Rust reference's module source filenames and `path`
     attribute rules), or `None` when it names no file."""
-    mod_rs = declaring.name in ("mod.rs", "lib.rs", "main.rs") or declaring.parent.name == "bin"
+    mod_rs = target_root or declaring.name in ("mod.rs", "lib.rs", "main.rs") or declaring.parent.name == "bin"
     directory = declaring.parent if mod_rs else declaring.with_suffix("")
     if path is not None:
         base = directory.joinpath(*inline) if inline else declaring.parent
@@ -630,24 +633,495 @@ def print_grandfather(policy: dict, metadata: dict) -> None:
         print(json.dumps({"id": rule["id"], "grandfathered": sorted(rule_violations(rule))}, indent=1))
 
 
+# Workspace policy covers the physical layout. ADR-0016's logical imaging
+# layers are checked separately by check_layering.
+LIBRARY_TIERS = {"casacore", "imaging", "casa"}
+TIER_DEPENDENCIES = {
+    "casacore": {"casacore"},
+    "imaging": LIBRARY_TIERS,
+    "casa": LIBRARY_TIERS,
+    "surfaces": LIBRARY_TIERS | {"surfaces"},
+    "frontends": LIBRARY_TIERS | {"surfaces"},
+    "dev": LIBRARY_TIERS | {"surfaces", "dev"},
+    "suites": LIBRARY_TIERS | {"surfaces", "frontends", "dev", "suites"},
+}
+TASK_DOMAINS = {"calibration", "imaging", "images", "ms", "simulation", "vla"}
+DOMAIN_FEATURES = {
+    "casa-tasks": TASK_DOMAINS,
+    "casa-plot-data": {"calibration", "ms", "simulation"},
+    "casars-cli": TASK_DOMAINS,
+}
+RUST_TOKENS = re.compile(r"""//|/\*|b?r#*"|b?["']|(?:r#)?[A-Za-z_][A-Za-z_0-9]*|::|[{};,]""")
+
+
+def package_tier(manifest: Path) -> str:
+    parts = manifest.relative_to(REPO_ROOT).parts
+    if len(parts) == 4 and parts[0] == "libs" and parts[1] in LIBRARY_TIERS:
+        return parts[1]
+    if len(parts) == 3 and parts[0] in {"surfaces", "frontends", "dev", "suites"}:
+        return parts[0]
+    return ""
+
+
+def ui_dependency(name: str) -> bool:
+    return name.split("-", 1)[0].split("_", 1)[0] in {"clap", "pyo3"}
+
+
+def feature_closure(features: dict, roots: set[str]) -> set[str]:
+    enabled = set()
+    pending = list(roots & features.keys())
+    while pending:
+        feature = pending.pop()
+        if feature in enabled:
+            continue
+        enabled.add(feature)
+        pending.extend(features.get(feature, []))
+    return enabled
+
+
+def dependency_feature_is_wired(package: dict, dependency: dict) -> bool:
+    name = dependency.get("rename") or dependency["name"]
+    enabled = feature_closure(package["features"], DOMAIN_FEATURES[package["name"]])
+    return dependency["optional"] and any(
+        entry == f"dep:{name}" or entry.startswith(f"{name}/") for entry in enabled
+    )
+
+
+def cfg_arguments(expression: str) -> list[str]:
+    depth = 0
+    quoted = False
+    start = 0
+    arguments = []
+    for index, char in enumerate(expression):
+        if char == '"':
+            quoted = not quoted
+        elif not quoted:
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            elif char == "," and depth == 0:
+                arguments.append(expression[start:index].strip())
+                start = index + 1
+    arguments.append(expression[start:].strip())
+    return [argument for argument in arguments if argument]
+
+
+def requires_macos(expression: str) -> bool:
+    if re.fullmatch(r'target_os\s*=\s*"macos"', expression):
+        return True
+    group = re.fullmatch(r"(cfg|all|any)\s*\((.*)\)", expression)
+    if group is None:
+        return False
+    operation, contents = group.groups()
+    arguments = cfg_arguments(contents)
+    if operation == "cfg":
+        return len(arguments) == 1 and requires_macos(arguments[0])
+    if operation == "any":
+        return bool(arguments) and all(map(requires_macos, arguments))
+    return any(map(requires_macos, arguments))
+
+
+def dependency_rules(package: dict, by_directory: dict, definitional: set[str]) -> list[str]:
+    name = package["name"]
+    tier = package_tier(Path(package["manifest_path"]))
+    if not tier:
+        return [f"{name} has no workspace tier at {package['manifest_path']}"]
+    failures = []
+    for dependency in package["dependencies"]:
+        target_name = dependency["name"]
+        directory = dependency.get("path")
+        target = by_directory.get(directory)
+        target_tier = package_tier(Path(target["manifest_path"])) if target is not None else ""
+        dev = dependency["kind"] == "dev"
+        if tier in LIBRARY_TIERS | {"surfaces"} and ui_dependency(target_name):
+            failures.append(f"{name} depends on UI framework {target_name}")
+        if tier in LIBRARY_TIERS and target_tier in {"surfaces", "frontends"}:
+            failures.append(f"{name} has an upward dependency on {target_name}")
+        elif not dev and target is not None and target_tier not in TIER_DEPENDENCIES[tier]:
+            failures.append(f"{name} ({tier}) may not depend on {target_name} ({target_tier})")
+        if not dev and package["publish"] != [] and directory:
+            if target is None or target["publish"] == []:
+                failures.append(f"publishable {name} depends on private path crate {target_name}")
+            if dependency["req"] == "*":
+                failures.append(f"publishable {name} needs a registry version for {target_name}")
+        if (
+            not dev and name in DOMAIN_FEATURES and target_tier in LIBRARY_TIERS
+            and target_name not in definitional and not dependency_feature_is_wired(package, dependency)
+        ):
+            failures.append(f"{name}'s {target_name} dependency must be optional and enabled by a domain feature")
+        if name == "casars-python" and target_name == "casa-aipsio":
+            failures.append("casars-python must use the typed libraries and may not depend on casa-aipsio")
+        if target_name == "objc2-metal":
+            if name != "casa-imaging-metal":
+                failures.append(f"{name} depends on objc2-metal outside casa-imaging-metal")
+            elif not requires_macos(dependency.get("target") or ""):
+                failures.append("objc2-metal must be behind a macOS target dependency")
+    if name == "casa-imaging-runtime" and not any(
+        d["name"] == "casa-imaging-metal" and d["kind"] is None
+        and not d["optional"] and d.get("target") is None for d in package["dependencies"]
+    ):
+        failures.append("casa-imaging-runtime needs an unconditional casa-imaging-metal dependency")
+    return failures
+
+
+def rust_tokens(source: str):
+    """Tokens relevant to the guard, outside comments and literals."""
+    position = 0
+    while (token := RUST_TOKENS.search(source, position)) is not None:
+        start = token.start()
+        position = token.end()
+        if token[0].startswith("/"):
+            position = comment_end(source, start)
+        elif '"' in token[0] or "'" in token[0]:
+            position = literal_end(source, start) or position
+        else:
+            yield token[0].removeprefix("r#")
+
+
+def rust_crate_references(source: str) -> set[str]:
+    """Crate paths, including bare use items and explicit extern crates."""
+    tokens = list(rust_tokens(source))
+    names = set()
+    importing = False
+    groups = []
+    for index, token in enumerate(tokens):
+        previous = tokens[index - 1] if index > 0 else ""
+        before_previous = tokens[index - 2] if index > 1 else ""
+        following = tokens[index + 1] if index + 1 < len(tokens) else ""
+        if token == "use":
+            importing = True
+        elif token == ";":
+            importing = False
+            groups.clear()
+        elif importing and token == "{":
+            groups.append(previous not in {"::"} and all(groups))
+        elif importing and token == "}":
+            if groups:
+                groups.pop()
+        elif IDENTIFIER.fullmatch(token) and (
+            (not importing and following == "::" and previous != "::")
+            or (importing and all(groups) and (
+                previous in {"use", "{", ","}
+                or previous == "::" and before_previous in {"use", "{", ","}
+            ))
+            or (previous == "crate" and before_previous == "extern")
+        ):
+            names.add(token)
+    return names
+
+
+def module_sources(entry: Path) -> set[Path]:
+    """Rust files reached from an actual Cargo target root."""
+    pending = [entry]
+    reached = set()
+    while pending:
+        path = pending.pop()
+        if path in reached or not path.is_relative_to(REPO_ROOT):
+            continue
+        reached.add(path)
+        for inline, name, _, attribute in module_declarations(path.read_text(encoding="utf-8")):
+            child = declared_file(path, inline, name, attribute, target_root=path == entry)
+            if child is not None:
+                pending.append(child)
+    return reached
+
+
+def allocator_or_binary_test(entry: Path) -> bool:
+    for path in module_sources(entry):
+        source = path.read_text(encoding="utf-8")
+        uses_allocator = re.search(r"(?m)^\s*#\[\s*global_allocator\s*\]", source)
+        if (uses_allocator and "global_allocator" in rust_tokens(source)) or re.search(
+            r'\b(?:env|option_env)!\s*\(\s*"CARGO_BIN_EXE_[^"]+"', source
+        ):
+            return True
+    return False
+
+
+def workspace_rust_files(root: Path) -> list[Path]:
+    files = []
+    for directory in ("src", "tests", "examples", "benches"):
+        files.extend(path for path in (root / directory).rglob("*.rs") if path.is_file())
+    return files
+
+
+def unused_dependencies(package: dict, files: list[Path]) -> set[str]:
+    declared = {d.get("rename") or d["name"] for d in package["dependencies"]}
+    if not declared:
+        return set()
+    sources = {path: path.read_text(encoding="utf-8") for path in files}
+    names = set().union(*(rust_crate_references(source) for source in sources.values()))
+    missing = {name for name in declared if name.replace("-", "_") not in names}
+    if not missing:
+        return set()
+    # Test targets can share fixture code through path attributes, including
+    # fixtures in another workspace crate.
+    root = Path(package["manifest_path"]).parent
+    helpers = {
+        (path.parent / attr[1]).resolve()
+        for path, source in sources.items()
+        for attr in PATH_ATTRIBUTE.finditer(source)
+    }
+    external = {
+        path for path in helpers if path.is_file() and path.is_relative_to(REPO_ROOT)
+        and not path.is_relative_to(root)
+    }
+    names.update(
+        identifier
+        for entry in external
+        for path in module_sources(entry)
+        for identifier in rust_crate_references(path.read_text(encoding="utf-8"))
+    )
+    return {name for name in missing if name.replace("-", "_") not in names}
+
+
+def default_api_test(package: dict, target: dict, entry: Path) -> bool:
+    return (
+        target["name"] == "api"
+        and Path(target["src_path"]) == entry
+        and target["test"]
+        and set(target.get("required-features", [])) <= feature_closure(package["features"], {"default"})
+    )
+
+
+def python_dispatch_errors(source: str) -> list[str]:
+    tree = ast.parse(source)
+    dispatcher = next(
+        (node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_execute_task"),
+        None,
+    )
+    errors = []
+    nodes = list(ast.walk(dispatcher)) if dispatcher is not None else []
+
+    def native_handle(node):
+        return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_native"
+
+    native_names = {
+        target.id for node in nodes if isinstance(node, ast.Assign) and native_handle(node.value)
+        for target in node.targets if isinstance(target, ast.Name)
+    }
+    if not any(
+        isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "run_native_task"
+        and (native_handle(node.func.value) or (
+            isinstance(node.func.value, ast.Name) and node.func.value.id in native_names
+        ))
+        for node in nodes
+    ):
+        errors.append("must call the PyO3 run_native_task entry point")
+    process_api = re.compile(r"(?:system|popen|(?:posix_)?spawn\w*|exec[lv]\w*|create_subprocess_\w*)")
+    if any(
+        isinstance(node, ast.Import) and any(alias.name.split(".")[0] == "subprocess" for alias in node.names)
+        or isinstance(node, ast.ImportFrom) and (
+            (node.module or "").split(".")[0] == "subprocess"
+            or node.module in {"os", "asyncio"} and any(process_api.fullmatch(alias.name) for alias in node.names)
+        )
+        or isinstance(node, ast.Attribute) and process_api.fullmatch(node.attr)
+        or isinstance(node, ast.Constant) and isinstance(node.value, str)
+        and re.fullmatch(r"CASARS_\w+_BIN", node.value)
+        for node in ast.walk(tree)
+    ):
+        errors.append("must dispatch tasks in-process without a CLI fallback")
+    return errors
+
+
+def git_output(*args: str) -> str | None:
+    result = subprocess.run(
+        ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=False,
+    )
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def dual_module_baseline(base: str | None) -> set[str] | None:
+    """In a checkout, use the merge base so the allowance can only shrink."""
+    if base is None:
+        if git_output("rev-parse", "--show-toplevel") != str(REPO_ROOT):
+            return None  # Source archives have no review base.
+        base = git_output("merge-base", "HEAD", "refs/remotes/origin/main")
+        if base is None:
+            raise ValueError("cannot find the architecture merge base; supply --base or fetch origin/main")
+    base_policy = git_output("show", f"{base}:{POLICY.relative_to(REPO_ROOT)}")
+    if base_policy is not None and "dual_module_files" in (previous := json.loads(base_policy)):
+        return set(previous["dual_module_files"])
+    # A branch based before the allowance was introduced can only list
+    # pairs present in the base tree.
+    files = git_output("ls-tree", "-r", "--name-only", base)
+    if files is None:
+        raise ValueError(f"cannot read architecture base tree {base}")
+    paths = files.splitlines()
+    directories = {p.as_posix() for path in paths for p in Path(path).parents}
+    return {path for path in paths if path.endswith(".rs") and path[:-3] in directories}
+
+
+def dual_module_errors(actual: set[str], allowed: set[str], baseline: set[str] | None) -> list[str]:
+    errors = [f"dual Rust module: move {p} into its matching directory" for p in sorted(actual - allowed)]
+    errors += [f"stale dual-module allowance: {p}" for p in sorted(allowed - actual)]
+    if baseline is not None:
+        errors += [f"new dual-module allowance: {p}" for p in sorted(allowed - baseline)]
+    return errors
+
+
+def check_workspace(policy: dict, metadata: dict, baseline: set[str] | None) -> list[str]:
+    packages = metadata["packages"]
+    by_directory = {str(Path(p["manifest_path"]).parent): p for p in packages}
+    old_pairs = set(policy.get("dual_module_files", []))
+    exceptions = set(policy.get("test_target_exceptions", []))
+    seen_exceptions = set()
+    dual_pairs = set()
+    failures = []
+    graph = {
+        p["name"]: {
+            by_directory[d["path"]]["name"]
+            for d in p["dependencies"]
+            if d["kind"] != "dev" and d.get("path") in by_directory
+        }
+        for p in packages
+    }
+    try:
+        tuple(TopologicalSorter(graph).static_order())
+    except CycleError as error:
+        failures.append("workspace dependency cycle: " + " -> ".join(error.args[1]))
+    for package in packages:
+        name = package["name"]
+        manifest = Path(package["manifest_path"])
+        root = manifest.parent
+        tier = package_tier(manifest)
+        failures += dependency_rules(package, by_directory, set(policy["definitional_packages"]))
+        source_paths = workspace_rust_files(root)
+        dual_pairs.update(
+            path.relative_to(REPO_ROOT).as_posix()
+            for path in source_paths if path.with_suffix("").is_dir()
+        )
+        if tier in LIBRARY_TIERS | {"surfaces"}:
+            if any("bin" in target["kind"] for target in package["targets"]) or any(
+                (root / path).exists() for path in ("src/main.rs", "src/bin")
+            ):
+                failures.append(f"{name} must not ship binary targets below frontends")
+        if tier in LIBRARY_TIERS:
+            if tomllib.loads(manifest.read_text(encoding="utf-8"))["package"].get("publish") is not True:
+                failures.append(f"{name} must explicitly declare publish = true")
+            if "cpp-interop-tests" in package["features"]:
+                failures.append(f"{name} must move C++ interop to suites/casacore-interop")
+            tests = [target for target in package["targets"] if "test" in target["kind"]]
+            if not any(default_api_test(package, target, root / "tests/api.rs") for target in tests):
+                failures.append(f"{name} needs its default tests/api.rs target")
+            for target in tests:
+                if target["name"] == "api":
+                    continue
+                entry = Path(target["src_path"])
+                relative = entry.relative_to(REPO_ROOT).as_posix()
+                if relative in exceptions and allocator_or_binary_test(entry):
+                    seen_exceptions.add(relative)
+                else:
+                    failures.append(f"{relative} must use tests/api.rs or an approved isolated target")
+        for target in package["targets"]:
+            if "custom-build" in target["kind"]:
+                path = Path(target["src_path"])
+                source_paths.append(path)
+                if tier in LIBRARY_TIERS and re.search(r'\bserde_json\b|\.json["\x27]', path.read_text(encoding="utf-8")):
+                    failures.append(f"{name} library build script must not contain JSON probes")
+        if name == "casars-python":
+            native_tasks = root / "src/native_tasks.rs"
+            runner = root / "python/casars/tasks/_runner.py"
+            if not any(d["name"] == "casa-tasks" and d["kind"] is None for d in package["dependencies"]) or not (
+                native_tasks.is_file()
+                and re.search(r"\brun_task_in_process\s*\(", native_tasks.read_text(encoding="utf-8"))
+            ):
+                failures.append("casars-python must dispatch native tasks through casa-tasks")
+            for file in (native_tasks, root / "src/tasks.rs"):
+                if file.is_file() and re.search(r"\b(?:subprocess|Command::new|CASARS_\w+_BIN)\b", file.read_text(encoding="utf-8")):
+                    failures.append(f"{file.relative_to(REPO_ROOT)} must dispatch tasks in-process")
+            if runner.is_file():
+                failures.extend(f"{runner.relative_to(REPO_ROOT)} {e}" for e in python_dispatch_errors(runner.read_text(encoding="utf-8")))
+            else:
+                failures.append("casars-python needs its native Python task runner")
+        failures.extend(f"{name} declares unused dependency {d}" for d in sorted(unused_dependencies(package, source_paths)))
+    failures.extend(f"stale test target exception: {p}" for p in sorted(exceptions - seen_exceptions))
+    failures.extend(dual_module_errors(dual_pairs, old_pairs, baseline))
+    return failures
+
+
+def check_workspace_self_test() -> None:
+    def package(name, manifest, **changes):
+        return {"name": name, "manifest_path": str(REPO_ROOT / manifest),
+                "publish": None, "dependencies": [], "features": {}, **changes}
+
+    top = package("app", "surfaces/app/Cargo.toml", **{"publish": []})
+    low = package("lib", "libs/casacore/lib/Cargo.toml")
+    low["dependencies"] = [{
+        "name": "app", "path": str(REPO_ROOT / "surfaces/app"),
+        "kind": "build", "req": "*", "optional": False,
+    }]
+    errors = dependency_rules(low, {str(REPO_ROOT / "surfaces/app"): top}, set())
+    assert any("upward dependency" in e for e in errors), errors
+    assert any("registry version" in e for e in errors), errors
+    assert any("private path crate" in e for e in errors), errors
+    assert rust_crate_references(
+        '/* other::Call */ "absent::Call"; let bytes = 5; use used::Call; '
+        'use {bare as alias, ::direct}; extern crate named as renamed; use std::{nested::Path, internal};'
+    ) == {"used", "bare", "direct", "named", "std"}
+
+    metal = package("casa-imaging-runtime", "libs/imaging/casa-imaging-runtime/Cargo.toml")
+    metal["dependencies"] = [{
+        "name": "casa-imaging-metal", "kind": None, "optional": False,
+        "target": 'cfg(target_os = "macos")',
+    }]
+    assert "unconditional" in dependency_rules(metal, {}, set())[0]
+    metal["dependencies"][0]["target"] = None
+    assert not dependency_rules(metal, {}, set())
+    assert requires_macos('cfg(all(target_os = "macos", not(coverage)))')
+    assert not requires_macos('cfg(not(target_os = "macos"))')
+    assert not requires_macos('cfg(any(target_os = "macos", target_os = "windows"))')
+
+    lib_directory = str(REPO_ROOT / "libs/casacore/lib")
+    adapter = package("casa-tasks", "surfaces/casa-tasks/Cargo.toml")
+    dep = {"name": "lib", "path": lib_directory, "kind": None, "req": "1", "optional": True}
+    adapter["dependencies"] = [dep]
+    assert any("domain feature" in e for e in dependency_rules(adapter, {lib_directory: low}, set()))
+    adapter["features"] = {"slow-tests": ["dep:lib"], "calibration": ["lib?/serde"]}
+    assert any("domain feature" in e for e in dependency_rules(adapter, {lib_directory: low}, set()))
+    adapter["features"] = {"calibration": ["logging"], "logging": ["dep:lib"]}
+    assert not dependency_rules(adapter, {lib_directory: low}, set())
+
+    entry = REPO_ROOT / "libs/casacore/lib/tests/api.rs"
+    target = {"name": "api", "src_path": str(entry), "test": True}
+    assert default_api_test(low, target, entry)
+    assert not default_api_test(low, {**target, "test": False}, entry)
+    assert not default_api_test(low, {**target, "required-features": ["slow-tests"]}, entry)
+
+    native = "def _execute_task():\n    return _native().run_native_task()\n"
+    assert not python_dispatch_errors(native)
+    assert python_dispatch_errors("def _execute_task():\n    return 0\n")
+    assert python_dispatch_errors(native + "import subprocess as sp\n")
+    assert python_dispatch_errors(native + "from os import system as run\nrun('cli')\n")
+    assert not dual_module_errors({"old.rs"}, {"old.rs"}, {"old.rs"})
+    assert dual_module_errors({"new.rs"}, {"new.rs"}, {"old.rs"}) == ["new dual-module allowance: new.rs"]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--grandfather", action="store_true", help="print current violations in policy form")
     parser.add_argument("--self-test", action="store_true", help="check the test-stripping and layering logic")
+    parser.add_argument("--base", help="Git revision for the dual-module ratchet (default: origin/main merge base)")
     args = parser.parse_args()
     if args.self_test:
+        check_workspace_self_test()
         return self_test()
     policy = json.loads(POLICY.read_text(encoding="utf-8"))
     metadata = cargo_metadata()
     if args.grandfather:
         print_grandfather(policy, metadata)
         return 0
-    failures = check_layering(policy, metadata) + check_source_rules(policy, metadata)
+    try:
+        baseline = dual_module_baseline(args.base)
+    except ValueError as error:
+        parser.error(str(error))
+    failures = check_workspace(policy, metadata, baseline) + check_layering(policy, metadata) + check_source_rules(policy, metadata)
     for failure in failures:
-        print(f"imaging-dependencies: {failure}", file=sys.stderr)
+        print(f"workspace-arch: {failure}", file=sys.stderr)
     if failures:
         return 1
-    print("imaging-dependencies: ok")
+    print("workspace-arch: ok")
     return 0
 
 

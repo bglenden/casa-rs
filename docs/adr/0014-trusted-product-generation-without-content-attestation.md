@@ -102,7 +102,7 @@ This decision is enforced by:
 - tests: product publication tests of write-only bounded ownership, complete
   ordered coverage, unchanged science and metadata and real I/O failures
   (`TESTING.md`); count, order, source and lifecycle checks on owned data
-- lint/import/dependency rules: `scripts/check-imaging-dependencies.py`
+- lint/import/dependency rules: `scripts/check-workspace-arch.py`
   refuses content hashing in the imaging and simulation crates
   (`no-content-hashing-in-imaging-crates`); imaging code rule 4 in
   `ARCHITECTURE.md`

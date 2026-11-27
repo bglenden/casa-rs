@@ -12,11 +12,12 @@ autotests = false
 [features]
 default = ["calibration", "imaging", "images", "ms", "simulation", "vla"]
 calibration = ["ms", "casa-tasks/calibration"]
-imaging = ["casa-tasks/imaging", "dep:casa-imaging", "dep:libc"]
-images = ["casa-tasks/images"]
-ms = ["casa-tasks/ms"]
+imaging = ["logging", "casa-tasks/imaging", "dep:casa-imaging", "dep:libc"]
+images = ["logging", "casa-tasks/images"]
+ms = ["logging", "casa-tasks/ms"]
 simulation = ["ms", "casa-tasks/simulation"]
-vla = ["casa-tasks/vla"]
+vla = ["logging", "casa-tasks/vla"]
+logging = ["dep:casa-tables"]
 slow-tests = []
 
 [lints]
@@ -25,7 +26,7 @@ workspace = true
 [dependencies]
 casa-contracts = { path = "../../surfaces/casa-contracts" }
 casa-imaging = { workspace = true, optional = true }
-casa-tables.workspace = true
+casa-tables = { workspace = true, optional = true }
 casa-tasks = { path = "../../surfaces/casa-tasks" }
 libc = { version = "0.2", optional = true }
 thiserror.workspace = true

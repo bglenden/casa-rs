@@ -39,3 +39,6 @@ mod tiled_endian_reads;
 mod undefined_array_cells;
 #[path = "api/zero_dimensional_cells.rs"]
 mod zero_dimensional_cells;
+
+#[cfg(unix)]
+mod lock_multiprocess;
