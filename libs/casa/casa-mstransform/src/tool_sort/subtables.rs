@@ -51,12 +51,13 @@ pub(super) fn check_named_output(
         }
         let table = Table::open(TableOptions::new(&path))?;
         for field in table.keywords().fields() {
+            let standard = standard.clone().any(|id| id.name() == field.name);
             let link = match &field.value {
                 Value::TableRef(link) if field.name != "SORTED_TABLE" => Some(link),
-                Value::Scalar(ScalarValue::String(link))
-                    if standard.clone().any(|id| id.name() == field.name) =>
-                {
-                    Some(link)
+                Value::Scalar(ScalarValue::String(link)) if standard => Some(link),
+                Value::Record(nested) => {
+                    protect_keyword_links(nested, &path, &mut pending);
+                    None
                 }
                 _ => None,
             };
@@ -64,9 +65,8 @@ pub(super) fn check_named_output(
                 let linked = add_directory(link, &path);
                 // The designated result keyword is republished with the new table.
                 // Protect standard MS subtables and all other names for that table.
-                if replace_keyword != Some((&path, field.name.as_str()))
-                    || standard.clone().any(|id| id.name() == field.name)
-                    || linked != output
+                if standard || linked != output || !matches!(replace_keyword,
+                    Some((owner, name)) if name == field.name && Table::keyword_descriptor_path(&path)? == owner)
                 {
                     pending.push((linked, true));
                 }
@@ -78,15 +78,21 @@ pub(super) fn check_named_output(
             .flat_map(|schema| schema.columns())
         {
             if let Some(keys) = table.column_keywords(column.name()) {
-                for field in keys.fields() {
-                    if let Value::TableRef(link) = &field.value {
-                        pending.push((add_directory(link, &path), true));
-                    }
-                }
+                protect_keyword_links(keys, &path, &mut pending);
             }
         }
     }
     Ok(staging_parent)
+}
+
+fn protect_keyword_links(record: &RecordValue, path: &Path, pending: &mut Vec<(PathBuf, bool)>) {
+    for field in record.fields() {
+        match &field.value {
+            Value::TableRef(link) => pending.push((add_directory(link, path), true)),
+            Value::Record(nested) => protect_keyword_links(nested, path, pending),
+            _ => {}
+        }
+    }
 }
 
 pub(super) fn copy_links(

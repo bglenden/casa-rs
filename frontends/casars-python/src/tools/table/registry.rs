@@ -80,7 +80,9 @@ pub(super) fn attached_table_paths() -> Vec<PathBuf> {
 /// Weak references keep the registry from retaining closed tables.
 pub(super) fn keyword_epoch(path: &Path) -> Arc<AtomicU64> {
     static EPOCHS: OnceLock<Mutex<HashMap<PathBuf, Weak<AtomicU64>>>> = OnceLock::new();
-    let name = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let name = casa_tables::Table::keyword_descriptor_path(path)
+        .or_else(|_| path.canonicalize())
+        .unwrap_or_else(|_| path.to_path_buf());
     let mut epochs = EPOCHS
         .get_or_init(Mutex::default)
         .lock()

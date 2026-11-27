@@ -329,9 +329,19 @@ impl StagedLegacyQuery {
         self,
         retained: &mut BTreeMap<PathBuf, TableWriteLock>,
     ) -> PyResult<Option<AttachedMs>> {
-        if let Some(subtable) = &self.subtable {
-            subtable.verify_parent()?;
-        }
+        let mut owner_lock = None;
+        let link_lock = if let Some(subtable) = &self.subtable {
+            let lock = match retained.get_mut(&subtable.owner) {
+                Some(lock) => lock,
+                None => owner_lock.insert(
+                    TableWriteLock::acquire_to_reread(&subtable.owner, 1).map_err(runtime_error)?,
+                ),
+            };
+            subtable.verify_lock(lock)?;
+            Some((subtable, lock))
+        } else {
+            None
+        };
         publish_selection(
             &self.output,
             &self.staged,
@@ -350,9 +360,8 @@ impl StagedLegacyQuery {
                         )
                     })
                     .transpose()?;
-                if let Some(subtable) = self.subtable {
-                    let held = retained.get_mut(&subtable.owner);
-                    subtable.publish_link(held)?;
+                if let Some((subtable, lock)) = link_lock {
+                    subtable.write_link(lock)?;
                 }
                 Ok(attached)
             },

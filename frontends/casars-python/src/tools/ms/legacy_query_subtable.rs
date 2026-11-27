@@ -94,19 +94,16 @@ impl QuerySubtable {
         Ok(())
     }
 
-    pub(super) fn publish_link(&self, retained: Option<&mut TableWriteLock>) -> PyResult<()> {
-        if let Some(lock) = retained {
-            return self.write_link(lock);
-        }
-        let mut lock = TableWriteLock::acquire_to_reread(&self.owner, 1).map_err(runtime_error)?;
-        self.write_link(&mut lock)
-    }
-
-    fn write_link(&self, lock: &mut TableWriteLock) -> PyResult<()> {
+    pub(super) fn verify_lock(&self, lock: &TableWriteLock) -> PyResult<()> {
         self.verify_parent()?;
         if !lock.matches_table_path(&self.owner) {
             return Err(runtime_error("TaQL result keyword parent was replaced"));
         }
+        Ok(())
+    }
+
+    pub(super) fn write_link(&self, lock: &mut TableWriteLock) -> PyResult<()> {
+        self.verify_lock(lock)?;
         let mut table = open(&self.owner)?;
         validate_keyword(&table, &self.keyword)?;
         table.keywords_mut().upsert(
@@ -127,38 +124,28 @@ fn open(path: &Path) -> PyResult<Table> {
 }
 
 fn first_parent<'a>(first: &'a str, active: &Path) -> PyResult<(PathBuf, Option<&'a str>)> {
-    if first == "." {
+    if matches!(first, "" | ".") {
         return Ok((active.to_owned(), None));
     }
-    match Path::new(first).canonicalize() {
-        Ok(path) => Ok((path, None)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => first
-            .strip_prefix('.')
-            .filter(|name| !name.is_empty() && !name.contains('/'))
-            .map(|column| (active.to_owned(), Some(column)))
-            .ok_or_else(|| runtime_error(error)),
-        Err(error) => Err(runtime_error(error)),
+    let path = Path::new(first).canonicalize();
+    if let Ok(path) = &path
+        && open(path).is_ok()
+    {
+        return Ok((path.clone(), None));
     }
+    if let Some(column) = first.strip_prefix('.').filter(|name| !name.contains('/')) {
+        return Ok((active.to_owned(), Some(column)));
+    }
+    Ok((path.map_err(runtime_error)?, None))
 }
 
 fn keyword_owner(parent: &Path) -> PyResult<PathBuf> {
-    let mut path = parent.to_owned();
-    for _ in 0..64 {
-        match Table::immediate_part_names(&path, &path).map_err(runtime_error)? {
-            TablePartNames::Plain(_) => return Ok(path),
-            TablePartNames::Reference(source) => {
-                path = source.canonicalize().map_err(runtime_error)?
-            }
-            TablePartNames::Concatenation { .. } => {
-                return Err(runtime_error(
-                    "a concatenation cannot persist TaQL result keywords",
-                ));
-            }
-        }
+    let path = Table::keyword_descriptor_path(parent).map_err(runtime_error)?;
+    if matches!(Table::immediate_part_names(&path, &path).map_err(runtime_error)?, TablePartNames::Plain(_)) {
+        Ok(path)
+    } else {
+        Err(runtime_error("a concatenation cannot persist TaQL result keywords"))
     }
-    Err(runtime_error(
-        "TaQL parent table reference chain is too deep",
-    ))
 }
 
 fn subtable_keyword<'a>(mut record: &'a RecordValue, fields: &str) -> PyResult<&'a str> {

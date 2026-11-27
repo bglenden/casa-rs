@@ -2,6 +2,7 @@
 //! Row selection for the legacy MSSelector methods.
 
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_core::{RecordField, RecordValue};
@@ -36,7 +37,16 @@ pub(super) struct LegacySelection {
     pub(super) axes: LegacyAxes,
     pub(super) baselines: Option<Vec<(i32, i32)>>,
     pub(super) iteration: Option<LegacyIteration>,
+    query_parent: LegacyQueryParent,
     positioned: bool,
+}
+
+#[derive(Default)]
+enum LegacyQueryParent {
+    #[default]
+    Attachment,
+    Named(Arc<Vec<PathBuf>>),
+    Transient,
 }
 
 impl LegacySelection {
@@ -68,6 +78,14 @@ impl LegacySelection {
         self.initial
             .as_ref()
             .map_or(&[], |initial| &initial.descriptions)
+    }
+
+    pub(super) fn query_parent<'a>(&'a self, attachment: &'a Path) -> Option<&'a Path> {
+        match &self.query_parent {
+            LegacyQueryParent::Attachment => Some(attachment),
+            LegacyQueryParent::Named(paths) => paths.first().map(PathBuf::as_path),
+            LegacyQueryParent::Transient => None,
+        }
     }
 }
 
@@ -227,6 +245,11 @@ impl AttachedMs {
             && let Some(initial) = &self.legacy_selection.initial
             && initial.descriptions == [id]
         {
+            self.legacy_selection.query_parent = if initial.rows.is_some() {
+                LegacyQueryParent::Transient
+            } else {
+                LegacyQueryParent::Attachment
+            };
             self.legacy_selection
                 .set_iterator_rows(initial.rows.clone(), false);
             return Ok(true);
@@ -285,6 +308,11 @@ impl AttachedMs {
             channels,
             rows: rows.clone(),
         });
+        self.legacy_selection.query_parent = if rows.is_some() {
+            LegacyQueryParent::Transient
+        } else {
+            LegacyQueryParent::Attachment
+        };
         self.legacy_selection.set_iterator_rows(rows, false);
         self.legacy_selection.axes = LegacyAxes::default();
         self.legacy_selection.baselines = None;
@@ -361,6 +389,7 @@ impl AttachedMs {
         }
         let (selected, staged) = view.prepare_legacy_taql(text, &original_path)?;
         let nonempty = !selected.is_empty();
+        let named_reference = staged.as_ref().and_then(StagedLegacyQuery::reference_path).map(Path::to_owned);
         let output = staged
             .map(|stage| stage.publish(&mut self.write_locks))
             .transpose()?
@@ -381,6 +410,10 @@ impl AttachedMs {
             }
             self.replace_legacy_output(Some(Box::new(output)));
         } else {
+            view.legacy_selection.query_parent = match named_reference {
+                Some(path) => LegacyQueryParent::Named(crate::tools::table::attach_table_paths(vec![path])),
+                None => LegacyQueryParent::Transient,
+            };
             view.legacy_selection
                 .set_iterator_rows(Some(selected), false);
         }
@@ -466,6 +499,7 @@ impl AttachedMs {
             })
             .collect::<PyResult<Arc<[usize]>>>()?;
         self.replace_legacy_output(None);
+        self.legacy_selection.query_parent = LegacyQueryParent::Transient;
         self.legacy_selection
             .set_iterator_rows(Some(selected), false);
         Ok(())
@@ -531,6 +565,7 @@ impl AttachedMs {
         };
         if let Some(predicate) = predicate {
             let (selected, _) = self.prepare_legacy_taql(&predicate, &self.path)?;
+            self.legacy_selection.query_parent = LegacyQueryParent::Transient;
             self.legacy_selection
                 .set_iterator_rows(Some(selected), false);
         }

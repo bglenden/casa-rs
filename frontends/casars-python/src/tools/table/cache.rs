@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use casa_tables::{LockType, table_cache_name};
+use casa_tables::{LockType, Table, table_cache_name};
 use pyo3::prelude::*;
 
 use super::registry;
@@ -24,18 +24,19 @@ pub(crate) fn path_is_in_use(path: &Path) -> bool {
     registry::for_each_other(u64::MAX, |state| {
         used |= match state {
             Some(state) => state.open.as_ref().is_some_and(|open| {
-                open.name
-                    .canonicalize()
-                    .is_ok_and(|name| name.starts_with(&path))
-                    || open
-                        .root()
-                        .table
-                        .cache_plain_table_paths()
-                        .map_or(true, |paths| {
-                            paths
-                                .into_iter()
-                                .any(|name| name.canonicalize().unwrap_or(name).starts_with(&path))
-                        })
+                let matches = |name: &Path| {
+                    name.canonicalize().is_ok_and(|name| name.starts_with(&path))
+                };
+                if matches(&open.name) {
+                    return true;
+                }
+                if open.is_memory && !open.root_name.exists() {
+                    return false;
+                }
+                let mut backing_is_used = false;
+                Table::visit_layout_paths(&open.root_name, |name| backing_is_used |= matches(name))
+                    .is_err()
+                    || backing_is_used
             }),
             None => true,
         };
