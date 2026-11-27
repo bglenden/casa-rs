@@ -159,9 +159,24 @@ pub fn select_projected_scalar_rows(
     let giving = select.giving.take();
     let offset = select.offset.take();
     let limit = select.limit.take();
-    let Some(rows) = select_simple_rows(table, &select, None, source_rows)? else {
+    let reverse = match select.order_by.as_slice() {
+        [] => false,
+        [order]
+            if !select.order_distinct
+                && matches!(&order.expr, Expr::FunctionCall { name, args }
+            if name.eq_ignore_ascii_case("rowid") && args.is_empty()) =>
+        {
+            !order.ascending
+        }
+        _ => return Ok(None),
+    };
+    select.order_by.clear();
+    let Some(mut rows) = select_simple_rows(table, &select, None, source_rows)? else {
         return Ok(None);
     };
+    if reverse {
+        rows.reverse();
+    }
     let rows = if offset.is_some() || limit.is_some() {
         taql::exec::apply_view_limits(rows, offset.as_ref(), limit.as_ref()).map_err(taql_error)?
     } else {

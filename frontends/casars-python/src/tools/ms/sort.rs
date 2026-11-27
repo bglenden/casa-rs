@@ -124,16 +124,8 @@ fn sort_attached(
         .collect();
     let workspace = tempfile::tempdir_in(parent_directory(&output)).map_err(runtime_error)?;
     let staged = workspace.path().join("sorted.ms");
-    write_sorted_measurement_set(
-        &source.ms,
-        workspace.path(),
-        &staged,
-        columns,
-        in_place,
-        &ms.path,
-        &held,
-    )
-    .map_err(runtime_error)?;
+    write_sorted_measurement_set(&source.ms, &staged, columns, in_place, &ms.path, &held)
+        .map_err(runtime_error)?;
     link.verify_directory().map_err(runtime_error)?;
     destination.publish(&staged, &output, "sorted")?;
     if !in_place {

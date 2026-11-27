@@ -30,6 +30,7 @@ mod generated_array;
 mod incremental_check;
 mod io;
 mod locking;
+mod memory;
 mod memory_manager;
 mod mutation;
 mod packed_write;
@@ -2296,39 +2297,6 @@ impl Table {
         &self,
     ) -> Option<&Arc<dyn casa_core::measures::MeasuresProvider>> {
         self.measures.as_ref()
-    }
-
-    /// Creates an in-memory copy of this table.
-    ///
-    /// All rows, keywords, column keywords, and schema are cloned into a
-    /// new table with [`TableKind::Memory`]. The source path and lock state
-    /// are not copied.
-    ///
-    /// This can be called on any table (plain or memory). Calling it on a
-    /// memory table produces an independent clone.
-    ///
-    /// C++ equivalent: `Table::copyToMemoryTable`.
-    pub fn to_memory(&self) -> Result<Self, TableError> {
-        Ok(Self {
-            inner: TableImpl::with_rows_keywords_and_schema(
-                self.inner.rows()?.to_vec(),
-                self.inner.undefined_cells()?.to_vec(),
-                self.inner.keywords().clone(),
-                self.inner.all_column_keywords().clone(),
-                self.inner.schema().cloned(),
-            ),
-            source_path: None,
-            kind: TableKind::Memory,
-            virtual_columns: HashSet::new(),
-            virtual_bindings: Vec::new(),
-            table_info: self.table_info.clone(),
-            dm_info: vec![],
-            external_sync: None,
-            measures: self.measures.clone(),
-            marked_for_delete: false,
-            #[cfg(unix)]
-            lock_state: None,
-        })
     }
 }
 

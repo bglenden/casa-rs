@@ -142,13 +142,11 @@ impl QueryOutputOptions {
 
     fn copy_endian(&self) -> PyResult<EndianFormat> {
         let defaults = query_defaults();
-        let storage = self
-            .storage
-            .unwrap_or_else(|| match defaults.storage.as_deref() {
-                Some("multifile") => QueryStorage::MultiFile,
-                Some("multihdf5") => QueryStorage::MultiHdf5,
-                _ => QueryStorage::Separate,
-            });
+        let storage = self.storage.unwrap_or(match defaults.storage.as_deref() {
+            Some("multifile") => QueryStorage::MultiFile,
+            Some("multihdf5") => QueryStorage::MultiHdf5,
+            _ => QueryStorage::Separate,
+        });
         match storage {
             QueryStorage::Separate => Ok(self.endian.unwrap_or(defaults.endian)),
             QueryStorage::MultiFile => Err(PyNotImplementedError::new_err(
@@ -251,15 +249,8 @@ impl AttachedMs {
                 .chain(self.write_locks.keys())
                 .cloned()
                 .collect();
-            write_selected_measurement_set_rows(
-                table,
-                rows,
-                stage.path(),
-                &staged,
-                endian,
-                &source_locks,
-            )
-            .map_err(runtime_error)?;
+            write_selected_measurement_set_rows(table, rows, &staged, endian, &source_locks)
+                .map_err(runtime_error)?;
             staged
         } else {
             let staged = stage.path().to_owned();
