@@ -18,9 +18,14 @@ casa-coordinates.workspace = true
 casa-core.workspace = true
 casa-images.workspace = true
 casa-imageanalysis.workspace = true
+casa-imaging.workspace = true
+casa-imaging-model.workspace = true
 casa-lattices.workspace = true
+casa-ms.workspace = true
 casa-tables.workspace = true
 ndarray.workspace = true
 num-complex.workspace = true
+serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
+sha2.workspace = true
 tempfile = "3"

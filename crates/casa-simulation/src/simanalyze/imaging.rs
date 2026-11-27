@@ -4,7 +4,7 @@ use super::{Parameters, failure, plan::Plan, preflight, total_power};
 use crate::{SessionResources, simobserve::SimobserveError, simutil::analysis};
 use casa_core::ScalarValue;
 use casa_images::{ImageInterface, PagedImage};
-use casa_imaging_application::{Cancel, ImagingRequest, RunContext};
+use casa_imaging::{Cancel, ImagingRequest, RunContext};
 use casa_imaging_runtime::{Demand, admit};
 use casa_ms::{MeasurementSet, SubtableId};
 use casa_mstransform::concat::{ConcatRequest, concat_with_memory};
@@ -35,9 +35,9 @@ pub(super) fn execute(
         let mut request =
             ImagingRequest::from_tclean_with_defaults(&plan.imaging).map_err(failure)?;
         request.backend = match resources.backend() {
-            crate::BackendRequest::Cpu => casa_imaging_application::BackendRequest::Cpu,
-            crate::BackendRequest::Metal => casa_imaging_application::BackendRequest::Gpu,
-            crate::BackendRequest::Auto => casa_imaging_application::BackendRequest::Auto,
+            crate::BackendRequest::Cpu => casa_imaging::BackendRequest::Cpu,
+            crate::BackendRequest::Metal => casa_imaging::BackendRequest::Gpu,
+            crate::BackendRequest::Auto => casa_imaging::BackendRequest::Auto,
         };
         Some(request)
     };
@@ -105,7 +105,7 @@ pub(super) fn execute(
         let mut request =
             ImagingRequest::from_tclean_with_defaults(&parameters).map_err(failure)?;
         request.backend = initial.backend;
-        casa_imaging_application::execute(&request, context(resources, cancel)).map_err(failure)?;
+        casa_imaging::execute(&request, context(resources, cancel)).map_err(failure)?;
     }
     Ok(products)
 }

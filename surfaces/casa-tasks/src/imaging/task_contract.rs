@@ -10,7 +10,7 @@ use casa_contracts::{
     ProviderProtocolDescriptor, ProviderSurfaceKind, TaskOperationDescriptor, TaskProviderContract,
     TaskProviderSchemas, TaskSemanticContract, builtin_surface_bundle, merged_components,
 };
-use casa_imaging_application::{
+use casa_imaging::{
     CleanStop, ImagingOutcome, ImagingRequest, NativeMinorCycleOutcome, NativeMinorCycleStopReason,
 };
 use schemars::{JsonSchema, schema_for};

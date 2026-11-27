@@ -8,7 +8,7 @@
 
 use std::sync::OnceLock;
 
-use casa_imaging_application::Cancel;
+use casa_imaging::Cancel;
 
 static TOKEN: OnceLock<Cancel> = OnceLock::new();
 

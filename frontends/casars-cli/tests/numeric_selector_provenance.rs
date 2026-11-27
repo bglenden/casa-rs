@@ -4,7 +4,7 @@
 //! their per-MeasurementSet array representation.
 
 use casa_contracts::{ParameterValue, TaskRunRequest, builtin_surface_bundle};
-use casa_imaging_application::ImagingRequest;
+use casa_imaging::ImagingRequest;
 use casa_tasks::imaging::{ImagingParameters, resolve_request, task_request};
 use casa_tasks::{
     BaseSource, ParameterSession, TaskInvocation, parse_profile, project_provider_invocation,

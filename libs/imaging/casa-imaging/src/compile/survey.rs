@@ -1,0 +1,1468 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+//! Compile's survey of the selected observation: one traversal of the
+//! partitions the request selects ([`super::partitions::candidates`]) that
+//! reads no visibilities, for the facts the later stages need.
+//!
+//! The traversal reads each partition's selected fields' times and, when a
+//! UV-distance interval or a W-projecting gridder needs them, the samples'
+//! UVW. AW PA stepping also identifies each buffer with an unflagged
+//! cross-correlation. A time's field comes with the batch, and a
+//! partition's samples share one spectral window and observing session, so
+//! the survey learns the selected fields, observations, times and windows
+//! from the batches' coordinates. The epochs (time, field) of each window's
+//! selected samples are what its frequency conversions are later evaluated
+//! at ([`super::envelope`]).
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use casa_core::measures::MjdHighPrec;
+use casa_imaging_model::{
+    CorrelationProduct, IdSelection, PartitionSelection, RowSelection, UvSelection,
+};
+use casa_imaging_runtime::{Admitted, Demand, HostResources, ResourcePolicy, admit};
+use casa_ms::observation_io::Msv2Observation;
+use casa_observation::{
+    AccessRequest, BatchBuffers, CorrelationRequest, Deliver, FlagsFrom, Grouping, Observation,
+    OrderedBaseline, PartitionEntry, ReadEvent, Roles, TimeSelection, VisibilityBatch,
+    WeightRequest,
+};
+
+use super::PrepareError;
+use super::partitions::{Candidate, Candidates, field_selection};
+use super::selection::{SourceSpectralWindow, WindowChannels, WindowRanges};
+
+/// The least bytes one batch of the survey holds: enough for several times
+/// of a large array, so a partition's survey is not a batch per time.
+const SURVEY_BATCH_BYTES: usize = 1 << 18;
+
+/// The `|w|` envelope of the selected samples, in metres.
+#[derive(Clone, Copy)]
+pub(super) struct WRange {
+    pub(super) maximum_abs_m: f64,
+    pub(super) minimum_abs_m: f64,
+    pub(super) sum_squares_m2: f64,
+    pub(super) samples: u64,
+}
+
+impl WRange {
+    const EMPTY: Self = Self {
+        maximum_abs_m: 0.0,
+        minimum_abs_m: f64::INFINITY,
+        sum_squares_m2: 0.0,
+        samples: 0,
+    };
+
+    fn observe(&mut self, w_m: f64) {
+        self.maximum_abs_m = self.maximum_abs_m.max(w_m.abs());
+        self.minimum_abs_m = self.minimum_abs_m.min(w_m.abs());
+        self.sum_squares_m2 += w_m * w_m;
+        self.samples += 1;
+    }
+
+    /// The envelope of the samples of both: those of several
+    /// MeasurementSets, which one image grids.
+    pub(super) fn union(self, other: Self) -> Self {
+        Self {
+            maximum_abs_m: self.maximum_abs_m.max(other.maximum_abs_m),
+            minimum_abs_m: self.minimum_abs_m.min(other.minimum_abs_m),
+            sum_squares_m2: self.sum_squares_m2 + other.sum_squares_m2,
+            samples: self.samples + other.samples,
+        }
+    }
+}
+
+/// One (time, field) a window's selected samples are observed at: what its
+/// frequency conversions are evaluated at.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Epoch {
+    /// Seconds since MJD 0 in the observation's time scale.
+    pub(super) time_mjd_seconds: f64,
+    pub(super) field_id: i32,
+    /// The buffer has a cross-correlation which passes CASA's row-validity check.
+    pub(super) has_unflagged_cross: bool,
+}
+
+/// The earliest selected cross-correlation sample not wholly flagged: what
+/// native AW evaluates its parallactic angle at.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct FirstCrossSample {
+    pub(super) time_mjd_seconds: f64,
+    pub(super) field_id: i32,
+    pub(super) observation_id: i32,
+}
+
+/// What the survey establishes.
+pub(super) struct Survey {
+    /// The per-sample predicates.
+    pub(super) row_selection: RowSelection,
+    /// The partitions holding a selected sample, in partition order, with
+    /// every correlation each holds.
+    pub(super) partitions: Vec<PartitionSelection>,
+    /// The selected samples, padding excluded.
+    pub(super) samples: u64,
+    /// The selected partitions' spectral windows, in one source frame.
+    pub(super) spectral_windows: Vec<SourceSpectralWindow>,
+    pub(super) source_frequency_reference: casa_core::measures::frequency::FrequencyRef,
+    pub(super) fields: BTreeSet<i32>,
+    /// The field of CASA's first visibility buffer: the least
+    /// (`DATA_DESC_ID`, `FIELD_ID`) of the selected samples, an MSv4's
+    /// window standing for its data description ([`FirstVisibility`]).
+    pub(super) first_visibility_field_id: usize,
+    /// The spectral window of that first buffer.
+    pub(super) first_visibility_spw_id: usize,
+    /// The field at the earliest selected time, which stands for CASA's first
+    /// selected row (`msc.fieldId()(0)`) in a MeasurementSet in time order.
+    pub(super) earliest_field_id: usize,
+    pub(super) observation_ids: BTreeSet<i32>,
+    /// The antennas of selected cross-correlations for an analytic ALMA PB
+    /// when the ANTENNA table holds both dish classes. Empty when unneeded.
+    pub(super) pb_antennas: Vec<bool>,
+    /// The selected MS's first physical row time for an image conversion;
+    /// otherwise the earliest selected time.
+    pub(super) image_time_mjd_seconds: f64,
+    pub(super) time_bounds_mjd_seconds: [f64; 2],
+    /// Read only for native AW ([`first_cross_sample`]).
+    pub(super) first_cross: Option<FirstCrossSample>,
+    /// Read only when a W-projecting gridder or a UV-distance interval needs
+    /// UVW; empty otherwise.
+    pub(super) w: WRange,
+    /// Each selected window's epochs, ascending in time, each once.
+    pub(super) epochs: BTreeMap<usize, Vec<Epoch>>,
+    /// The channels the request's `spw` names per window
+    /// ([`super::selection::SpwChoice::channels`]), set after the survey.
+    pub(super) spw_channels: WindowChannels,
+    /// The channel ranges the request's `spw` names per window
+    /// ([`super::selection::SpwChoice::ranges`]), set with
+    /// [`spw_channels`](Self::spw_channels).
+    pub(super) spw_ranges: WindowRanges,
+    /// The selection `savemodel='virtual'` writes its model for, resolved
+    /// beside the survey from the same selection
+    /// ([`super::virtual_selection`]).
+    pub(super) virtual_model: Option<crate::virtual_model::CompiledSelection>,
+}
+
+impl Survey {
+    /// The epochs of window `spw_id`'s selected samples.
+    pub(super) fn window_epochs(&self, spw_id: usize) -> &[Epoch] {
+        self.epochs.get(&spw_id).map_or(&[], Vec::as_slice)
+    }
+
+    /// The earliest selected time of field `field_id`, if it has one.
+    pub(super) fn first_time_of(&self, field_id: i32) -> Option<f64> {
+        self.epochs
+            .values()
+            .filter_map(|epochs| epochs.iter().find(|epoch| epoch.field_id == field_id))
+            .map(|epoch| epoch.time_mjd_seconds)
+            .reduce(f64::min)
+    }
+}
+
+/// What the survey reads, and the observation it reads it from.
+pub(super) struct SurveyPlan<'a> {
+    pub(super) observation: &'a dyn Observation,
+    /// The MeasurementSet, when the store is one ([`super::OpenedStore::msv2`]).
+    pub(super) msv2: Option<&'a Msv2Observation>,
+    pub(super) candidates: Candidates,
+    pub(super) row_selection: RowSelection,
+    /// A TOPO cube's image epoch is its first selected physical MAIN row.
+    pub(super) image_row_epoch: bool,
+    /// Whether the survey reads UVW for the W range, besides a UV-distance
+    /// interval's test.
+    pub(super) w_range: bool,
+    /// Whether analytic PB selection needs the antennas of actual rows.
+    pub(super) track_pb_antennas: bool,
+    /// Whether AW needs the epochs CASA accepts into its major cycle for PA stepping.
+    pub(super) track_aw_pa_epochs: bool,
+    /// Whether native AW needs its first cross-correlation sample.
+    pub(super) first_cross: bool,
+}
+
+/// The key CASA's imaging iterator orders its buffers by, whose least the
+/// first buffer holds: (`ARRAY_ID`, `DATA_DESC_ID`, `FIELD_ID`)
+/// (`SynthesisImagerVi2` sorts by them, then `TIME`). An MSv2 partition
+/// states the array its rows share, and a partition whose rows hold several
+/// reads its selected rows' arrays ([`Msv2Observation::array_ids`]). An
+/// MSv4 has no arrays, and its window stands for the data description.
+/// The window follows from the data description, so it orders nothing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+struct FirstVisibility {
+    array: i32,
+    description: u32,
+    field_id: i32,
+    spw_id: usize,
+}
+
+impl FirstVisibility {
+    /// Keep the least of the keys observed.
+    fn observe(first: &mut Option<Self>, key: Self) {
+        *first = Some(first.map_or(key, |prior| prior.min(key)));
+    }
+}
+
+/// The facts gathered over every partition.
+struct Facts {
+    fields: BTreeSet<i32>,
+    first_visibility: Option<FirstVisibility>,
+    earliest_field_id: Option<i32>,
+    observation_ids: BTreeSet<i32>,
+    pb_antennas: Vec<bool>,
+    /// Lowest selected physical row and its time, for the image epoch.
+    image_first_row: Option<(u32, f64)>,
+    time_bounds_mjd_seconds: [f64; 2],
+    w: WRange,
+    epochs: BTreeMap<usize, Vec<Epoch>>,
+}
+
+impl SurveyPlan<'_> {
+    /// Whether the survey reads UVW: for the W range, a UV-distance
+    /// interval's test, or to tell the MSv2 adapter's padding (NaN UVW)
+    /// from the samples a scan or baseline selection counts.
+    fn reads_uvw(&self) -> bool {
+        self.w_range
+            || !matches!(self.row_selection.uv_distances(), UvSelection::All)
+            || self.scans_tested()
+            || self.baselines_tested()
+            || self.times_tested()
+    }
+
+    /// Whether each time is tested against a `timerange`.
+    fn times_tested(&self) -> bool {
+        !self.row_selection.times().is_all()
+    }
+
+    /// Whether the scan and the time of time `time` of `batch` are
+    /// selected. A time is tested as CASA's TaQL tests `TIME`: seconds since
+    /// MJD 0 in the column's scale, which an MSv2's batches hold exactly.
+    fn time_holds(&self, batch: &VisibilityBatch<'_>, time: usize) -> Result<bool, PrepareError> {
+        Ok(self.scan_holds(batch, time)?
+            && self
+                .row_selection
+                .times()
+                .holds(batch.time.seconds_since(time, MjdHighPrec::new(0.0, 0.0))))
+    }
+
+    /// Whether each sample's baseline is tested: an antenna selection holds
+    /// some of a partition's baselines.
+    fn baselines_tested(&self) -> bool {
+        !self.row_selection.baselines().is_all()
+    }
+
+    /// Whether the antenna selection holds `baseline`.
+    fn baseline_holds(&self, baseline: OrderedBaseline) -> bool {
+        self.row_selection
+            .baselines()
+            .holds(baseline.antenna1.0, baseline.antenna2.0)
+    }
+
+    /// Whether each time's scan is tested: a scan selection holds some of a
+    /// partition's scans, so its times are selected one by one.
+    fn scans_tested(&self) -> bool {
+        !self.row_selection.scans().is_all()
+    }
+
+    /// Whether the scan of time `time` of `batch` is selected.
+    fn scan_holds(&self, batch: &VisibilityBatch<'_>, time: usize) -> Result<bool, PrepareError> {
+        scan_holds(self.row_selection.scans(), batch, time)
+    }
+
+    /// The `ARRAY_ID` `candidate`'s samples share, or `None` for an MSv2
+    /// partition whose rows hold several ([`Msv2Observation::array_id`]);
+    /// an MSv4 has no arrays.
+    fn partition_array(&self, candidate: &Candidate) -> Option<i32> {
+        self.msv2.map_or(Some(0), |ms| ms.array_id(candidate.id))
+    }
+
+    /// The data description standing for `candidate`'s in the first
+    /// visibility key: an MSv2's `DATA_DESC_ID`, else its window.
+    fn description(&self, candidate: &Candidate) -> u32 {
+        self.msv2.map_or_else(
+            || u32::try_from(candidate.spectral_window).expect("a window id fits u32"),
+            |ms| ms.data_description_id(candidate.id),
+        )
+    }
+
+    /// Whether the store holds its own padding, which only a NaN weight
+    /// marks: an MSv4 (XRADIO's converter leaves its `FLAG` false). The
+    /// MSv2 adapter pads its grids itself, counts what it pads
+    /// ([`casa_observation::PartitionEstimate::padded_fraction`]) and states
+    /// each row's `FLAG_ROW`.
+    fn stored_padding(&self) -> bool {
+        self.msv2.is_none()
+    }
+
+    /// The request surveying `candidate` (`entry` in the catalogue): its
+    /// selected fields' times, with UVW when read and all native channels'
+    /// weights when identifying a store's own padding; with `flags`, all
+    /// channels' flags instead of the weights.
+    fn request(
+        &self,
+        candidate: &Candidate,
+        entry: &PartitionEntry,
+        flags: bool,
+        batch_bytes: usize,
+    ) -> AccessRequest {
+        AccessRequest {
+            partitions: vec![candidate.id],
+            data_group: self.candidates.data_group.clone(),
+            roles: Roles {
+                values: false,
+                flags: flags || (self.track_aw_pa_epochs && self.stored_padding()),
+                weights: !flags && self.stored_padding(),
+                // A partition of several arrays tells its rows apart
+                // sample by sample, padding by its NaN UVW.
+                uvw: self.reads_uvw()
+                    || self.track_pb_antennas
+                    || self.partition_array(candidate).is_none(),
+                time_centroid: false,
+                interval: false,
+                exposure: false,
+                scan: self.scans_tested(),
+            },
+            weights: WeightRequest::Stored,
+            channels: if flags || self.stored_padding() {
+                0..entry.frequencies_hz.len()
+            } else {
+                0..1
+            },
+            times: TimeSelection::All,
+            fields: field_selection(self.observation.catalogue(), self.row_selection.fields()),
+            correlations: CorrelationRequest {
+                deliver: Deliver::All,
+                flags_from: FlagsFrom::Delivered,
+            },
+            grouping: Grouping::None,
+            batch_bytes,
+        }
+    }
+
+    /// The bytes one time of `candidate`'s survey holds, with the cursor's
+    /// scratch: of its flags pass when `flags`.
+    fn bytes_per_time(&self, candidate: &Candidate, flags: bool) -> Result<usize, PrepareError> {
+        let entry = self.observation.catalogue().partition(candidate.id);
+        let estimate =
+            self.observation
+                .estimate(&self.request(candidate, entry, flags, usize::MAX))?;
+        Ok(estimate
+            .partitions
+            .first()
+            .map_or(0, casa_observation::PartitionEstimate::held_bytes_per_time))
+    }
+}
+
+/// Survey `plan`'s partitions, admitted on `host` under `policy`: the
+/// largest batch of the traversal (and of native AW's flags pass on a store
+/// holding its own padding) and each
+/// window's epochs, one per selected time of each of its partitions at
+/// most. The charge is held until the problem compiles, since the epochs
+/// are read until then.
+///
+/// # Errors
+///
+/// When the admission is refused, a traversal fails, or the selection
+/// holds no sample.
+pub(super) fn survey(
+    plan: SurveyPlan<'_>,
+    spectral_windows: Vec<SourceSpectralWindow>,
+    (host, policy): (&HostResources, &ResourcePolicy),
+) -> Result<Admitted<Survey>, PrepareError> {
+    let catalogue = plan.observation.catalogue();
+    let mut batch_bytes = SURVEY_BATCH_BYTES;
+    let mut epoch_bound = BTreeMap::<usize, usize>::new();
+    for candidate in &plan.candidates.partitions {
+        batch_bytes = batch_bytes.max(plan.bytes_per_time(candidate, false)?);
+        if plan.first_cross && plan.stored_padding() {
+            batch_bytes = batch_bytes.max(plan.bytes_per_time(candidate, true)?);
+        }
+        let entry = catalogue.partition(candidate.id);
+        let estimate =
+            plan.observation
+                .estimate(&plan.request(candidate, entry, false, batch_bytes))?;
+        *epoch_bound.entry(candidate.spectral_window).or_default() += estimate
+            .partitions
+            .first()
+            .map_or(0, |partition| partition.times);
+    }
+    let epoch_bytes = epoch_bound.values().sum::<usize>() * size_of::<Epoch>();
+    // A partition of several arrays holds a selected time's MAIN rows and
+    // their arrays: a row and an array a baseline at most.
+    let several_arrays_bytes = plan
+        .candidates
+        .partitions
+        .iter()
+        .filter(|candidate| plan.partition_array(candidate).is_none())
+        .map(|candidate| {
+            catalogue.partition(candidate.id).baselines.len()
+                * (size_of::<usize>() + size_of::<i32>())
+        })
+        .max()
+        .unwrap_or(0);
+    let pb_antenna_count = if plan.track_pb_antennas {
+        catalogue.antennas.len()
+    } else {
+        0
+    };
+    // The survey's buffers grow to its largest batch, the cursor's scratch
+    // with them.
+    let reservation = admit(
+        host,
+        policy,
+        &Demand {
+            phase: "observation survey",
+            memory: (2 * batch_bytes
+                + epoch_bytes
+                + several_arrays_bytes
+                + pb_antenna_count * size_of::<bool>()) as u64,
+        },
+    )?;
+    let mut facts = Facts {
+        fields: BTreeSet::new(),
+        first_visibility: None,
+        earliest_field_id: None,
+        observation_ids: BTreeSet::new(),
+        pb_antennas: vec![false; pb_antenna_count],
+        image_first_row: None,
+        time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
+        w: WRange::EMPTY,
+        epochs: epoch_bound
+            .into_iter()
+            .map(|(window, bound)| (window, Vec::with_capacity(bound)))
+            .collect(),
+    };
+    let mut buffers = BatchBuffers::default();
+    let mut partitions = Vec::new();
+    let mut samples = 0;
+    let mut first_cross: Option<FirstCrossSample> = None;
+    for candidate in &plan.candidates.partitions {
+        let entry = catalogue.partition(candidate.id);
+        let request = plan.request(candidate, entry, false, batch_bytes);
+        let selected = survey_partition(&plan, candidate, &request, &mut buffers, &mut facts)?;
+        if selected == 0 {
+            continue;
+        }
+        samples += selected;
+        if plan.first_cross
+            && let Some(sample) = first_cross_sample(
+                &plan,
+                candidate,
+                &plan.request(candidate, entry, plan.stored_padding(), batch_bytes),
+                &mut buffers,
+            )?
+            && first_cross.is_none_or(|first| sample.time_mjd_seconds < first.time_mjd_seconds)
+        {
+            first_cross = Some(sample);
+        }
+        partitions.push(PartitionSelection::new(
+            candidate.id,
+            u32::try_from(candidate.spectral_window).expect("an SPW id is a stored i32"),
+            entry
+                .correlations
+                .iter()
+                .enumerate()
+                .map(|(index, correlation)| {
+                    CorrelationProduct::new(
+                        u32::try_from(index).expect("a CORR_TYPE index fits u32"),
+                        *correlation,
+                    )
+                })
+                .collect(),
+        ));
+    }
+    drop(buffers);
+    if samples == 0 {
+        return Err(PrepareError::NoSelectedSamples);
+    }
+    for epochs in facts.epochs.values_mut() {
+        epochs.sort_unstable_by(|a, b| {
+            a.time_mjd_seconds
+                .total_cmp(&b.time_mjd_seconds)
+                .then(a.field_id.cmp(&b.field_id))
+        });
+        epochs.dedup_by(|later, kept| {
+            if later.time_mjd_seconds == kept.time_mjd_seconds && later.field_id == kept.field_id {
+                kept.has_unflagged_cross |= later.has_unflagged_cross;
+                true
+            } else {
+                false
+            }
+        });
+    }
+    facts.epochs.retain(|_, epochs| !epochs.is_empty());
+    let mut spectral_windows = spectral_windows;
+    spectral_windows.retain(|window| facts.epochs.contains_key(&window.spw_id));
+    let source_frequency_reference = super::selection::one_source_frame(&spectral_windows)?;
+    let first_visibility = facts
+        .first_visibility
+        .expect("a survey holding samples observed a first visibility");
+    let image_time_mjd_seconds = if plan.image_row_epoch && plan.msv2.is_some() {
+        facts
+            .image_first_row
+            .ok_or(PrepareError::NoSelectedSamples)?
+            .1
+    } else {
+        facts.time_bounds_mjd_seconds[0]
+    };
+    Ok(Admitted {
+        value: Survey {
+            row_selection: plan.row_selection,
+            partitions,
+            samples,
+            spectral_windows,
+            source_frequency_reference,
+            fields: facts.fields,
+            first_visibility_field_id: usize::try_from(first_visibility.field_id)
+                .expect("a FIELD row is nonnegative"),
+            first_visibility_spw_id: first_visibility.spw_id,
+            earliest_field_id: usize::try_from(
+                facts.earliest_field_id.unwrap_or(first_visibility.field_id),
+            )
+            .expect("a FIELD row is nonnegative"),
+            observation_ids: facts.observation_ids,
+            pb_antennas: facts.pb_antennas,
+            image_time_mjd_seconds,
+            time_bounds_mjd_seconds: facts.time_bounds_mjd_seconds,
+            first_cross,
+            w: facts.w,
+            epochs: facts.epochs,
+            spw_channels: WindowChannels::new(),
+            spw_ranges: WindowRanges::new(),
+            virtual_model: None,
+        },
+        reservation,
+    })
+}
+
+/// Survey one partition into `facts`: the epochs, fields, observation,
+/// times and W range of its selected samples. Returns how many it holds.
+///
+/// Without a UV-distance interval every delivered sample but padding is
+/// selected. On an MSv2 the estimate counts them
+/// ([`casa_observation::PartitionEstimate::padded_fraction`]): a delivered
+/// time always holds one, since a time is on a partition's grid only when a
+/// sample of it was acquired. A store holding its own padding (an MSv4)
+/// marks it only by NaN weights, which the survey reads and counts past
+/// ([`stored_padding`]). With a UV-distance interval, the survey tests each
+/// sample that is not padding and whose UVW is finite (the MSv2 adapter's
+/// padding's is NaN).
+fn survey_partition(
+    plan: &SurveyPlan<'_>,
+    candidate: &Candidate,
+    request: &AccessRequest,
+    buffers: &mut BatchBuffers,
+    facts: &mut Facts,
+) -> Result<u64, PrepareError> {
+    let uv = plan.row_selection.uv_distances();
+    let tested = !matches!(uv, UvSelection::All)
+        || plan.scans_tested()
+        || plan.baselines_tested()
+        || plan.times_tested();
+    // A partition of several arrays reads each selected time's rows.
+    let array = plan.partition_array(candidate);
+    let per_sample = plan.reads_uvw()
+        || plan.track_pb_antennas
+        || plan.track_aw_pa_epochs
+        || plan.stored_padding()
+        || array.is_none();
+    let counted = tested || plan.stored_padding() || array.is_none();
+    let description = plan.description(candidate);
+    let (mut rows, mut arrays) = (Vec::new(), Vec::new());
+    let mut traversal = plan.observation.bind_read(request)?;
+    let estimate = traversal_samples(&traversal.estimate);
+    let mut samples = if counted { 0 } else { estimate };
+    let epochs = facts
+        .epochs
+        .get_mut(&candidate.spectral_window)
+        .expect("the survey bounds every candidate's window");
+    let origin = MjdHighPrec::new(0.0, 0.0);
+    let mut image_first_row = facts.image_first_row;
+    while let Some(event) = traversal.next(buffers)? {
+        let ReadEvent::Batch(batch) = event else {
+            continue;
+        };
+        for time in 0..batch.times() {
+            if !plan.time_holds(&batch, time)? {
+                continue;
+            }
+            // Once physical row zero is selected no later row can precede it.
+            let find_first = plan.image_row_epoch
+                && plan.msv2.is_some()
+                && image_first_row.is_none_or(|(row, _)| row != 0);
+            let (selected, first_row, has_unflagged_cross) = if per_sample {
+                // UVW read only to tell rows apart leaves the W range alone.
+                let mut unused = WRange::EMPTY;
+                let w = if plan.reads_uvw() {
+                    &mut facts.w
+                } else {
+                    &mut unused
+                };
+                rows.clear();
+                let (held, first_row, has_unflagged_cross) = observe_time(
+                    plan,
+                    candidate,
+                    (&batch, time),
+                    w,
+                    array.is_none().then_some(&mut rows),
+                    &mut facts.pb_antennas,
+                    find_first,
+                )?;
+                samples += if counted { held } else { 0 };
+                (held > 0, first_row, has_unflagged_cross)
+            } else {
+                let first_row = if find_first {
+                    plan.msv2
+                        .expect("the first row is an MSv2 row")
+                        .first_main_row_at_time(candidate.id, batch.time.offsets_s()[time])
+                } else {
+                    None
+                };
+                (true, first_row, false)
+            };
+            if !selected {
+                continue;
+            }
+            let time_mjd_seconds = batch.time.seconds_since(time, origin);
+            if let Some(row) = first_row
+                && image_first_row.is_none_or(|(previous, _)| row < previous)
+            {
+                image_first_row = Some((row, time_mjd_seconds));
+            }
+            let field_id = i32::try_from(batch.field[time].0).expect("a FIELD row is an i32 id");
+            facts.fields.insert(field_id);
+            let array = match array {
+                Some(array) => array,
+                None => {
+                    plan.msv2
+                        .expect("only an MSv2 partition holds several arrays")
+                        .array_ids(&rows, &mut arrays)?;
+                    *arrays.iter().min().expect("a selected time holds a row")
+                }
+            };
+            FirstVisibility::observe(
+                &mut facts.first_visibility,
+                FirstVisibility {
+                    array,
+                    description,
+                    field_id,
+                    spw_id: candidate.spectral_window,
+                },
+            );
+            let bounds = &mut facts.time_bounds_mjd_seconds;
+            if time_mjd_seconds < bounds[0] {
+                facts.earliest_field_id = Some(field_id);
+            }
+            bounds[0] = bounds[0].min(time_mjd_seconds);
+            bounds[1] = bounds[1].max(time_mjd_seconds);
+            epochs.push(Epoch {
+                time_mjd_seconds,
+                field_id,
+                has_unflagged_cross,
+            });
+        }
+    }
+    facts.image_first_row = image_first_row;
+    if samples > 0 {
+        let entry = plan.observation.catalogue().partition(candidate.id);
+        facts
+            .observation_ids
+            .insert(i32::try_from(entry.observation.0).expect("an OBSERVATION row is an i32 id"));
+    }
+    Ok(samples)
+}
+
+/// The selected samples of time `time` of `batch`, observed into `w` when
+/// the batch holds UVW: those on a baseline the antenna selection holds that
+/// are not the store's own padding when `stored` ([`stored_padding`]) and,
+/// with UVW, those whose UVW is finite and that `uv`, when tested, holds for
+/// its candidate's wavelength.
+/// Returns how many, with their MSv2 MAIN rows into `rows` when given.
+fn observe_time(
+    plan: &SurveyPlan<'_>,
+    candidate: &Candidate,
+    (batch, time): (&VisibilityBatch<'_>, usize),
+    w: &mut WRange,
+    mut rows: Option<&mut Vec<usize>>,
+    pb_antennas: &mut [bool],
+    find_first: bool,
+) -> Result<(u64, Option<u32>, bool), PrepareError> {
+    let uv = plan.row_selection.uv_distances();
+    let per_time = batch.samples_per_time();
+    let mut held = 0;
+    let mut first_row = None;
+    let mut has_unflagged_cross = false;
+    for sample in time * per_time..(time + 1) * per_time {
+        let baseline = batch.baselines[sample % per_time];
+        if !plan.baseline_holds(baseline) {
+            continue;
+        }
+        if plan.stored_padding() && stored_padding(batch, sample) {
+            continue;
+        }
+        if let Some(uvw) = batch.group.uvw {
+            let uvw_m = uvw.metres_at(sample);
+            if !uv.holds(uvw_m, candidate.wavelength_m) {
+                continue;
+            }
+            if !uvw_m.iter().all(|value| value.is_finite()) {
+                let time_mjd_seconds = batch.time.seconds_since(time, MjdHighPrec::new(0.0, 0.0));
+                if plan.msv2.is_none_or(|ms| {
+                    ms.main_row(candidate.id, batch.time.offsets_s()[time], baseline)
+                        .is_some()
+                }) {
+                    return Err(PrepareError::NonFiniteUvw {
+                        partition: candidate.id.0,
+                        time_mjd_seconds,
+                        antennas: [baseline.antenna1.0, baseline.antenna2.0],
+                    });
+                }
+                continue;
+            }
+            w.observe(uvw_m[2]);
+        }
+        if (find_first || rows.is_some())
+            && let Some(ms) = plan.msv2
+            && let Some(row) = ms.main_row(candidate.id, batch.time.offsets_s()[time], baseline)
+        {
+            if let Some(rows) = rows.as_deref_mut() {
+                rows.push(row as usize);
+            }
+            if find_first {
+                first_row = Some(first_row.map_or(row, |previous: u32| previous.min(row)));
+            }
+        }
+        // The synthesis major cycle skips a buffer with no valid cross-row
+        // before AW can inspect its PA (SynthesisUtilMethods::validate).
+        if plan.track_aw_pa_epochs && !has_unflagged_cross && !baseline.is_auto() {
+            let epoch = batch.time.seconds_since(time, MjdHighPrec::new(0.0, 0.0));
+            has_unflagged_cross = unflagged_row(plan, candidate, batch, sample, epoch, baseline)?;
+        }
+        // Standard gridding omits autocorrelations, so they cannot choose
+        // a dish model. Other selection predicates have already been tested.
+        if !pb_antennas.is_empty() && !baseline.is_auto() {
+            pb_antennas[baseline.antenna1.0 as usize] = true;
+            pb_antennas[baseline.antenna2.0 as usize] = true;
+        }
+        held += 1;
+    }
+    Ok((held, first_row, has_unflagged_cross))
+}
+
+/// Whether sample `sample` of `batch` is padding its store holds: every
+/// weight across its native channels not finite. A NaN weight is
+/// padding's one mark in both stores, and XRADIO's converter and
+/// casa-rs's writer put it on every channel and product of a cell no
+/// acquisition filled.
+fn stored_padding(batch: &VisibilityBatch<'_>, sample: usize) -> bool {
+    batch
+        .group
+        .weights
+        .expect("the survey reads a store's own padding's weights")
+        .slice(ndarray::s![sample, .., ..])
+        .iter()
+        .all(|weight| !weight.is_finite())
+}
+
+/// Whether `scans` holds the scan number of time `time` of `batch`. A batch
+/// carries its times' scans when the request asks for them, which the
+/// survey does whenever `scans` constrains them; a scan the store names
+/// without a casacore number (an MSv4 scan name that is not a decimal
+/// integer) is never selected by number.
+fn scan_holds(
+    scans: &IdSelection,
+    batch: &VisibilityBatch<'_>,
+    time: usize,
+) -> Result<bool, PrepareError> {
+    if scans.is_all() {
+        return Ok(true);
+    }
+    let Some(times) = batch.scan.as_ref() else {
+        return Err(PrepareError::Opening(
+            casa_observation::ObservationError::InvalidStore {
+                reason: "a scan-selected batch carries no scans".to_string(),
+            },
+        ));
+    };
+    Ok(batch.catalogue.scans[times[time].0 as usize]
+        .number
+        .is_some_and(|number| scans.holds(i64::from(number))))
+}
+
+/// The samples `estimate`'s one partition delivers that are not padding.
+fn traversal_samples(estimate: &casa_observation::Estimate) -> u64 {
+    let partition = estimate
+        .partitions
+        .first()
+        .expect("a survey estimates one partition");
+    let cells = partition.times * partition.baselines;
+    let padded = (cells as f64 * partition.padded_fraction).round() as usize;
+    u64::try_from(cells.saturating_sub(padded)).expect("a sample count fits u64")
+}
+
+/// The first sample of `candidate`'s selected times, in time order, that
+/// correlates two antennas, is selected by UV distance and is not
+/// row-flagged: CASA's AW projection evaluates its parallactic angle at the
+/// first row of the first buffer that is a cross-correlation and not
+/// row-flagged (`getPA`), whatever its cell flags. On an MSv2 the adapter
+/// states each row's `FLAG_ROW` and padding has no row; `request` is then
+/// the survey's own. An MSv4 holds no row flags (XRADIO's converter folds
+/// `FLAG_ROW` into `FLAG`), so there the sample must hold a value not
+/// flagged, its padding flagged throughout; `request` reads every channel's
+/// flags. The traversal stops at the sample.
+fn first_cross_sample(
+    plan: &SurveyPlan<'_>,
+    candidate: &Candidate,
+    request: &AccessRequest,
+    buffers: &mut BatchBuffers,
+) -> Result<Option<FirstCrossSample>, PrepareError> {
+    let uv = plan.row_selection.uv_distances();
+    let mut traversal = plan.observation.bind_read(request)?;
+    let observation = plan
+        .observation
+        .catalogue()
+        .partition(candidate.id)
+        .observation;
+    let origin = MjdHighPrec::new(0.0, 0.0);
+    while let Some(event) = traversal.next(buffers)? {
+        let ReadEvent::Batch(batch) = event else {
+            continue;
+        };
+        for sample in 0..batch.samples() {
+            let baseline = batch.baselines[sample % batch.samples_per_time()];
+            if baseline.is_auto() || !plan.baseline_holds(baseline) {
+                continue;
+            }
+            let time = sample / batch.samples_per_time();
+            if !plan.time_holds(&batch, time)? {
+                continue;
+            }
+            if let Some(uvw) = batch.group.uvw
+                && !uv.holds(uvw.metres_at(sample), candidate.wavelength_m)
+            {
+                continue;
+            }
+            let time_mjd_seconds = batch.time.seconds_since(time, origin);
+            if !unflagged_row(plan, candidate, &batch, sample, time_mjd_seconds, baseline)? {
+                continue;
+            }
+            return Ok(Some(FirstCrossSample {
+                time_mjd_seconds,
+                field_id: i32::try_from(batch.field[time].0).expect("a FIELD row is an i32 id"),
+                observation_id: i32::try_from(observation.0)
+                    .expect("an OBSERVATION row is an i32 id"),
+            }));
+        }
+    }
+    Ok(None)
+}
+
+/// CASA tests FLAG_ROW independently of channel flags and weights. MSv4
+/// folds FLAG_ROW into FLAG, so it uses the represented sample flags.
+fn unflagged_row(
+    plan: &SurveyPlan<'_>,
+    candidate: &Candidate,
+    batch: &VisibilityBatch<'_>,
+    sample: usize,
+    time_mjd_seconds: f64,
+    baseline: OrderedBaseline,
+) -> Result<bool, PrepareError> {
+    match plan.msv2 {
+        Some(ms) => Ok(ms
+            .row_flagged(candidate.id, time_mjd_seconds, baseline)
+            .map_err(PrepareError::Opening)?
+            == Some(false)),
+        None => Ok(!batch
+            .group
+            .flags
+            .expect("the pass reads an MSv4's flags")
+            .slice(ndarray::s![sample, .., ..])
+            .iter()
+            .all(|flag| *flag)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_first_visibility_follows_array_description_then_field_order() {
+        use super::FirstVisibility;
+        let keys = [(2, 0, 0), (1, 4, 1), (1, 2, 9), (1, 2, 7), (1, 3, 0)];
+        for reversed in [false, true] {
+            let mut first = None;
+            for index in 0..keys.len() {
+                let (array, description, field_id) = keys[if reversed {
+                    keys.len() - 1 - index
+                } else {
+                    index
+                }];
+                FirstVisibility::observe(
+                    &mut first,
+                    FirstVisibility {
+                        array,
+                        description,
+                        field_id,
+                        spw_id: description as usize,
+                    },
+                );
+            }
+            assert_eq!(
+                first,
+                Some(FirstVisibility {
+                    array: 1,
+                    description: 2,
+                    field_id: 7,
+                    spw_id: 2,
+                })
+            );
+        }
+    }
+
+    use casa_core::{ArrayValue, ScalarValue, Value};
+    use casa_imaging_model::{IdSelection, IntentSelection};
+    use casa_ms::MeasurementSet;
+
+    use super::*;
+
+    const T0: f64 = 5_000_000_000.0;
+
+    /// A mixed ALMA catalogue adds one retained antenna entry for each
+    /// antenna. Its survey reservation covers the bitmap capacity.
+    #[test]
+    fn a_survey_charges_the_selected_pb_antenna_bitmap() {
+        let root = tempfile::tempdir().expect("temporary fixture");
+        let archive = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../libs/casacore/casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
+        tar::Archive::new(flate2::read::GzDecoder::new(
+            std::fs::File::open(archive).unwrap(),
+        ))
+        .unpack(root.path())
+        .unwrap();
+        let observation = Msv2Observation::open(root.path().join("ms_trial.ms")).unwrap();
+        let catalogue = observation.catalogue();
+        let id = catalogue.partition_ids()[0];
+        let window = catalogue.partition(id).window.0 as usize;
+        let host = HostResources::detect().unwrap();
+        let policy = ResourcePolicy::Explicit {
+            workers: 1,
+            memory: 1 << 30,
+        };
+        let run = |track_pb_antennas| {
+            survey(
+                SurveyPlan {
+                    observation: &observation,
+                    msv2: Some(&observation),
+                    candidates: Candidates {
+                        data_group: "base".into(),
+                        partitions: vec![Candidate {
+                            id,
+                            spectral_window: window,
+                            wavelength_m: None,
+                        }],
+                    },
+                    row_selection: RowSelection::new(
+                        IdSelection::All,
+                        UvSelection::All,
+                        IntentSelection::All,
+                    ),
+                    image_row_epoch: false,
+                    w_range: false,
+                    track_pb_antennas,
+                    track_aw_pa_epochs: false,
+                    first_cross: false,
+                },
+                super::super::selection::spectral_windows(catalogue, [window]),
+                (&host, &policy),
+            )
+            .unwrap()
+        };
+        let ordinary = run(false);
+        let tracked = run(true);
+        assert_eq!(ordinary.value.pb_antennas.capacity(), 0);
+        assert_eq!(tracked.value.pb_antennas.len(), catalogue.antennas.len());
+        assert!(tracked.value.pb_antennas.iter().any(|selected| *selected));
+        let extra = tracked.reservation.memory() - ordinary.reservation.memory();
+        let held = tracked.value.pb_antennas.capacity() * size_of::<bool>();
+        assert_eq!(extra, held as u64, "the survey charges its retained bitmap");
+    }
+
+    /// A stored row's NaN coordinates are invalid input, not evidence of
+    /// missing acquisition. Grid padding still passes the same survey.
+    #[test]
+    fn a_nonfinite_stored_uvw_is_refused_but_grid_padding_is_skipped() {
+        for (poison, signed_zero) in [
+            (Some(true), false),
+            (Some(false), false),
+            (Some(true), true),
+            (None, false),
+        ] {
+            let root = tempfile::tempdir().expect("temporary fixture");
+            let archive = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../libs/casacore/casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
+            tar::Archive::new(flate2::read::GzDecoder::new(
+                std::fs::File::open(archive).unwrap(),
+            ))
+            .unpack(root.path())
+            .unwrap();
+            let path = root.path().join("ms_trial.ms");
+            let mut ms = MeasurementSet::open(&path).unwrap();
+            if signed_zero {
+                let remove: Vec<_> = (1..ms.row_count()).collect();
+                ms.main_table_mut().remove_rows(&remove).unwrap();
+                ms.main_table_mut()
+                    .cell_accessor_mut(0, "TIME")
+                    .unwrap()
+                    .set(Value::Scalar(ScalarValue::Float64(-0.0)))
+                    .unwrap();
+            }
+            if let Some(all) = poison {
+                for row in 0..if all { ms.row_count() } else { 1 } {
+                    ms.main_table_mut()
+                        .cell_accessor_mut(row, "UVW")
+                        .unwrap()
+                        .set(Value::Array(ArrayValue::Float64(
+                            ndarray::arr1(&[f64::NAN; 3]).into_dyn(),
+                        )))
+                        .unwrap();
+                }
+            } else {
+                ms.main_table_mut().remove_rows(&[7]).unwrap();
+            }
+            let rows = ms.row_count() as u64;
+            ms.save().unwrap();
+            drop(ms);
+            let observation = Msv2Observation::open(&path).unwrap();
+            assert_eq!(observation.catalogue().partitions.len(), 1);
+            let id = observation.catalogue().partition_ids()[0];
+            let entry = observation.catalogue().partition(id);
+            let candidate = Candidate {
+                id,
+                spectral_window: entry.window.0 as usize,
+                wavelength_m: None,
+            };
+            let plan = SurveyPlan {
+                observation: &observation,
+                msv2: Some(&observation),
+                candidates: Candidates {
+                    data_group: "base".into(),
+                    partitions: vec![],
+                },
+                row_selection: RowSelection::new(
+                    IdSelection::All,
+                    UvSelection::All,
+                    IntentSelection::All,
+                ),
+                image_row_epoch: false,
+                w_range: true,
+                track_pb_antennas: false,
+                track_aw_pa_epochs: false,
+                first_cross: false,
+            };
+            let mut facts = Facts {
+                fields: BTreeSet::new(),
+                first_visibility: None,
+                earliest_field_id: None,
+                observation_ids: BTreeSet::new(),
+                pb_antennas: Vec::new(),
+                image_first_row: None,
+                time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
+                w: WRange::EMPTY,
+                epochs: [(candidate.spectral_window, Vec::new())].into(),
+            };
+            let request = plan.request(&candidate, entry, false, 1 << 20);
+            let result = survey_partition(
+                &plan,
+                &candidate,
+                &request,
+                &mut BatchBuffers::default(),
+                &mut facts,
+            );
+            if poison.is_some() {
+                assert!(
+                    matches!(result, Err(PrepareError::NonFiniteUvw { .. })),
+                    "{poison:?}"
+                );
+            } else {
+                assert_eq!(result.unwrap(), rows);
+                assert!(!facts.epochs[&candidate.spectral_window].is_empty());
+            }
+        }
+    }
+
+    /// Native AW's reference time and imported AW's valid rotation epochs
+    /// on `ms_trial.ms` cut to two rows an hour apart. Each row specifies
+    /// (`FLAG_ROW`, every `FLAG` set, autocorrelation).
+    fn aw_cross_times(rows: [(bool, bool, bool); 2]) -> (Option<f64>, Vec<f64>) {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../libs/casacore/casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
+        tar::Archive::new(flate2::read::GzDecoder::new(
+            std::fs::File::open(fixture).expect("the fixture"),
+        ))
+        .unpack(root.path())
+        .expect("unpacked");
+        let path = root.path().join("ms_trial.ms");
+        let mut ms = MeasurementSet::open(&path).expect("an editable MeasurementSet");
+        let remove: Vec<usize> = (2..ms.main_table().row_count()).collect();
+        ms.main_table_mut()
+            .remove_rows(&remove)
+            .expect("rows removed");
+        for column in [
+            "DATA_DESC_ID",
+            "FIELD_ID",
+            "OBSERVATION_ID",
+            "ARRAY_ID",
+            "STATE_ID",
+            "PROCESSOR_ID",
+            "FEED1",
+            "FEED2",
+            "SCAN_NUMBER",
+            "INTERVAL",
+        ] {
+            let value = ms
+                .main_table()
+                .column_accessor(column)
+                .expect("a key column")
+                .get(0)
+                .expect("row 0")
+                .expect("a value")
+                .clone();
+            ms.main_table_mut()
+                .cell_accessor_mut(1, column)
+                .expect("row 1")
+                .set(value)
+                .expect("set");
+        }
+        for (row, (row_flag, all_flagged, auto)) in rows.into_iter().enumerate() {
+            let Value::Array(ArrayValue::Bool(mut flags)) = ms
+                .main_table()
+                .column_accessor("FLAG")
+                .expect("FLAG")
+                .get(row)
+                .expect("a row")
+                .expect("a cell")
+                .clone()
+            else {
+                panic!("FLAG is a Bool array");
+            };
+            flags.fill(all_flagged);
+            for (column, value) in [
+                ("FLAG", Value::Array(ArrayValue::Bool(flags))),
+                ("FLAG_ROW", Value::Scalar(ScalarValue::Bool(row_flag))),
+                ("ANTENNA1", Value::Scalar(ScalarValue::Int32(0))),
+                (
+                    "ANTENNA2",
+                    Value::Scalar(ScalarValue::Int32(i32::from(!auto))),
+                ),
+                (
+                    "TIME",
+                    Value::Scalar(ScalarValue::Float64(T0 + row as f64 * 3600.0)),
+                ),
+            ] {
+                ms.main_table_mut()
+                    .cell_accessor_mut(row, column)
+                    .expect("a cell")
+                    .set(value)
+                    .expect("set");
+            }
+        }
+        ms.save().expect("saved");
+        drop(ms);
+        let observation = Msv2Observation::open(&path).expect("the cut MeasurementSet opens");
+        let id = observation.catalogue().partition_ids()[0];
+        let entry = observation.catalogue().partition(id);
+        let candidate = Candidate {
+            id,
+            spectral_window: entry.window.0 as usize,
+            wavelength_m: None,
+        };
+        let plan = SurveyPlan {
+            observation: &observation,
+            msv2: Some(&observation),
+            candidates: Candidates {
+                data_group: "base".into(),
+                partitions: vec![],
+            },
+            row_selection: RowSelection::new(
+                IdSelection::All,
+                UvSelection::All,
+                IntentSelection::All,
+            ),
+            image_row_epoch: false,
+            w_range: false,
+            track_pb_antennas: false,
+            track_aw_pa_epochs: true,
+            first_cross: true,
+        };
+        let request = plan.request(&candidate, entry, false, 1 << 20);
+        let mut buffers = BatchBuffers::default();
+        let first = first_cross_sample(&plan, &candidate, &request, &mut buffers)
+            .expect("the pass reads")
+            .map(|sample| sample.time_mjd_seconds);
+        let mut facts = Facts {
+            fields: BTreeSet::new(),
+            first_visibility: None,
+            earliest_field_id: None,
+            observation_ids: BTreeSet::new(),
+            pb_antennas: Vec::new(),
+            image_first_row: None,
+            time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
+            w: WRange::EMPTY,
+            epochs: [(candidate.spectral_window, Vec::new())].into(),
+        };
+        survey_partition(&plan, &candidate, &request, &mut buffers, &mut facts)
+            .expect("the survey reads");
+        let times = facts.epochs[&candidate.spectral_window]
+            .iter()
+            .filter(|epoch| epoch.has_unflagged_cross)
+            .map(|epoch| epoch.time_mjd_seconds)
+            .collect();
+        (first, times)
+    }
+
+    /// The samples `observation`'s survey selects, with no selection.
+    fn surveyed(observation: &dyn Observation, msv2: Option<&Msv2Observation>) -> u64 {
+        let plan = SurveyPlan {
+            observation,
+            msv2,
+            candidates: Candidates {
+                data_group: "base".into(),
+                partitions: vec![],
+            },
+            row_selection: RowSelection::new(
+                IdSelection::All,
+                UvSelection::All,
+                IntentSelection::All,
+            ),
+            image_row_epoch: false,
+            w_range: false,
+            track_pb_antennas: false,
+            track_aw_pa_epochs: false,
+            first_cross: false,
+        };
+        let catalogue = observation.catalogue();
+        let mut total = 0;
+        for id in catalogue.partition_ids() {
+            let entry = catalogue.partition(id);
+            let candidate = Candidate {
+                id,
+                spectral_window: entry.window.0 as usize,
+                wavelength_m: None,
+            };
+            let mut facts = Facts {
+                fields: BTreeSet::new(),
+                first_visibility: None,
+                earliest_field_id: None,
+                observation_ids: BTreeSet::new(),
+                pb_antennas: Vec::new(),
+                image_first_row: None,
+                time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
+                w: WRange::EMPTY,
+                epochs: [(candidate.spectral_window, Vec::new())].into(),
+            };
+            let request = plan.request(&candidate, entry, false, 1 << 20);
+            total += survey_partition(
+                &plan,
+                &candidate,
+                &request,
+                &mut BatchBuffers::default(),
+                &mut facts,
+            )
+            .expect("the survey reads");
+        }
+        total
+    }
+
+    /// An MSv4 holds its own padding, whose NaN weights the survey counts
+    /// past: the MSv4 conversion of `ms_trial.ms` less one row selects the
+    /// rows the MeasurementSet holds (Astra's review of #1013).
+    #[test]
+    fn an_msv4_survey_counts_its_acquisitions_not_its_padding() {
+        use casa_ms::observation_io::Msv4Observation;
+        use casa_mstransform::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../libs/casacore/casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
+        tar::Archive::new(flate2::read::GzDecoder::new(
+            std::fs::File::open(fixture).expect("the fixture"),
+        ))
+        .unpack(root.path())
+        .expect("unpacked");
+        let path = root.path().join("ms_trial.ms");
+        let mut ms = MeasurementSet::open(&path).expect("an editable MeasurementSet");
+        ms.main_table_mut()
+            .remove_rows(&[7])
+            .expect("a row removed");
+        let rows = ms.main_table().row_count() as u64;
+        ms.save().expect("saved");
+        drop(ms);
+        let v4 = root.path().join("sparse.ps.zarr");
+        to_msv4(
+            &path,
+            &v4,
+            &ConversionOptions {
+                data_groups: None,
+                accept: vec![LossKind::Sigma, LossKind::Tables],
+                batch_bytes: 1 << 20,
+                workers: 1,
+                chunks: [5, 0, 0, 0],
+                codec: casa_ms::observation_io::Msv4Codec::BloscLz4,
+                padding: PaddingRows::Flagged,
+                creator: "survey law".into(),
+                creation_date: "2026-10-30T00:00:00+00:00".into(),
+            },
+        )
+        .expect("converted");
+        let original = Msv2Observation::open(&path).expect("the MeasurementSet opens");
+        assert_eq!(surveyed(&original, Some(&original)), rows);
+        let converted = Msv4Observation::open(&v4).expect("the processing set opens");
+        assert_eq!(
+            surveyed(&converted, None),
+            rows,
+            "an acquisition the MSv4 holds as padding is not a selected sample"
+        );
+    }
+
+    /// The samples and epoch times `observation`'s survey selects under
+    /// `row_selection`, over every partition.
+    fn surveyed_under(
+        observation: &Msv2Observation,
+        row_selection: RowSelection,
+    ) -> (u64, Vec<f64>) {
+        let plan = SurveyPlan {
+            observation,
+            msv2: Some(observation),
+            candidates: Candidates {
+                data_group: "base".into(),
+                partitions: vec![],
+            },
+            row_selection,
+            image_row_epoch: false,
+            w_range: false,
+            track_pb_antennas: false,
+            track_aw_pa_epochs: false,
+            first_cross: false,
+        };
+        let catalogue = observation.catalogue();
+        let (mut total, mut times) = (0, Vec::new());
+        for id in catalogue.partition_ids() {
+            let entry = catalogue.partition(id);
+            let candidate = Candidate {
+                id,
+                spectral_window: entry.window.0 as usize,
+                wavelength_m: None,
+            };
+            let mut facts = Facts {
+                fields: BTreeSet::new(),
+                first_visibility: None,
+                earliest_field_id: None,
+                observation_ids: BTreeSet::new(),
+                pb_antennas: Vec::new(),
+                image_first_row: None,
+                time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
+                w: WRange::EMPTY,
+                epochs: [(candidate.spectral_window, Vec::new())].into(),
+            };
+            let request = plan.request(&candidate, entry, false, 1 << 20);
+            total += survey_partition(
+                &plan,
+                &candidate,
+                &request,
+                &mut BatchBuffers::default(),
+                &mut facts,
+            )
+            .expect("the survey reads");
+            times.extend(
+                facts
+                    .epochs
+                    .into_values()
+                    .flatten()
+                    .map(|epoch| epoch.time_mjd_seconds),
+            );
+        }
+        (total, times)
+    }
+
+    /// A scan selection counts only the selected scan's samples, and every
+    /// epoch the survey keeps lies within that scan: the counts are CASA
+    /// 6.7.6.14's rows for `scan='1'` and `scan='3'` on `mssel_test_small.ms`
+    /// (`tclean-selection-casa-20261031.json`), out of 1,058.
+    #[test]
+    fn a_scan_selection_surveys_only_its_scans_times() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz");
+        tar::Archive::new(flate2::read::GzDecoder::new(
+            std::fs::File::open(fixture).expect("the fixture"),
+        ))
+        .unpack(root.path())
+        .expect("unpacked");
+        let path = root.path().join("mssel_test_small.ms");
+        let ms = MeasurementSet::open(&path).expect("the MeasurementSet");
+        let main = ms.main_table();
+        let scan_times = |scan: i32| {
+            let times = (0..main.row_count())
+                .filter(|row| {
+                    matches!(
+                        main.cell_accessor(*row, "SCAN_NUMBER").unwrap().scalar().unwrap(),
+                        casa_core::ScalarValue::Int32(number) if *number == scan
+                    )
+                })
+                .map(
+                    |row| match main.cell_accessor(row, "TIME").unwrap().scalar().unwrap() {
+                        casa_core::ScalarValue::Float64(time) => *time,
+                        other => panic!("TIME is {other:?}"),
+                    },
+                )
+                .collect::<Vec<_>>();
+            let lower = times.iter().copied().fold(f64::INFINITY, f64::min);
+            let upper = times.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            [lower, upper]
+        };
+        let observation = Msv2Observation::open(&path).expect("the MeasurementSet opens");
+        let all = RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All);
+        assert_eq!(surveyed_under(&observation, all.clone()).0, 1_058);
+        for (scan, rows) in [(1, 322), (3, 736)] {
+            let selection = all
+                .clone()
+                .with_scan_observation(IdSelection::Only(vec![scan]), IdSelection::All);
+            let (samples, times) = surveyed_under(&observation, selection);
+            assert_eq!(samples, rows, "scan {scan}");
+            let [lower, upper] = scan_times(scan as i32);
+            assert!(!times.is_empty());
+            assert!(
+                times.iter().all(|time| (lower..=upper).contains(time)),
+                "scan {scan}: an epoch outside {lower}..={upper}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_row_not_row_flagged_counts_however_its_cells_are_flagged() {
+        assert_eq!(
+            aw_cross_times([(false, true, false), (false, false, false)]).0,
+            Some(T0)
+        );
+        assert_eq!(
+            aw_cross_times([(false, true, false), (false, true, false)]).0,
+            Some(T0)
+        );
+    }
+
+    #[test]
+    fn a_row_flagged_row_does_not_count_however_its_cells_are_flagged() {
+        assert_eq!(
+            aw_cross_times([(true, false, false), (false, false, false)]).0,
+            Some(T0 + 3600.0)
+        );
+        assert_eq!(
+            aw_cross_times([(true, false, false), (true, false, false)]).0,
+            None
+        );
+    }
+
+    #[test]
+    fn rotation_epochs_exclude_flagged_and_auto_only_visibility_buffers() {
+        let both_cross = aw_cross_times([(true, false, false), (false, true, false)]);
+        assert_eq!(both_cross.1, [T0 + 3600.0]);
+        let earlier_auto = aw_cross_times([(false, false, true), (false, true, false)]);
+        assert_eq!(earlier_auto.1, [T0 + 3600.0]);
+    }
+}

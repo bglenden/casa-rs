@@ -44,10 +44,10 @@ imaging-t31-multidomain-geometry testdata_root casa_prefix:
     just arch-check
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model image_domain_projections_require_canonical_ordinals_and_share_equal_psf_values
     CARGO_INCREMENTAL=0 cargo test -p casa-ms reproject_raw_uvw --lib
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-products --test continuum_products two_domain_members_consume_their_matching_normal_and_model_chart -- --exact
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test continuum_application application_uses_weight_when_selected_weight_spectrum_cells_are_undefined -- --exact
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test continuum_application t31_application_executes_recentered_domains_through_one_scientific_route -- --exact
-    CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T31_CASA_PREFIX="{{casa_prefix}}" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test t31_multidomain_casa_oracle t31_multidomain_geometry_matches_frozen_casa_dirty_and_hogbom -- --ignored --exact --nocapture
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-products --test api continuum_products::two_domain_members_consume_their_matching_normal_and_model_chart -- --exact
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging --test api continuum_application::application_uses_weight_when_selected_weight_spectrum_cells_are_undefined -- --exact
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging --test api continuum_application::t31_application_executes_recentered_domains_through_one_scientific_route -- --exact
+    CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T31_CASA_PREFIX="{{casa_prefix}}" CARGO_INCREMENTAL=0 cargo test -p casa-parity --test api t31_multidomain_casa_oracle::t31_multidomain_geometry_matches_frozen_casa_dirty_and_hogbom -- --ignored --exact --nocapture
 
 # Focused #522 frame/interval evaluation and edge coverage.
 imaging-t36-spectral-law:
@@ -71,7 +71,7 @@ imaging-t41-moving-source-casa testdata_root cubesource_casa_prefix:
     set -euo pipefail
     test -d "{{testdata_root}}"
     CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CARGO_INCREMENTAL=0 cargo test -p casa-ms selected_observation::tests::t41_ephemeris_oracle::t41_trackfield_phase_centre_matches_casa_at_three_row_times -- --ignored --exact --nocapture
-    CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T41_CASA_PREFIX="{{cubesource_casa_prefix}}" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test t41_moving_source_casa_oracle t41_tracked_cubesource_matches_casa_geometry_and_dirty_products --release -- --ignored --exact --nocapture
+    CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T41_CASA_PREFIX="{{cubesource_casa_prefix}}" CARGO_INCREMENTAL=0 cargo test -p casa-parity --test api t41_moving_source_casa_oracle::t41_tracked_cubesource_matches_casa_geometry_and_dirty_products --release -- --ignored --exact --nocapture
 
 # Focused #534 heterogeneous ALMA/ACA response, bounded selection, and CASA product gate.
 imaging-t48-heterogeneous-response:
@@ -98,18 +98,18 @@ imaging-t42-mtmfs-normal:
 imaging-t43-mtmfs-clean:
     just arch-check
     CARGO_INCREMENTAL=0 cargo test -p casa-numerics dynamic_casacore_ldlt_matches_fixed_solver
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test compiled_problem
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test measurement_equation_contract
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test api compiled_problem::
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test api measurement_equation_contract::
 
 # Focused #530 sealed Taylor-product and frozen-CASA publication gate.
 imaging-t44-mtmfs-products testdata_root casa_python casa_prefix:
     just arch-check
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test compiled_problem
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-products --test continuum_products
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-products --test taylor_products
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test availability
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test api compiled_problem::
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-products --test api continuum_products::
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-products --test api taylor_products::
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging --test api availability::
     python3 tools/science/t44_test_mtmfs_products_compare.py
-    CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T44_APPLICATION_PREFIX="{{justfile_directory()}}/target/t43-t44-casa-oracle/rust-application/casa" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test mtmfs_publication_oracle t44_application_mtmfs_publishes_frozen_casa_product_contract -- --ignored --exact --nocapture
+    CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T44_APPLICATION_PREFIX="{{justfile_directory()}}/target/t43-t44-casa-oracle/rust-application/casa" CARGO_INCREMENTAL=0 cargo test -p casa-parity --test api mtmfs_publication_oracle::t44_application_mtmfs_publishes_frozen_casa_product_contract -- --ignored --exact --nocapture
     "{{casa_python}}" tools/science/t44_mtmfs_products_compare.py --casa-prefix "{{casa_prefix}}" --rust-prefix "{{justfile_directory()}}/target/t43-t44-casa-oracle/rust-application/casa" --summary-output "{{justfile_directory()}}/target/t43-t44-casa-oracle/t44-comparison.json"
 
 # Focused #545 memory admission and representative frozen-CASA production gate.
@@ -117,8 +117,8 @@ imaging-t59-low-memory representative_ms casa_prefix:
     test -d "{{representative_ms}}"
     test -e "{{casa_prefix}}.psf.tt0"
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test pass_laws residency::
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test continuum_application domains_and_waves::
-    CASA_RS_ISSUE607_MTMFS_MS="{{representative_ms}}" CASA_RS_ISSUE607_MTMFS_CASA_PREFIX="{{casa_prefix}}" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test mtmfs_publication_oracle issue607_representative_mtmfs_matches_casa_products --release -- --ignored --exact --nocapture
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging --test api continuum_application::domains_and_waves::
+    CASA_RS_ISSUE607_MTMFS_MS="{{representative_ms}}" CASA_RS_ISSUE607_MTMFS_CASA_PREFIX="{{casa_prefix}}" CARGO_INCREMENTAL=0 cargo test -p casa-parity --test api mtmfs_publication_oracle::issue607_representative_mtmfs_matches_casa_products --release -- --ignored --exact --nocapture
 
 release-perf:
     bash scripts/test-release-perf.sh

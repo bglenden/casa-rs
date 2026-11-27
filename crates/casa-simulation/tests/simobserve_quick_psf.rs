@@ -199,7 +199,7 @@ fn compare(reference: &Value, path: &Path) {
 }
 
 fn default_tclean_control(case: &Value, quick: &Path) {
-    use casa_imaging_application::{
+    use casa_imaging::{
         BackendRequest as ImagingBackend, Cancel, ImagingRequest, RunContext, execute,
     };
     let project = quick.parent().expect("project");

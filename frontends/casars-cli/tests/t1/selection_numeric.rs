@@ -5,9 +5,10 @@
 use std::path::Path;
 
 use casa_core::{ScalarValue, Value};
-use casa_imaging_application::{ImagingRequest, product_law};
+use casa_imaging::ImagingRequest;
 use casa_ms::{MeasurementSet, SubtableId};
 use casa_tasks::imaging::{ImagerRunTaskResult, ImagingParameters, resolve_request, run};
+use casa_test_support::{IMAGING_NRMS_TOLERANCE, image_nrms};
 use serde_json::json;
 
 use super::fixture::{Component, Observation, PHASE_CENTER_RAD, Setup};
@@ -90,9 +91,8 @@ fn compare_products(result: &ImagerRunTaskResult, prefix: &Path, reference: &Pat
     for artifact in result.artifacts.iter().filter(|artifact| artifact.exists) {
         let suffix = artifact.path.strip_prefix(prefix.as_ref()).unwrap();
         let expected = format!("{}{suffix}", reference.display());
-        let nrms =
-            product_law::image_nrms(Path::new(&expected), Path::new(&artifact.path)).unwrap();
-        assert!(nrms <= product_law::TOLERANCE, "{suffix}: {nrms:e}");
+        let nrms = image_nrms(Path::new(&expected), Path::new(&artifact.path)).unwrap();
+        assert!(nrms <= IMAGING_NRMS_TOLERANCE, "{suffix}: {nrms:e}");
     }
 }
 
@@ -188,7 +188,7 @@ fn refused_selectors_write_no_images() {
 #[test]
 fn single_term_controller_peak_matches_published_residual_units() {
     use casa_images::PagedImage;
-    use casa_imaging_application::{Cancel, HostResources, RunContext, execute};
+    use casa_imaging::{Cancel, HostResources, RunContext, execute};
     use casa_tasks::imaging::resolve_request;
 
     let observation = numeric_fixture();

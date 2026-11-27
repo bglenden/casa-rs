@@ -20,7 +20,7 @@ calibration = [
 ]
 imaging = [
     "dep:casa-images",
-    "dep:casa-imaging-application",
+    "dep:casa-imaging",
     "dep:casa-ms",
     "dep:ndarray",
 ]
@@ -65,7 +65,7 @@ casa-components = { workspace = true, optional = true }
 casa-contracts = { path = "../casa-contracts" }
 casa-imageanalysis = { workspace = true, optional = true }
 casa-images = { workspace = true, optional = true }
-casa-imaging-application = { path = "../../crates/casa-imaging-application", optional = true }
+casa-imaging = { workspace = true, optional = true }
 casa-lattices = { workspace = true, optional = true }
 casa-measures = { workspace = true, optional = true }
 casa-ms = { workspace = true, features = ["msv4"], optional = true }
@@ -90,6 +90,6 @@ tracing.workspace = true
 ureq = { version = "3", optional = true }
 
 [dev-dependencies]
-casa-imaging-deconvolution = { path = "../../crates/casa-imaging-deconvolution" }
+casa-imaging-deconvolution.workspace = true
 casa-test-support = { path = "../../dev/casa-test-support" }
 tempfile = "3"

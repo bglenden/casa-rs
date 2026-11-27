@@ -129,7 +129,7 @@ fn total_power<'a, 'b>(
         plan.tp_vis[0].clone()
     };
     let sparse = json!({"infiles":[input],"outfile":raw,"imsize":p.0["imsize"],"cell":[cell.clone(),cell],"phasecenter":plan.model.direction,"mode":"channel","nchan":plan.model.channels,"gridfunction":"sf","convsupport":6});
-    let result = casa_imaging_application::single_dish::image_from_sparse_parameters(
+    let result = casa_imaging::single_dish::image_from_sparse_parameters(
         sparse.as_object().unwrap(),
         &crate::simanalyze::imaging::context(resources, cancel),
     )

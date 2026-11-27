@@ -16,7 +16,7 @@ from perf_harness.subprocesses import run_command
 
 
 DEFAULT_PATHS = [
-    "crates/casa-imaging/src",
+    "libs/imaging/casa-imaging/src",
     "crates/casars-imager/src",
     "libs/casacore/casa-ms/src/visibility_buffer.rs",
     "libs/casacore/casa-ms/src/spectral_selection.rs",

@@ -3,9 +3,9 @@
 //! Field-name selection reaches production imaging (#54/#980).
 
 use casa_core::{ArrayValue, ScalarValue, Value};
-use casa_imaging_application::product_law;
 use casa_ms::build_table_schema;
 use casa_ms::{MeasurementSet, OptionalMainColumn};
+use casa_test_support::{IMAGING_NRMS_TOLERANCE, image_nrms};
 use ndarray::ArrayD;
 use serde_json::json;
 
@@ -34,12 +34,12 @@ fn field_names_patterns_and_mixed_lists_image_the_same_rows_as_ids() {
         let (_, b) = observation.image(&named, controls(names, false));
         assert_eq!(a.suffixes(), b.suffixes());
         for suffix in a.suffixes() {
-            let nrms = product_law::image_nrms(
+            let nrms = image_nrms(
                 &observation.scratch(&format!("{reference}{suffix}")),
                 &observation.scratch(&format!("{named}{suffix}")),
             )
             .unwrap();
-            assert!(nrms <= 1e-6, "{names} {suffix}: {nrms:e}");
+            assert!(nrms <= IMAGING_NRMS_TOLERANCE, "{names} {suffix}: {nrms:e}");
         }
     }
     let error = observation
