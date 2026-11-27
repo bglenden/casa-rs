@@ -12,10 +12,12 @@ interoperable MeasurementSets and images, and scientific results checked
 against CASA. The Python package and command-line suite run on **Linux
 x86_64** and **macOS on Apple Silicon**. See [Installation](#installation).
 
-**casa-rs reads and writes both MSv2 and XRADIO MSv4.** `tclean` can image
-either format directly. With `msconvert`, pass either format as `vis` and
-choose the output format independently with `outformat="msv2"` or
-`outformat="msv4"`. See the [`msconvert` parameters](docs/reference/task-parameters.md#surface-msconvert).
+**casa-rs reads and writes both MSv2 and XRADIO MSv4.** `tclean` and
+`tsdimaging` accept either format as input. With `msconvert`, pass either
+format as `vis` and choose the output format independently with
+`outformat="msv2"` or `outformat="msv4"`. See the [`msconvert` parameters](docs/reference/task-parameters.md#surface-msconvert).
+`mstransform` and `flagdata` still require MSv2, and `simobserve` writes MSv2.
+Broader task support is tracked in the [MeasurementSet format migration](https://github.com/bglenden/casa-rs/issues/1055).
 
 Matched benchmarks show speedups over CASA across a wide range of tasks and
 tools, including calibration, MeasurementSet transforms, plotting and image
