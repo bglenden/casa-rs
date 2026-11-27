@@ -1,18 +1,21 @@
 # casa-rs
 
 Truth class: current descriptive
-Last reality check: 2026-11-02
+Last reality check: 2026-11-27
 Verification: just docs-check
 
 ![casa-rs observatory assistant header](branding/headers/casa-rs-header.png)
 
-`casa-rs` is an experiment/hobby project by Brian Glendenning
-(<i>brian@glendenning.net</i>), NRAO retiree. It is a from-scratch Rust
-reimplementation of parts of CASA and casacore: persistent astronomical data,
-radio-interferometric processing, and the supporting numerical and coordinate
-infrastructure. CASA and casacore are used for interoperability tests,
-calculation checks, and performance comparisons; they are not required as
-runtime computation engines.
+**`casa-rs` aims for functional parity with CASA and faster execution.** It
+implements supported CASA workflows in Rust, with Python task and tool APIs,
+interoperable MeasurementSets and images, and scientific results checked
+against CASA. Selected imaging and simulation workloads ran **1.7–5.5×
+faster** on Apple Silicon in the [macOS benchmarks](#representative-macos-performance).
+CASA and casacore serve as test and benchmark references. The Rust
+implementation runs independently.
+
+This is an experiment/hobby project by Brian Glendenning
+(<i>brian@glendenning.net</i>), NRAO retiree.
 
 The source is almost entirely written by AI. I switch between Claude and
 Codex, prompting them using various strategies. Experimenting with development
@@ -24,21 +27,51 @@ are GPL-3.0-or-later. See [License](#license).
 Python is the user-facing surface, alongside reusable Rust libraries and
 command-line tasks.
 
+## CASA Compatibility
+
+The 61 CASA-named Python tasks match the parameter order, argument kinds and
+defaults of CASA 6.7.6.14. Supported options and behavioral coverage vary by
+task. This list describes the source checkout. Published releases may lag
+it. See the [CASA compatibility reference](docs/reference/casa-compatibility.md)
+for supported parameters, paired tests and remaining gaps.
+
+### Python tasks and tools
+
+| Area | Tasks in `casars.tasks` |
+|---|---|
+| Imaging and image analysis | `exportfits`, `feather`, `imhead`, `immath`, `immoments`, `impbcor`, `importfits`, `impv`, `imregrid`, `imstat`, `imsubimage`, `tclean` |
+| MeasurementSets and flagging | `concat`, `flagdata`, `flagmanager`, `importvla`, `initweights`, `mstransform`, `split`, `statwt` |
+| Calibration and visibility models | `accor`, `appendantab`, `applycal`, `bandpass`, `blcal`, `calstat`, `clearcal`, `delmod`, `fluxscale`, `fringefit`, `ft`, `gaincal`, `gencal`, `getantposalma`, `getcalmodvla`, `getjyperkalma`, `listcal`, `pccor`, `polcal`, `polfromgain`, `rerefant`, `setjy`, `smoothcal`, `uvmodelfit`, `uvsub`, `wvrgcal` |
+| Plotting | `plotbandpass`, `plotms` (static plots), `plotweather` |
+| Simulation and observing utilities | `getephemtable`, `predictcomp`, `simalma`, `simanalyze`, `simobserve` |
+| Single dish | `sdatmcor`, `sdbaseline`, `sdcal`, `sdfit`, `sdgaincal`, `sdsmooth`, `tsdimaging` |
+| casa-rs additions | `calibrate`, `msconvert`, `msexplore` |
+
+`casars.tools` exports `agentflagger`, `atmosphere`, `calanalysis`,
+`calibrater`, `componentlist`, `coordsys`, `image`, `imager`, `measures`, `ms`,
+`msmetadata`, `quanta`, `simulator`, `singledishms`, `table`, `tablerow`, and
+`wvr`. The 435 public methods across `image`, `coordsys`, `table`, `msmetadata`
+and `ms` passed behavioral acceptance against CASA 6.7.6.14. See the
+[Python binding closeout](https://github.com/bglenden/casa-rs/issues/1025#issuecomment-7225120185).
+
+### Representative macOS performance
+
+These are recorded wall times on Apple Silicon. Speedup is CASA wall time
+divided by casa-rs wall time for the listed workload. The evidence records
+give the inputs, build revisions and comparison conditions.
+
+| Workload | Mac and casa-rs backend | CASA | casa-rs | Speedup | Evidence |
+|---|---|---:|---:|---:|---|
+| `tclean`, 4096² continuum image, four spectral windows, Clark to 0.5 mJy | M4 MacBook Air, CPU f64, one worker | 246 s | 44.8–45.0 s | 5.5× | [Imaging row P17](https://github.com/bglenden/casa-rs/issues/648#issuecomment-6222278538) |
+| `tclean`, 1024² VLA spectral cube, 512 channels | M4 MacBook Air, Metal f32, four workers | 21,623 s | 4,144 s | 5.22× | [Full-cube comparison](https://github.com/bglenden/casa-rs/issues/659#issuecomment-6203335788) |
+| `tclean`, VLASS fragment, AW-projection and MT-MFS, warm convolution-function cache | M4 MacBook Air, CPU f64, one worker | 9,074 s | 4,765 s | 1.90× | [Imaging row P11, CASA 6.7.5.9](https://github.com/bglenden/casa-rs/issues/648#issuecomment-6222278538) |
+| `simobserve`, ALMA disk simulation with atmospheric noise | Apple Silicon Mac mini, CPU | 2.42 s | 1.41 s | 1.71× | [Simulation case `psim2`](resources/casa-compat/evidence/simobserve-parity-20261103.json) |
+
 ## Current Status
 
-The project implements substantial table, MeasurementSet, image, calibration,
-flagging, simulation, and imaging functionality. It remains experimental:
-implemented functionality is not a claim of complete CASA task or casacore
-module parity, and APIs and workflows are still evolving. Published release
-assets may lag the checkout.
-
-The central requirements are CASA-compatible persistent data and scientific
-agreement with CASA. Tests compare both implementations' reads and writes,
-and imaging acceptance normally targets normalized RMS differences around
-0.001 together with metadata, mask, beam, flux, and other scientific checks.
-Bitwise reproducibility is not the goal. Acceptance and performance evidence
-are specific to the workload and configuration; passing a small test is not
-blanket scientific validation. See [TESTING.md](TESTING.md).
+Tests compare both implementations' reads and writes. Imaging acceptance
+normally targets normalized RMS differences around 0.001 alongside metadata,
+mask, beam, flux and other scientific checks. See [TESTING.md](TESTING.md).
 
 | Capability | Current implementation |
 |---|---|
@@ -49,9 +82,9 @@ blanket scientific validation. See [TESTING.md](TESTING.md).
 | Imaging | Continuum and spectral cubes; standard, W-projection, mosaic, and AW-projection gridders; Högbom, Clark, multiscale, and MT-MFS deconvolution; masks, restoration, and primary-beam products. Not every combination is available. |
 | Python | In-process NumPy-compatible table/image access, generated task wrappers, shared parameter profiles, and numeric MeasurementSet plot documents. |
 
-The imaging foundation uses one compile/plan/run path through
-`casa-imaging-application`, with separate owners for the measurement operator,
-deconvolution, products, execution, and Metal acceleration. Explicitly
+The imaging foundation uses one compile/plan/run path through `casa-imaging`,
+with separate owners for the measurement operator, deconvolution, products,
+execution, and Metal acceleration. Explicitly
 unsupported requests fail before execution. Current limits include:
 
 - AW projection supports continuum/MT-MFS, not spectral cubes; native
@@ -62,7 +95,7 @@ unsupported requests fail before execution. Current limits include:
   macOS hardware; W and AW projection use the CPU.
 
 The authoritative availability checks are in
-[`availability.rs`](crates/casa-imaging-application/src/availability.rs).
+[`availability.rs`](libs/imaging/casa-imaging/src/availability.rs).
 Current work and remaining acceptance obligations live in
 [GitHub issues](https://github.com/bglenden/casa-rs/issues) and pull requests.
 
@@ -117,15 +150,12 @@ print(stats["rms"])
 Named wrappers take CASA's parameters and run in the current directory;
 `tasks.run(task_name, parameters=None, /, *, workspace=None, **values)` runs
 any catalog task from a draft, in a chosen workspace. Each call resolves its
-parameters through the shared Rust contracts and starts the task's own
-executable, whose log reaches `sys.stderr` as it runs. They do not call CASA.
-A task whose surface names its CASA task (every CASA-named task but `plotms`,
-`tclean` among them) has CASA's signature and returns CASA's value, such as
-`imstat`'s statistics dictionary, `flagdata`'s summary, `fluxscale`'s flux
-densities or `tclean`'s summary record. A task that refuses its
-parameters raises
-`casars.tasks.TaskParameterError`, a `ValueError`; one that does not succeed
-raises `casars.tasks.TaskExecutionError`.
+parameters through the shared Rust contracts and runs in process. The task's
+log reaches `sys.stderr` as it runs. CASA-named wrappers return CASA's value,
+such as `imstat`'s statistics dictionary, `flagdata`'s summary, `fluxscale`'s
+flux densities or `tclean`'s summary record. Parameter refusals raise
+`casars.tasks.TaskParameterError`, a `ValueError`. Failed executions raise
+`casars.tasks.TaskExecutionError`.
 Parameters can also be loaded, edited, validated, and saved as sparse TOML
 profiles:
 
@@ -166,8 +196,8 @@ implementation, not a wrapper around casacore C++.
 | Python | `frontends/casars-python/`, with its PyO3 extension `casars._core` |
 | Comparison and test support | `dev/casa-test-support`, `dev/casa-dev-tools`, `suites/`, `tools/science/` |
 
-The [application catalog](crates/casa-provider-contracts/resources/application-catalog.json)
-and [parameter surfaces](crates/casa-provider-contracts/resources/parameter-surfaces.json)
+The [application catalog](surfaces/casa-contracts/resources/application-catalog.json)
+and [parameter surfaces](surfaces/casa-contracts/resources/parameter-surfaces.json)
 are shared by the task executables and Python. The
 [architecture document](ARCHITECTURE.md) describes ownership and dependency
 rules in detail.
