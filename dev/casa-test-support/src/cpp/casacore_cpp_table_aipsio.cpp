@@ -710,7 +710,49 @@ int32_t cpp_table_verify_undefined_scalars(const char* path, char** out_error) {
     } catch (...) { *out_error = make_error("unknown exception in verify_undefined_scalars"); return -1; }
 }
 
+void define_rank_zero_empty_record_arrays(casacore::TableRecord& arrays) {
+    using namespace casacore;
+    arrays.define("bool", Array<Bool>());
+    arrays.define("u8", Array<uChar>());
+    arrays.define("i16", Array<Short>());
+    arrays.define("i32", Array<Int>());
+    arrays.define("u32", Array<uInt>());
+    arrays.define("i64", Array<Int64>());
+    arrays.define("f32", Array<Float>());
+    arrays.define("f64", Array<Double>());
+    arrays.define("c32", Array<Complex>());
+    arrays.define("c64", Array<DComplex>());
+    arrays.define("str", Array<String>());
+}
+
+void verify_record_arrays(const casacore::RecordInterface& record) {
+    using namespace casacore;
+    const RecordInterface& arrays = record.asRecord("empty_arrays");
+    const std::pair<const char*, DataType> types[] = {
+        {"bool", TpArrayBool}, {"u8", TpArrayUChar}, {"i16", TpArrayShort},
+        {"i32", TpArrayInt}, {"u32", TpArrayUInt}, {"i64", TpArrayInt64},
+        {"f32", TpArrayFloat}, {"f64", TpArrayDouble}, {"c32", TpArrayComplex},
+        {"c64", TpArrayDComplex}, {"str", TpArrayString},
+    };
+    for (const auto& [name, type] : types) {
+        if (arrays.dataType(name) != type) {
+            throw std::runtime_error(std::string("empty record array type mismatch: ") + name);
+        }
+        const IPosition shape = arrays.shape(name);
+        if (!shape.empty() && !shape.isEqual(IPosition(1, 0))) {
+            throw std::runtime_error(std::string("empty record array shape mismatch: ") + name);
+        }
+    }
+
+    const Array<Double>& singleton = record.asArrayDouble("one");
+    if (!singleton.shape().isEqual(IPosition(1, 1)) || *singleton.cbegin() != 42.75) {
+        throw std::runtime_error("record array 'one' should hold 42.75 in shape [1]");
+    }
+}
+
 // Record column: 3-row table with scalar Int "id" and record "meta".
+// The same array fields appear in a table keyword and in the first record cell.
+
 // Row 0: meta = {unit: "Jy", value: 2.5}
 // Row 1: meta = {flag: True}
 // Row 2: meta = {} (empty record)
@@ -737,6 +779,13 @@ void write_record_column_impl(const std::string& path) {
     casacore::TableRecord rec0;
     rec0.define("unit", casacore::String("Jy"));
     rec0.define("value", 2.5);
+    casacore::TableRecord empties;
+    define_rank_zero_empty_record_arrays(empties);
+    casacore::TableRecord arrays;
+    arrays.defineRecord("empty_arrays", empties);
+    arrays.define("one", casacore::Vector<casacore::Double>(1, 42.75));
+    rec0.merge(arrays);
+    table.rwKeywordSet().defineRecord("arrays", arrays);
     meta_col.put(0, rec0);
 
     // Row 1: {flag: True}
@@ -772,6 +821,8 @@ void verify_record_column_impl(const std::string& path) {
     if (r0.asDouble("value") != 2.5) {
         throw std::runtime_error("row 0 meta.value != 2.5");
     }
+    verify_record_arrays(r0);
+    verify_record_arrays(table.keywordSet().asRecord("arrays"));
 
     // Row 1: {flag: True}
     casacore::TableRecord r1 = meta_col(1);

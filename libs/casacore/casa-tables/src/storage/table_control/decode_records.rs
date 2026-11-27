@@ -670,19 +670,6 @@ pub(super) fn read_array_record_field(
     let version = io.getstart(&type_name)?;
     let ndim = io.get_u32()? as usize;
 
-    if ndim == 0 {
-        io.getend()?;
-        // Return a zero-element array of the appropriate type.
-        return match dt {
-            CasacoreDataType::TpArrayString => Ok(Value::Array(ArrayValue::String(
-                ArrayD::from_shape_vec(IxDyn(&[0]).f(), vec![]).unwrap(),
-            ))),
-            _ => Ok(Value::Array(ArrayValue::Float32(
-                ArrayD::from_shape_vec(IxDyn(&[0]).f(), vec![]).unwrap(),
-            ))),
-        };
-    }
-
     // Older versions (< 3) include an origin before the shape.
     if version < 3 {
         for _ in 0..ndim {
@@ -691,16 +678,26 @@ pub(super) fn read_array_record_field(
     }
 
     // Shape: ndim × u32 (NOT an IPosition AipsIO object).
-    let mut shape = Vec::with_capacity(ndim);
+    let mut shape = Vec::with_capacity(ndim.max(1));
     for _ in 0..ndim {
         shape.push(io.get_u32()? as usize);
     }
-    let nelem: usize = shape.iter().product();
+    let count = io.get_u32()? as usize;
+    if ndim == 0 {
+        // casacore's empty IPosition has no elements. A rank-zero ndarray
+        // would instead hold one element, so represent this as shape [0].
+        if count != 0 {
+            return Err(StorageError::FormatMismatch(format!(
+                "rank-zero record array has element count {count}, expected 0"
+            )));
+        }
+        shape.push(0);
+    }
+    let count = count.min(shape.iter().product());
 
     let av = match dt {
         CasacoreDataType::TpArrayBool => {
-            let count = io.get_u32()? as usize;
-            let mut vals = vec![false; count.min(nelem)];
+            let mut vals = vec![false; count];
             // casacore's TypeIO stores Booleans bit-packed, eight to a byte.
             io.get_bool_into(&mut vals)?;
             ArrayValue::Bool(
@@ -709,8 +706,7 @@ pub(super) fn read_array_record_field(
             )
         }
         CasacoreDataType::TpArrayUChar => {
-            let count = io.get_u32()? as usize;
-            let mut vals = vec![0u8; count.min(nelem)];
+            let mut vals = vec![0u8; count];
             for v in vals.iter_mut() {
                 *v = io.get_u8()?;
             }
@@ -720,8 +716,7 @@ pub(super) fn read_array_record_field(
             )
         }
         CasacoreDataType::TpArrayShort => {
-            let count = io.get_u32()? as usize;
-            let mut vals = vec![0i16; count.min(nelem)];
+            let mut vals = vec![0i16; count];
             for v in vals.iter_mut() {
                 *v = io.get_i16()?;
             }
@@ -731,8 +726,7 @@ pub(super) fn read_array_record_field(
             )
         }
         CasacoreDataType::TpArrayUShort => {
-            let count = io.get_u32()? as usize;
-            let mut vals = vec![0u16; count.min(nelem)];
+            let mut vals = vec![0u16; count];
             for v in vals.iter_mut() {
                 *v = io.get_u16()?;
             }
@@ -742,8 +736,7 @@ pub(super) fn read_array_record_field(
             )
         }
         CasacoreDataType::TpArrayInt => {
-            let count = io.get_u32()? as usize;
-            let mut vals = vec![0i32; count.min(nelem)];
+            let mut vals = vec![0i32; count];
             for v in vals.iter_mut() {
                 *v = io.get_i32()?;
             }
@@ -753,8 +746,7 @@ pub(super) fn read_array_record_field(
             )
         }
         CasacoreDataType::TpArrayUInt => {
-            let count = io.get_u32()? as usize;
-            let mut vals = vec![0u32; count.min(nelem)];
+            let mut vals = vec![0u32; count];
             for v in vals.iter_mut() {
                 *v = io.get_u32()?;
             }
@@ -764,8 +756,7 @@ pub(super) fn read_array_record_field(
             )
         }
         CasacoreDataType::TpArrayFloat => {
-            let count = io.get_u32()? as usize;
-            let mut vals = vec![0f32; count.min(nelem)];
+            let mut vals = vec![0f32; count];
             for v in vals.iter_mut() {
                 *v = io.get_f32()?;
             }
@@ -775,8 +766,7 @@ pub(super) fn read_array_record_field(
             )
         }
         CasacoreDataType::TpArrayDouble => {
-            let count = io.get_u32()? as usize;
-            let mut vals = vec![0f64; count.min(nelem)];
+            let mut vals = vec![0f64; count];
             for v in vals.iter_mut() {
                 *v = io.get_f64()?;
             }
@@ -786,8 +776,7 @@ pub(super) fn read_array_record_field(
             )
         }
         CasacoreDataType::TpArrayComplex => {
-            let count = io.get_u32()? as usize;
-            let mut vals = vec![Complex32::new(0.0, 0.0); count.min(nelem)];
+            let mut vals = vec![Complex32::new(0.0, 0.0); count];
             for v in vals.iter_mut() {
                 *v = io.get_complex32()?;
             }
@@ -797,8 +786,7 @@ pub(super) fn read_array_record_field(
             )
         }
         CasacoreDataType::TpArrayDComplex => {
-            let count = io.get_u32()? as usize;
-            let mut vals = vec![Complex64::new(0.0, 0.0); count.min(nelem)];
+            let mut vals = vec![Complex64::new(0.0, 0.0); count];
             for v in vals.iter_mut() {
                 *v = io.get_complex64()?;
             }
@@ -808,9 +796,8 @@ pub(super) fn read_array_record_field(
             )
         }
         CasacoreDataType::TpArrayString => {
-            let count = io.get_u32()? as usize;
-            let mut vals = Vec::with_capacity(count.min(nelem));
-            for _ in 0..count.min(nelem) {
+            let mut vals = Vec::with_capacity(count);
+            for _ in 0..count {
                 vals.push(io.get_string()?);
             }
             ArrayValue::String(
@@ -819,8 +806,7 @@ pub(super) fn read_array_record_field(
             )
         }
         CasacoreDataType::TpArrayInt64 => {
-            let count = io.get_u32()? as usize;
-            let mut vals = vec![0i64; count.min(nelem)];
+            let mut vals = vec![0i64; count];
             for v in vals.iter_mut() {
                 *v = io.get_i64()?;
             }

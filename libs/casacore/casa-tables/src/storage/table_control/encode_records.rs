@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use super::*;
+use crate::storage::stman_array_file::stored_shape_ref;
 
 pub(crate) fn write_ref_table_stream(
     mut io: AipsIo,
@@ -408,7 +409,8 @@ pub(super) fn write_record_field_value(io: &mut AipsIo, value: &Value) -> Result
 
 /// Write an array-typed record field to AipsIO.
 ///
-/// C++ serializes `Array<T>` as: `"Array"` v3 → Int ndim → IPosition shape → count + data.
+/// The version 3 array object stores its rank and extents, followed by the
+/// element count and data.
 pub(super) fn write_array_record_field(
     io: &mut AipsIo,
     av: &ArrayValue,
@@ -430,17 +432,13 @@ pub(super) fn write_array_record_field(
     };
     io.putstart(type_name, 3)?;
 
-    // Write ndim as u32, then shape as ndim × u32 (NOT as IPosition).
-    let ndim = av.ndim() as u32;
-    io.put_u32(ndim)?;
-    if ndim > 0 {
-        for &d in av.shape() {
-            io.put_u32(d as u32)?;
-        }
-        let nelem = av.len() as u32;
-        io.put_u32(nelem)?;
-        write_array_elements(io, av)?;
+    let shape = stored_shape_ref(av.shape());
+    io.put_u32(shape.len() as u32)?;
+    for &extent in shape {
+        io.put_u32(extent as u32)?;
     }
+    io.put_u32(av.len() as u32)?;
+    write_array_elements(io, av)?;
 
     io.putend()?;
     Ok(())

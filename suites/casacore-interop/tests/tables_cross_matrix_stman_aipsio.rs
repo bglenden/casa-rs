@@ -1037,6 +1037,42 @@ fn stride_read_on_cpp_written_table() {
 // Record columns (Wave 16)
 // ---------------------------------------------------------------------------
 
+fn record_array_fields() -> [RecordField; 2] {
+    macro_rules! empty {
+        ($name:literal, $variant:ident) => {
+            RecordField::new(
+                $name,
+                Value::Array(ArrayValue::$variant(
+                    ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(&[0]), Vec::new()).unwrap(),
+                )),
+            )
+        };
+    }
+    let empties = RecordValue::new(vec![
+        empty!("bool", Bool),
+        empty!("u8", UInt8),
+        empty!("i16", Int16),
+        empty!("i32", Int32),
+        empty!("u32", UInt32),
+        empty!("i64", Int64),
+        empty!("f32", Float32),
+        empty!("f64", Float64),
+        empty!("c32", Complex32),
+        empty!("c64", Complex64),
+        empty!("str", String),
+    ]);
+    [
+        RecordField::new("empty_arrays", Value::Record(empties)),
+        RecordField::new("one", record_array_singleton(&[1])),
+    ]
+}
+
+fn record_array_singleton(shape: &[usize]) -> Value {
+    Value::Array(ArrayValue::Float64(
+        ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(shape), vec![42.75]).unwrap(),
+    ))
+}
+
 fn record_column_fixture() -> TableFixture {
     let schema = TableSchema::new(vec![
         ColumnSchema::scalar("id", PrimitiveType::Int32),
@@ -1044,16 +1080,15 @@ fn record_column_fixture() -> TableFixture {
     ])
     .expect("schema");
 
+    let mut meta = vec![
+        RecordField::new("unit", Value::Scalar(ScalarValue::String("Jy".into()))),
+        RecordField::new("value", Value::Scalar(ScalarValue::Float64(2.5))),
+    ];
+    meta.extend(record_array_fields());
     let rows = vec![
         RecordValue::new(vec![
             RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
-            RecordField::new(
-                "meta",
-                Value::Record(RecordValue::new(vec![
-                    RecordField::new("unit", Value::Scalar(ScalarValue::String("Jy".into()))),
-                    RecordField::new("value", Value::Scalar(ScalarValue::Float64(2.5))),
-                ])),
-            ),
+            RecordField::new("meta", Value::Record(RecordValue::new(meta))),
         ]),
         RecordValue::new(vec![
             RecordField::new("id", Value::Scalar(ScalarValue::Int32(2))),
@@ -1074,7 +1109,10 @@ fn record_column_fixture() -> TableFixture {
     TableFixture {
         schema,
         rows,
-        table_keywords: RecordValue::default(),
+        table_keywords: RecordValue::new(vec![RecordField::new(
+            "arrays",
+            Value::Record(RecordValue::new(record_array_fields().into())),
+        )]),
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::AipsIORecordColumn),
         tile_shape: None,
@@ -1086,6 +1124,55 @@ fn record_column_fixture() -> TableFixture {
 fn record_column_cross_matrix() {
     let fixture = record_column_fixture();
     assert_matrix_results(&run_full_cross_matrix(&fixture, ManagerKind::StManAipsIO));
+    assert_matrix_results(&run_endian_cross_matrix(&fixture, ManagerKind::StManAipsIO));
+}
+
+#[test]
+fn scalar_shaped_arrays_in_keywords_and_record_column_keep_their_element() {
+    let mut fixture = record_column_fixture();
+    let with_scalar_shape = |record: Option<&Value>| {
+        let Some(Value::Record(record)) = record else {
+            panic!("fixture record missing");
+        };
+        let mut record = record.clone();
+        record.upsert("one", record_array_singleton(&[]));
+        Value::Record(record)
+    };
+    let meta = with_scalar_shape(fixture.rows[0].get("meta"));
+    fixture.rows[0].upsert("meta", meta);
+    let arrays = with_scalar_shape(fixture.table_keywords.get("arrays"));
+    fixture.table_keywords.upsert("arrays", arrays);
+
+    use casa_tables::{DataManagerKind, EndianFormat};
+    let temp = tempfile::tempdir().unwrap();
+    for manager in [DataManagerKind::StManAipsIO, DataManagerKind::StandardStMan] {
+        for endian in [EndianFormat::BigEndian, EndianFormat::LittleEndian] {
+            let path = temp
+                .path()
+                .join(format!("scalar-{manager:?}-{endian:?}.tbl"));
+            let options = TableOptions::new(&path)
+                .with_data_manager(manager)
+                .with_endian_format(endian);
+            let mut table =
+                Table::from_rows_with_schema(fixture.rows.clone(), fixture.schema.clone()).unwrap();
+            *table.keywords_mut() = fixture.table_keywords.clone();
+            table.save(options).unwrap();
+            drop(table);
+
+            if casa_test_support::casacore_oracle_available() {
+                TableOracle::table_verify(CppTableFixture::AipsIORecordColumn, &path)
+                    .expect("casacore reads the singleton keyword and record cell");
+            }
+            let table = Table::open(TableOptions::new(&path)).unwrap();
+            let cell = table.cell_accessor(0, "meta").unwrap().value().unwrap();
+            for record in [table.keywords().get("arrays"), cell] {
+                let Some(Value::Record(record)) = record else {
+                    panic!("reopened record missing");
+                };
+                assert_eq!(record.get("one"), Some(&record_array_singleton(&[1])));
+            }
+        }
+    }
 }
 
 #[test]

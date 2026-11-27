@@ -257,7 +257,7 @@ pub(super) fn stored_shape(shape: &[usize]) -> Vec<usize> {
     stored_shape_ref(shape).to_vec()
 }
 
-fn stored_shape_ref(shape: &[usize]) -> &[usize] {
+pub(super) fn stored_shape_ref(shape: &[usize]) -> &[usize] {
     if shape.is_empty() { &[1] } else { shape }
 }
 

@@ -116,6 +116,33 @@ fn an_array_keyword_is_of_variable_shape_in_its_record_desc() {
 }
 
 #[test]
+fn rank_zero_record_array_requires_a_zero_element_count() {
+    let directory = tempfile::tempdir().unwrap();
+    for count in [0, 1] {
+        let path = directory.path().join(format!("rank-zero-{count}.aips"));
+        {
+            let mut writer = AipsIo::open(&path, AipsOpenOption::New).unwrap();
+            writer.putstart("Array<short>", 3).unwrap();
+            writer.put_u32(0).unwrap();
+            writer.put_u32(count).unwrap();
+            writer.putend().unwrap();
+        }
+        let mut reader = AipsIo::open(&path, AipsOpenOption::Old).unwrap();
+        // casacore's RecordRep cannot store UInt16, but the native codec
+        // supports the tag and must retain it when the payload is empty.
+        let decoded = read_array_record_field(&mut reader, CasacoreDataType::TpArrayUShort);
+        if count == 0 {
+            let Value::Array(ArrayValue::UInt16(array)) = decoded.unwrap() else {
+                panic!("expected UInt16 array");
+            };
+            assert_eq!(array.shape(), &[0]);
+        } else {
+            assert!(matches!(decoded, Err(StorageError::FormatMismatch(_))));
+        }
+    }
+}
+
+#[test]
 fn column_keywords_roundtrip_in_table_dat() {
     // Build a ColumnDescContents with nested record keywords
     let mut measinfo = RecordValue::default();
