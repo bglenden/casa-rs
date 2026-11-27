@@ -298,10 +298,10 @@ def tclean(
     """Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.
 
     CASA's ``tclean``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #980:
-    ``interactive``.
-    Accepted only at CASA's default, where CASA reads them, until #1070:
-    ``computepastep``, ``rotatepastep``.
+    Only CASA's defaults are accepted for ``interactive`` where CASA reads
+    them (see #980).
+    Only CASA's defaults are accepted for ``computepastep``,
+    ``rotatepastep`` where CASA reads them (see #1070).
     """
     return _call_casa(tclean, locals())
 
@@ -1075,9 +1075,9 @@ def plotms(
     """Plot selected MeasurementSet or calibration table data.
 
     CASA's ``plotms``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #1032:
-    ``plotindex``, ``extendflag``, ``extcorr``, ``extchannel``,
-    ``clearplots``.
+    Only CASA's defaults are accepted for ``plotindex``, ``extendflag``,
+    ``extcorr``, ``extchannel``, ``clearplots`` where CASA reads them (see
+    #1032).
     """
     return _call_casa(plotms, locals())
 
@@ -1373,8 +1373,8 @@ def simanalyze(
     """Image and analyze a simulated observation: CASA's simanalyze
 
     CASA's ``simanalyze``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #980:
-    ``interactive``.
+    Only CASA's defaults are accepted for ``interactive`` where CASA reads
+    them (see #980).
     """
     return _call_casa(simanalyze, locals())
 
@@ -1416,10 +1416,10 @@ def tsdimaging(
     """Grid total-power spectra by pointing into a CASA image and weight image.
 
     CASA's ``tsdimaging``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #938:
-    ``field``, ``scan``, ``timerange``, ``outframe``, ``mode``, ``veltype``,
-    ``specmode``, ``interpolation``, ``pointingcolumn``, ``convertfirst``,
-    ``projection``, ``stokes``, ``clipminmax``.
+    Only CASA's defaults are accepted for ``field``, ``scan``,
+    ``timerange``, ``outframe``, ``mode``, ``veltype``, ``specmode``,
+    ``interpolation``, ``pointingcolumn``, ``convertfirst``, ``projection``,
+    ``stokes``, ``clipminmax`` where CASA reads them (see #938).
     """
     return _call_casa(tsdimaging, locals())
 
@@ -1437,8 +1437,8 @@ def concat(
     """Concatenate simulated interferometric MeasurementSets with per-input weights.
 
     CASA's ``concat``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #939:
-    ``respectname``, ``timesort``, ``forcesingleephemfield``.
+    Only CASA's defaults are accepted for ``respectname``, ``timesort``,
+    ``forcesingleephemfield`` where CASA reads them (see #939).
     """
     return _call_casa(concat, locals())
 
