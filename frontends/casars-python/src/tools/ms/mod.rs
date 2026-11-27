@@ -63,6 +63,7 @@ struct AttachedMs {
     main: Table,
     main_files: attachment_info::TableFiles,
     main_stamp: Option<attachment_info::TableStamp>,
+    asdm_index: Option<Option<Arc<casa_tables::AsdmBdfIndex>>>,
     #[cfg(unix)]
     history_snapshot: Option<history::HistorySnapshot>,
     subtables: subtable_queries::Subtables,
@@ -132,6 +133,7 @@ impl AttachedMs {
             main,
             main_files,
             main_stamp,
+            asdm_index: None,
             #[cfg(unix)]
             history_snapshot: None,
             subtables: subtable_queries::Subtables::default(),
