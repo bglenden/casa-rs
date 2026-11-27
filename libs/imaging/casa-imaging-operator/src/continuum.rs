@@ -240,17 +240,15 @@ pub fn fit_and_subtract_continuum(
         .min(u8::try_from(valid_indices.len() - 1).unwrap_or(u8::MAX));
     let coefficient_count = usize::from(effective_order) + 1;
     let fit_component = |component: fn(Complex64) -> f64| {
-        let samples = valid_indices
-            .iter()
-            .map(|&index| {
-                (
-                    normalized[index],
-                    component(input.samples[index].visibility),
-                    input.samples[index].weight,
-                )
-            })
-            .collect::<Vec<_>>();
-        fit_polynomial_row(&samples, coefficient_count, RowWeights::Supplied)
+        let samples = valid_indices.iter().map(|&index| {
+            let sample = input.samples[index];
+            (
+                normalized[index],
+                component(sample.visibility),
+                sample.weight,
+            )
+        });
+        fit_polynomial_row(samples, coefficient_count, RowWeights::Supplied)
             .ok_or(ContinuumFitError::SingularFit)
     };
     let real = fit_component(|value| value.re)?;
