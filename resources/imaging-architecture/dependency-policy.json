@@ -338,7 +338,7 @@
     "libs/casacore/casa-measures/src"
    ],
    "exclude_roots": [
-    "libs/casacore/casa-tables/src/log_table.rs"
+    "libs/casacore/casa-tables/src/log_table/mod.rs"
    ],
    "extensions": [
     ".rs"
@@ -540,15 +540,6 @@
   "libs/casa/casa-singledish/src/single_dish_import.rs",
   "libs/casa/casa-singledish/src/single_dish_import/asap.rs",
   "libs/casa/casa-singledish/src/single_dish_import/nro.rs",
-  "libs/casacore/casa-tables/src/lock/lock_file.rs",
-  "libs/casacore/casa-tables/src/log_table.rs",
-  "libs/casacore/casa-tables/src/publication.rs",
-  "libs/casacore/casa-tables/src/table/columns.rs",
-  "libs/casacore/casa-tables/src/table/tests.rs",
-  "libs/casacore/casa-tables/src/table_impl.rs",
-  "libs/casacore/casa-tables/src/taql/eval.rs",
-  "libs/casacore/casa-tables/tests/api.rs",
-  "libs/casacore/casa-tables/tests/lock_multiprocess.rs",
   "libs/imaging/casa-imaging-deconvolution/src/mask.rs",
   "libs/imaging/casa-imaging-deconvolution/src/normal_state.rs",
   "libs/imaging/casa-imaging-deconvolution/src/normal_state/storage.rs",
