@@ -12015,6 +12015,14 @@ result under the transient view's nonexistent directory. casa-rs reports
 that the view has no persisted directory and preserves the current selection
 (#1030).
 
+For `GIVING "parent.ms::RESULT" AS MEMORY`, CASA returns a usable memory
+selection but stores a keyword pointing to a transient directory that no disk
+reader can reopen. casa-rs validates the parent and leaves its persisted
+keywords intact. An untyped named `GIVING` from an existing memory selection
+also creates an unopenable RefTable in CASA. casa-rs persists the selected
+rows as an independent table and keeps the memory selection's row IDs
+(#1030).
+
 ## Duplicate observations can interrupt a subtable-only concatenation
 
 With two identical OBSERVATION rows in the attached MeasurementSet and

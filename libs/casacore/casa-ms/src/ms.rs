@@ -69,6 +69,7 @@ pub struct MeasurementSet {
     main: Table,
     subtables: HashMap<SubtableId, Table>,
     subtable_paths: HashMap<SubtableId, PathBuf>,
+    detached_keyword_tables: std::collections::BTreeMap<PathBuf, Table>,
     path: Option<PathBuf>,
 }
 
@@ -177,6 +178,7 @@ impl MeasurementSet {
             main,
             subtables,
             subtable_paths,
+            detached_keyword_tables: Default::default(),
             path: Some(path),
         })
     }
@@ -245,6 +247,7 @@ impl MeasurementSet {
             main,
             subtables,
             subtable_paths,
+            detached_keyword_tables: Default::default(),
             path: Some(path),
         };
         tracing::info!(
@@ -538,6 +541,10 @@ impl MeasurementSet {
         self.path = Some(target.staging_path().to_path_buf());
         self.rebase_subtable_paths(target.staging_path());
         self.save_using(save_main)?;
+        for (relative, table) in &self.detached_keyword_tables {
+            let output = target.staging_path().join(relative);
+            table.save(measurement_set_table_options(&output))?;
+        }
         target
             .commit()
             .map_err(|error| MsError::InvalidInput(error.to_string()))?;
@@ -1053,6 +1060,7 @@ impl MeasurementSet {
             main,
             subtables,
             subtable_paths,
+            detached_keyword_tables: Default::default(),
             path,
         })
     }

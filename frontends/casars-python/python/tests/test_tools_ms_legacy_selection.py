@@ -239,8 +239,6 @@ def test_legacy_taql_giving_persists_an_ordered_reference(native_dataset, tmp_pa
     with pytest.raises(RuntimeError, match="not a true table directory"):
         reader.selecttaqlold(f'True GIVING "{protected}"')
     assert (protected / "sentinel").read_text() == "preserve"
-    with pytest.raises(NotImplementedError, match=r"GIVING.*#1030"):
-        reader.selecttaqlold(f'True GIVING "{tmp_path / "typed.ms"}" AS MEMORY')
     np.testing.assert_array_equal(reader.rangeold("rows")["rows"], order)
     assert reader.done()
 

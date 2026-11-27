@@ -413,7 +413,9 @@ impl AttachedMs {
         let nonempty = !selected.is_empty();
         let output = match staged {
             Some(PreparedLegacyQuery::Disk(stage)) => Some(stage.publish(&mut self.write_locks)?),
-            Some(PreparedLegacyQuery::Memory(view)) => Some(PublishedLegacyQuery::Independent(view)),
+            Some(PreparedLegacyQuery::Memory(view)) => {
+                Some(PublishedLegacyQuery::Independent(view))
+            }
             None => None,
         };
         let view = self.legacy_view_mut();
@@ -485,11 +487,14 @@ impl AttachedMs {
                     self.legacy_selection.query_parent(&self.path),
                     &self.path,
                 )?;
-                self.memory_ms.is_none().then(|| {
-                    let mut memory = self.new_legacy_memory(&output)?;
-                    memory.legacy_selection.query_parent = LegacyQueryParent::Transient;
-                    Ok::<_, PyErr>(PreparedLegacyQuery::Memory(Box::new(memory)))
-                }).transpose()?
+                self.memory_ms
+                    .is_none()
+                    .then(|| {
+                        let mut memory = self.new_legacy_memory(&output)?;
+                        memory.legacy_selection.query_parent = LegacyQueryParent::Transient;
+                        Ok::<_, PyErr>(PreparedLegacyQuery::Memory(Box::new(memory)))
+                    })
+                    .transpose()?
             } else {
                 self.stage_legacy_query(table, &output, &giving.table_name, options, original_path)?
                     .map(|stage| PreparedLegacyQuery::Disk(Box::new(stage)))
