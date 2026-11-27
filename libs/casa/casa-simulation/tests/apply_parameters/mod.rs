@@ -9,7 +9,7 @@ use support::run;
 
 fn fixture() -> Value {
     let mut text = String::new();
-    GzDecoder::new(&include_bytes!("data/sm_apply_parameters_casa.json.gz")[..])
+    GzDecoder::new(&include_bytes!("../data/sm_apply_parameters_casa.json.gz")[..])
         .read_to_string(&mut text)
         .unwrap();
     let fixture: Value = serde_json::from_str(&text).unwrap();

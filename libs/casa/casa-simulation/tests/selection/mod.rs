@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Selection and ordered DATA against independent CASA 6.7.6.14 (#1053).
 
-#[path = "selection/input.rs"]
+#[path = "input.rs"]
 mod input;
-#[path = "selection/noise.rs"]
+#[path = "noise.rs"]
 mod noise;
 use crate::pass_summary;
 use crate::predict_support;
@@ -29,7 +29,7 @@ use serde_json::Value;
 
 fn fixture() -> Value {
     let mut text = String::new();
-    GzDecoder::new(&include_bytes!("data/sm_selection_casa.json.gz")[..])
+    GzDecoder::new(&include_bytes!("../data/sm_selection_casa.json.gz")[..])
         .read_to_string(&mut text)
         .unwrap();
     let fixture: Value = serde_json::from_str(&text).unwrap();

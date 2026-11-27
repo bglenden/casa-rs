@@ -38,17 +38,17 @@
 //! no Metal device` and pass: run them outside command sandboxes on Apple
 //! silicon (`TESTING.md`).
 
-#[path = "backends/apply_frequency.rs"]
+#[path = "apply_frequency.rs"]
 mod apply_frequency;
-#[path = "backends/coverage.rs"]
+#[path = "coverage.rs"]
 mod coverage;
-#[path = "backends/feeds.rs"]
+#[path = "feeds.rs"]
 mod feeds;
-#[path = "backends/offline_noise.rs"]
+#[path = "offline_noise.rs"]
 mod offline_noise;
 use crate::pass_summary;
 use crate::predict_support;
-#[path = "backends/trop_test_ramp.rs"]
+#[path = "trop_test_ramp.rs"]
 mod trop_test_ramp;
 
 use std::path::Path;

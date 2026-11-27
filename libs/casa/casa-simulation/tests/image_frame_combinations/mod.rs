@@ -14,12 +14,12 @@ use std::path::Path;
 
 #[test]
 fn accepted_image_frames_and_beams_match_casa() {
-    compare_frames(include_bytes!("data/sm_image_frames_casa.json.gz"));
+    compare_frames(include_bytes!("../data/sm_image_frames_casa.json.gz"));
 }
 
 #[test]
 fn time_dependent_mosaics_match_casa() {
-    compare_frames(include_bytes!("data/sm_frame_mosaics_casa.json.gz"));
+    compare_frames(include_bytes!("../data/sm_frame_mosaics_casa.json.gz"));
 }
 
 fn compare_frames(bytes: &[u8]) {
@@ -137,7 +137,7 @@ fn reference_earth_orientation_matches_casa_hour_angle() {
     use casa_core::measures::direction::{DirectionRef, MDirection};
     use casa_core::measures::{MPosition, MeasFrame};
     let fixture: Value = serde_json::from_reader(GzDecoder::new(
-        &include_bytes!("data/sm_image_frames_casa.json.gz")[..],
+        &include_bytes!("../data/sm_image_frames_casa.json.gz")[..],
     ))
     .unwrap();
     let frame = MeasFrame::new()
