@@ -270,17 +270,24 @@ For timing, use release task binaries and `--trials 3`. Trials alternate the
 implementation order. The JSONL output records public task call times separately
 from setup and verification. Compare runs with passing assertions on both sides.
 
-**Simulator.** Its Metal law, `cargo nextest run -p casa-simulation --test
-backends --no-capture`, run outside the sandbox, predicts sessions on both
+**Live calibration parity.** Run `cargo nextest run -p casa-parity --features
+live-casa --test calibration_oracle` with `CASA_RS_CASA_PYTHON` pointing
+to CASA 6.7.6.14 and `CASA_RS_TESTDATA_ROOT` containing
+`measurementset/vla/ngc5921.ms` and `measurementset/alma/multiobs.ms`.
+The tests stage writable copies of the source tables. Failures in CASA or
+missing prerequisites fail the explicitly selected target.
+
+**Simulator.** Its Metal law, `cargo nextest run -p casa-simulation --test api -E "test(backends::)"
+--no-capture`, run outside the sandbox, predicts sessions on both
 backends and prints each case's `max |metal − cpu| / max |cpu|` (the T0
 limit is `1e-4`). Its casacore interop test, `cargo nextest run -p
-casa-simulation --features cpp-interop-tests --test simulator_cpp_interop`,
+casacore-interop --features cpp-interop-tests --test simulator_cpp_interop`,
 needs `pkg-config casacore`: C++ casacore digests the MeasurementSets the
 session writes, and the digests must equal casa-rs's. Its counting law
 (`--test session_memory`) runs alone in a process of its own.
 
 The C++ `tNewMSSimulator.cc` scenarios run natively in
-`cargo test -p casa-simulation --test upstream_cpp`: independent constructor
+`cargo test -p casa-simulation --test api upstream_cpp::`: independent constructor
 lifetimes and antenna initialization for array sizes two through ten.
 These tests need no C++ SDK at runtime.
 
@@ -326,7 +333,7 @@ products, including the feather cube, are read back with CASA C++. Preserve
 the raw upstream `.image0` assertion failure separately: the actual TP path
 is `.sd.image0`.
 
-**simobserve.** `cargo nextest run -p casa-simulation --test simobserve` runs
+**simobserve.** `cargo nextest run -p casa-simulation --test api -E "test(simobserve::)"` runs
 the task end to end on a small array without CASA. Its agreement with CASA
 6.7.6's task is `tools/simulation/simobserve_parity.py`, run under CASA's
 Python with the release `simobserve` binary, a casatestdata clone and

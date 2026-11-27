@@ -236,7 +236,6 @@ main() {
 
   shopt -s nullglob
   local manifests=(
-    crates/*/Cargo.toml
     libs/*/*/Cargo.toml
     surfaces/*/Cargo.toml
     frontends/*/Cargo.toml

@@ -108,21 +108,22 @@ impl AttachedMs {
         let is_multi_ms = main.info().sub_type == "CONCATENATED";
         let part_names = Table::immediate_part_names(&path, &name).map_err(runtime_error)?;
         let reference_multi = is_multi_ms && matches!(part_names, TablePartNames::Reference(_));
-        let sources =
-            if reference_multi || (is_multi_ms && matches!(part_names, TablePartNames::Plain(_))) {
-                // A saved view can inherit the multi-MS subtype. Its descriptor
-                // holds a row projection, and the view is the logical input.
-                let view = MeasurementSet::open(&path).map_err(runtime_error)?;
-                if view.ms_version() != Some(2.0) {
-                    return Err(runtime_error(format!(
-                        "{} is not an MSv2 MeasurementSet",
-                        path.display()
-                    )));
-                }
-                vec![path.clone()]
-            } else {
-                casa_calibration::visibility_model_source_paths(&path).map_err(runtime_error)?
-            };
+        let sources = if reference_multi
+            || (is_multi_ms && matches!(part_names, TablePartNames::Plain(_)))
+        {
+            // A saved view can inherit the multi-MS subtype. Its descriptor
+            // holds a row projection, and the view is the logical input.
+            let view = MeasurementSet::open(&path).map_err(runtime_error)?;
+            if view.ms_version() != Some(2.0) {
+                return Err(runtime_error(format!(
+                    "{} is not an MSv2 MeasurementSet",
+                    path.display()
+                )));
+            }
+            vec![path.clone()]
+        } else {
+            casa_calibration::uvsub::visibility_model_source_paths(&path).map_err(runtime_error)?
+        };
         let physical_parts = if reference_multi && (lock || writable) {
             main.cache_plain_table_paths()
                 .map_err(runtime_error)?
@@ -313,7 +314,7 @@ impl PyMsTool {
                             TableWriteLock::acquire_to_reread(path, 0).map_err(runtime_error)?,
                         )
                     };
-                    casa_calibration::subtract_visibility_model_selected(
+                    casa_calibration::uvsub::subtract_visibility_model_selected(
                         &mut part,
                         reverse,
                         Some(&rows),
@@ -326,7 +327,7 @@ impl PyMsTool {
                     }
                 }
             } else if ms.write_locks.is_empty() {
-                casa_calibration::subtract_visibility_model(&ms.path, reverse)
+                casa_calibration::uvsub::subtract_visibility_model(&ms.path, reverse)
                     .map_err(runtime_error)?;
             } else {
                 for path in &ms.sources {
@@ -334,7 +335,7 @@ impl PyMsTool {
                         .write_locks
                         .get_mut(path)
                         .expect("permanent MS source lock");
-                    casa_calibration::subtract_visibility_model_holding(path, reverse, lock)
+                    casa_calibration::uvsub::subtract_visibility_model_holding(path, reverse, lock)
                         .map_err(runtime_error)?;
                 }
             }

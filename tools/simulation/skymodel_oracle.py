@@ -5,7 +5,7 @@
 Run with CASA's Python (for example `/Applications/CASA.app/Contents/MacOS/python3 -I`):
 
     python3 -I tools/simulation/skymodel_oracle.py \\
-        --out crates/casa-simulation/tests/data/skymodel
+        --out libs/casa/casa-simulation/tests/data/skymodel
 
 It writes, into `--out`:
 - `skymodel_inputs.tar.gz`: the images (CASA images and FITS files) and
@@ -37,7 +37,7 @@ casa-rs's tests compare them with `CASA_RS_SKYMODEL_FIXTURE=<out>`:
 
     python3 -I tools/simulation/skymodel_oracle.py --out EV --evidence /Volumes/home/casatestdata
     CASA_RS_SKYMODEL_FIXTURE=EV CASA_RS_SKYMODEL_OUT=EV/casa-rs \\
-        cargo nextest run -p casa-simulation --test skymodel_casa
+        cargo nextest run -p casa-simulation --test api -E "test(skymodel_casa::)"
     python3 -I tools/simulation/skymodel_oracle.py --out EV --check EV/casa-rs
 """
 

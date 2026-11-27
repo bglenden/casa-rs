@@ -17,7 +17,7 @@ with `compare_sm_ms.py` under CASA's Python (`<out>/report.json`).
 rows lie TAI - UTC after the requested times; casa-rs stores the requested
 UTC (plan decision 5). To compare rows at equal stored TIME, the casa-rs run
 requests every scan that much later, as
-`crates/casa-simulation/examples/observe_scenarios.rs` does: before running a
+`libs/casa/casa-simulation/examples/observe_scenarios.rs` does: before running a
 script the runner replaces `casars.tools.simulator` by a delegating wrapper
 (below) whose `settimes` takes TAI - UTC at its reference epoch from the
 measures data (`casars.tools.measures`) and whose `observe` adds it to

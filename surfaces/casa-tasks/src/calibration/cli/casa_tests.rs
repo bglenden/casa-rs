@@ -14,10 +14,17 @@ use crate::calibration::{
     CalibrationTaskRequest, ExecuteApplyTaskRequest, GencalTaskRequest, SolveGainTaskRequest,
 };
 use casa_calibration::{
-    ApplyArgumentError, ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode,
-    BandpassSolveCuts, BandpassType, FluxScaleRequest, GainFieldSelector, GainNormalization,
-    GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSplineControls,
-    GainType, GencalRequest, GencalType, RefAntSelector,
+    apply::{
+        ApplyArgumentError, ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode,
+        GainFieldSelector,
+    },
+    bandpass::{BandpassSolveCuts, BandpassType},
+    fluxscale::FluxScaleRequest,
+    gencal::{GencalRequest, GencalType},
+    solve::{
+        GainNormalization, GainSolveCombine, GainSolveInterval, GainSolveMode,
+        GainSolveModelSource, GainSplineControls, GainType, RefAntSelector,
+    },
 };
 
 /// The request `surface` makes for the plain-JSON `values`, set as a
@@ -511,7 +518,7 @@ fn fluxscale_reads_casas_values() {
             "incremental": true,
         })),
         FluxScaleRequest {
-            options: casa_calibration::FluxScaleOptions {
+            options: casa_calibration::fluxscale::FluxScaleOptions {
                 measurement_set: Some(PathBuf::from(vis)),
                 ..Default::default()
             },

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's original fixed-integration statistical reweighter.
 
-use casa_calibration::StatWtMs;
+use casa_calibration::statwt::StatWtMs;
 use casa_calibration::statwt::{LegacyStatWtOptions, reweight_legacy};
 use casa_ms::MsSelection;
 use pyo3::prelude::*;

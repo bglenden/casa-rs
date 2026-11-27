@@ -3,7 +3,7 @@
 """CASA reads native MSs after supplied-table simulation corruption (SIM-16).
 
 Use CASA 6.7.6.14 Python, --root matching the two native export directories,
-and --fixtures pointing to crates/casa-simulation/tests/data.
+and --fixtures pointing to libs/casa/casa-simulation/tests/data.
 """
 import argparse
 import gzip

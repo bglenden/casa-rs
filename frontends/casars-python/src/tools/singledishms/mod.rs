@@ -10,8 +10,8 @@ pub(crate) mod surface;
 use std::path::Path;
 use std::sync::{Mutex, PoisonError};
 
-use casa_calibration::{SingleDishSession, SingleDishSmoothing};
 use casa_ms::MsSelection;
+use casa_singledish::{SingleDishSession, SingleDishSmoothing};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 

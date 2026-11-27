@@ -8,7 +8,10 @@ use casa_contracts::CasaValue;
 
 use crate::calibration::CalibrationTaskResult;
 use casa_calibration::gencal::jyperk::{self, Endpoint, JyperkError, ServiceOptions};
-use casa_calibration::{CalibrationOutputMode, GencalRequest, GencalType};
+use casa_calibration::{
+    gencal::{GencalRequest, GencalType},
+    output::CalibrationOutputMode,
+};
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let standalone = task.surface() == "getjyperkalma";

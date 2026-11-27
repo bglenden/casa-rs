@@ -5,7 +5,7 @@ pub(crate) mod surface;
 
 use std::path::{Path, PathBuf};
 
-use casa_calibration::{
+use casa_calibration::wvr::{
     WvrError, WvrRequest, WvrSelectors, execute_wvr_with_log, resolve_wvr_selectors,
 };
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};

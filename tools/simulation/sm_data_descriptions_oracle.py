@@ -100,7 +100,7 @@ def main():
     root = args.out.resolve()
     inputs = root / "inputs"
     inputs.mkdir(parents=True)
-    source = Path(__file__).resolve().parents[2] / "crates/casa-simulation/tests/data/sm_irregular_channels/spectrum.cl"
+    source = Path(__file__).resolve().parents[2] / "libs/casa/casa-simulation/tests/data/sm_irregular_channels/spectrum.cl"
     shutil.copytree(source, inputs / "spectrum.cl", ignore=shutil.ignore_patterns("table.lock"))
     shutil.copytree(source.with_name("spectrum.image"), inputs / "spectrum.image", ignore=shutil.ignore_patterns("table.lock"))
     original = root / "original.ms"

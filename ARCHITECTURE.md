@@ -25,6 +25,7 @@ The casacore foundation libraries live in `libs/casacore/`. CASA component model
 | native imaging (`casa-imaging-model`, `-operator`, `-deconvolution`, `-products`, `-runtime`, `-metal`) | Request science and compiled problem; the measurement operator; image-domain reconstruction; normalization and products; host resources, admission and the major-cycle pass; the Metal backend (see Imaging ownership) | the ADR-0016 layering below |
 | single-dish imaging (`casa-imaging-singledish`) | CASA's `SDGrid` as its own operator family (ADR-0016 decision 13) | execution layer of the ADR-0016 layering |
 | imaging application (`casa-imaging`) | Sole production composition of observation, reconstruction, products, resources and execution | native imaging owners, `casa-ms`, `casa-observation` |
+| single-dish workflows (`casa-singledish`) | ASAP and NOSTAR conversion, spectral smoothing, baselines, line fits, and atmospheric correction | MeasurementSet and transform libraries, calibration publication, and image analysis |
 | simulation (`casa-simulation`) | CASA's `sm` tool, `simutil`, `simobserve`, multi-array/TP `simanalyze`, `simalma`, and native developer fixtures | an application of the ADR-0016 layering |
 | image persistence (`casa-images`) | Typed images, expression evaluation, image I/O and sampling pixel planes | casacore foundations |
 | CASA image analysis (`casa-imageanalysis`) | Component-backed virtual images, convolution, mosaics, high-level regridding and analysis tasks | `casa-components` and casacore foundations including `casa-images` |

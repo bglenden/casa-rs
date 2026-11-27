@@ -17,16 +17,24 @@ use crate::calibration::{
     SolveGainTaskRequest, StatsTaskRequest, SummaryTaskRequest,
 };
 use casa_calibration::{
-    ApplyCalibrationTablePlan, ApplyCalibrationTableSpec, ApplyExecutionReport,
-    ApplyExecutionTimings, ApplyInterpolationMode, ApplyMode, ApplyPlan, ApplySpwMapping,
-    BandpassSolveCombine, BandpassSolveReport, BandpassType, CalibrationColumnSummary,
-    CalibrationIndexedStats, CalibrationIssueSeverity, CalibrationKeywordSummary,
-    CalibrationParameterFamily, CalibrationStatsAxis, CalibrationStatsReport,
-    CalibrationSubtableSummary, CalibrationTableSummary, CalibrationValidationIssue,
-    CalibrationValueStats, FluxScaleFieldResult, FluxScaleReport, FluxScaleRequest,
-    FluxScaleSpwResult, GainFieldSelector, GainSolveCombine, GainSolveInterval, GainSolveMode,
-    GainSolveModelSource, GainSolveReport, GainType, GencalType, RefAntSelector, ResolvedGainField,
-    ResolvedNearestGainField, TimeCoverageSummary,
+    apply::{
+        ApplyCalibrationTablePlan, ApplyCalibrationTableSpec, ApplyExecutionReport,
+        ApplyExecutionTimings, ApplyInterpolationMode, ApplyMode, ApplyPlan, ApplySpwMapping,
+        GainFieldSelector, ResolvedGainField, ResolvedNearestGainField,
+    },
+    bandpass::{BandpassSolveCombine, BandpassSolveReport, BandpassType},
+    fluxscale::{FluxScaleFieldResult, FluxScaleReport, FluxScaleRequest, FluxScaleSpwResult},
+    gencal::GencalType,
+    solve::{
+        GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveReport,
+        GainType, RefAntSelector,
+    },
+    table::{
+        CalibrationColumnSummary, CalibrationIndexedStats, CalibrationIssueSeverity,
+        CalibrationKeywordSummary, CalibrationParameterFamily, CalibrationStatsAxis,
+        CalibrationStatsReport, CalibrationSubtableSummary, CalibrationTableSummary,
+        CalibrationValidationIssue, CalibrationValueStats, TimeCoverageSummary,
+    },
 };
 
 /// `args` on `surface`'s command line as the front end resolves them, read
@@ -435,14 +443,14 @@ fn gain_solve() -> SolveGainTaskRequest {
 #[test]
 fn fringe_request_rejects_complex_schema_before_opening_input() {
     let request = SolveGainTaskRequest {
-        fringe_controls: Some(casa_calibration::FringeControls {
+        fringe_controls: Some(casa_calibration::solve::FringeControls {
             delay_window: [-1e6, 1e6],
             rate_window: [-1e6, 1e6],
             global_solve: true,
             iterations: 100,
             active_parameters: [true, true, false],
             zero_rates: false,
-            correlation_combination: casa_calibration::FringeCorrelation::Separate,
+            correlation_combination: casa_calibration::solve::FringeCorrelation::Separate,
             concatenate_windows: true,
         }),
         ..gain_solve()
@@ -691,7 +699,7 @@ fn calibrate_gencal_reads_every_parameter_it_emits() {
     assert_eq!(
         request("calibrate", &args).expect("gencal"),
         CalibrationTaskRequest::Gencal(GencalTaskRequest {
-            prior: casa_calibration::GencalRequest {
+            prior: casa_calibration::gencal::GencalRequest {
                 measurement_set: PathBuf::from("tutorial.ms"),
                 output_table: PathBuf::from("cal.tau"),
                 caltype: GencalType::Opac,

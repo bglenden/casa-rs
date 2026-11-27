@@ -5,13 +5,48 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use crate::TaskFailure;
+use casa_calibration::apply::evaluate_plot_rows;
+use casa_calibration::apply::{ApplyMode, ApplyPlanRequest, plan_apply};
 use casa_calibration::callib::{load_apply_specs_from_callib_at, parse_apply_specs_at};
-use casa_calibration::execute::evaluate_plot_rows;
-use casa_calibration::{ApplyMode, ApplyPlanRequest, plan_apply};
-use casa_ms::{MeasurementSet, MsSelection};
+use casa_ms::{MeasurementSet, MsSelection, ResolvedMsSelectionRow};
 use casa_plot_data::msexplore::{PlotMsCalibratedRow, PlotMsCalibration};
 
-pub use casa_calibration::plotms::load_models;
+use casa_calibration::models::plotms_model_input;
+use casa_core::ArrayValue;
+use casa_mstransform::{PlotMsModelReferences, TransformInputView};
+
+/// Predict model visibilities for the exact PlotMS row selection without
+/// writing MODEL_DATA. Return None when no selected field has a virtual model
+/// pointer, so PlotMS can use its physical or default model reader.
+/// When supplied, `references` identifies the input buffer recipe and chunk
+/// phase reference for each selected row.
+pub fn load_models(
+    ms: &MeasurementSet,
+    rows: &[ResolvedMsSelectionRow],
+    references: Option<PlotMsModelReferences<'_>>,
+) -> Result<Option<HashMap<usize, ArrayValue>>, String> {
+    let fields = casa_ms::virtual_model_fields(ms);
+    if !rows.iter().any(|row| fields.contains(&row.field_id)) {
+        return Ok(None);
+    }
+    let indices = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
+    let prepared = plotms_model_input(references)
+        .prepare(ms, rows, &BTreeMap::new())
+        .map_err(|error| error.to_string())?;
+    let mut columns = prepared
+        .read(ms.main_table(), &indices, &["MODEL_DATA"])
+        .map_err(|error| error.to_string())?;
+    let cells = columns
+        .remove("MODEL_DATA")
+        .ok_or_else(|| "virtual models did not supply MODEL_DATA".to_string())?;
+    Ok(Some(
+        indices
+            .into_iter()
+            .zip(cells)
+            .filter_map(|(row, cell)| cell.map(|cell| (row, cell)))
+            .collect(),
+    ))
+}
 
 /// Correct the selected plot rows through the applycal engine without saving them.
 /// For channel-weighted ordinates, the calibration preview expands scalar sigma

@@ -10,9 +10,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use casa_calibration::{
-    AttachmentError, AttachmentOptions, ImagerAttachments, ImagerChannelSelection,
-    ImagerLegacyAwOptions, ImagerLegacyPbWOptions, ImagerPrediction, ImagerPredictionModel,
-    ImagerSingleDishSetup, ImagerVoltagePattern,
+    attachment::{AttachmentError, AttachmentOptions, ImagerAttachments, ImagerChannelSelection},
+    ft::{
+        ImagerLegacyAwOptions, ImagerLegacyPbWOptions, ImagerPrediction, ImagerPredictionModel,
+        ImagerSingleDishSetup, ImagerVoltagePattern,
+    },
 };
 use casa_ms::MsSelection;
 use pyo3::{
@@ -436,11 +438,9 @@ impl PyImager {
         };
         let result = self.with_state(py, |state| {
             let path = (!vis.is_empty()).then(|| Path::new(vis));
-            let explicit_open = state
-                .attachments
-                .inputs()
-                .first()
-                .is_some_and(|input| input.mode() == casa_calibration::AttachmentMode::Open);
+            let explicit_open = state.attachments.inputs().first().is_some_and(|input| {
+                input.mode() == casa_calibration::attachment::AttachmentMode::Open
+            });
             if !explicit_open && let Some(path) = path {
                 state.uses_scratch = usescratch && !datainmemory;
                 if datainmemory {
@@ -597,7 +597,7 @@ impl PyImager {
         freqs: Option<Variant>,
         pfx: &str,
     ) -> PyResult<String> {
-        use casa_calibration::predict_calibrator_component;
+        use casa_calibration::ft::predict_calibrator_component;
         use casa_core::measures::{EpochRef, MEpoch};
 
         let epoch = match epoch {

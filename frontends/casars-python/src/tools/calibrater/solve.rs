@@ -4,10 +4,16 @@
 use std::path::PathBuf;
 
 use casa_calibration::{
-    BandpassFrequencyInterval, BandpassSolveCombine, BandpassSolveCuts, BandpassSolveRequest,
-    BandpassType, CalibrationSolveRequest, FringeControls, FringeCorrelation, GainNormalization,
-    GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest,
-    GainSolveRobustness, GainType, RefAntSelector, SingleDishSolveControls,
+    bandpass::{
+        BandpassFrequencyInterval, BandpassSolveCombine, BandpassSolveCuts, BandpassSolveRequest,
+        BandpassType,
+    },
+    sd_solver::SingleDishSolveControls,
+    solve::{
+        CalibraterLifecycle, CalibrationSolveRequest, FringeControls, FringeCorrelation,
+        GainNormalization, GainSolveCombine, GainSolveInterval, GainSolveMode,
+        GainSolveModelSource, GainSolveRequest, GainSolveRobustness, GainType, RefAntSelector,
+    },
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -207,7 +213,7 @@ fn fringe_window(value: Option<&Bound<'_, PyAny>>) -> PyResult<[f64; 2]> {
 impl StandardSolver {
     fn bandpass(
         self,
-        frequency_interval: Option<casa_calibration::BandpassFrequencyInterval>,
+        frequency_interval: Option<BandpassFrequencyInterval>,
         fill_gaps: usize,
     ) -> BandpassSolveRequest {
         BandpassSolveRequest {
@@ -299,9 +305,9 @@ fn standard_request(
 }
 
 fn configure_generic_spline(
-    state: &mut casa_calibration::CalibraterLifecycle,
+    state: &mut CalibraterLifecycle,
     standard: StandardSolver,
-    mode: casa_calibration::CalibrationOutputMode,
+    mode: casa_calibration::output::CalibrationOutputMode,
     apmode: &str,
 ) -> PyResult<()> {
     state
@@ -350,7 +356,7 @@ impl super::PyCalibrater {
         rmsthresh: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
         use crate::tools::{LogLine, emit};
-        use casa_calibration::CalibrationOutputMode;
+        use casa_calibration::output::CalibrationOutputMode;
 
         let append = setsolve_bool(append, 5, false)?;
         let preavg = number(preavg.cloned(), "setsolve", 6, -1.)?;
@@ -385,13 +391,12 @@ impl super::PyCalibrater {
             CalibrationOutputMode::Replace
         };
         let family = r#type.unwrap_or("MF").to_ascii_uppercase();
-        let family = casa_calibration::CalibraterLifecycle::direct_solve_factory_alias(&family)
+        let family = CalibraterLifecycle::direct_solve_factory_alias(&family)
             .map(str::to_owned)
             .unwrap_or(family);
         let single_dish = single_dish_controls(&family, fraction, numedge, radius, smooth)?;
-        let polarization =
-            casa_calibration::CalibraterLifecycle::recognizes_polarization_solve_type(&family);
-        let gather_only = casa_calibration::CalibraterLifecycle::gather_only_solve_type(&family);
+        let polarization = CalibraterLifecycle::recognizes_polarization_solve_type(&family);
+        let gather_only = CalibraterLifecycle::gather_only_solve_type(&family);
         let baseline = matches!(
             family.as_str(),
             "M" | "M MUELLER" | "MF" | "MF MUELLER" | "A" | "A MUELLER"

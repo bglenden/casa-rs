@@ -11,7 +11,8 @@ members = [
     "libs/casacore/casa-aipsio",
     "libs/casacore/casa-numerics",
     "libs/casacore/casa-fft",
-    "crates/casa-calibration",
+    "libs/casa/casa-calibration",
+    "libs/casa/casa-singledish",
     "libs/casa/casa-components",
     "libs/casa/casa-imageanalysis",
     "libs/casacore/casa-tables",
@@ -26,7 +27,7 @@ members = [
     "libs/imaging/casa-imaging-runtime",
     "libs/imaging/casa-imaging-singledish",
     "libs/imaging/casa-imaging-metal",
-    "crates/casa-simulation",
+    "libs/casa/casa-simulation",
     "libs/casa/casa-atmosphere",
     "libs/casacore/casa-measures",
     "libs/casacore/casa-ms",
@@ -49,6 +50,9 @@ description = "Rust implementation of casacore-compatible persistent data I/O"
 repository = "https://github.com/bglenden/casa-rs"
 
 [workspace.dependencies]
+casa-calibration = { path = "libs/casa/casa-calibration", version = "0.27.0" }
+casa-singledish = { path = "libs/casa/casa-singledish", version = "0.27.0" }
+casa-simulation = { path = "libs/casa/casa-simulation", version = "0.27.0" }
 casa-atmosphere = { path = "libs/casa/casa-atmosphere", version = "0.27.0" }
 casa-flagging = { path = "libs/casa/casa-flagging", version = "0.27.0" }
 casa-ms = { path = "libs/casacore/casa-ms", version = "0.27.0" }

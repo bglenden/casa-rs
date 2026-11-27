@@ -263,7 +263,6 @@ dependencies = [
  "casa-test-support",
  "csv-core",
  "flate2",
- "libc",
  "libm",
  "ndarray",
  "num-complex",
@@ -694,6 +693,7 @@ dependencies = [
 name = "casa-parity"
 version = "0.27.0"
 dependencies = [
+ "casa-calibration",
  "casa-components",
  "casa-coordinates",
  "casa-core",
@@ -703,13 +703,16 @@ dependencies = [
  "casa-imaging-model",
  "casa-lattices",
  "casa-ms",
+ "casa-simulation",
  "casa-tables",
  "casa-test-support",
+ "flate2",
  "ndarray",
  "num-complex",
  "serde",
  "serde_json",
  "sha2",
+ "tar",
  "tempfile",
 ]
 
@@ -801,6 +804,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "casa-singledish"
+version = "0.27.0"
+dependencies = [
+ "casa-atmosphere",
+ "casa-calibration",
+ "casa-core",
+ "casa-fft",
+ "casa-imageanalysis",
+ "casa-measures",
+ "casa-ms",
+ "casa-mstransform",
+ "casa-numerics",
+ "casa-tables",
+ "libc",
+ "ndarray",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "casa-tables"
 version = "0.27.0"
 dependencies = [
@@ -843,6 +866,7 @@ dependencies = [
  "casa-observation",
  "casa-plot-data",
  "casa-simulation",
+ "casa-singledish",
  "casa-tables",
  "casa-test-support",
  "casa-vla",
@@ -911,10 +935,12 @@ dependencies = [
  "casa-imaging-deconvolution",
  "casa-imaging-model",
  "casa-imaging-products",
+ "casa-imaging-runtime",
  "casa-lattices",
  "casa-measures",
  "casa-ms",
  "casa-observation",
+ "casa-simulation",
  "casa-tables",
  "casa-test-support",
  "casa-vla",
@@ -984,6 +1010,7 @@ dependencies = [
  "casa-mstransform",
  "casa-plot-data",
  "casa-simulation",
+ "casa-singledish",
  "casa-tables",
  "casa-tasks",
  "libc",

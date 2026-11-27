@@ -15,8 +15,9 @@ use std::path::Path;
 use casa_contracts::{CasaFloat, CasaValue, FloatDtype};
 
 use casa_calibration::{
-    ApplyCalibrationTableSpec, FluxScaleFieldResult, FluxScaleReport, SelectedData, SolveCounts,
-    SolveStats,
+    apply::ApplyCalibrationTableSpec,
+    fluxscale::{FluxScaleFieldResult, FluxScaleReport},
+    solve::{SelectedData, SolveCounts, SolveStats},
 };
 
 /// `gaincal`'s and `bandpass`'s return: the tables applied while solving,

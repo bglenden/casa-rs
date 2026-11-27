@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Convert the legacy imager's Python image-definition arguments.
 
-use casa_calibration::{ImagerDefinitionRequest, ImagerPhaseCentre, ImagerSpectralAxis};
+use casa_calibration::ft::{ImagerDefinitionRequest, ImagerPhaseCentre, ImagerSpectralAxis};
 use casa_coordinates::{ProjectionType, StokesType};
 use casa_core::measures::direction::{DirectionRef, MDirection};
 use casa_core::measures::doppler::DopplerRef;

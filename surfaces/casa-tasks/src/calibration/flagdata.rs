@@ -186,7 +186,7 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         &path,
         &request,
         !calculate,
-        Some(casa_calibration::flagdata_model),
+        Some(casa_calibration::models::flagdata_model),
     )
     .map_err(|error| match error {
         FlaggingError::MissingCorrelationSummary => {

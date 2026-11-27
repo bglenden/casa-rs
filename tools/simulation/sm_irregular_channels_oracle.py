@@ -80,7 +80,7 @@ def main():
     cl.rename(str(inputs / "spectrum.cl"))
     cl.done()
     model(inputs / "spectrum.image")
-    legacy = Path(__file__).resolve().parents[2] / "crates/casa-simulation/tests/data/sm_polynomial/GSPLINE"
+    legacy = Path(__file__).resolve().parents[2] / "libs/casa/casa-simulation/tests/data/sm_polynomial/GSPLINE"
     shutil.copytree(legacy, inputs / "gspline.cal", ignore=shutil.ignore_patterns("table.lock"))
     cases = []
     for axis, frequencies in AXES.items():

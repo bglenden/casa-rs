@@ -82,8 +82,8 @@ def main():
         captured.clear();plt.close('all')
     repo=Path(__file__).resolve().parents[2]
     if args.case=='all':
-        with tarfile.open(repo/'crates/casa-simulation/tests/data/simanalyze_multi_inputs.tar.gz') as archive:archive.extractall(root,filter='data')
-    with gzip.open(repo/'crates/casa-simulation/tests/data/simanalyze_multi_casa.json.gz','rt') as source:cases=json.load(source)['cases']
+        with tarfile.open(repo/'libs/casa/casa-simulation/tests/data/simanalyze_multi_inputs.tar.gz') as archive:archive.extractall(root,filter='data')
+    with gzip.open(repo/'libs/casa/casa-simulation/tests/data/simanalyze_multi_casa.json.gz','rt') as source:cases=json.load(source)['cases']
     task,defaults=analysis_graphics_task()
     import glob
     from types import SimpleNamespace

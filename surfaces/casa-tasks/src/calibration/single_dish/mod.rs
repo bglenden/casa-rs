@@ -12,10 +12,11 @@ mod smooth;
 use std::path::{Path, PathBuf};
 
 use crate::{TaskFailure, TaskInvocation, TaskSuccess};
-use casa_calibration::single_dish::{edges, lock_solve_output, position_switch};
+use casa_calibration::sd_solver::{edges, lock_solve_output, position_switch};
 use casa_calibration::{
-    CalibrationOutputMode, GencalRequest, GencalType, gencal_with_output_mode,
-    session::resolve_casa_calibration_selection,
+    gencal::{GencalRequest, GencalType, gencal_with_output_mode},
+    output::CalibrationOutputMode,
+    solve::resolve_casa_calibration_selection,
 };
 use casa_contracts::{CasaValue, ParameterValue};
 use casa_ms::{MeasurementSet, MsError, MsSelection, MsSelectionError, ResolvedMsSelection};

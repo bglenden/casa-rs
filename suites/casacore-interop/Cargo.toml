@@ -255,6 +255,8 @@ path = "tests/component_list.rs"
 required-features = ["cpp-interop-tests"]
 
 [dev-dependencies]
+casa-imaging-runtime.workspace = true
+casa-simulation.workspace = true
 casa-components.workspace = true
 casa-imaging-deconvolution.workspace = true
 casa-imaging-model.workspace = true
@@ -314,4 +316,9 @@ required-features = ["cpp-interop-tests"]
 [[test]]
 name = "cpp_vlafiller_spw_seed_debug"
 path = "tests/cpp_vlafiller_spw_seed_debug.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "simulator_cpp_interop"
+path = "tests/simulator_cpp_interop.rs"
 required-features = ["cpp-interop-tests"]

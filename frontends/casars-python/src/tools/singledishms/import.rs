@@ -13,14 +13,14 @@ impl PySingleDishMs {
     #[pyo3(signature = (infile = "", outfile = "", parallel = false), text_signature = "($self, infile='', outfile='', parallel=False)")]
     fn importasap(&self, py: Python<'_>, infile: &str, outfile: &str, parallel: bool) -> bool {
         py.detach(|| {
-            casa_calibration::import_asap(Path::new(infile), Path::new(outfile), parallel).is_ok()
+            casa_singledish::import_asap(Path::new(infile), Path::new(outfile), parallel).is_ok()
         })
     }
 
     #[pyo3(signature = (infile = "", outfile = "", parallel = false), text_signature = "($self, infile='', outfile='', parallel=False)")]
     fn importnro(&self, py: Python<'_>, infile: &str, outfile: &str, parallel: bool) -> bool {
         py.detach(|| {
-            casa_calibration::import_nro(Path::new(infile), Path::new(outfile), parallel).is_ok()
+            casa_singledish::import_nro(Path::new(infile), Path::new(outfile), parallel).is_ok()
         })
     }
 }

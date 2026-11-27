@@ -2,7 +2,7 @@
 
 Truth class: current descriptive
 Last reality check: 2026-11-15
-Verification: `cargo test -p casa-simulation --test simanalyze_multi_casa`
+Verification: `cargo test -p casa-parity --test api simanalyze_multi_casa::`
 
 `casars.tasks.simanalyze` composes native Rust applications to image a
 simulation project. It discovers the MS inputs and sky model, concatenates

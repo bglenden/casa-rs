@@ -80,7 +80,7 @@ def main():
         for name, value in (("DATA", 3+4j), ("MODEL_DATA", 7-2j), ("CORRECTED_DATA", -5+6j)):
             tb.putcell(name, row, np.full(shape, value, dtype=np.complex64))
     tb.close()
-    source = Path(__file__).resolve().parents[2]/"crates/casa-simulation/tests/data/sm_image_layouts"
+    source = Path(__file__).resolve().parents[2]/"libs/casa/casa-simulation/tests/data/sm_image_layouts"
     cases = []
     for name, spec in CASES.items():
         work = root/name

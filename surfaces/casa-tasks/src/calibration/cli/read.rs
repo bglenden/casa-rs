@@ -21,10 +21,16 @@ use crate::calibration::{
     SummaryTaskRequest,
 };
 use casa_calibration::{
-    ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode, BandpassSolveCombine,
-    BandpassType, CalibrationStatsAxis, FluxScaleRequest, GainFieldSelector, GainSolveCombine,
-    GainSolveInterval, GainSolveMode, GainSolveModelSource, GainType, GencalRequest, GencalType,
-    RefAntSelector, load_apply_specs_from_callib,
+    apply::{ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode, GainFieldSelector},
+    bandpass::{BandpassSolveCombine, BandpassType},
+    callib::load_apply_specs_from_callib,
+    fluxscale::FluxScaleRequest,
+    gencal::{GencalRequest, GencalType},
+    solve::{
+        GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainType,
+        RefAntSelector,
+    },
+    table::CalibrationStatsAxis,
 };
 
 /// How a command line prints a run's report.

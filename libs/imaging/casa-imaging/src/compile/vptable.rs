@@ -88,7 +88,7 @@ mod tests {
 
     fn supplied_beam_inputs(gridder: &str) -> (ImagingRequest, RunContext) {
         let table = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../crates/casa-simulation/tests/data/sm_squint/custom_gaussian.vp");
+            .join("../../casa/casa-simulation/tests/data/sm_squint/custom_gaussian.vp");
         let request = crate::request::tests::request(
             json!({ "gridder": gridder, "vptable": table, "write_pb": true }),
         );

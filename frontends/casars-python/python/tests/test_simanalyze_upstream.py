@@ -20,7 +20,7 @@ def test_upstream_combined_imaging_produces_if_tp_and_feather_images(tmp_path):
     Use the existing compact, independently CASA-generated scenario and
     numerical reference, within the regular test machine's memory budget.
     """
-    fixtures = Path(__file__).resolve().parents[4] / "crates" / "casa-simulation/tests/data"
+    fixtures = Path(__file__).resolve().parents[4] / "libs/casa" / "casa-simulation/tests/data"
     with tarfile.open(fixtures / "simanalyze_multi_inputs.tar.gz") as archive:
         options = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
         archive.extractall(tmp_path, **options)

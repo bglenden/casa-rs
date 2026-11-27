@@ -54,7 +54,7 @@ def figures():
 @pytest.fixture(scope="module")
 def images(tmp_path_factory):
     root = tmp_path_factory.mktemp("simutil-plots")
-    with tarfile.open(REPOSITORY / "crates/casa-simulation/tests/data/simanalyze_analysis_inputs.tar.gz") as archive:
+    with tarfile.open(REPOSITORY / "libs/casa/casa-simulation/tests/data/simanalyze_analysis_inputs.tar.gz") as archive:
         archive.extractall(root, filter="data")
     with tarfile.open(Path(__file__).with_name("data") / "simutil_graphics_observation.tar.gz") as archive:
         archive.extractall(root, filter="data")

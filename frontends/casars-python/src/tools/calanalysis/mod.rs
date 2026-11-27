@@ -5,7 +5,7 @@ pub(crate) mod surface;
 
 use std::sync::{Mutex, PoisonError};
 
-use casa_calibration::{CalAnalysis, CalAnalysisFit, CalAnalysisIds::*, CalAnalysisQuery};
+use casa_calibration::table::{CalAnalysis, CalAnalysisFit, CalAnalysisIds::*, CalAnalysisQuery};
 use casa_contracts::casacore_value_to_casa;
 use casa_core::Value;
 use numpy::PyArray1;

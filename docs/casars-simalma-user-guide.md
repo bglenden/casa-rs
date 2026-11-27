@@ -2,7 +2,7 @@
 
 Truth class: current descriptive
 Last reality check: 2026-11-15
-Verification: `cargo test -p casa-simulation --test simalma_casa --test simalma_parameters`
+Verification: `cargo test -p casa-parity --test api simalma_casa::` and `cargo test -p casa-simulation --test api simalma_parameters::`
 
 `casars.tasks.simalma` runs native ALMA/ACA observations, images each array,
 concatenates the interferometric data and combines them with total power.

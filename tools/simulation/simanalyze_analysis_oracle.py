@@ -5,7 +5,7 @@
 Run with CASA's Python (for example `/Applications/CASA.app/Contents/MacOS/python3 -I`):
 
     python3 -I tools/simulation/simanalyze_analysis_oracle.py \\
-        --out crates/casa-simulation/tests/data
+        --out libs/casa/casa-simulation/tests/data
 
 It writes, into `--out`:
 - `simanalyze_analysis_inputs.tar.gz`: the images it builds (with
@@ -32,7 +32,7 @@ same steps run on them. casa-rs's tests compare them with
 `CASA_RS_SIMANALYZE_FIXTURE=<out>`:
 
     python3 -I tools/simulation/simanalyze_analysis_oracle.py --out EV --evidence work/m51c
-    CASA_RS_SIMANALYZE_FIXTURE=EV cargo nextest run -p casa-simulation --test simanalyze_analysis_casa
+    CASA_RS_SIMANALYZE_FIXTURE=EV cargo nextest run -p casa-simulation --test api -E "test(simanalyze_analysis_casa::)"
 """
 
 from __future__ import annotations
