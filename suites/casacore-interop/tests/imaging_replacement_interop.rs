@@ -174,10 +174,10 @@ fn held_image_reader_child() {
 
 #[test]
 fn a_held_reader_keeps_the_old_image_whole_across_a_replacement() {
-    if !casacore_oracle_available() {
-        eprintln!("skipping: C++ casacore not available");
-        return;
-    }
+    assert!(
+        casacore_oracle_available(),
+        "imaging replacement interop requires the C++ casacore SDK (pkg-config casacore)"
+    );
     let directory = tempfile::tempdir().expect("output directory");
     let base = directory.path().join("image");
     let residual = residual_path(&base);
