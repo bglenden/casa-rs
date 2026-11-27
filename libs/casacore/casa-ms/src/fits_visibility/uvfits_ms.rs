@@ -34,7 +34,7 @@ pub(super) fn write_metadata(
         "TAI" | "IAT" => "TAI",
         _ => "UTC",
     };
-    configure_references(ms, frame, epoch)?;
+    configure_references(ms, frame, epoch, true)?;
     write_observation(ms, header, time)?;
     write_antennas(
         ms,
@@ -100,12 +100,14 @@ pub fn configure_references(
     ms: &mut MeasurementSet,
     frame: DirectionRef,
     epoch: &str,
+    uvw_uses_phase_frame: bool,
 ) -> MsResult<()> {
     for column in ["TIME", "TIME_CENTROID"] {
         TableMeasDesc::new_fixed(column, MeasureType::Epoch, epoch).write(ms.main_table_mut())?;
     }
     // The native schema installs MEASINFO for UVW. Keep its type and units.
-    if let Some(mut keywords) = ms.main_table().column_keywords("UVW").cloned()
+    if uvw_uses_phase_frame
+        && let Some(mut keywords) = ms.main_table().column_keywords("UVW").cloned()
         && let Some(Value::Record(mut record)) = keywords.get("MEASINFO").cloned()
     {
         record.upsert("Ref", s(&frame.to_string()));

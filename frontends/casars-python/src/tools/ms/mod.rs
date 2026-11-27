@@ -96,6 +96,7 @@ struct AttachedMs {
 
 impl AttachedMs {
     fn open(name: PathBuf, writable: bool, lock: bool, check: bool) -> PyResult<Self> {
+        let _publication = crate::tools::table::lock_attachment_publication();
         let path = name.canonicalize().map_err(runtime_error)?;
         let directory = std::fs::metadata(&path).map_err(runtime_error)?;
         let main_files = attachment_info::TableFiles::new(&path);

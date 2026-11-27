@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError, TryLockError, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, TryLockError, Weak};
 
 use super::state::{Fail, State};
 
@@ -49,6 +49,14 @@ pub(crate) fn prepare_provider_write(
 static TOOLS: Mutex<Vec<(u64, Weak<Mutex<State>>)>> = Mutex::new(Vec::new());
 /// The plain tables reported by tools with a live MeasurementSet attachment.
 static ATTACHMENTS: Mutex<Vec<Weak<Vec<PathBuf>>>> = Mutex::new(Vec::new());
+/// Serialize attachment creation with the publication of an MS replacement.
+static ATTACHMENT_PUBLICATION: Mutex<()> = Mutex::new(());
+
+pub(crate) fn lock_attachment_publication() -> MutexGuard<'static, ()> {
+    ATTACHMENT_PUBLICATION
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
 
 /// The caller retains the returned handle for the lifetime of its attachment.
 pub(crate) fn attach_table_paths(paths: Vec<PathBuf>) -> Arc<Vec<PathBuf>> {

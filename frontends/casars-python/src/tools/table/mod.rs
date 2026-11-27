@@ -46,9 +46,9 @@ mod write_cells;
 mod write_structure;
 
 pub(crate) use cache::{path_is_in_use, replacement_target_is_in_use};
-pub(crate) use registry::attach_table_paths;
 #[cfg(unix)]
 pub(crate) use registry::prepare_provider_write;
+pub(crate) use registry::{attach_table_paths, lock_attachment_publication};
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 

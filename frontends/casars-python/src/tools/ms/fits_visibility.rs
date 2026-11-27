@@ -7,7 +7,7 @@ use casa_ms::MsSelection;
 use casa_ms::fits_visibility::{
     UvFitsExportOptions, UvFitsImportOptions, export_uvfits, import_uvfits,
 };
-use casa_mstransform::fits_idi::{FitsIdiOptions, import_fits_idi};
+use casa_mstransform::fits_idi::{FitsIdiOptions, stage_fits_idi};
 use pyo3::prelude::*;
 
 use super::partition::{all_if_minus_one, optional_expression};
@@ -65,17 +65,14 @@ impl PyMsTool {
         let diagnostics = py.detach(|| -> PyResult<_> {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
             let output = Path::new(msfile);
-            if options.overwrite && output.try_exists().map_err(runtime_error)? {
-                let path = output.canonicalize().map_err(runtime_error)?;
-                if crate::tools::table::replacement_target_is_in_use(&path) {
-                    return Err(runtime_error(format!(
-                        "Table {} cannot be deleted: table is still open in this process",
-                        path.display()
-                    )));
-                }
-            }
-            let diagnostics =
-                import_fits_idi(Path::new(fitsfile), output, options).map_err(runtime_error)?;
+            check_fits_idi_replacement(output, options.overwrite)?;
+            let staged =
+                stage_fits_idi(Path::new(fitsfile), output, options).map_err(runtime_error)?;
+            let diagnostics = {
+                let _publication = crate::tools::table::lock_attachment_publication();
+                check_fits_idi_replacement(output, options.overwrite)?;
+                staged.publish().map_err(runtime_error)?
+            };
             *attached = Some(AttachedMs::open(
                 table_cache_name(output).map_err(runtime_error)?,
                 !nomodify,
@@ -148,6 +145,19 @@ impl PyMsTool {
             Ok(true)
         })
     }
+}
+
+fn check_fits_idi_replacement(output: &Path, overwrite: bool) -> PyResult<()> {
+    if overwrite && output.try_exists().map_err(runtime_error)? {
+        let path = output.canonicalize().map_err(runtime_error)?;
+        if crate::tools::table::replacement_target_is_in_use(&path) {
+            return Err(runtime_error(format!(
+                "Table {} cannot be deleted: table is still open in this process",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn default_fits_path(source: &Path) -> PathBuf {

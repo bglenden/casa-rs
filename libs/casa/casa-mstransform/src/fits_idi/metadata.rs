@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 use casa_core::Complex32;
+use casa_core::measures::MeasFrame;
 use casa_core::measures::direction::{DirectionRef, MDirection};
 use fitsio::FitsFile;
 use fitsio::hdu::{FitsHdu, HduInfo};
@@ -134,10 +135,15 @@ pub(super) fn write_frequency(
     ms: &mut MeasurementSet,
     fits: &mut FitsFile,
     hdu: &FitsHdu,
+    expected_bands: usize,
+    expected_channels: usize,
 ) -> MsResult<Vec<f64>> {
     let mut table = IdiTable::new(fits, hdu)?;
     let bands = table.count("NO_BAND")?;
     let channels = table.count("NO_CHAN")?;
+    if bands != expected_bands || channels != expected_channels {
+        return Err(invalid("FITS-IDI FREQUENCY and UV_DATA shapes disagree"));
+    }
     let base: f64 = table.required_key("REF_FREQ")?;
     let pixel: f64 = table.required_key("REF_PIXL")?;
     let offset = table.column::<f64>("BANDFREQ", bands)?;
@@ -237,7 +243,7 @@ pub(super) fn write_fields(
     ms: &mut MeasurementSet,
     fits: &mut FitsFile,
     hdu: &FitsHdu,
-) -> MsResult<DirectionRef> {
+) -> MsResult<(DirectionRef, usize)> {
     let mut table = IdiTable::new(fits, hdu)?;
     let mut ids = table.column::<i32>(
         if table.has("SOURCE_ID") {
@@ -261,28 +267,34 @@ pub(super) fn write_fields(
             .into_iter()
             .map(|value| {
                 if value.contains("J2000") {
-                    Ok(DirectionRef::J2000)
+                    Some(DirectionRef::J2000)
                 } else if value.contains("1950.0B") {
-                    Ok(DirectionRef::B1950)
+                    Some(DirectionRef::B1950)
                 } else {
-                    Err(invalid(format!("Cannot handle FITS-IDI equinox {value}")))
+                    None
                 }
             })
-            .collect::<MsResult<Vec<_>>>()?
+            .collect::<Vec<_>>()
     } else {
         table
             .column::<f64>("EPOCH", 1)?
             .into_iter()
             .map(|value| {
                 if (value - 1950.0).abs() < 0.01 {
-                    DirectionRef::B1950
+                    Some(DirectionRef::B1950)
+                } else if (value - 2000.0).abs() <= 0.01 * value.abs().max(2000.0) {
+                    Some(DirectionRef::J2000)
                 } else {
-                    DirectionRef::J2000
+                    None
                 }
             })
             .collect()
     };
-    let frame = frames.first().copied().unwrap_or(DirectionRef::J2000);
+    let frame = frames
+        .first()
+        .copied()
+        .flatten()
+        .unwrap_or(DirectionRef::J2000);
     for id in &mut ids {
         if *id == -1 {
             *id = 1;
@@ -305,22 +317,28 @@ pub(super) fn write_fields(
         let motion = [motion_ra[row], motion_dec[row]];
         let moving = motion.iter().any(|rate| rate.abs() > 1e-13)
             && motion.iter().all(|rate| rate.abs() <= 1000.0);
-        let direction = if moving {
-            canonical_direction([apparent_ra[row], apparent_dec[row]])
+        let (angles, source_frame) = if moving {
+            ([apparent_ra[row], apparent_dec[row]], DirectionRef::J2000)
         } else {
-            canonical_direction([ra[row], dec[row]])
+            let source_frame = frames[row].ok_or_else(|| {
+                invalid(format!(
+                    "Cannot handle FITS-IDI source equinox at row {row}"
+                ))
+            })?;
+            ([ra[row], dec[row]], source_frame)
         };
+        let direction = direction_in_frame(angles.map(f64::to_radians), source_frame, frame)?;
         if moving {
+            let rates = direction_in_frame(
+                motion.map(|rate| rate.to_radians() / 86_400.0),
+                source_frame,
+                frame,
+            )?;
             write_field(
                 ms,
                 names[row].trim_end(),
                 codes[row].trim_end(),
-                &[
-                    direction[0],
-                    motion[0].to_radians() / 86_400.0,
-                    direction[1],
-                    motion[1].to_radians() / 86_400.0,
-                ],
+                &[direction[0], rates[0], direction[1], rates[1]],
                 1,
                 false,
             )?;
@@ -335,7 +353,7 @@ pub(super) fn write_fields(
             )?;
         }
     }
-    Ok(frame)
+    Ok((frame, count as usize))
 }
 
 fn write_field(
@@ -486,8 +504,19 @@ impl<'a> IdiTable<'a> {
     }
 }
 
-fn canonical_direction(angles_deg: [f64; 2]) -> [f64; 2] {
-    let [lon, lat] = angles_deg.map(f64::to_radians);
-    let (longitude, latitude) = MDirection::from_angles(lon, lat, DirectionRef::J2000).as_angles();
-    [longitude.sin().atan2(longitude.cos()), latitude]
+fn direction_in_frame(
+    [longitude, latitude]: [f64; 2],
+    source: DirectionRef,
+    target: DirectionRef,
+) -> MsResult<[f64; 2]> {
+    let direction = MDirection::from_angles(longitude, latitude, source);
+    let direction = if source == target {
+        direction
+    } else {
+        direction
+            .convert_to(target, &MeasFrame::default())
+            .map_err(invalid)?
+    };
+    let (longitude, latitude) = direction.as_angles();
+    Ok([longitude.sin().atan2(longitude.cos()), latitude])
 }

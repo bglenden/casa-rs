@@ -1,17 +1,19 @@
 """FITS-IDI tool behaviour with the upstream e-MERLIN and VLBA fixtures."""
 
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from math import prod
 import os
 from pathlib import Path
 import struct
+import time
 
 import numpy as np
 import pytest
 
 from casars import tools
 from test_tools_ms import pinned_casa
-from test_tools_ms_fits import fits_binary_header, fits_header, read
+from test_tools_ms_fits import fits_binary_header, fits_columns, fits_extension, fits_header, read
 
 
 FIXTURES = [
@@ -49,11 +51,15 @@ def test_fromfitsidi_stock_exchange(name, rows, cell, windows, tmp_path):
         assert ref.open(str(left)) and cpp.open(str(right)) and native.open(str(left))
         assert ref.nrows() == cpp.nrows() == native.nrows() == rows
         assert set(ref.colnames()) == set(cpp.colnames()) == set(native.colnames())
+        for reader in (ref, cpp, native):
+            assert reader.getcolkeyword("UVW", "MEASINFO") == {"Ref": "ITRF", "type": "uvw"}
         columns = ["DATA", "FLAG", "FLAG_CATEGORY", "FLAG_ROW", "WEIGHT", "SIGMA", "UVW",
                    "ANTENNA1", "ANTENNA2", "ARRAY_ID", "DATA_DESC_ID", "FIELD_ID", "TIME",
                    "TIME_CENTROID", "INTERVAL", "EXPOSURE", "SCAN_NUMBER"]
         if "WEIGHT_SPECTRUM" in ref.colnames():
             columns.extend(["WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"])
+        for column in columns:
+            assert ref.coldatatype(column) == cpp.coldatatype(column) == native.coldatatype(column)
         assert ref.getcell("DATA", 0).shape == cell
         assert ref.getcell("FLAG_CATEGORY", 0).shape == (*cell, 3)
         block_rows = min(4096, 524288 // prod(cell))
@@ -145,6 +151,163 @@ def test_fromfitsidi_replacement_and_failed_input_preserve_state(tmp_path):
     assert read(casa, output, ["TIME"])["TIME"].size == 8496
 
 
+def test_fromfitsidi_refuses_to_replace_an_unrelated_directory(tmp_path):
+    source = idi_fixture(FIXTURES[0][0])
+    output = tmp_path / "unrelated.ms"
+    output.mkdir()
+    (output / "table.dat").write_text("not a casacore table")
+    (output / "important.txt").write_text("keep this")
+    with closing(tools.ms()) as importer, pytest.raises(RuntimeError):
+        importer.fromfitsidi(str(output), str(source), nomodify=False)
+    assert (output / "table.dat").read_text() == "not a casacore table"
+    assert (output / "important.txt").read_text() == "keep this"
+
+
+@pytest.mark.parametrize("already_present", [False, True])
+def test_fromfitsidi_protects_a_handle_opened_while_staging(tmp_path, already_present):
+    source = idi_fixture(FIXTURES[0][0])
+    larger = idi_fixture(FIXTURES[3][0])
+    output = tmp_path / "result.ms"
+    original = output if already_present else tmp_path / "pending.ms"
+    with closing(tools.ms()) as importer:
+        assert importer.fromfitsidi(str(original), str(source))
+    with ThreadPoolExecutor(max_workers=1) as executor, closing(tools.ms()) as holder:
+        def replace():
+            with closing(tools.ms()) as importer:
+                return importer.fromfitsidi(str(output), str(larger), nomodify=False)
+
+        conversion = executor.submit(replace)
+        deadline = time.monotonic() + 10
+        while not any(tmp_path.glob(".fits-idi-*/visibility.ms")):
+            assert not conversion.done() and time.monotonic() < deadline
+            time.sleep(0.001)
+        if not already_present:
+            original.rename(output)
+        assert holder.open(str(output)) and holder.nrow() == 504
+        with pytest.raises(RuntimeError, match="still open"):
+            conversion.result(timeout=30)
+        assert holder.nrow() == 504
+
+
+def replace_card(raw, position, name, value):
+    if isinstance(value, str):
+        card = f"{name:8}= '{value:<8}'".encode().ljust(80)
+    else:
+        card = fits_header([(name, value)])[:80]
+    raw[position:position + 80] = card
+
+
+@pytest.mark.parametrize("problem", ["frequency shape", "flux shape", "source id"])
+def test_fromfitsidi_rejects_inconsistent_metadata(problem, tmp_path):
+    stock = idi_fixture(FIXTURES[0][0])
+    raw = bytearray(stock.read_bytes())
+    if problem == "frequency shape":
+        cards, _ = fits_extension(raw, "FREQUENCY")
+        replace_card(raw, cards["NO_CHAN"][1], "NO_CHAN", 511)
+        message = "FREQUENCY and UV_DATA shapes disagree"
+    elif problem == "flux shape":
+        cards, _ = fits_extension(raw, "UV_DATA")
+        replace_card(raw, cards["MAXIS3"][1], "MAXIS3", 511)
+        message = "FLUX repeat"
+    else:
+        cards, start = fits_extension(raw, "UV_DATA")
+        source, _ = fits_columns(cards, start)["SOURCE_ID"]
+        struct.pack_into(">i", raw, source, 311)
+        message = "SOURCE_ID has no matching FIELD row"
+    damaged = tmp_path / "damaged.fits"
+    damaged.write_bytes(raw)
+    output = tmp_path / "result.ms"
+    with closing(tools.ms()) as importer:
+        assert importer.fromfitsidi(str(output), str(stock))
+        assert importer.close()
+        with pytest.raises(RuntimeError, match=message):
+            importer.fromfitsidi(str(output), str(damaged), nomodify=False)
+        assert importer.open(str(output)) and importer.nrow() == 504
+
+
+def two_channel_idi(no_interval):
+    raw = bytearray(idi_fixture(FIXTURES[0][0]).read_bytes())
+    fq, _ = fits_extension(raw, "FREQUENCY")
+    replace_card(raw, fq["NO_CHAN"][1], "NO_CHAN", 2)
+    uv, start = fits_extension(raw, "UV_DATA")
+    columns = fits_columns(uv, start)
+    flux, form = columns["FLUX"]
+    row_size = int(uv["NAXIS1"][0])
+    # Preserve the original row's scalar metadata and substitute two channels
+    # per band with unequal weights in the three-component representation.
+    rows = bytearray()
+    for index in range(2):
+        row = raw[start:flux] + struct.pack(">24f", *([3, 2, 1, 5, 7, 9] * 4))
+        row.extend(raw[flux + 4096 * 4:start + row_size])
+        time_offset = columns["TIME"][0] - start
+        initial_time, = struct.unpack_from(">d", row, time_offset)
+        struct.pack_into(">d", row, time_offset, initial_time + index * 4.0 / 86400.0)
+        rows.extend(row)
+    replace_card(raw, form, "TFORM11", "24E")
+    replace_card(raw, uv["TDIM11"][1], "TDIM11", "(3,1,2,4,1,1)")
+    replace_card(raw, uv["NAXIS1"][1], "NAXIS1", len(rows) // 2)
+    replace_card(raw, uv["NAXIS2"][1], "NAXIS2", 2)
+    replace_card(raw, uv["MAXIS1"][1], "MAXIS1", 3)
+    replace_card(raw, uv["MAXIS3"][1], "MAXIS3", 2)
+    replace_card(raw, uv["CRVAL2"][1], "CRVAL2", 1.0)
+    if no_interval:
+        for name, (value, position) in uv.items():
+            if name.startswith("TTYPE") and value == "INTTIM":
+                replace_card(raw, position, name, "UNUSED")
+                break
+    return raw[:start] + rows.ljust(len(rows) + (-len(rows) % 2880), b"\0")
+
+
+@pytest.mark.parametrize("no_interval", [False, True])
+def test_fromfitsidi_two_channel_correlation_weight_and_interval(no_interval, tmp_path):
+    casa = pinned_casa()
+    source = tmp_path / "narrow.fits"
+    source.write_bytes(two_channel_idi(no_interval))
+    paths = [tmp_path / "casa.ms", tmp_path / "native.ms"]
+    for api, output in zip((casa, tools), paths, strict=True):
+        with closing(api.ms()) as importer:
+            assert importer.fromfitsidi(str(output), str(source))
+            assert importer.nrow() == 8
+    we, wn = (read(casa, path, ("WEIGHT_SPECTRUM", "SIGMA_SPECTRUM", "WEIGHT", "SIGMA",
+                              "INTERVAL", "EXPOSURE", "TIME", "TIME_CENTROID")) for path in paths)
+    for path in paths:
+        pol = read(casa, path / "POLARIZATION", ("CORR_TYPE", "CORR_PRODUCT"))
+        np.testing.assert_array_equal(pol["CORR_TYPE"], [[9]])
+        np.testing.assert_array_equal(pol["CORR_PRODUCT"], [[[0]], [[0]]])
+    if no_interval:
+        np.testing.assert_allclose(wn["INTERVAL"], 4.0, atol=1e-5, rtol=0)
+        np.testing.assert_array_equal(wn["EXPOSURE"], wn["INTERVAL"])
+        np.testing.assert_array_equal(wn["TIME_CENTROID"], wn["TIME"] + wn["INTERVAL"] / 2)
+        np.testing.assert_array_equal(wn["WEIGHT"][..., :4], wn["WEIGHT"][..., 4:])
+        assert we["TIME_CENTROID"][0] - we["TIME"][0] == 0.5
+    else:
+        for name in wn:
+            np.testing.assert_array_equal(wn[name], we[name], strict=True, err_msg=name)
+    np.testing.assert_array_equal(wn["WEIGHT"], wn["WEIGHT_SPECTRUM"][:, 0, :])
+    np.testing.assert_array_equal(wn["SIGMA"], wn["SIGMA_SPECTRUM"][:, 1, :])
+
+
+def test_fromfitsidi_converts_each_source_to_the_field_reference(tmp_path):
+    casa = pinned_casa()
+    raw = bytearray(idi_fixture(FIXTURES[1][0]).read_bytes())
+    source_cards, first = fits_extension(raw, "SOURCE")
+    equinox, _ = fits_columns(source_cards, first)["EQUINOX"]
+    raw[equinox:equinox + 8] = b"J2000   "
+    second = equinox + int(source_cards["NAXIS1"][0])
+    raw[second:second + 8] = b"1950.0B "
+    source = tmp_path / "mixed-source.fits"
+    source.write_bytes(raw)
+    outputs = [tmp_path / "casa.ms", tmp_path / "native.ms"]
+    for api, path in zip((casa, tools), outputs, strict=True):
+        with closing(api.ms()) as importer:
+            assert importer.fromfitsidi(str(path), str(source))
+    with closing(casa.table()) as ref, closing(casa.table()) as native:
+        assert ref.open(str(outputs[0] / "FIELD")) and native.open(str(outputs[1] / "FIELD"))
+        for column in ("DELAY_DIR", "PHASE_DIR", "REFERENCE_DIR"):
+            assert ref.getcolkeyword(column, "MEASINFO") == native.getcolkeyword(column, "MEASINFO")
+            np.testing.assert_allclose(native.getcol(column), ref.getcol(column), atol=5e-8, rtol=0)
+
+
 def test_fromfitsidi_weather_columns_and_flag_channel_range(tmp_path):
     casa = pinned_casa()
     fixture = idi_fixture(FIXTURES[0][0])
@@ -187,7 +350,11 @@ def test_fromfitsidi_weather_columns_and_flag_channel_range(tmp_path):
         result["IONOS_ELECTRON"], expected["IONOS_ELECTRON"], strict=True
     )
     assert read(casa, reference / "FLAG_CMD", ("COMMAND",))["COMMAND"][-1] == "spw='*:1~3''"
-    assert read(casa, output / "FLAG_CMD", ("COMMAND",))["COMMAND"][-1] == "spw='0,1,2,3:1~3'"
+    command = read(casa, output / "FLAG_CMD", ("COMMAND",))["COMMAND"][-1]
+    assert command == "spw='0:1~3,1:1~3,2:1~3,3:1~3'"
+    with closing(casa.ms()) as selector:
+        indices = selector.msseltoindex(vis=str(output), spw=command[5:-1])
+    np.testing.assert_array_equal(indices["channel"], [[window, 1, 3, 1] for window in range(4)])
 
 
 def test_fromfitsidi_phase_calibration_subtable(tmp_path):

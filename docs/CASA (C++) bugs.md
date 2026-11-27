@@ -12515,5 +12515,18 @@ range and a second quote when it finishes the spectral-window expression.
 It also replaces a selected frequency setup with a wildcard when all its
 bands are flagged. On an upstream e-MERLIN file with a flag extension for
 channels 2 through 4 of all four bands in frequency setup 1, casa-rs
-persists the selection `spw='0,1,2,3:1~3'` with a single closing quote and
-explicit window IDs.
+persists `spw='0:1~3,1:1~3,2:1~3,3:1~3'` with a single closing quote and
+a channel range for each window. The pinned selection parser confirms all
+four ranges.
+
+## FITS-IDI interval inference can leave inconsistent centroids and weights
+
+For FITS-IDI visibility rows with no `INTTIM` column, CASA 6.7.6.14 starts
+with a one-second integration. When it reaches a later timestamp, it
+fills INTERVAL and EXPOSURE with the timestamp difference. The initial
+TIME_CENTROID, visibility weights and interval-dependent digital scaling
+still reflect one second. The fill can also change durations from an
+earlier UV_DATA extension. On two integrations four seconds apart,
+the first persisted CASA exposure is four seconds, but the centroid is only
+half a second after its start. casa-rs determines each extension's inferred
+interval before decoding its visibilities and uses that interval throughout.

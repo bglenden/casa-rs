@@ -6,7 +6,7 @@ use std::ops::Range;
 use casa_core::{Complex32, Correlation};
 use fitsio::FitsFile;
 use fitsio::hdu::{FitsHdu, HduInfo};
-use fitsio::tables::ReadsCol;
+use fitsio::tables::{ColumnDataType, ReadsCol};
 use ndarray::{Array1, Array2, ShapeBuilder};
 
 use super::digital::DigitalCorrection;
@@ -50,17 +50,23 @@ impl DataLayout {
             match name.trim_end() {
                 "COMPLEX" => components = Some(samples),
                 "STOKES" => {
+                    if samples > 8 {
+                        return Err(invalid("Invalid FITS-IDI STOKES axis length"));
+                    }
                     let reference: f64 = hdu.read_key(fits, &key("CRVAL")).map_err(invalid)?;
                     let pixel: f64 = hdu.read_key(fits, &key("CRPIX")).map_err(invalid)?;
                     let step: f64 = hdu.read_key(fits, &key("CDELT")).map_err(invalid)?;
                     input = Some(
                         (0..samples)
                             .map(|index| {
-                                fits_correlation(
-                                    (reference + (index as f64 + 1.0 - pixel) * step + 0.5).floor()
-                                        as i32,
-                                    true,
-                                )
+                                let code = (reference + (index as f64 + 1.0 - pixel) * step + 0.5)
+                                    .floor() as i32;
+                                if code == 1 {
+                                    // The FITS-IDI reader treats SMA's +1 as a receptor pair.
+                                    Ok(Correlation::XX)
+                                } else {
+                                    fits_correlation(code, false)
+                                }
                             })
                             .collect::<MsResult<Vec<_>>>()?,
                     );
@@ -111,6 +117,25 @@ impl DataLayout {
             .and_then(|cells| cells.checked_mul(bands))
             .and_then(|cells| cells.checked_mul(components))
             .ok_or_else(|| invalid("FITS-IDI visibility row size overflow"))?;
+        let HduInfo::TableInfo {
+            column_descriptions,
+            ..
+        } = &hdu.info
+        else {
+            return Err(invalid("UV_DATA is not a FITS binary table"));
+        };
+        let row_bytes = hdu.read_key::<i64>(fits, "NAXIS1").map_err(invalid)?;
+        if !column_descriptions.iter().any(|column| {
+            column.name == "FLUX"
+                && column.data_type.typ == ColumnDataType::Float
+                && column.data_type.repeat == floats
+        }) || floats.checked_mul(size_of::<f32>()).is_none_or(|bytes| {
+            usize::try_from(row_bytes).map_or(true, |row_bytes| bytes > row_bytes)
+        }) {
+            return Err(invalid(
+                "FITS-IDI FLUX repeat disagrees with the visibility axes",
+            ));
+        }
         Ok(Self {
             bands,
             channels,
@@ -134,8 +159,9 @@ impl DataLayout {
     }
 }
 
-pub(super) struct SpectralInput<'a> {
+pub(super) struct VisibilityInput<'a> {
     pub(super) resolutions: &'a [f64],
+    pub(super) field_count: usize,
     pub(super) correlator: &'a str,
     pub(super) correlator_version: f64,
     pub(super) van_vleck: f64,
@@ -152,7 +178,7 @@ pub(super) fn append_hdu(
     hdu: &FitsHdu,
     columns: &mut ImportColumns,
     geometry: &Geometry,
-    spectral: &SpectralInput<'_>,
+    input: &VisibilityInput<'_>,
     scan: i32,
     times: &mut TimeRange,
 ) -> MsResult<()> {
@@ -162,7 +188,7 @@ pub(super) fn append_hdu(
     };
     let scale = optional_key::<f64>(hdu, fits, "VIS_SCAL")?.unwrap_or(1.0);
     let weight_type = optional_key::<String>(hdu, fits, "WEIGHTYP")?
-        .map_or(matches!(spectral.correlator, "DIFX" | "VLBA"), |value| {
+        .map_or(matches!(input.correlator, "DIFX" | "VLBA"), |value| {
             value.trim().eq_ignore_ascii_case("CORRELAT")
         });
     let rows = InputColumns::resolve(hdu)?;
@@ -171,18 +197,21 @@ pub(super) fn append_hdu(
     } else {
         Some(infer_interval(fits, hdu, &rows, num_rows)?)
     };
-    let mut buffers = DecodeBuffers::new(&layout, spectral.resolutions);
-    let mut digital = DigitalCorrection::for_correlator(spectral.correlator, spectral.van_vleck);
+    let mut buffers = DecodeBuffers::new(&layout, input.resolutions);
+    let mut digital = DigitalCorrection::for_correlator(input.correlator, input.van_vleck);
     let rows_per_block = (262_144 / layout.floats()).clamp(1, 1024);
     for start in (0..num_rows).step_by(rows_per_block) {
         let range = start..(start + rows_per_block).min(num_rows);
         let values = RowBlock::read(fits, hdu, &rows, &layout, range)?;
         for index in 0..values.date.len() {
             let visibility = values.header(index, geometry, inferred.unwrap_or(1.0))?;
+            if visibility.field as usize >= input.field_count {
+                return Err(invalid("FITS-IDI SOURCE_ID has no matching FIELD row"));
+            }
             times.first.get_or_insert(visibility.time);
             times.last_end = visibility.time + f64::from(visibility.interval);
             let visibility_divisor =
-                if spectral.correlator == "VLBA" && spectral.correlator_version >= 4.17 {
+                if input.correlator == "VLBA" && input.correlator_version >= 4.17 {
                     scale * f64::from(visibility.interval)
                 } else {
                     scale
@@ -568,12 +597,8 @@ fn median_spectrum(spectrum: &Array2<f32>, output: &mut Array1<f32>, entries: &m
     for (result, row) in output.iter_mut().zip(spectrum.rows()) {
         entries.clear();
         entries.extend(row.iter().copied());
-        let middle = entries.len() / 2;
-        let (lower, median, _) = entries.select_nth_unstable_by(middle, f32::total_cmp);
-        *result = if spectrum.ncols().is_multiple_of(2) {
-            (lower.iter().max_by(|a, b| a.total_cmp(b)).unwrap() + *median) * 0.5
-        } else {
-            *median
-        };
+        // casacore's partialMedians uses the lower middle for even lengths.
+        let middle = (entries.len() - 1) / 2;
+        *result = *entries.select_nth_unstable_by(middle, f32::total_cmp).1;
     }
 }

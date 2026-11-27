@@ -231,27 +231,26 @@ pub(super) fn flag_commands(
             (frequencies[row] > 0).then_some(frequencies[row].saturating_sub(1) as usize);
         let selected_bands = &band_flags[row * band_width..(row + 1) * band_width];
         if requested.is_some() || selected_bands.contains(&0) || lo > 0 {
-            let windows = (0..spectral_windows)
-                .filter(|&window| {
-                    requested.is_none_or(|freq| window / bands == freq)
-                        && selected_bands
-                            .get(window % bands)
-                            .is_some_and(|&flag| flag != 0)
-                })
-                .map(|window| window.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            let windows = if requested.is_none() && !selected_bands.contains(&0) {
-                "*"
-            } else {
-                &windows
-            };
             let channel = if lo > 0 {
                 format!(":{}~{}", lo - 1, hi - 1)
             } else {
                 String::new()
             };
-            terms.push(format!("spw='{windows}{channel}'"));
+            let selection = if requested.is_none() && !selected_bands.contains(&0) {
+                format!("*{channel}")
+            } else {
+                (0..spectral_windows)
+                    .filter(|&window| {
+                        requested.is_none_or(|freq| window / bands == freq)
+                            && selected_bands
+                                .get(window % bands)
+                                .is_some_and(|&flag| flag != 0)
+                    })
+                    .map(|window| format!("{window}{channel}"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            };
+            terms.push(format!("spw='{selection}'"));
         }
         let flagged = &flags[4 * row..4 * row + corr_count];
         if flagged.contains(&0) {

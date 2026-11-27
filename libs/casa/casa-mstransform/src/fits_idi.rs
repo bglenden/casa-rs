@@ -8,7 +8,7 @@ mod metadata;
 mod rows;
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use casa_core::Value;
 use casa_tables::{Table, TableInfo, TableOptions};
@@ -23,7 +23,7 @@ use casa_ms::fits_visibility::reader_support::{
 use casa_ms::schema::main_table::OptionalMainColumn;
 use casa_ms::{MeasurementSet, MeasurementSetBuilder, MsResult, SubtableId};
 use metadata::{write_feeds, write_fields, write_frequency, write_geometry, write_observation};
-use rows::{DataLayout, SpectralInput, TimeRange, append_hdu};
+use rows::{DataLayout, TimeRange, VisibilityInput, append_hdu};
 
 /// Layout and replacement policy for FITS-IDI imports.
 #[derive(Clone, Copy, Debug, Default)]
@@ -34,19 +34,41 @@ pub struct FitsIdiOptions {
     pub overwrite: bool,
 }
 
-/// Convert the FITS-IDI visibility buffers and extension metadata to MSv2.
+/// An MSv2 conversion held in a private sibling directory until publication.
+pub struct StagedFitsIdi {
+    directory: tempfile::TempDir,
+    output: PathBuf,
+    overwrite: bool,
+    diagnostics: Vec<String>,
+}
+
+impl StagedFitsIdi {
+    /// Publish the completed MS and return its correlator diagnostics.
+    ///
+    /// # Errors
+    /// Returns an error if the destination cannot be created or replaced.
+    pub fn publish(self) -> MsResult<Vec<String>> {
+        publish_import(
+            &self.directory.path().join("visibility.ms"),
+            &self.output,
+            self.overwrite,
+        )?;
+        Ok(self.diagnostics)
+    }
+}
+
+/// Convert FITS-IDI visibility and extension metadata into a private MSv2.
 ///
-/// Returns diagnostics for corrections requested by the correlator metadata
-/// that CASA does not apply.
+/// Hold the result until the caller is ready to publish the completed table.
 ///
 /// # Errors
 /// Returns an error for an unreadable source, inconsistent visibility axes
 /// or linked identifiers, and when the destination cannot be created.
-pub fn import_fits_idi(
+pub fn stage_fits_idi(
     input: &Path,
     output: &Path,
     options: FitsIdiOptions,
-) -> MsResult<Vec<String>> {
+) -> MsResult<StagedFitsIdi> {
     let mut fits = open_file(input)?;
     if output.file_name().is_none() {
         return Err(invalid("FITS-IDI output filename is missing"));
@@ -67,7 +89,10 @@ pub fn import_fits_idi(
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    let payload = tempfile::tempdir_in(parent).map_err(invalid)?;
+    let payload = tempfile::Builder::new()
+        .prefix(".fits-idi-")
+        .tempdir_in(parent)
+        .map_err(invalid)?;
     let staging = payload.path().join("visibility.ms");
     std::fs::create_dir(&staging).map_err(invalid)?;
     let mut ms = MeasurementSet::create_staged(&staging, idi_builder(&layout, &catalog))?;
@@ -77,11 +102,17 @@ pub fn import_fits_idi(
     let source_hdu = read_extension(&mut fits, catalog.first("SOURCE")?)?;
     let feed_hdu = read_extension(&mut fits, catalog.first("ANTENNA")?)?;
     let mut geometry = write_geometry(&mut ms, &mut fits, &geometry_hdu)?;
-    let frame = write_fields(&mut ms, &mut fits, &source_hdu)?;
-    let resolutions = write_frequency(&mut ms, &mut fits, &frequency_hdu)?;
+    let (frame, field_count) = write_fields(&mut ms, &mut fits, &source_hdu)?;
+    let resolutions = write_frequency(
+        &mut ms,
+        &mut fits,
+        &frequency_hdu,
+        layout.bands,
+        layout.channels,
+    )?;
     write_feeds(&mut ms, &mut fits, &feed_hdu, &mut geometry)?;
     write_polarization(&mut ms, &layout.correlations)?;
-    configure_references(&mut ms, frame, &geometry.epoch)?;
+    configure_references(&mut ms, frame, &geometry.epoch, false)?;
     let dimensions = [layout.correlations.len(), layout.channels];
     let tile = visibility_tile(dimensions, &geometry.name, options.observation_type);
     let spectra = if layout.components == 3 {
@@ -95,8 +126,9 @@ pub fn import_fits_idi(
     } else {
         &catalog.correlator
     };
-    let spectral = SpectralInput {
+    let input = VisibilityInput {
         resolutions: &resolutions,
+        field_count,
         correlator,
         correlator_version: catalog.correlator_version,
         van_vleck: catalog.van_vleck,
@@ -108,7 +140,7 @@ pub fn import_fits_idi(
             uv,
             &mut columns,
             &geometry,
-            &spectral,
+            &input,
             scan as i32,
             &mut times,
         )?;
@@ -122,8 +154,12 @@ pub fn import_fits_idi(
     for (name, table) in calibration {
         table.save(TableOptions::new(staging.join(name)))?;
     }
-    publish_import(&staging, output, options.overwrite)?;
-    Ok(diagnostics)
+    Ok(StagedFitsIdi {
+        directory: payload,
+        output: output.to_owned(),
+        overwrite: options.overwrite,
+        diagnostics,
+    })
 }
 
 fn idi_builder(layout: &DataLayout, catalog: &Catalog) -> MeasurementSetBuilder {
@@ -179,14 +215,23 @@ fn check_replacement_target(output: &Path) -> MsResult<()> {
             "FITS-IDI overwrite requires an existing casacore table directory",
         ));
     }
-    casa_tables::publication::check_write_access(output).map_err(invalid)
+    casa_tables::publication::check_write_access(output).map_err(invalid)?;
+    Table::open(TableOptions::new(output))?;
+    Ok(())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn replace_import(staging: &Path, output: &Path) -> MsResult<()> {
     use casa_tables::publication::{exchange_directories, lock_table_tree_for_replacement};
     check_replacement_target(output)?;
-    let _guards = lock_table_tree_for_replacement(output)?;
+    let guards = lock_table_tree_for_replacement(output)?;
+    check_replacement_target(output)?;
+    if !guards
+        .first()
+        .is_some_and(|guard| guard.matches_table_path(output))
+    {
+        return Err(invalid("FITS-IDI output changed during replacement"));
+    }
     exchange_directories(staging, output).map_err(invalid)
 }
 
