@@ -267,10 +267,10 @@ fn summarize_synthetic_complex_caltable() {
 #[test]
 fn summarize_delay_k_jones_table_supports_float_family() {
     let dir = TempDir::new().expect("tempdir");
-    let table_path = common::create_apply_delay_caltable(
+    let table_path = common::synthetic_tables::create_apply_delay_caltable(
         &dir.path().join("synthetic.kcal"),
         &["target"],
-        &[common::SyntheticDelaySolutionRow {
+        &[common::synthetic_tables::SyntheticDelaySolutionRow {
             time_seconds: 123.5,
             field_id: 0,
             spectral_window_id: 5,
@@ -308,10 +308,10 @@ fn summarize_delay_k_jones_table_supports_float_family() {
 #[test]
 fn summarize_bpoly_table_reads_cal_desc_spw_ids() {
     let dir = TempDir::new().expect("tempdir");
-    let table_path = common::create_apply_bpoly_caltable(
+    let table_path = common::synthetic_tables::create_apply_bpoly_caltable(
         &dir.path().join("synthetic.bpoly"),
         &[
-            common::SyntheticBPolySolutionRow {
+            common::synthetic_tables::SyntheticBPolySolutionRow {
                 time_seconds: 42.0,
                 field_id: 0,
                 spectral_window_id: 3,
@@ -322,7 +322,7 @@ fn summarize_bpoly_table_reads_cal_desc_spw_ids() {
                 phase_coefficients: vec![vec![0.0, 0.0], vec![0.0, 0.0]],
                 phase_units: "deg",
             },
-            common::SyntheticBPolySolutionRow {
+            common::synthetic_tables::SyntheticBPolySolutionRow {
                 time_seconds: 45.0,
                 field_id: 0,
                 spectral_window_id: 7,
@@ -402,9 +402,9 @@ fn summarize_malformed_table_reports_validation_and_type_warnings() {
 #[test]
 fn summarize_bpoly_missing_cal_desc_and_batch_open_errors() {
     let dir = TempDir::new().expect("tempdir");
-    let table_path = common::create_apply_bpoly_caltable(
+    let table_path = common::synthetic_tables::create_apply_bpoly_caltable(
         &dir.path().join("missing-cal-desc.bpoly"),
-        &[common::SyntheticBPolySolutionRow {
+        &[common::synthetic_tables::SyntheticBPolySolutionRow {
             time_seconds: 1.0,
             field_id: 0,
             spectral_window_id: 2,

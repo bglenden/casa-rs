@@ -22,16 +22,21 @@ fn empty_selection_is_an_error_in_every_mode_with_casa_column_setup() {
     ] {
         let dir = tempfile::tempdir().unwrap();
         let path = common::create_apply_fixture_ms(dir.path(), false);
-        let rows = [0, 1].map(|antenna_id| common::SyntheticGainSolutionRow {
-            time_seconds: 100.,
-            field_id: 0,
-            spectral_window_id: 0,
-            antenna_id,
-            gains: vec![Complex32::new(2., 0.); 2],
-            flags: vec![false; 2],
-        });
-        let gain =
-            common::create_apply_gain_caltable(&dir.path().join("gain.gcal"), &["TARGET0"], &rows);
+        let rows = [0, 1].map(
+            |antenna_id| common::synthetic_tables::SyntheticGainSolutionRow {
+                time_seconds: 100.,
+                field_id: 0,
+                spectral_window_id: 0,
+                antenna_id,
+                gains: vec![Complex32::new(2., 0.); 2],
+                flags: vec![false; 2],
+            },
+        );
+        let gain = common::synthetic_tables::create_apply_gain_caltable(
+            &dir.path().join("gain.gcal"),
+            &["TARGET0"],
+            &rows,
+        );
         let error = execute_apply_from_path(
             &path,
             &ApplyPlanRequest {
@@ -124,15 +129,18 @@ fn flag_only_modes_preserve_corrected_columns_and_weights() {
                 }
                 ms.save().unwrap();
                 drop(ms);
-                let rows = [0, 1].map(|antenna| common::SyntheticGainSolutionRow {
-                    time_seconds: 100.,
-                    field_id: 0,
-                    spectral_window_id: 0,
-                    antenna_id: antenna,
-                    gains: vec![Complex32::new(2., 0.); 2],
-                    flags: vec![antenna == 0; 2],
-                });
-                let gain = common::create_apply_gain_caltable(
+                let rows =
+                    [0, 1].map(
+                        |antenna| common::synthetic_tables::SyntheticGainSolutionRow {
+                            time_seconds: 100.,
+                            field_id: 0,
+                            spectral_window_id: 0,
+                            antenna_id: antenna,
+                            gains: vec![Complex32::new(2., 0.); 2],
+                            flags: vec![antenna == 0; 2],
+                        },
+                    );
+                let gain = common::synthetic_tables::create_apply_gain_caltable(
                     &dir.path().join("gain.gcal"),
                     &["TARGET0"],
                     &rows,
@@ -279,29 +287,38 @@ fn unavailable_windows_preserve_data_weights_and_only_strict_modes_flag() {
                 }
                 ms.save().unwrap();
                 drop(ms);
-                let rows = [0, 1].map(|antenna| common::SyntheticGainSolutionRow {
-                    time_seconds: 100.,
-                    field_id: 0,
-                    spectral_window_id: 0,
-                    antenna_id: antenna,
-                    gains: vec![Complex32::new(2., 0.); 2],
-                    flags: vec![false; 2],
-                });
+                let rows =
+                    [0, 1].map(
+                        |antenna| common::synthetic_tables::SyntheticGainSolutionRow {
+                            time_seconds: 100.,
+                            field_id: 0,
+                            spectral_window_id: 0,
+                            antenna_id: antenna,
+                            gains: vec![Complex32::new(2., 0.); 2],
+                            flags: vec![false; 2],
+                        },
+                    );
                 let gain = if bpoly {
-                    let rows = [0, 1].map(|antenna| common::SyntheticBPolySolutionRow {
-                        time_seconds: 100.,
-                        field_id: 0,
-                        spectral_window_id: 0,
-                        antenna_id: antenna,
-                        scale_factor: Complex32::new(2., 0.),
-                        valid_domain_hz: [1.0e9, 1.2e9],
-                        amp_coefficients: vec![vec![0.]; 2],
-                        phase_coefficients: vec![vec![0.]; 2],
-                        phase_units: "rad",
-                    });
-                    common::create_apply_bpoly_caltable(&dir.path().join("gain.bpoly"), &rows)
+                    let rows =
+                        [0, 1].map(
+                            |antenna| common::synthetic_tables::SyntheticBPolySolutionRow {
+                                time_seconds: 100.,
+                                field_id: 0,
+                                spectral_window_id: 0,
+                                antenna_id: antenna,
+                                scale_factor: Complex32::new(2., 0.),
+                                valid_domain_hz: [1.0e9, 1.2e9],
+                                amp_coefficients: vec![vec![0.]; 2],
+                                phase_coefficients: vec![vec![0.]; 2],
+                                phase_units: "rad",
+                            },
+                        );
+                    common::synthetic_tables::create_apply_bpoly_caltable(
+                        &dir.path().join("gain.bpoly"),
+                        &rows,
+                    )
                 } else {
-                    common::create_apply_gain_caltable(
+                    common::synthetic_tables::create_apply_gain_caltable(
                         &dir.path().join("gain.gcal"),
                         &["TARGET0"],
                         &rows,

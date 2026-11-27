@@ -44,7 +44,7 @@ fn fixture(path: &Path) -> PathBuf {
     let gains = input
         .rows
         .iter()
-        .map(|row| common::SyntheticGainSolutionRow {
+        .map(|row| common::synthetic_tables::SyntheticGainSolutionRow {
             time_seconds: row.time,
             field_id: row.field_id,
             spectral_window_id: row.spw_id,
@@ -57,7 +57,8 @@ fn fixture(path: &Path) -> PathBuf {
             flags: row.flags.clone(),
         })
         .collect::<Vec<_>>();
-    let gain = common::create_apply_gain_caltable(path, &["FLUX", "PHASE"], &gains);
+    let gain =
+        common::synthetic_tables::create_apply_gain_caltable(path, &["FLUX", "PHASE"], &gains);
     let mut times = BTreeMap::<i32, Vec<f64>>::new();
     for row in &input.rows {
         let times = times.entry(row.field_id).or_default();
@@ -257,7 +258,7 @@ fn partial_antenna_samples_do_not_move_the_casa_incremental_reference_time() {
 fn unmatched_transfer_field_does_not_discard_another_fields_valid_flux() {
     let dir = tempfile::tempdir().unwrap();
     let rows = [(0, 0, 2.), (1, 0, 4.), (2, 1, 3.)].map(|(field, antenna, amplitude)| {
-        common::SyntheticGainSolutionRow {
+        common::synthetic_tables::SyntheticGainSolutionRow {
             time_seconds: 10. * field as f64,
             field_id: field,
             spectral_window_id: 0,
@@ -266,7 +267,7 @@ fn unmatched_transfer_field_does_not_discard_another_fields_valid_flux() {
             flags: vec![false; 2],
         }
     });
-    let gain = common::create_apply_gain_caltable(
+    let gain = common::synthetic_tables::create_apply_gain_caltable(
         &dir.path().join("disjoint.gcal"),
         &["FLUX", "PHASE", "OTHER"],
         &rows,

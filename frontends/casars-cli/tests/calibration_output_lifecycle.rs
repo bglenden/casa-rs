@@ -84,7 +84,10 @@ fn snapshot(path: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 #[test]
 fn replace_and_append_then_no_solutions_preserve_the_product() {
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     let output = dir.path().join("g.cal");
     solve(&ms, gain(&output), CalibrationOutputMode::Replace).unwrap();
     let first = rows(&output);
@@ -115,7 +118,10 @@ fn replace_and_append_then_no_solutions_preserve_the_product() {
 #[test]
 fn failed_pipelined_input_finishes_and_preserves_the_prior_product() {
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     let output = dir.path().join("g.cal");
     solve(&ms, gain(&output), CalibrationOutputMode::Replace).unwrap();
     let before = snapshot(&output);
@@ -173,7 +179,10 @@ fn failed_pipelined_input_finishes_and_preserves_the_prior_product() {
 #[test]
 fn incompatible_append_and_interrupted_staging_preserve_every_prior_byte() {
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     let output = dir.path().join("g.cal");
     solve(&ms, gain(&output), CalibrationOutputMode::Replace).unwrap();
     let before = snapshot(&output);
@@ -207,7 +216,10 @@ fn incompatible_append_and_interrupted_staging_preserve_every_prior_byte() {
 #[test]
 fn append_rejects_spectral_metadata_changes_and_preserves_subtable_keywords() {
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     let output = dir.path().join("g.cal");
     solve(&ms, gain(&output), CalibrationOutputMode::Replace).unwrap();
     let spw = output.join("SPECTRAL_WINDOW");
@@ -231,7 +243,10 @@ fn append_rejects_spectral_metadata_changes_and_preserves_subtable_keywords() {
 #[test]
 fn generated_corrections_accumulate_by_selected_antenna_and_refuse_wrong_types() {
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     let output = dir.path().join("o.cal");
     let mut request = GencalRequest {
         measurement_set: ms,
@@ -310,7 +325,10 @@ fn generated_corrections_accumulate_by_selected_antenna_and_refuse_wrong_types()
 #[test]
 fn replacing_an_ms_or_a_non_table_is_refused() {
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     let before = snapshot(&ms);
     assert!(solve(&ms, gain(&ms), CalibrationOutputMode::Replace).is_err());
     assert_eq!(snapshot(&ms), before);
@@ -323,7 +341,10 @@ fn replacing_an_ms_or_a_non_table_is_refused() {
 #[test]
 fn report_aliasing_a_table_file_is_refused_before_replacement() {
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     let output = dir.path().join("g.cal");
     solve(&ms, gain(&output), CalibrationOutputMode::Replace).unwrap();
     let before = snapshot(&output);
@@ -357,7 +378,7 @@ fn polynomial_bandpass_append_reuses_the_window_descriptor() {
     let unit = casa_core::Complex32::new(1.0, 0.0);
     let ms = common::create_bandpass_solve_fixture_ms(
         dir.path(),
-        &[common::SyntheticBandpassTimeCluster {
+        &[common::synthetic_tables::SyntheticBandpassTimeCluster {
             field_id: 0,
             time_seconds: 100.0,
             scan_number: 1,
@@ -405,7 +426,10 @@ fn polynomial_bandpass_append_reuses_the_window_descriptor() {
 #[test]
 fn append_refuses_a_missing_parameter_column_without_changing_the_table() {
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     let output = dir.path().join("g.cal");
     solve(&ms, gain(&output), CalibrationOutputMode::Replace).unwrap();
     let mut malformed = table(&output);
@@ -420,7 +444,10 @@ fn append_refuses_a_missing_parameter_column_without_changing_the_table() {
 #[test]
 fn restarted_process_refuses_another_process_backup_and_reservation() {
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     let output = dir.path().join("g.cal");
     solve(&ms, gain(&output), CalibrationOutputMode::Replace).unwrap();
     let backup = dir.path().join(".g.cal.casa-rs-replaced-previous-process");
@@ -452,7 +479,10 @@ fn restarted_process_refuses_another_process_backup_and_reservation() {
 #[test]
 fn reports_cannot_overwrite_prior_tables_or_gaincurve_sources() {
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     let prior = dir.path().join("prior.cal");
     solve(&ms, gain(&prior), CalibrationOutputMode::Replace).unwrap();
     let output = dir.path().join("new.cal");
@@ -495,7 +525,10 @@ fn reports_cannot_overwrite_prior_tables_or_gaincurve_sources() {
 #[test]
 fn export_symlink_parent_is_resolved_before_parent_components() {
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     let alias = dir.path().join("alias");
     std::os::unix::fs::symlink(ms.join("ANTENNA"), &alias).unwrap();
     let before = snapshot(&ms);
@@ -516,7 +549,10 @@ fn export_symlink_parent_is_resolved_before_parent_components() {
 #[test]
 fn append_preserves_custom_keyword_subtables() {
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     let output = dir.path().join("g.cal");
     solve(&ms, gain(&output), CalibrationOutputMode::Replace).unwrap();
     let provenance = output.join("PROVENANCE");

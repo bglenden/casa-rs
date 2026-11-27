@@ -211,11 +211,11 @@ fn plan_apply_resolves_gainfield_nearest_by_field_direction() {
 fn plan_apply_accepts_k_jones_delay_tables() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path = common::create_apply_fixture_ms(dir.path(), true);
-    let caltable_path = common::create_apply_delay_caltable(
+    let caltable_path = common::synthetic_tables::create_apply_delay_caltable(
         &dir.path().join("delay.kcal"),
         &["TARGET0"],
         &[
-            common::SyntheticDelaySolutionRow {
+            common::synthetic_tables::SyntheticDelaySolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -223,7 +223,7 @@ fn plan_apply_accepts_k_jones_delay_tables() {
                 delays_ns: vec![250.0, 250.0],
                 flags: vec![false, false],
             },
-            common::SyntheticDelaySolutionRow {
+            common::synthetic_tables::SyntheticDelaySolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -258,9 +258,9 @@ fn plan_apply_accepts_k_jones_delay_tables() {
 fn plan_apply_accepts_bpoly_tables() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path = common::create_apply_fixture_ms(dir.path(), true);
-    let bpoly_path = common::create_apply_bpoly_caltable(
+    let bpoly_path = common::synthetic_tables::create_apply_bpoly_caltable(
         &dir.path().join("bandpass.bpoly"),
-        &[common::SyntheticBPolySolutionRow {
+        &[common::synthetic_tables::SyntheticBPolySolutionRow {
             time_seconds: 100.0,
             field_id: 0,
             spectral_window_id: 0,
@@ -292,9 +292,9 @@ fn plan_apply_accepts_bpoly_tables() {
 fn plan_apply_keeps_bpoly_gainfield_as_an_ignored_upstream_control() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path = common::create_apply_fixture_ms(dir.path(), true);
-    let bpoly_path = common::create_apply_bpoly_caltable(
+    let bpoly_path = common::synthetic_tables::create_apply_bpoly_caltable(
         &dir.path().join("bandpass.bpoly"),
-        &[common::SyntheticBPolySolutionRow {
+        &[common::synthetic_tables::SyntheticBPolySolutionRow {
             time_seconds: 100.0,
             field_id: 0,
             spectral_window_id: 0,

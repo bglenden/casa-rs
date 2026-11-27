@@ -106,11 +106,11 @@ fn create_two_table_callib_fixture(
     ms.save().unwrap();
     drop(ms);
 
-    common::create_apply_gain_caltable(
+    common::synthetic_tables::create_apply_gain_caltable(
         &root.join("field0.gcal"),
         &["TARGET0"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -121,7 +121,7 @@ fn create_two_table_callib_fixture(
                 ],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 100.0,
                 field_id: 0,
                 spectral_window_id: 0,
@@ -134,11 +134,11 @@ fn create_two_table_callib_fixture(
             },
         ],
     );
-    common::create_apply_gain_caltable(
+    common::synthetic_tables::create_apply_gain_caltable(
         &root.join("field1.gcal"),
         &["TARGET1"],
         &[
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 200.0,
                 field_id: 1,
                 spectral_window_id: 1,
@@ -149,7 +149,7 @@ fn create_two_table_callib_fixture(
                 ],
                 flags: vec![false, false],
             },
-            common::SyntheticGainSolutionRow {
+            common::synthetic_tables::SyntheticGainSolutionRow {
                 time_seconds: 200.0,
                 field_id: 1,
                 spectral_window_id: 1,

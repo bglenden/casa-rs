@@ -100,15 +100,18 @@ fn selected_channels_preserve_other_cells_and_use_the_selected_weight_median() {
                     }
                     ms.save().unwrap();
                     drop(ms);
-                    let rows = [0, 1].map(|antenna| common::SyntheticGainSolutionRow {
-                        time_seconds: 100.,
-                        field_id: 0,
-                        spectral_window_id: 0,
-                        antenna_id: antenna,
-                        gains: vec![Complex32::new(2., 0.); 2],
-                        flags: vec![false; 2],
-                    });
-                    let gain = common::create_apply_gain_caltable(
+                    let rows =
+                        [0, 1].map(
+                            |antenna| common::synthetic_tables::SyntheticGainSolutionRow {
+                                time_seconds: 100.,
+                                field_id: 0,
+                                spectral_window_id: 0,
+                                antenna_id: antenna,
+                                gains: vec![Complex32::new(2., 0.); 2],
+                                flags: vec![false; 2],
+                            },
+                        );
+                    let gain = common::synthetic_tables::create_apply_gain_caltable(
                         &dir.path().join("gain.gcal"),
                         &["TARGET0"],
                         &rows,
@@ -202,18 +205,26 @@ fn selected_bandpass_channel_uses_its_original_grid_position() {
     for calwt in [false, true] {
         let dir = tempfile::tempdir().unwrap();
         let path = common::create_apply_fixture_ms(dir.path(), false);
-        let rows = [0, 1].map(|antenna| common::SyntheticBPolySolutionRow {
-            time_seconds: 100.,
-            field_id: 0,
-            spectral_window_id: 0,
-            antenna_id: antenna,
-            scale_factor: Complex32::new(if antenna == 0 { 8_f32.sqrt() } else { 1. }, 0.),
-            valid_domain_hz: [1.0e9, 1.001e9],
-            amp_coefficients: vec![vec![0., if antenna == 0 { 2_f64.ln() / 2. } else { 0. }]; 2],
-            phase_coefficients: vec![vec![0.]; 2],
-            phase_units: "RADIANS",
-        });
-        let gain = common::create_apply_bpoly_caltable(&dir.path().join("bandpass.bpoly"), &rows);
+        let rows = [0, 1].map(
+            |antenna| common::synthetic_tables::SyntheticBPolySolutionRow {
+                time_seconds: 100.,
+                field_id: 0,
+                spectral_window_id: 0,
+                antenna_id: antenna,
+                scale_factor: Complex32::new(if antenna == 0 { 8_f32.sqrt() } else { 1. }, 0.),
+                valid_domain_hz: [1.0e9, 1.001e9],
+                amp_coefficients: vec![
+                    vec![0., if antenna == 0 { 2_f64.ln() / 2. } else { 0. }];
+                    2
+                ],
+                phase_coefficients: vec![vec![0.]; 2],
+                phase_units: "RADIANS",
+            },
+        );
+        let gain = common::synthetic_tables::create_apply_bpoly_caltable(
+            &dir.path().join("bandpass.bpoly"),
+            &rows,
+        );
         let mut spec = ApplyCalibrationTableSpec::new(gain);
         spec.calwt = calwt;
         execute_apply_from_path(
@@ -261,15 +272,17 @@ fn descending_ms_bandpass_is_independent_of_calwt_after_frequency_resampling() {
             .unwrap();
         ms.save().unwrap();
         drop(ms);
-        let rows = [0, 1].map(|antenna| common::SyntheticGainSolutionRow {
-            time_seconds: 100.,
-            field_id: 0,
-            spectral_window_id: 0,
-            antenna_id: antenna,
-            gains: vec![Complex32::new(1., 0.); 2],
-            flags: vec![false; 2],
-        });
-        let gain = common::create_apply_gain_caltable(
+        let rows = [0, 1].map(
+            |antenna| common::synthetic_tables::SyntheticGainSolutionRow {
+                time_seconds: 100.,
+                field_id: 0,
+                spectral_window_id: 0,
+                antenna_id: antenna,
+                gains: vec![Complex32::new(1., 0.); 2],
+                flags: vec![false; 2],
+            },
+        );
+        let gain = common::synthetic_tables::create_apply_gain_caltable(
             &dir.path().join("bandpass.bcal"),
             &["TARGET0"],
             &rows,

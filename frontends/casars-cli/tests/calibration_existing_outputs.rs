@@ -73,7 +73,7 @@ fn gain_request(output_table: PathBuf) -> GainSolveRequest {
 
 /// A gain table with a reference and a transfer field, for fluxscale.
 fn two_field_gain_table(path: &Path) -> PathBuf {
-    let row = |time_seconds, field_id, gain| common::SyntheticGainSolutionRow {
+    let row = |time_seconds, field_id, gain| common::synthetic_tables::SyntheticGainSolutionRow {
         time_seconds,
         field_id,
         spectral_window_id: 0,
@@ -81,7 +81,7 @@ fn two_field_gain_table(path: &Path) -> PathBuf {
         gains: vec![Complex32::new(gain, 0.0); 2],
         flags: vec![false, false],
     };
-    common::create_apply_gain_caltable(
+    common::synthetic_tables::create_apply_gain_caltable(
         path,
         &["REF0", "TARGET0"],
         &[row(10.0, 0, 1.0), row(20.0, 1, 2.0)],
@@ -90,10 +90,10 @@ fn two_field_gain_table(path: &Path) -> PathBuf {
 
 /// A gain table with solutions for antenna 0 only, in spw 0.
 fn antenna0_gain_table(path: &Path) -> PathBuf {
-    common::create_apply_gain_caltable(
+    common::synthetic_tables::create_apply_gain_caltable(
         path,
         &["TARGET0"],
-        &[common::SyntheticGainSolutionRow {
+        &[common::synthetic_tables::SyntheticGainSolutionRow {
             time_seconds: 100.0,
             field_id: 0,
             spectral_window_id: 0,
@@ -107,7 +107,10 @@ fn antenna0_gain_table(path: &Path) -> PathBuf {
 #[test]
 fn gaincal_replaces_and_fluxscale_refuses_an_existing_product() {
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     let table = dir.path().join("solved.gcal");
     let solve = || {
         solve_calibration(
@@ -195,7 +198,10 @@ fn a_refused_report_runs_nothing() {
 fn overwrite_replaces_the_report_and_gaincal_replaces_its_table() {
     // CASA gaincal replaces a table by default; report overwrite is separate (#945).
     let dir = TempDir::new().unwrap();
-    let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let ms = common::create_gain_solve_fixture_ms(
+        dir.path(),
+        common::synthetic_tables::SyntheticGainFixtureKind::G,
+    );
     let first_table = dir.path().join("first.gcal");
     let report = dir.path().join("report.txt");
     let solve = |table: &Path| {
