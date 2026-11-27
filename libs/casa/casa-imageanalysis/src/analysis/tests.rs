@@ -450,8 +450,8 @@ fn imstat_accepts_crtf_pixel_polygon_regions() {
 
     assert_eq!(from_file.blc, vec![0, 0]);
     assert_eq!(from_file.trc, vec![2, 2]);
-    assert_eq!(from_file.npts, 3.0);
-    assert_eq!(from_file.sum, 14.0);
+    assert_eq!(from_file.npts, 6.0);
+    assert_eq!(from_file.sum, 50.0);
 }
 
 #[test]
@@ -481,8 +481,8 @@ fn imstat_accepts_crtf_world_polygon_regions() {
 
     assert_eq!(from_file.blc, vec![0, 0]);
     assert_eq!(from_file.trc, vec![2, 2]);
-    assert_eq!(from_file.npts, 3.0);
-    assert_eq!(from_file.sum, 14.0);
+    assert_eq!(from_file.npts, 6.0);
+    assert_eq!(from_file.sum, 50.0);
 }
 
 #[test]

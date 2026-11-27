@@ -25,6 +25,7 @@ use super::super::axes::{
     legacy_subimage_coordinates_with_stokes, stokes_for_axis, subimage_coordinates_with_stokes,
 };
 use super::super::imsubimage::{SubimagePlan, SubimageRegion, region::SubimageSelection};
+use super::super::regions::crtf_polygon_contains;
 use super::super::{
     PixelRegion, direction_plane_axes, mask_error_wording, parse_image_channel_selection,
     parse_stokes_selection, region_pixels,
@@ -418,7 +419,7 @@ impl ImmathSelection {
             && self.saved_mask.is_none()
             && self.strided_plan.is_none()
             && self.box_spec.as_ref().is_none_or(|b| b.boxes.len() <= 1)
-            && !matches!(self.region, Some(PixelRegion::Polygon(_)))
+            && !matches!(self.region, Some(PixelRegion::Polygon { .. }))
             && !matches!(self.region, Some(PixelRegion::Boxes(ref boxes)) if boxes.len() > 1)
             && !self.has_channel_gaps()
             && !self.has_stokes_gaps()
@@ -601,54 +602,15 @@ fn immath_region_pixel_mask(
                 Ok(boxes_union_mask(boxes, start, shape, plane))
             }
         }
-        PixelRegion::Polygon(vertices) => {
-            if vertices.len() < 3 {
-                return Err(ImageError::InvalidMetadata(
-                    "CRTF polygon regions require at least three vertices".to_string(),
-                ));
-            }
+        PixelRegion::Polygon { vertices, .. } => {
             let [x_axis, y_axis] = plane;
             Ok(ArrayD::from_shape_fn(IxDyn(shape), |idx| {
-                let x = (start[x_axis] + idx[x_axis]) as f64;
-                let y = (start[y_axis] + idx[y_axis]) as f64;
-                point_in_polygon_or_boundary(x, y, vertices)
+                let x = start[x_axis] + idx[x_axis];
+                let y = start[y_axis] + idx[y_axis];
+                crtf_polygon_contains(vertices, x, y)
             }))
         }
     }
-}
-
-fn point_in_polygon_or_boundary(x: f64, y: f64, vertices: &[[usize; 2]]) -> bool {
-    let mut inside = false;
-    let mut previous = vertices[vertices.len() - 1];
-    for &current in vertices {
-        let x0 = previous[0] as f64;
-        let y0 = previous[1] as f64;
-        let x1 = current[0] as f64;
-        let y1 = current[1] as f64;
-        if point_on_segment(x, y, x0, y0, x1, y1) {
-            return true;
-        }
-        let crosses = (y0 > y) != (y1 > y);
-        if crosses {
-            let x_intersection = (x1 - x0) * (y - y0) / (y1 - y0) + x0;
-            if x <= x_intersection {
-                inside = !inside;
-            }
-        }
-        previous = current;
-    }
-    inside
-}
-
-fn point_on_segment(x: f64, y: f64, x0: f64, y0: f64, x1: f64, y1: f64) -> bool {
-    let cross = (x - x0) * (y1 - y0) - (y - y0) * (x1 - x0);
-    if cross.abs() > 1.0e-9 {
-        return false;
-    }
-    x >= x0.min(x1) - 1.0e-9
-        && x <= x0.max(x1) + 1.0e-9
-        && y >= y0.min(y1) - 1.0e-9
-        && y <= y0.max(y1) + 1.0e-9
 }
 
 fn mask_skipped_axis_positions(
