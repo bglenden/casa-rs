@@ -123,7 +123,7 @@
 //!
 //! `resources/casa-compat/evidence/msselection-spw-casa-20261102.json` holds
 //! what CASA 6.7.6.14's `ms.msselect` and `ms.msselectedindices` report for
-//! 1552 expressions over two MeasurementSets (curated forms and seeded
+//! over 1,500 expressions over two MeasurementSets (curated forms and seeded
 //! random ones), written by `tools/casa-compat/spw_selection_oracle.py`;
 //! `libs/casacore/casa-ms/tests/spw_selection_oracle.rs` replays every one.
 

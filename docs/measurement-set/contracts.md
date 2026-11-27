@@ -48,6 +48,19 @@ wrapper still leaks physical rows or `DATA_DESC_ID` into its algorithm.
   quanta types directly, with no observation-specific measure vocabulary,
   and the Measures APIs may be reworked for bulk use (below).
 
+## Windows
+
+MSv2 has one catalogue window per `SPECTRAL_WINDOW` row. In MSv4,
+datasets with the same `spectral_window_name` share a catalogue window
+only when their channel frequencies in stored order, frequency frame,
+signed channel width and reference frequency agree exactly. Numeric
+comparisons treat positive and negative zero as equal. The reference
+frequency agrees when both datasets omit it or both state the same value
+and frame. Opening a conflicting store returns `InvalidStore`, naming the
+window and the conflicting metadata. The MSv4 writer checks the metadata
+it will emit at dataset declaration. A conflict returns `InvalidRequest`
+and prevents publication of the processing set.
+
 ## Capabilities not yet offered
 
 Each is refused today with a typed error, or offered only in part. It is

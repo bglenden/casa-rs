@@ -563,17 +563,20 @@ impl MsSelection {
         Ok(self)
     }
 
-    /// Return the retained channel selector for a spectral window, if present.
+    /// Return all channel ranges for a window in the numeric SPW selector,
+    /// in expression order, retaining overlaps between ranges.
+    ///
+    /// A matching clause without a channel range selects the whole window
+    /// and returns `None`. A missing or unparseable selection also returns
+    /// `None`.
     pub fn channel_selection_for_spw(&self, spw_id: i32) -> Option<ChannelSelection> {
-        self.spw
-            .as_deref()
-            .and_then(|selector| parse_spw_selector(selector).ok())
-            .and_then(|selectors| {
-                selectors
-                    .into_iter()
-                    .find(|selector| selector.spw_id == spw_id)
-                    .and_then(|selector| selector.channels)
-            })
+        let clauses = parse_spw_selector(self.spw.as_deref()?).ok()?;
+        let mut matching = clauses.into_iter().filter(|clause| clause.spw_id == spw_id);
+        let mut selection = matching.next()?.channels?;
+        for clause in matching {
+            selection.segments.extend(clause.channels?.segments);
+        }
+        Some(selection)
     }
 
     /// Select rows matching the given DATA_DESC_IDs directly.

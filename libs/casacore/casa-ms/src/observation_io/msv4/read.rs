@@ -27,8 +27,8 @@ use super::cursor::Msv4Cursor;
 use super::ephemeris;
 use super::held;
 use super::metadata::{
-    DataGroupRecord, SCHEMA_VERSION, data_groups, direction_frame, frequency_frame, has_node,
-    invalid, numbers, open_array, require_layout, require_units, storage, strings, text,
+    DataGroupRecord, SCHEMA_VERSION, WindowMetadata, data_groups, direction_frame, frequency_frame,
+    has_node, invalid, numbers, open_array, require_layout, require_units, storage, strings, text,
     time_reference, visibility_units,
 };
 use super::opening;
@@ -58,6 +58,8 @@ pub(super) struct GroupArrays {
 pub(super) struct Dataset {
     /// The dataset's group in the processing set (`/name`).
     pub(super) path: String,
+    /// `frequency.channel_width`, which is stated even for an empty axis.
+    channel_width_hz: f64,
     /// `time` coordinate: seconds from the partition's origin.
     pub(super) times: Vec<f64>,
     /// `time.integration_time`, when stated.
@@ -339,8 +341,8 @@ impl Msv4Observation {
             exists(root, &format!("{path}/TIME_CENTROID_EXTRA_PRECISION"));
         let exposure = auxiliary("EFFECTIVE_INTEGRATION_TIME", false)?;
         let (scans, intents) = self.scans(store, root, path)?;
-        let (partition, window) = self.partition(store, path)?;
-        let window = self.window(window);
+        let (partition, window, channel_width_hz) = self.partition(store, path)?;
+        let window = self.window(window, &partition, channel_width_hz)?;
         let processor = self.processor(attributes);
         let field_names = strings(store, &format!("{path}/field_name"))?;
         if field_names.len() != times.len()
@@ -419,6 +421,7 @@ impl Msv4Observation {
         });
         self.datasets.push(Dataset {
             path: path.to_string(),
+            channel_width_hz,
             times,
             interval_s,
             centroid,
@@ -505,18 +508,42 @@ impl Msv4Observation {
         }
     }
 
-    /// The catalogue's window `entry` describes, added if new: one per
-    /// spectral window name, as XRADIO names one per window.
-    fn window(&mut self, entry: WindowEntry) -> WindowId {
-        let windows = &mut self.catalogue_mut().windows;
-        let index = windows
+    /// The catalogue's window `entry` describes, added if new. Each name
+    /// identifies one window, so the datasets naming it must agree on its
+    /// channel axis and reference frequency.
+    fn window(
+        &mut self,
+        entry: WindowEntry,
+        partition: &PartitionEntry,
+        channel_width_hz: f64,
+    ) -> Result<WindowId, ObservationError> {
+        let windows = &self.catalogue.windows;
+        let Some(index) = windows.iter().position(|known| known.name == entry.name) else {
+            let window = WindowId(u32::try_from(windows.len()).expect("few windows"));
+            self.catalogue_mut().windows.push(entry);
+            return Ok(window);
+        };
+        let window = WindowId(u32::try_from(index).expect("few windows"));
+        let (dataset, previous) = self
+            .datasets
             .iter()
-            .position(|known| known.name == entry.name)
-            .unwrap_or_else(|| {
-                windows.push(entry);
-                windows.len() - 1
-            });
-        WindowId(u32::try_from(index).expect("few windows"))
+            .zip(&self.catalogue.partitions)
+            .find(|(_, partition)| partition.window == window)
+            .expect("an earlier dataset opened the window");
+        let known = WindowMetadata::new(
+            previous,
+            dataset.channel_width_hz,
+            windows[index].reference_frequency.as_ref(),
+        );
+        let proposed = WindowMetadata::new(
+            partition,
+            channel_width_hz,
+            entry.reference_frequency.as_ref(),
+        );
+        if let Some(reason) = known.conflict(&proposed, &entry.name) {
+            return Err(invalid(reason));
+        }
+        Ok(window)
     }
 
     /// The catalogue's processor for this dataset's `processor_info`,
@@ -548,13 +575,14 @@ impl Msv4Observation {
         Some(ProcessorId(u32::try_from(index).expect("few processors")))
     }
 
-    /// The partition's spectral window and correlations, and the window's
-    /// entry; its data groups are added by the caller.
+    /// The partition's spectral window and correlations, the window's
+    /// entry, and the scalar channel width stated on the frequency axis.
+    /// The caller adds the data groups.
     fn partition(
         &self,
         store: &Arc<FilesystemStore>,
         path: &str,
-    ) -> Result<(PartitionEntry, WindowEntry), ObservationError> {
+    ) -> Result<(PartitionEntry, WindowEntry, f64), ObservationError> {
         let (frequencies_hz, attributes) = numbers::<f64>(store, &format!("{path}/frequency"))?;
         let reference_frequency = attributes
             .get("reference_frequency")
@@ -623,7 +651,7 @@ impl Msv4Observation {
             states: Vec::new(),
             processor: None,
         };
-        Ok((entry, window))
+        Ok((entry, window, channel_width))
     }
 
     /// The catalogue scan of each time, when the dataset has `scan_name`,
