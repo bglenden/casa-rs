@@ -414,9 +414,5 @@
   "libs/imaging/casa-imaging-singledish/tests/grid_memory.rs",
   "libs/imaging/casa-imaging/tests/admission_memory.rs"
  ],
- "dual_module_files": [
-  "surfaces/casa-plot-data/src/calibration/plotbandpass.rs",
-  "surfaces/casa-plot-data/src/msexplore.rs",
-  "surfaces/casa-plot-data/src/plot_document.rs"
- ]
+ "dual_module_files": []
 }
