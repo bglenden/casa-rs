@@ -14,8 +14,8 @@ use super::{PyTableTool, flag, text};
 use crate::convert::value::CasaValue;
 use crate::tools::LogLine;
 
-/// Protect a plain table held by a live table tool, including an underlying
-/// table opened through a reference. A busy handle cannot be inspected.
+/// Protect a live table's descriptor and its physical backing tables. A
+/// busy handle cannot be inspected.
 pub(crate) fn path_is_in_use(path: &Path) -> bool {
     let Ok(path) = table_cache_name(path) else {
         return true;
@@ -24,14 +24,18 @@ pub(crate) fn path_is_in_use(path: &Path) -> bool {
     registry::for_each_other(u64::MAX, |state| {
         used |= match state {
             Some(state) => state.open.as_ref().is_some_and(|open| {
-                open.root()
-                    .table
-                    .cache_plain_table_paths()
-                    .map_or(true, |paths| {
-                        paths
-                            .into_iter()
-                            .any(|name| name.canonicalize().unwrap_or(name).starts_with(&path))
-                    })
+                open.name
+                    .canonicalize()
+                    .is_ok_and(|name| name.starts_with(&path))
+                    || open
+                        .root()
+                        .table
+                        .cache_plain_table_paths()
+                        .map_or(true, |paths| {
+                            paths
+                                .into_iter()
+                                .any(|name| name.canonicalize().unwrap_or(name).starts_with(&path))
+                        })
             }),
             None => true,
         };

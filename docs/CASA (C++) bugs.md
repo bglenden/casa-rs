@@ -11999,11 +11999,15 @@ open the table named by the parent keyword. Repeating a plain copy onto the
 source MeasurementSet's own keyword can terminate the pinned process. When
 the destination is inside a linked source subtable, the pinned copy attempts
 to copy that directory into itself and can leave a partial output.
+For a concatenated parent, CASA reports success and leaves the named child,
+but the parent drops its newly assigned keyword when it closes.
 
 casa-rs stages the copy outside the source subtable trees and publishes the
 child and the keyword naming that child. The keyword uses casacore's relative
 path encoding so the parent and result can move together. A keyword with an
 incompatible existing type fails before a child is published (#1030).
+Concatenated parents are refused before publication because their descriptor
+has no persisted keyword record.
 
 ## Duplicate observations can interrupt a subtable-only concatenation
 

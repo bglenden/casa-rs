@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Independent persisted outputs of a legacy MS TaQL selection.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -31,6 +32,16 @@ pub(super) struct QueryOutputOptions {
     overwrite: bool,
     endian: Option<EndianFormat>,
     storage: Option<QueryStorage>,
+}
+
+pub(super) struct StagedLegacyQuery {
+    output: PathBuf,
+    staged: PathBuf,
+    stage: tempfile::TempDir,
+    destination: SortedDestination,
+    subtable: Option<QuerySubtable>,
+    independent: bool,
+    _stage_lock: Option<TableWriteLock>,
 }
 
 #[derive(Clone, Copy)]
@@ -192,14 +203,14 @@ fn option_value(field: &GivingOption) -> PyResult<(ExprValue, &'static str)> {
 }
 
 impl AttachedMs {
-    pub(super) fn save_legacy_query(
+    pub(super) fn stage_legacy_query(
         &self,
         table: &Table,
         rows: &[usize],
         name: &str,
         options: QueryOutputOptions,
         original: &Path,
-    ) -> PyResult<Option<Self>> {
+    ) -> PyResult<Option<StagedLegacyQuery>> {
         if name.is_empty() {
             return Ok(None);
         }
@@ -257,29 +268,20 @@ impl AttachedMs {
         self.working_metadata_link()
             .verify_directory()
             .map_err(runtime_error)?;
-        let _stage_lock = options
+        let stage_lock = options
             .independent
             .then(|| TableWriteLock::acquire_to_reread(&staged, 1))
             .transpose()
             .map_err(runtime_error)?;
-        publish_selection(&output, &staged, stage, destination, |publication| {
-            let attached = options
-                .independent
-                .then(|| {
-                    Self::open_with_publication_guard(
-                        output.clone(),
-                        false,
-                        false,
-                        false,
-                        publication,
-                    )
-                })
-                .transpose()?;
-            if let Some(subtable) = subtable {
-                subtable.publish_link()?;
-            }
-            Ok(attached)
-        })
+        Ok(Some(StagedLegacyQuery {
+            output,
+            staged,
+            stage,
+            destination,
+            subtable,
+            independent: options.independent,
+            _stage_lock: stage_lock,
+        }))
     }
 
     fn check_query_destination(
@@ -319,6 +321,42 @@ impl AttachedMs {
             }
         }
         Ok(parent)
+    }
+}
+
+impl StagedLegacyQuery {
+    pub(super) fn publish(
+        self,
+        retained: &mut BTreeMap<PathBuf, TableWriteLock>,
+    ) -> PyResult<Option<AttachedMs>> {
+        if let Some(subtable) = &self.subtable {
+            subtable.verify_parent()?;
+        }
+        publish_selection(
+            &self.output,
+            &self.staged,
+            self.stage,
+            self.destination,
+            |publication| {
+                let attached = self
+                    .independent
+                    .then(|| {
+                        AttachedMs::open_with_publication_guard(
+                            self.output.clone(),
+                            false,
+                            false,
+                            false,
+                            publication,
+                        )
+                    })
+                    .transpose()?;
+                if let Some(subtable) = self.subtable {
+                    let held = retained.get_mut(&subtable.owner);
+                    subtable.publish_link(held)?;
+                }
+                Ok(attached)
+            },
+        )
     }
 }
 

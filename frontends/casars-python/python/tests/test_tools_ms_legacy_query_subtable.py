@@ -177,3 +177,28 @@ def test_legacy_taql_can_copy_into_a_linked_subtable_without_copying_the_stage(n
         assert child.open(published)
         assert child.nrows() == 2
     assert not any(path.name.startswith(".taql-ms-") for path in root.rglob("*"))
+
+
+def test_legacy_taql_rejects_unpersistable_concatenated_parent(native_dataset, tmp_path):
+    casa = pinned_casa()
+    parts = [tmp_path / "first.ms", tmp_path / "second.ms"]
+    for part in parts:
+        copytree(native_dataset, part)
+    parent = tmp_path / "parent.ms"
+    with closing(casa.ms()) as builder:
+        assert builder.createmultims(str(parent), list(map(str, parts)), [])
+    command = f'True LIMIT 2 GIVING "{parent}::RESULT"'
+    with closing(tools.ms()) as selector:
+        assert selector.open(str(native_dataset))
+        original = selector.nrowold()
+        with pytest.raises(RuntimeError, match="cannot persist TaQL result keywords"):
+            selector.selecttaqlold(command)
+        assert selector.nrowold() == original
+    assert not (parent / "RESULT").exists()
+    with closing(casa.ms()) as selector:
+        assert selector.open(str(native_dataset))
+        assert selector.selecttaqlold(command)
+    assert (parent / "RESULT").is_dir()
+    with closing(casa.table()) as reader:
+        assert reader.open(str(parent))
+        assert "RESULT" not in reader.keywordnames()

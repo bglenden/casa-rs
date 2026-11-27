@@ -15,7 +15,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use super::legacy_iteration::LegacyIteration;
-use super::legacy_query_output::QueryOutputOptions;
+use super::legacy_query_output::{QueryOutputOptions, StagedLegacyQuery};
 use super::legacy_visibility::LegacyAxes;
 use super::metadata_link::compose_rows;
 use super::selection_indices::{selectinit_id, selection_dictionary, selection_text};
@@ -148,7 +148,7 @@ impl PyMsTool {
         py.detach(|| {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
             match attached.as_mut() {
-                Some(ms) => ms.select_legacy_taql(msselect.unwrap_or_default()),
+                Some(ms) => ms.select_legacy_taql(msselect.as_deref().unwrap_or_default()),
                 None => Ok(false),
             }
         })
@@ -353,31 +353,52 @@ impl AttachedMs {
                 .is_none_or(|rows| !rows.is_empty()))
     }
 
-    fn select_legacy_taql(&mut self, text: String) -> PyResult<bool> {
+    fn select_legacy_taql(&mut self, text: &str) -> PyResult<bool> {
         let original_path = self.path.clone();
         let view = self.legacy_view_for_filter();
         if !view.prepare_legacy_filter()? || text.bytes().all(|character| character == b' ') {
             return Ok(false);
         }
-        let (nonempty, output) = view.apply_legacy_taql(text, &original_path)?;
-        if let Some(output) = output {
+        let (selected, staged) = view.prepare_legacy_taql(text, &original_path)?;
+        let nonempty = !selected.is_empty();
+        let output = staged
+            .map(|stage| stage.publish(&mut self.write_locks))
+            .transpose()?
+            .flatten();
+        let view = self.legacy_view_mut();
+        if let Some(mut output) = output {
+            output.legacy_selection.initial =
+                view.legacy_selection.initial.clone().map(|mut initial| {
+                    initial.rows = None;
+                    initial
+                });
+            output.legacy_selection.axes = view.legacy_selection.axes.without_baseline_read();
+            output.legacy_selection.baselines = view.legacy_selection.baselines.clone();
+            if !nonempty {
+                output
+                    .legacy_selection
+                    .set_iterator_rows(Some(Arc::from([])), false);
+            }
             self.replace_legacy_output(Some(Box::new(output)));
+        } else {
+            view.legacy_selection
+                .set_iterator_rows(Some(selected), false);
         }
         Ok(nonempty)
     }
 
-    fn apply_legacy_taql(
-        &mut self,
-        text: String,
+    fn prepare_legacy_taql(
+        &self,
+        text: &str,
         original_path: &std::path::Path,
-    ) -> PyResult<(bool, Option<AttachedMs>)> {
+    ) -> PyResult<(Arc<[usize]>, Option<StagedLegacyQuery>)> {
         let previous = self.legacy_selection.rows();
         let working = self.working_metadata_link();
         let outer = working.selected_rows().map_err(runtime_error)?;
         let physical_rows = compose_rows(outer.as_deref(), previous);
         let refreshed = self.refresh_legacy_main()?;
         let table = refreshed.as_ref().unwrap_or(&self.main);
-        let fast = select_projected_scalar_rows(table, &text, physical_rows.as_deref())
+        let fast = select_projected_scalar_rows(table, text, physical_rows.as_deref())
             .map_err(runtime_error)?;
         let selection = if let Some(selection) = fast {
             selection
@@ -385,39 +406,22 @@ impl AttachedMs {
             let snapshot = working
                 .snapshot_relative_rows(previous)
                 .map_err(runtime_error)?;
-            select_legacy_rows(&snapshot.ms, &text).map_err(runtime_error)?
+            select_legacy_rows(&snapshot.ms, text).map_err(runtime_error)?
         };
         let selected = selection
             .rows
             .into_iter()
             .map(|row| previous.map_or(row, |previous| previous[row]))
             .collect::<Arc<[usize]>>();
-        let nonempty = !selected.is_empty();
-        if let Some(giving) = selection.giving {
+        let staged = if let Some(giving) = selection.giving {
             let options = QueryOutputOptions::parse(&giving)?;
             let output = compose_rows(outer.as_deref(), Some(&selected)).expect("row projection");
             working.verify_directory().map_err(runtime_error)?;
-            if let Some(mut saved) =
-                self.save_legacy_query(table, &output, &giving.table_name, options, original_path)?
-            {
-                saved.legacy_selection.initial =
-                    self.legacy_selection.initial.clone().map(|mut s| {
-                        s.rows = None;
-                        s
-                    });
-                saved.legacy_selection.axes = self.legacy_selection.axes.without_baseline_read();
-                saved.legacy_selection.baselines = self.legacy_selection.baselines.clone();
-                if !nonempty {
-                    saved
-                        .legacy_selection
-                        .set_iterator_rows(Some(Arc::from([])), false);
-                }
-                return Ok((nonempty, Some(saved)));
-            }
-        }
-        self.legacy_selection
-            .set_iterator_rows(Some(selected), false);
-        Ok((nonempty, None))
+            self.stage_legacy_query(table, &output, &giving.table_name, options, original_path)?
+        } else {
+            None
+        };
+        Ok((selected, staged))
     }
 
     fn select_legacy_record(&mut self, record: RecordValue) -> PyResult<bool> {
@@ -526,8 +530,9 @@ impl AttachedMs {
             range => legacy_range_predicate(range, &field)?,
         };
         if let Some(predicate) = predicate {
-            let original = self.path.clone();
-            self.apply_legacy_taql(predicate, &original)?;
+            let (selected, _) = self.prepare_legacy_taql(&predicate, &self.path)?;
+            self.legacy_selection
+                .set_iterator_rows(Some(selected), false);
         }
         Ok(())
     }

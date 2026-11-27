@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Resolve and publish a legacy TaQL result named through a table keyword.
 
+use std::fs::{self, Metadata};
 use std::path::{Path, PathBuf};
 
 use casa_core::{RecordValue, Value};
@@ -8,12 +9,15 @@ use casa_tables::publication::check_write_access;
 use casa_tables::{Table, TableOptions, TablePartNames, TableWriteLock, add_directory};
 use pyo3::prelude::*;
 
+use super::metadata_link::same_directory;
 use super::runtime_error;
 
 pub(super) struct QuerySubtable {
     pub(super) output: PathBuf,
     pub(super) owner: PathBuf,
     pub(super) keyword: String,
+    parent_directory: Metadata,
+    owner_directory: Metadata,
 }
 
 impl QuerySubtable {
@@ -60,17 +64,49 @@ impl QuerySubtable {
         }
         let owner = keyword_owner(&parent)?;
         let output = parent.join(keyword);
+        let parent_directory = fs::metadata(&parent).map_err(runtime_error)?;
+        let owner_directory = fs::metadata(&owner).map_err(runtime_error)?;
         validate_keyword(&open(&owner)?, keyword)?;
         check_write_access(&owner.join("table.dat")).map_err(runtime_error)?;
         Ok(Some(Self {
             output,
             owner,
             keyword: keyword.into(),
+            parent_directory,
+            owner_directory,
         }))
     }
 
-    pub(super) fn publish_link(&self) -> PyResult<()> {
+    pub(super) fn verify_parent(&self) -> PyResult<()> {
+        let parent = self
+            .output
+            .parent()
+            .expect("subtable has a parent directory");
+        for (path, expected) in [
+            (parent, &self.parent_directory),
+            (&self.owner, &self.owner_directory),
+        ] {
+            let current = fs::metadata(path).map_err(runtime_error)?;
+            if !same_directory(expected, &current) {
+                return Err(runtime_error("TaQL result keyword parent was replaced"));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn publish_link(&self, retained: Option<&mut TableWriteLock>) -> PyResult<()> {
+        if let Some(lock) = retained {
+            return self.write_link(lock);
+        }
         let mut lock = TableWriteLock::acquire_to_reread(&self.owner, 1).map_err(runtime_error)?;
+        self.write_link(&mut lock)
+    }
+
+    fn write_link(&self, lock: &mut TableWriteLock) -> PyResult<()> {
+        self.verify_parent()?;
+        if !lock.matches_table_path(&self.owner) {
+            return Err(runtime_error("TaQL result keyword parent was replaced"));
+        }
         let mut table = open(&self.owner)?;
         validate_keyword(&table, &self.keyword)?;
         table.keywords_mut().upsert(
