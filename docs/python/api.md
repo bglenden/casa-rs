@@ -23,14 +23,13 @@ casars.tasks.<task>(**parameters)
 
 A task call runs in process. `tasks.run` returns a `TaskCompletion` with the
 task, workspace, logs, status, message, parameter, CASA return value, and
-declared products. A wrapper whose surface names its CASA task (every task but the
-casa-rs tasks `calibrate`, `msexplore` and `msconvert`, and `plotms`) has
-CASA's signature, positional or by keyword with
-CASA's defaults, then casa-rs's own controls, keyword-only, and returns
-CASA's value, with NumPy arrays where CASA returns them. A parameter casa-rs
-does not implement yet is taken only at CASA's default; its docstring names
-the issue. The other wrappers take keyword arguments and return the
-`TaskCompletion`.
+declared products. Wrappers for CASA tasks, including `plotms`, use CASA's
+parameter order, argument kinds, and defaults. Additional casa-rs controls
+are keyword-only. These wrappers return CASA's value, including NumPy arrays
+where CASA returns them. Wrapper docstrings identify parameters limited to
+their CASA defaults and cite the relevant issues. The casa-rs tasks
+`calibrate`, `msexplore`, and `msconvert` take keyword arguments and return
+the `TaskCompletion`.
 
 On a single MeasurementSet, `split` and `mstransform` accept named fields
 and spectral windows, antenna baselines, scan predicates, calendar times,
