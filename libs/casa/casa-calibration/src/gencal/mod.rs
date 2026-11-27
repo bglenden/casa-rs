@@ -125,6 +125,7 @@ impl GencalType {
         }
     }
 
+    /// Reports whether this calibration type represents an antenna gain curve.
     pub fn is_gain_curve(self) -> bool {
         matches!(self, Self::Gc | Self::Gceff | Self::Eff)
     }
@@ -933,6 +934,7 @@ fn open_measurement_set(path: &Path) -> Result<MeasurementSet, GencalError> {
     })
 }
 
+/// Collects the prior-calibration inputs used by the task report.
 pub fn prior_inputs_for_report(
     request: &GencalRequest,
     infile: Option<&Path>,
@@ -1403,6 +1405,7 @@ fn f32_column(values: &[f32]) -> ArrayValue {
     )
 }
 
+/// Finds the default VLA gain-curve table in the discovered measures runtime.
 pub fn default_vla_gaincurve_table() -> Option<PathBuf> {
     if let Ok(path) = env::var("CASA_RS_VLA_GAINCURVES") {
         return Some(PathBuf::from(path));

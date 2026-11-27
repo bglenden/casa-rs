@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+#![warn(missing_docs)]
 //! Feature-gated renderer-neutral plot documents and MeasurementSet plot builders.
 
 mod document;

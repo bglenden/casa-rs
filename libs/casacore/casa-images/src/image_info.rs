@@ -14,18 +14,31 @@ use crate::error::ImageError;
 /// This mirrors `ImageInfo::ImageTypes` in casacore C++.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ImageType {
+    /// Image with no recognized scientific classification.
     Undefined,
+    /// Brightness or flux density; the image brightness keyword supplies the units.
     Intensity,
+    /// A point-spread or primary-beam response associated with the image.
     Beam,
+    /// Line-of-sight particle column density, typically in inverse square centimeters.
     ColumnDensity,
+    /// Ratio of polarization fractions, dimensionless.
     DepolarizationRatio,
+    /// Temperature of the emitting material inferred from its kinetic energy.
     KineticTemperature,
+    /// An inferred magnetic field component or strength, in the image's declared field units.
     MagneticField,
+    /// Line-of-sight optical depth, dimensionless.
     OpticalDepth,
+    /// Faraday rotation per wavelength squared, typically in radians per square meter.
     RotationMeasure,
+    /// Excitation temperature inferred from the relative populations of rotational levels.
     RotationalTemperature,
+    /// Dimensionless exponent of the intensity's power-law dependence on frequency.
     SpectralIndex,
+    /// Doppler velocity in the convention, reference frame, and units of the product.
     Velocity,
+    /// Width of a velocity distribution in the image's declared speed units.
     VelocityDispersion,
 }
 

@@ -194,8 +194,11 @@ use typed_array::*;
 /// `SWAP_SIZE` is the component size for byte-swapping (1 for bool, 4 for
 /// f32/Complex32, 8 for f64/Complex64).
 pub trait TilePixel: Copy + Default + 'static {
+    /// Number of bytes occupied by one element on disk.
     const ELEM_SIZE: usize;
+    /// Number of bytes in each independently byte-swapped component.
     const SWAP_SIZE: usize;
+    /// casacore primitive type tag associated with this Rust element type.
     const STORAGE_TYPE: PrimitiveType;
 }
 impl TilePixel for bool {

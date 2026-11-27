@@ -10,13 +10,18 @@ use casa_tables::{TableError, TableWriteLock, table_cache_name};
 use crate::model_columns::{has_column, initialize_calibrater_columns, initialize_scratch_column};
 use crate::session::resolve_casa_calibration_selection;
 
+/// An open MeasurementSet and the owned write lock held across a calibration mutation.
 pub struct OpenedMs {
     path: PathBuf,
+    /// MeasurementSet read while holding the MAIN-table lock.
     pub measurement_set: MeasurementSet,
+    /// Exclusive MAIN-table lock; hand it to storage-changing operations that reopen the table.
     pub lock: TableWriteLock,
 }
 
 impl OpenedMs {
+    /// Canonicalizes the table path, acquires its MAIN write lock, then reads the MeasurementSet.
+    /// Lock and open failures propagate.
     pub fn open(path: &Path) -> MsResult<Self> {
         let path = table_cache_name(path)?;
         let lock = TableWriteLock::acquire_to_reread(&path, 0)?;
@@ -32,11 +37,14 @@ impl OpenedMs {
         })
     }
 
+    /// Initializes the requested scratch visibility column and retains the resulting lock.
     pub fn initialize(mut self, column: VisibilityDataColumn) -> MsResult<Self> {
         self.lock = initialize_scratch_column(&mut self.measurement_set, column, self.lock)?;
         Ok(self)
     }
 
+    /// Initializes the requested corrected and model columns under the retained write lock,
+    /// optionally using compressed storage.
     pub fn initialize_calibrater(
         mut self,
         compress: bool,
@@ -53,6 +61,7 @@ impl OpenedMs {
         Ok(self)
     }
 
+    /// Resolves CASA calibration selectors against the locked MeasurementSet's current metadata.
     pub fn resolve(
         &self,
         selection: &MsSelection,
@@ -60,11 +69,13 @@ impl OpenedMs {
         resolve_casa_calibration_selection(&self.measurement_set, selection)
     }
 
+    /// Drops and rereads the MeasurementSet while retaining the exclusive lock.
     pub fn reload(self) -> MsResult<Self> {
         drop(self.measurement_set);
         Self::read_holding(self.path, self.lock)
     }
 
+    /// Closes the MeasurementSet and explicitly releases the lock, returning any release error.
     pub fn release(self) -> MsResult<()> {
         drop(self.measurement_set);
         self.lock.release()?;
@@ -284,6 +295,8 @@ impl CalibrationAttachment {
         }
     }
 
+    /// Validates and replaces the attached input's selection. An empty or invalid selection is
+    /// reported and leaves the attachment in a rejected selection state.
     pub fn select(&mut self, selection: MsSelection) -> Result<(), AttachmentError> {
         self.select_with_channels(selection, None)
     }
@@ -309,10 +322,13 @@ impl CalibrationAttachment {
         Ok(())
     }
 
+    /// Borrows the currently stored selector. Selection state separately tracks whether it was
+    /// rejected.
     pub fn selection(&self) -> &MsSelection {
         &self.selection
     }
 
+    /// Clears explicit row and channel selections and wavelength bounds.
     pub fn reset_selection(&mut self) {
         self.selection = MsSelection::default();
         self.imager_channels = None;
@@ -598,6 +614,8 @@ impl ImagerAttachments {
         Ok(active)
     }
 
+    /// Replaces the latest input's setjy selection and updates which attachments are active. Fails
+    /// if the imager has no attached input or validation fails.
     pub fn retain_setjy_selection(
         &mut self,
         selection: MsSelection,

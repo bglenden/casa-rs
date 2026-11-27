@@ -619,32 +619,39 @@ impl TiledArrayStorage {
         })
     }
 
+    /// Returns the logical array extents in stored axis order.
     pub fn cube_shape(&self) -> &[usize] {
         self.inner.cube_shape()
     }
 
+    /// Returns the physical tile extents in stored axis order.
     pub fn tile_shape(&self) -> &[usize] {
         self.inner.tile_shape()
     }
 
+    /// Reports whether multibyte components are stored most significant byte first.
     pub fn big_endian(&self) -> bool {
         self.inner.big_endian()
     }
 
+    /// Returns the schema's primitive pixel type required for typed I/O.
     pub fn pixel_type(&self) -> PrimitiveType {
         self.inner
             .pixel_type()
             .expect("typed tiled-array storage always has a pixel type")
     }
 
+    /// Returns the casacore data-manager sequence number used in table file naming.
     pub fn dm_seq_nr(&self) -> u32 {
         self.inner.dm_seq_nr()
     }
 
+    /// Borrows the directory of the containing casacore table.
     pub fn table_path(&self) -> &Path {
         self.inner.table_path()
     }
 
+    /// Returns the configured tile cache budget in bytes.
     pub fn cache_budget_bytes(&self) -> usize {
         self.cache_budget_bytes
     }
@@ -658,10 +665,12 @@ impl TiledArrayStorage {
         cache_bytes.saturating_add(self.inner.direct_write_buffer.capacity())
     }
 
+    /// Returns this handle's accumulated tile I/O counters.
     pub fn io_stats(&self) -> TiledFileIoStats {
         self.inner.io_stats()
     }
 
+    /// Resets this handle's counters without changing cached pixels.
     pub fn reset_io_stats(&mut self) {
         self.inner.reset_io_stats();
     }
@@ -688,10 +697,13 @@ impl TiledArrayStorage {
         }
     }
 
+    /// Writes pending dirty tile bytes to the backing file, propagating I/O failures.
     pub fn flush(&mut self) -> Result<(), StorageError> {
         self.inner.flush()
     }
 
+    /// Writes a typed array at a zero-based origin, taking extents from the input. Shape, type, and
+    /// storage errors propagate.
     pub fn put_slice<T: TilePixel>(
         &mut self,
         data: &ArrayD<T>,
@@ -701,6 +713,8 @@ impl TiledArrayStorage {
         self.inner.put_slice_ndarray(data, start)
     }
 
+    /// Writes contiguous input with the last axis fastest. Start and extents follow stored axis
+    /// order.
     pub fn put_slice_c_order<T: TilePixel>(
         &mut self,
         data: &[T],
@@ -711,6 +725,8 @@ impl TiledArrayStorage {
         self.inner.put_slice_c_order(data, start, shape)
     }
 
+    /// Writes contiguous input with the first axis fastest. Start and extents follow stored axis
+    /// order.
     pub fn put_slice_fortran<T: TilePixel>(
         &mut self,
         data: &[T],
@@ -721,6 +737,8 @@ impl TiledArrayStorage {
         self.inner.put_slice_fortran(data, start, shape)
     }
 
+    /// Attempts a direct write from a last-axis-fastest buffer. False means the window could not
+    /// use the aligned path.
     pub fn put_aligned_c_order_tiles<T: TilePixel>(
         &mut self,
         data: &[T],
@@ -731,6 +749,8 @@ impl TiledArrayStorage {
         self.inner.put_aligned_c_order_tiles(data, start, shape)
     }
 
+    /// Attempts a direct write from a first-axis-fastest buffer. False means the window could not
+    /// use the aligned path.
     pub fn put_aligned_fortran_order_tiles<T: TilePixel>(
         &mut self,
         data: &[T],
@@ -768,6 +788,8 @@ impl TiledArrayStorage {
         Ok(tile_as_typed::<T>(tile)[pixel_index])
     }
 
+    /// Reads a rectangular section in first-axis-fastest layout. Invalid bounds, pixel types, and
+    /// storage failures return an error.
     pub fn get_slice<T: TilePixel>(
         &mut self,
         start: &[usize],
@@ -793,6 +815,8 @@ impl TiledArrayStorage {
         self.inner.get_strided_slice(start, shape, stride)
     }
 
+    /// Reads a section into caller-owned first-axis-fastest storage. The buffer must fit the
+    /// requested extents and have the stored type.
     pub fn get_slice_into<T: TilePixel>(
         &mut self,
         start: &[usize],
@@ -803,6 +827,8 @@ impl TiledArrayStorage {
         self.inner.get_slice_into(start, shape, destination)
     }
 
+    /// Reads an owned array with the full stored shape and first-axis-fastest layout. The requested
+    /// Rust element type must match the stored type.
     pub fn get_all<T: TilePixel>(&mut self) -> Result<ArrayD<T>, StorageError> {
         self.ensure_pixel_type::<T>()?;
         self.inner.get_all()

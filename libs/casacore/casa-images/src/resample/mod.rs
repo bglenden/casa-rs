@@ -101,8 +101,13 @@ pub fn regrid_complex_plane(
 /// One direction plane of the input, first axis fastest, with its mask
 /// (true where good) when it has one.
 pub struct Plane<'a> {
+    /// Borrowed plane values in the input image's brightness unit, indexed with the first axis
+    /// fastest.
     pub data: &'a [f64],
+    /// Optional validity plane in the same order as the values. True marks samples usable in
+    /// interpolation.
     pub mask: Option<&'a [bool]>,
+    /// Extents of the first and second direction axes in pixels.
     pub shape: [usize; 2],
 }
 

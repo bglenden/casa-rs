@@ -491,6 +491,8 @@ pub(super) fn flag_region_contains(region: &MsFlagRegion, x: f64, y: f64) -> boo
     x >= region.x_min && x <= region.x_max && y >= region.y_min && y <= region.y_max
 }
 
+/// Copies one MAIN-table FLAG cell in correlation-by-channel order. Invalid rows or incompatible
+/// cell data return a diagnostic.
 pub fn clone_flag_matrix(ms: &MeasurementSet, row: usize) -> Result<ndarray::Array2<bool>, String> {
     match ms
         .flag_column()

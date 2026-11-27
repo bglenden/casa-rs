@@ -498,46 +498,85 @@ impl QueryResult<'_> {
 pub enum TableError {
     /// A row index exceeded the number of rows in the table.
     #[error("row index {row_index} is out of bounds for table with {row_count} rows")]
-    RowOutOfBounds { row_index: usize, row_count: usize },
+    RowOutOfBounds {
+        /// Requested zero-based row index.
+        row_index: usize,
+        /// Number of rows available.
+        row_count: usize,
+    },
     /// A [`RowRange`] had `start > end` or `end > row_count`.
     #[error("row range [{start}, {end}) is invalid for table with {row_count} rows")]
     InvalidRowRange {
+        /// First zero-based row in the requested range.
         start: usize,
+        /// Exclusive zero-based end of the requested range.
         end: usize,
+        /// Number of rows available.
         row_count: usize,
     },
     /// A [`RowRange`] stride was zero, which would produce an infinite loop.
     #[error("row stride must be >= 1, got {stride}")]
-    InvalidRowStride { stride: usize },
+    InvalidRowStride {
+        /// Requested step between successive selected rows.
+        stride: usize,
+    },
     /// The requested column was absent from the row (and no schema default applies).
     #[error("column \"{column}\" not found in row {row_index}")]
-    ColumnNotFound { row_index: usize, column: String },
+    ColumnNotFound {
+        /// Zero-based row whose cell was absent.
+        row_index: usize,
+        /// Name of the requested column.
+        column: String,
+    },
     /// The column name is not declared in the attached [`TableSchema`].
     #[error("column \"{column}\" does not exist in schema")]
-    SchemaColumnUnknown { column: String },
+    SchemaColumnUnknown {
+        /// Name of the column missing from the schema.
+        column: String,
+    },
     /// A record-specific operation was attempted on a non-record schema column.
     #[error("column \"{column}\" is not a record column in schema")]
-    SchemaColumnNotRecord { column: String },
+    SchemaColumnNotRecord {
+        /// Name of the column declared with a non-record type.
+        column: String,
+    },
     /// Prepared row access currently requires an attached schema.
     #[error("prepared row access requires an attached schema")]
     PreparedRowRequiresSchema,
     /// Prepared row access currently supports only scalar and array schema columns.
     #[error("prepared row access does not yet support record column \"{column}\"")]
-    PreparedRowRecordColumnUnsupported { column: String },
+    PreparedRowRecordColumnUnsupported {
+        /// Name of the record column requested through prepared access.
+        column: String,
+    },
     /// A required column (non-optional per schema) was absent from a row.
     #[error("schema column \"{column}\" is missing in row {row_index}")]
-    SchemaColumnMissing { row_index: usize, column: String },
+    SchemaColumnMissing {
+        /// Zero-based row being validated.
+        row_index: usize,
+        /// Name of the missing required column.
+        column: String,
+    },
     /// A row contained a column name that is not declared in the schema.
     #[error("row {row_index} contains unknown column \"{column}\" not present in schema")]
-    RowContainsUnknownColumn { row_index: usize, column: String },
+    RowContainsUnknownColumn {
+        /// Zero-based row being validated.
+        row_index: usize,
+        /// Name absent from the current schema.
+        column: String,
+    },
     /// A cell held a value of the wrong type for its schema column.
     #[error(
         "row {row_index} column \"{column}\" has unexpected type {found:?}; expected {expected}"
     )]
     ColumnTypeMismatch {
+        /// Zero-based row containing the incompatible cell.
         row_index: usize,
+        /// Name of the incompatible column.
         column: String,
+        /// Declared scalar, array, or record category.
         expected: &'static str,
+        /// Actual value category in the cell.
         found: ValueKind,
     },
     /// A scalar or array had the wrong primitive element type.
@@ -545,39 +584,65 @@ pub enum TableError {
         "row {row_index} column \"{column}\" has primitive type {found:?}; expected {expected:?}"
     )]
     PrimitiveTypeMismatch {
+        /// Zero-based row containing the incompatible cell.
         row_index: usize,
+        /// Name of the incompatible column.
         column: String,
+        /// Declared scalar or array element type.
         expected: PrimitiveType,
+        /// Actual scalar or array element type.
         found: PrimitiveType,
     },
     /// An array cell had a shape that did not match the schema's fixed shape.
     #[error("row {row_index} column \"{column}\" has shape {found:?}; expected {expected:?}")]
     ArrayShapeMismatch {
+        /// Zero-based row containing the incompatible array.
         row_index: usize,
+        /// Name of the fixed-shape column.
         column: String,
+        /// Declared extents in array-axis order.
         expected: Vec<usize>,
+        /// Actual extents in array-axis order.
         found: Vec<usize>,
     },
     /// An array cell had a number of dimensions that did not match the schema.
     #[error("row {row_index} column \"{column}\" has ndim {found}; expected {expected}")]
     ArrayNdimMismatch {
+        /// Zero-based row containing the incompatible array.
         row_index: usize,
+        /// Name of the column with declared rank.
         column: String,
+        /// Declared number of array axes.
         expected: usize,
+        /// Actual number of array axes.
         found: usize,
     },
     /// [`TableColumnMut::put`] or [`TableColumnMut::put_range`] received fewer values than rows.
     #[error("column write received too few values: expected {expected}, provided {provided}")]
-    ColumnWriteTooFewValues { expected: usize, provided: usize },
+    ColumnWriteTooFewValues {
+        /// Number of selected rows to populate.
+        expected: usize,
+        /// Number of values received before input ended.
+        provided: usize,
+    },
     /// [`TableColumnMut::put`] or [`TableColumnMut::put_range`] received more values than rows.
     #[error("column write received too many values: expected {expected}")]
-    ColumnWriteTooManyValues { expected: usize },
+    ColumnWriteTooManyValues {
+        /// Number of selected rows to populate.
+        expected: usize,
+    },
     /// Generated scalar run starts were malformed.
     #[error("invalid generated scalar runs: {message}")]
-    InvalidGeneratedScalarRuns { message: String },
+    InvalidGeneratedScalarRuns {
+        /// Diagnostic for the invalid run start or extent.
+        message: String,
+    },
     /// Generated array run starts were malformed.
     #[error("invalid generated array runs: {message}")]
-    InvalidGeneratedArrayRuns { message: String },
+    InvalidGeneratedArrayRuns {
+        /// Diagnostic for the invalid run start, extent, or cell data.
+        message: String,
+    },
     /// A [`SchemaError`][crate::schema::SchemaError] was encountered during validation.
     #[error("schema error: {0}")]
     Schema(String),
@@ -588,23 +653,49 @@ pub enum TableError {
     ///
     /// C++ equivalent: lock failure in `TableLockData::makeLock`.
     #[error("lock acquisition failed on \"{path}\": {message}")]
-    LockFailed { path: String, message: String },
+    LockFailed {
+        /// Path of the table whose lock was requested.
+        path: String,
+        /// Reason the lock could not be acquired.
+        message: String,
+    },
     /// A locking operation was attempted but the table has no lock state
     /// (opened without locking or created in-memory).
     #[error("table is not opened with locking; cannot {operation}")]
-    NotLocked { operation: String },
+    NotLocked {
+        /// Requested locking operation.
+        operation: String,
+    },
     /// A lock-file I/O error occurred.
     #[error("lock I/O error on \"{path}\": {message}")]
-    LockIo { path: String, message: String },
+    LockIo {
+        /// Path of the table associated with the lock file.
+        path: String,
+        /// Underlying I/O diagnostic.
+        message: String,
+    },
     /// A row index in a selection is out of range.
     #[error("row index {index} out of range (table has {count} rows)")]
-    RowIndexOutOfRange { index: usize, count: usize },
+    RowIndexOutOfRange {
+        /// Zero-based parent row in the selection.
+        index: usize,
+        /// Number of available parent rows.
+        count: usize,
+    },
     /// A column name in a selection does not exist.
     #[error("unknown column \"{name}\" in selection")]
-    UnknownColumn { name: String },
+    UnknownColumn {
+        /// Requested column name.
+        name: String,
+    },
     /// A reference table's parent could not be found.
     #[error("parent table not found at \"{path}\": {message}")]
-    ParentTableNotFound { path: String, message: String },
+    ParentTableNotFound {
+        /// Resolved path of the referenced parent table.
+        path: String,
+        /// Underlying parent-open diagnostic.
+        message: String,
+    },
     /// A reference table requires the parent to have been saved to disk.
     #[error("parent table has no disk path; save it first")]
     ParentNotSaved,
@@ -613,13 +704,19 @@ pub enum TableError {
     /// Only scalar columns can be used as sort keys, matching C++ casacore's
     /// runtime check in `BaseTable::sort`.
     #[error("column \"{column}\" is not a scalar column; only scalar columns can be sort keys")]
-    SortKeyNotScalar { column: String },
+    SortKeyNotScalar {
+        /// Name of the non-scalar sort column.
+        column: String,
+    },
     /// A sort key column contains values without a total order.
     ///
     /// Complex32 and Complex64 columns have no natural total ordering and
     /// cannot be used as sort keys.
     #[error("column \"{column}\" contains unsortable values (Complex types have no total order)")]
-    SortKeyUnsortable { column: String },
+    SortKeyUnsortable {
+        /// Name of the sort column without a supported ordering.
+        column: String,
+    },
     /// No sort key columns were specified.
     #[error("at least one sort key column is required")]
     SortNoKeys,
@@ -630,7 +727,10 @@ pub enum TableError {
     ///
     /// C++ equivalent: `ConcatTable` constructor's schema check.
     #[error("concat table schema mismatch: {message}")]
-    SchemaMismatch { message: String },
+    SchemaMismatch {
+        /// Description of the incompatible schema entry.
+        message: String,
+    },
     /// A concatenation was attempted with zero tables.
     ///
     /// [`Table::concat`] requires at least one table.
@@ -641,7 +741,10 @@ pub enum TableError {
     /// All constituent tables must be saved to disk before the `ConcatTable`
     /// can be persisted, since the on-disk format stores relative paths.
     #[error("constituent table {index} has no disk path; save it first")]
-    ConstituentNotSaved { index: usize },
+    ConstituentNotSaved {
+        /// Zero-based position in the concatenation input list.
+        index: usize,
+    },
     /// No columns were supplied to [`crate::ColumnsIndex::new`].
     #[error("at least one column is required to build a ColumnsIndex")]
     IndexNoColumns,
@@ -650,15 +753,24 @@ pub enum TableError {
     /// Only scalar columns can serve as index keys, matching C++ casacore's
     /// `ColumnsIndex` restriction.
     #[error("column \"{column}\" is not a scalar column; only scalar columns can be indexed")]
-    IndexColumnNotScalar { column: String },
+    IndexColumnNotScalar {
+        /// Name of the non-scalar index column.
+        column: String,
+    },
     /// A column has an unsortable type (Complex32/Complex64) and cannot be indexed.
     ///
     /// Complex types have no total order and therefore cannot be used as index keys.
     #[error("column \"{column}\" contains unsortable values (Complex types have no total order)")]
-    IndexColumnUnsortable { column: String },
+    IndexColumnUnsortable {
+        /// Name of the index column without a supported ordering.
+        column: String,
+    },
     /// [`crate::ColumnsIndex::lookup_unique`] found more than one matching row.
     #[error("index lookup_unique found {count} matching rows; expected at most 1")]
-    IndexNotUnique { count: usize },
+    IndexNotUnique {
+        /// Number of matching rows for the supplied key.
+        count: usize,
+    },
     /// A TaQL query error occurred.
     ///
     /// Wraps [`crate::taql::TaqlError`] for convenience when using the
@@ -668,35 +780,57 @@ pub enum TableError {
     /// Slicer dimension vectors have different lengths.
     #[error("slicer dimension mismatch: start={start_ndim}, end={end_ndim}, stride={stride_ndim}")]
     SlicerDimensionMismatch {
+        /// Number of supplied start coordinates.
         start_ndim: usize,
+        /// Number of supplied end coordinates.
         end_ndim: usize,
+        /// Number of supplied strides.
         stride_ndim: usize,
     },
     /// A slicer stride was zero on the given axis.
     #[error("slicer stride is zero on axis {axis}")]
-    SlicerZeroStride { axis: usize },
+    SlicerZeroStride {
+        /// Zero-based array axis with a zero step.
+        axis: usize,
+    },
     /// A slicer range has start > end on the given axis.
     #[error("slicer range invalid on axis {axis}: start={start} > end={end}")]
     SlicerInvalidRange {
+        /// Zero-based array axis with reversed bounds.
         axis: usize,
+        /// First zero-based index requested on the axis.
         start: usize,
+        /// Last zero-based index requested on the axis.
         end: usize,
     },
     /// A slicer index is out of bounds for the array shape.
     #[error("slicer out of bounds on axis {axis}: index {index} >= extent {extent}")]
     SlicerOutOfBounds {
+        /// Zero-based array axis whose bound is invalid.
         axis: usize,
+        /// Invalid zero-based index on the axis.
         index: usize,
+        /// Number of elements along that axis.
         extent: usize,
     },
     /// A cell is not an array (slice operations require array cells).
     #[error("cell at row {row} column \"{column}\" is not an array")]
-    CellNotArray { row: usize, column: String },
+    CellNotArray {
+        /// Zero-based row requested by the slice.
+        row: usize,
+        /// Name of the non-array column.
+        column: String,
+    },
     /// The number of data elements doesn't match the number of selected rows.
     #[error(
         "column slice length mismatch: {rows} rows selected but {data_len} data elements provided"
     )]
-    ColumnSliceLengthMismatch { rows: usize, data_len: usize },
+    ColumnSliceLengthMismatch {
+        /// Number of selected rows.
+        rows: usize,
+        /// Number of input values supplied for the selection.
+        data_len: usize,
+    },
 }
 
 impl From<crate::storage::StorageError> for TableError {

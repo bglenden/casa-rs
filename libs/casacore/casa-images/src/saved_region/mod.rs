@@ -133,8 +133,11 @@ struct PlaneSelection {
     inside: Array2<bool>,
 }
 
+/// Bounding section of the pixels selected by a polygon region, in image-axis order.
 pub struct PolygonBounds {
+    /// Zero-based start along each image axis.
     pub start: Vec<usize>,
+    /// Extent along each image axis.
     pub shape: Vec<usize>,
 }
 
@@ -350,6 +353,8 @@ impl PolygonRegion {
             .collect()
     }
 
+    /// Projects the region at the coordinate system's reference world position. Returns None if no
+    /// pixel centers are selected, or an error if region axes or the transform are invalid.
     pub fn lattice_plane(
         &self,
         coords: &CoordinateSystem,
@@ -487,6 +492,8 @@ pub struct PolygonPixelPlane {
 }
 
 impl PolygonPixelPlane {
+    /// Expands the polygon's tight pixel bounds into a full-rank image section. Axes outside the
+    /// polygon plane span their full extents.
     pub fn section(&self, shape: &[usize], [x, y]: [usize; 2]) -> (Vec<usize>, Vec<usize>) {
         let mut start = vec![0; shape.len()];
         start[x] = self.start[0];
@@ -497,6 +504,8 @@ impl PolygonPixelPlane {
         (start, shape)
     }
 
+    /// Tests whether the center of a zero-based pixel in the polygon plane lies in any member
+    /// polygon.
     pub fn contains(&self, x: usize, y: usize) -> bool {
         let point = [x as f64, y as f64];
         self.polygons
@@ -505,6 +514,8 @@ impl PolygonPixelPlane {
     }
 }
 
+/// Builds a plane for the union of pixel-coordinate polygons, clipped to the two specified image
+/// axes. Returns None when no pixel center is selected.
 pub fn polygon_pixel_plane(
     polygons: &[Vec<[f64; 2]>],
     shape: &[usize],

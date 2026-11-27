@@ -25,38 +25,56 @@ use crate::output::CalibrationOutputMode;
 pub use service::{Endpoint, ServiceOptions};
 
 #[derive(Debug, Error)]
+/// Failure acquiring or writing amplitude factors for the Jy-per-kelvin calibration type.
 pub enum JyperkError {
     #[error("There is no Jy/K db-derived factor file: {0}")]
+    /// The requested local factor file does not exist.
     MissingFile(PathBuf),
     #[error("read Jy/K factor file {path}: {source}")]
+    /// A factor file could not be read.
     ReadFile {
+        /// Path of the requested factor file.
         path: PathBuf,
+        /// Underlying file-read error.
         source: std::io::Error,
     },
     #[error("read Jy/K factor file {path}: {source}")]
+    /// A factor file is not valid UTF-8.
     ParseFile {
+        /// Path of the malformed factor file.
         path: PathBuf,
+        /// Error locating the invalid UTF-8 bytes.
         source: std::str::Utf8Error,
     },
     #[error("generator raised StopIteration")]
+    /// The local file has no factor rows.
     EmptyFile,
     #[error("No valid Jy/K factors found for this MS")]
+    /// No Jy/K factors matched the requested selection.
     NoFactors,
     #[error("could not convert string to float: {0}")]
+    /// A numeric field in the factor input could not be parsed.
     InvalidNumber(String),
     #[error(
         "Jy/K factor {factor:?} must yield a finite positive gain for antenna {antenna:?} and SPW {window:?}"
     )]
+    /// A returned Jy/K factor is invalid.
     InvalidFactor {
+        /// Raw value of the invalid factor.
         factor: String,
+        /// Antenna identifier for the factor.
         antenna: String,
+        /// Spectral-window identifier for the factor.
         window: String,
     },
     #[error("{0}")]
+    /// The remote calibration service returned an error.
     Service(String),
     #[error("No Jy/K factors available: JYPERKDB_URL, backup_hosts, and infile all failed")]
+    /// None of the requested factor sources could supply the calibration.
     AllSourcesFailed,
     #[error(transparent)]
+    /// The generated factors could not be published as a calibration table.
     Generate(#[from] GencalError),
 }
 
@@ -103,6 +121,8 @@ impl Factor {
     }
 }
 
+/// Resolves Jy/K factors from the requested input and writes a calibration table for the selected
+/// antennas and spectral windows.
 pub fn calibrate(
     request: &GencalRequest,
     path: Option<&Path>,

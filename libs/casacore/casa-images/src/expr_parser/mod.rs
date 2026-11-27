@@ -318,6 +318,9 @@ where
     result.into_mask(0)
 }
 
+/// Builds a subimage mask from a Boolean expression or from numeric pixels at least 0.5. A precision
+/// resolver selects CASA literal and geometry semantics. Invalid expressions and unresolved operands
+/// return a parse error.
 pub fn subimage_mask_builder<'a, T, R>(
     expression: &str,
     real: &R,
@@ -370,6 +373,8 @@ where
     Ok(result)
 }
 
+/// Compiles a CASA image-tool Boolean mask in fill mode. The resolvers supply real and complex images
+/// and identify single-precision operands.
 pub fn parse_image_tool_mask<'a, R>(
     expression: &str,
     real: &R,
@@ -382,6 +387,8 @@ where
     image_tool_mask_builder(expression, real, complex, single_precision, false)?.compile()
 }
 
+/// Builds a Boolean mask using CASA expression semantics. Section mode checks lattice geometry before
+/// evaluating pixels. Invalid selections or non-Boolean results return an image error.
 pub fn image_tool_mask_builder<'a, R>(
     expression: &str,
     real: &R,
@@ -422,6 +429,8 @@ pub enum ImageToolPixelExpression {
     Boolean(Vec<usize>),
 }
 
+/// Compiles a CASA image-tool calculation and reports whether the result uses single precision. The
+/// result distinguishes real pixels, complex pixels, and a Boolean lattice.
 pub fn compile_image_tool_pixels<'a, R>(
     expression: &str,
     real: &R,
@@ -456,11 +465,17 @@ where
     Ok((expression, single_precision))
 }
 
+/// Evaluated replacement pixels for an image-tool selection. A zero-dimensional array represents a
+/// scalar broadcast over the selection.
 pub enum ReplacementPixels {
+    /// Real replacement pixels evaluated in double precision.
     Real(ndarray::ArrayD<f64>),
+    /// Complex replacement pixels evaluated in double precision.
     Complex(ndarray::ArrayD<Complex64>),
 }
 
+/// Evaluates a replacement expression for the given selection shape. Scalars are broadcast by the
+/// caller. Non-scalars must match the selection, and complex results require a complex destination.
 pub fn evaluate_replacement<'a, R>(
     expression: &str,
     real: &R,
@@ -527,6 +542,8 @@ where
     }
 }
 
+/// Evaluates a real scalar, preserving reduction validity. Empty reductions, non-scalar images, and
+/// incompatible types return an error.
 pub fn evaluate_real_scalar<'a, R>(
     expression: &str,
     real: &R,

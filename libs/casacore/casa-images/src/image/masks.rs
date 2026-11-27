@@ -2,6 +2,8 @@
 
 use super::*;
 
+/// Builds the CASA lattice-region record for a paged Boolean mask, using a path relative to the image
+/// and the mask extents in pixel-axis order.
 pub fn make_paged_mask_record(relative_mask_path: &str, shape: &[usize]) -> RecordValue {
     let mut record = RecordValue::default();
     record.upsert(
@@ -275,6 +277,8 @@ impl<T: ImagePixel> PagedImage<T> {
         Ok(())
     }
 
+    /// Replaces the raw CASA coordinate keyword. Callers supplying a new geometry should update the
+    /// typed coordinate system together with its record.
     pub fn set_coords_record_keyword(&mut self, record: RecordValue) {
         self.table
             .keywords_mut()

@@ -42,10 +42,12 @@ pub(super) fn metadata_pair(spec: &MsPlotSpec) -> Option<PointDimensions> {
     )
 }
 
+/// Reports whether the axis pair uses array-horizontal metadata coordinates.
 pub fn array_horizontal_pair(x: MsAxis, y: MsAxis) -> bool {
     x == MsAxis::Channel && y.uses_derived_geometry()
 }
 
+/// Resolves the channel and baseline dimensions needed by a supported pair of metadata axes.
 pub fn metadata_coordinate_pair(x: MsAxis, y: MsAxis) -> Option<PointDimensions> {
     if x.uses_uvw() && y.uses_uvw() {
         return Some(PointDimensions {

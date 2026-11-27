@@ -258,8 +258,11 @@ pub struct PlotMsCalibration {
 }
 
 #[derive(Clone, Copy)]
+/// Visibility of valid and flagged symbols in the raw PlotMS scatter output.
 pub struct RawSymbolVisibility {
+    /// Whether to retain unflagged points in the plot.
     pub unflagged: bool,
+    /// Whether to retain flagged points in the plot.
     pub flagged: bool,
 }
 
@@ -283,15 +286,26 @@ struct PlotMsInput<'a> {
     phasecenter: Option<MDirection>,
 }
 
+/// Per-axis data-column choices and optional geometry for PlotMS.
 pub struct PlotMsColumnSelection<'a> {
+    /// X-axis data column override.
     pub x: Option<MsDataColumn>,
+    /// Data column for the first secondary ordinate.
     pub secondary_y: Option<MsDataColumn>,
+    /// Additional ordinate and column pairs in display order.
     pub additional_y: &'a [(MsAxis, MsDataColumn)],
+    /// Per-axis choices governing visibility weights for the primary, secondary, and horizontal
+    /// projections.
     pub weights: [Option<MsDataColumn>; 3],
+    /// Optional filter controlling the visibility of flagged and valid raw symbols.
     pub raw_symbols: Option<RawSymbolVisibility>,
+    /// Optional pointing frame and interpolation settings for plotted axes.
     pub pointing: Option<&'a plotms_pointing::PointingAxes>,
+    /// Optional phase tracking center including its celestial reference frame.
     pub phasecenter: Option<MDirection>,
+    /// Whether to permit the extended combinations of derived ordinates.
     pub extended_derived: bool,
+    /// Whether a derived visibility expression can use an implicit model.
     pub implicit_derived_model: bool,
 }
 
@@ -521,6 +535,8 @@ fn build_stacked_page_child(
     }
 }
 
+/// Resolves native MeasurementSet row and channel selectors for PlotMS, propagating invalid
+/// selection and table errors.
 pub fn resolve_selected_rows_with_msselect(
     ms: &MeasurementSet,
     selection: &MsSelection,
@@ -536,6 +552,7 @@ fn fixed_bounds(axis: MsAxis) -> Option<(f64, f64)> {
     matches!(axis, MsAxis::Phase).then_some((-180.0, 180.0))
 }
 
+/// Returns the PlotMS display label for an axis, including its unit where applicable.
 pub fn axis_label(axis: MsAxis) -> String {
     match axis {
         MsAxis::Time => "Time (MJD seconds)".to_string(),

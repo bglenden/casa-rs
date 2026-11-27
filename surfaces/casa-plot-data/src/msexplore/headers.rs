@@ -116,6 +116,7 @@ pub(super) fn collect_page_y_column_labels(spec: &MsExploreSpec) -> Vec<String> 
     labels
 }
 
+/// Wraps header fragments into the lines displayed by PlotMS.
 pub fn wrap_header_segments(segments: &[String]) -> Vec<String> {
     const MAX_HEADER_LINE_CHARS: usize = 96;
     let mut lines = Vec::<String>::new();

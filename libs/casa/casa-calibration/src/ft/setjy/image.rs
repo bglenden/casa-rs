@@ -17,13 +17,19 @@ use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection};
 use crate::ft::image::{ImageModel, prepare_image};
 use crate::ft::{invalid, spectral_with_runtime};
 
+/// Frequency grid used to scale a setjy calibrator image.
 pub struct ImageFrequencies {
+    /// Model sampling frequencies in hertz.
     pub samples: Vec<f64>,
     span: f64,
+    /// Frequency reference of the first selected spectral window, used when converting native image
+    /// frequencies.
     pub first_window_reference: FrequencyRef,
 }
 
 impl ImageFrequencies {
+    /// Builds the model grid from a positive lower frequency, upper frequency, and step in hertz.
+    /// Invalid ranges and nonfinite or oversized grids return an error.
     pub fn new(
         min: f64,
         max: f64,
@@ -56,6 +62,8 @@ impl ImageFrequencies {
         })
     }
 
+    /// Returns the CASA image scaling reference frequency in hertz, using the middle samples of the
+    /// grid.
     pub fn center(&self) -> f64 {
         let count = self.samples.len();
         let lower = self.samples[(count - 1) / 2];
@@ -82,11 +90,16 @@ impl ImageFrequencies {
     }
 }
 
+/// Requested Stokes I normalization of an image model, in janskys.
 pub enum ImageFlux {
+    /// One normalization across the frequency grid, or None to retain native scaling.
     Constant(Option<f64>),
+    /// One normalization per sampled frequency, or None to retain native scaling.
     PerChannel(Option<Vec<f64>>),
 }
 
+/// Prepares image models for the selected MeasurementSet rows, with flux normalization in janskys.
+/// The input must have two leading direction axes plus Stokes and spectral axes.
 pub fn calibrator_images(
     ms: &MeasurementSet,
     selections: &[ResolvedMsSelection],

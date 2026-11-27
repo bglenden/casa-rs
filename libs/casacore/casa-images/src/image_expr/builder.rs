@@ -145,6 +145,8 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
         Ok(self.compile()?.mapped_sections(convert))
     }
 
+    /// Builds a lazy image leaf from shared pixel and optional validity readers. Both use zero-based
+    /// starts, extents, and positive strides in the geometry described by the supplied metadata.
     pub fn from_section_readers(
         meta: ImageExprMeta,
         read: OwnedSliceReader<T>,

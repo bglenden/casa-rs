@@ -30,39 +30,67 @@ impl fmt::Display for SourcePos {
 pub enum TaqlError {
     /// The lexer encountered an invalid token.
     #[error("lexer error at {pos}: {message}")]
-    LexError { pos: SourcePos, message: String },
+    LexError {
+        /// Location of the unrecognized token.
+        pos: SourcePos,
+        /// Lexical diagnostic.
+        message: String,
+    },
 
     /// The parser encountered unexpected input.
     #[error("parse error at {pos}: {message}")]
-    ParseError { pos: SourcePos, message: String },
+    ParseError {
+        /// Location of the rejected token.
+        pos: SourcePos,
+        /// Expected syntax or parse diagnostic.
+        message: String,
+    },
 
     /// The parser reached end of input unexpectedly.
     #[error("unexpected end of query: {message}")]
-    UnexpectedEnd { message: String },
+    UnexpectedEnd {
+        /// Description of the syntax expected after the input ended.
+        message: String,
+    },
 
     /// An expression evaluated to an unexpected type.
     #[error("type error: {message}")]
-    TypeError { message: String },
+    TypeError {
+        /// Details of the unsupported operand types or conversion.
+        message: String,
+    },
 
     /// A column referenced in a query does not exist.
     #[error("column not found: \"{name}\"")]
-    ColumnNotFound { name: String },
+    ColumnNotFound {
+        /// Unresolved column name.
+        name: String,
+    },
 
     /// A function referenced in a query does not exist.
     #[error("unknown function: \"{name}\"")]
-    UnknownFunction { name: String },
+    UnknownFunction {
+        /// Unrecognized TaQL function name.
+        name: String,
+    },
 
     /// A function was called with the wrong number of arguments.
     #[error("function \"{name}\" expects {expected} argument(s), got {got}")]
     ArgumentCount {
+        /// Name of the function called.
         name: String,
+        /// Accepted argument count or range.
         expected: String,
+        /// Number of arguments supplied.
         got: usize,
     },
 
     /// A feature is parsed but not yet implemented.
     #[error("unsupported: {message}")]
-    Unsupported { message: String },
+    Unsupported {
+        /// Description of the unsupported operation.
+        message: String,
+    },
 
     /// An error from the underlying table operations.
     #[error("table error: {0}")]
@@ -74,11 +102,21 @@ pub enum TaqlError {
 
     /// INSERT column count does not match value count.
     #[error("INSERT column count ({columns}) does not match value count ({values})")]
-    InsertColumnMismatch { columns: usize, values: usize },
+    InsertColumnMismatch {
+        /// Number of columns targeted by INSERT.
+        columns: usize,
+        /// Number of value expressions supplied.
+        values: usize,
+    },
 
     /// A JOIN table could not be opened.
     #[error("cannot open JOIN table \"{name}\": {message}")]
-    JoinTableOpen { name: String, message: String },
+    JoinTableOpen {
+        /// Join table name or path.
+        name: String,
+        /// Diagnostic from opening the join input.
+        message: String,
+    },
 }
 
 impl TaqlError {

@@ -201,6 +201,7 @@ pub enum MsPageHeaderItem {
 }
 
 impl MsPageHeaderItem {
+    /// Parses a supported CASA iteration-axis token.
     pub fn parse(token: &str) -> Option<Self> {
         use MsPageHeaderItem::*;
         [
@@ -253,10 +254,12 @@ pub enum MsIterationAxis {
 }
 
 impl MsIterationAxis {
+    /// Reports whether this iteration dimension supports averaged ordinates.
     pub fn supports_averaged_ordinates(self) -> bool {
         matches!(self, Self::Correlation | Self::Scan | Self::Field)
     }
 
+    /// Reports whether this iteration dimension is keyed by row metadata.
     pub fn groups_by_row(self) -> bool {
         matches!(self, Self::Antenna | Self::Baseline | Self::Time)
     }
@@ -753,6 +756,8 @@ impl MsPlotSpec {
         self.validate_with_plotms(false, false, false)
     }
 
+    /// Validates the plot specification together with the PlotMS-specific axis and averaging
+    /// options.
     pub fn validate_with_plotms(
         &self,
         independent_ordinates: bool,
@@ -1160,6 +1165,7 @@ impl MsExploreSpec {
         self.validate_with_plotms(false, false, false)
     }
 
+    /// Validates the iteration or page request together with the supplied PlotMS plot settings.
     pub fn validate_with_plotms(
         &self,
         independent_ordinates: bool,

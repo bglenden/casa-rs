@@ -46,6 +46,7 @@ impl ConcatManifest {
         Self::open_descriptor(&directory.join(FILE))
     }
 
+    /// Opens a saved concatenation descriptor and validates the referenced lattice's geometry.
     pub fn open_descriptor(path: &Path) -> Result<Self, ImageError> {
         let bytes = fs::read(path).map_err(|error| ImageError::Io(error.to_string()))?;
         let manifest: Self = serde_json::from_slice(&bytes)

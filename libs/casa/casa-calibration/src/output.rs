@@ -24,6 +24,7 @@ pub enum CalibrationOutputMode {
 #[derive(Debug)]
 pub struct CalibrationOutput {
     pub(crate) destination: PathBuf,
+    /// Temporary sibling path that owns the unpublished calibration output.
     pub staging: PathBuf,
     mode: CalibrationOutputMode,
     table_type: Option<&'static str>,
@@ -162,6 +163,7 @@ impl CalibrationOutput {
         &self.destination
     }
 
+    /// Prepares an ephemeris subtable for the staged output before it is published.
     pub fn prepare_ephemeris_table(
         path: &Path,
         overwrite: bool,
@@ -250,6 +252,8 @@ impl CalibrationOutput {
         })
     }
 
+    /// Publishes the staged calibration table using the selected output mode. Rename or destination
+    /// conflicts return a writer error.
     pub fn commit(&self) -> Result<(), CalibrationTableWriteError> {
         let fail = |reason| CalibrationTableWriteError::Publish {
             staging: self.staging.display().to_string(),

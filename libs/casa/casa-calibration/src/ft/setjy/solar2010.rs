@@ -20,6 +20,7 @@ const LIGHT_SPEED: f64 = 299_792_458.;
 const PLANCK: f64 = 6.626_075_5e-34;
 const BOLTZMANN: f64 = 1.380_657_798_751_064_7e-23;
 
+/// Butler-JPL-Horizons 2010 disk and temperature model evaluated at an observing epoch.
 pub struct Solar2010 {
     direction: MDirection,
     diameter_rad: f64,
@@ -27,6 +28,8 @@ pub struct Solar2010 {
 }
 
 impl Solar2010 {
+    /// Resolves the body's ephemeris and reads its apparent size and direction in the supplied
+    /// observing frame. An unsupported object or unavailable ephemeris returns an error.
     pub fn open(workspace: &Path, body: &str, epoch: &MEpoch, frame: &MeasFrame) -> MsResult<Self> {
         let mut temperature = Temperature::for_body(body).ok_or_else(|| {
             invalid(format!(
@@ -74,6 +77,7 @@ impl Solar2010 {
         })
     }
 
+    /// Produces an apparent disk component with flux densities for the requested frequency samples.
     pub fn component(
         &self,
         position: Option<MDirection>,

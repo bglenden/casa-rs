@@ -94,6 +94,8 @@ impl ImageHistoryRow {
 }
 
 impl ImageHistoryEntry {
+    /// Returns wall-clock seconds since MJD zero on the civil Unix time scale. A system clock earlier
+    /// than the Unix epoch returns an error.
     pub fn current_time() -> Result<f64, ImageError> {
         const UNIX_EPOCH_MJD_SECONDS: f64 = 40_587.0 * 86_400.0;
         let duration = std::time::SystemTime::now()
@@ -150,9 +152,13 @@ impl ImagePixel for Complex64 {}
 /// Supported image pixel kinds discoverable from on-disk metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ImagePixelType {
+    /// Single-precision real pixels.
     Float32,
+    /// Double-precision real pixels.
     Float64,
+    /// Complex pixels with single-precision real and imaginary parts.
     Complex32,
+    /// Complex pixels with double-precision real and imaginary parts.
     Complex64,
 }
 
@@ -173,9 +179,13 @@ impl ImagePixelType {
 /// Dynamically opened paged image with runtime pixel-type dispatch.
 #[derive(Debug)]
 pub enum AnyPagedImage {
+    /// An open paged image with single-precision real pixels.
     Float32(PagedImage<f32>),
+    /// An open paged image with double-precision real pixels.
     Float64(PagedImage<f64>),
+    /// An open paged image with single-precision complex pixels.
     Complex32(PagedImage<Complex32>),
+    /// An open paged image with double-precision complex pixels.
     Complex64(PagedImage<Complex64>),
 }
 
@@ -235,6 +245,7 @@ impl AnyPagedImage {
         }
     }
 
+    /// Borrows the pixel-to-world coordinate system irrespective of the stored pixel type.
     pub fn coordinates(&self) -> &CoordinateSystem {
         match self {
             Self::Float32(image) => image.coordinates(),
@@ -423,10 +434,16 @@ pub trait ImageInterface<T: ImagePixel>: Lattice<T> {
         ))
     }
 
+    /// Borrows the image's pixel-to-world transform, including axis units and reference frames.
     fn coordinates(&self) -> &CoordinateSystem;
+    /// Returns the brightness unit, for example Jy/beam. An empty string denotes unspecified units.
     fn units(&self) -> &str;
+    /// Returns an owned copy of auxiliary metadata.
     fn misc_info(&self) -> RecordValue;
+    /// Reads the image type and restoring beams. Malformed metadata or an unreadable backing store
+    /// may return an image error.
     fn image_info(&self) -> Result<ImageInfo, ImageError>;
+    /// Returns the persistent image path or source name, when the image has one.
     fn name(&self) -> Option<&Path>;
 
     /// Returns the default pixel mask, if one is configured.
@@ -477,6 +494,7 @@ pub trait ImageInterface<T: ImagePixel>: Lattice<T> {
         Ok(Vec::new())
     }
 
+    /// Formats the image name as a path or only its basename, if a name is available.
     fn name_string(&self, strip_path: bool) -> Option<String> {
         self.name().map(|path| {
             if strip_path {

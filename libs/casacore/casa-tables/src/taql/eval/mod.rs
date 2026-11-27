@@ -37,11 +37,17 @@ use super::error::TaqlError;
 /// - `Array` stores a flat vector of homogeneous values with an n-dimensional shape.
 #[derive(Debug, Clone)]
 pub enum ExprValue {
+    /// Boolean scalar.
     Bool(bool),
+    /// Signed 64-bit integer scalar.
     Int(i64),
+    /// Double-precision scalar without a unit.
     Float(f64),
+    /// Double-precision scalar paired with a physical unit.
     Quantity(Quantity),
+    /// Complex scalar with double-precision components.
     Complex(Complex64),
+    /// Owned text scalar.
     String(String),
     /// Modified Julian Date stored as fractional days (MJD = JD − 2_400_000.5).
     DateTime(f64),
@@ -51,9 +57,12 @@ pub enum ExprValue {
     MaskedArray(Box<ArrayValue>, Vec<bool>),
     /// A compiled regex pattern for matching.
     Regex {
+        /// Raw pattern supplied to the regular-expression matcher.
         pattern: String,
+        /// Flags controlling how the pattern is matched.
         flags: String,
     },
+    /// Missing or undefined query value.
     Null,
 }
 

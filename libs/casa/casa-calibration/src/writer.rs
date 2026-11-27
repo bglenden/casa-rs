@@ -40,30 +40,50 @@ pub(crate) struct CalibrationTableDescriptor<'a> {
 #[derive(Debug, Error)]
 pub enum CalibrationTableWriteError {
     #[error("failed to prepare output path {path}: {reason}")]
-    Prepare { path: String, reason: String },
+    /// Could not prepare a calibration output path.
+    Prepare {
+        /// Requested output path.
+        path: String,
+        /// Diagnostic from staging preparation.
+        reason: String,
+    },
     #[error("failed to append calibration row to {path}: {source}")]
+    /// A typed calibration row could not be appended.
     Append {
+        /// Path of the calibration table being built.
         path: String,
         #[source]
+        /// Underlying row or schema error.
         source: Box<TableError>,
     },
     #[error("failed to save calibration table {path}: {source}")]
+    /// The completed staged table could not be saved.
     Save {
+        /// Path of the calibration table being saved.
         path: String,
         #[source]
+        /// Underlying table storage error.
         source: Box<TableError>,
     },
     #[error("failed to copy {subtable} subtable into {path}: {source}")]
+    /// A required MeasurementSet subtable could not be copied.
     CopySubtable {
+        /// CASA subtable name.
         subtable: String,
+        /// Destination calibration table path.
         path: String,
         #[source]
+        /// Underlying table-copy error.
         source: Box<TableError>,
     },
     #[error("failed to publish staged calibration table {staging} as {output}: {reason}")]
+    /// The staged table could not be made visible at its final path.
     Publish {
+        /// Path of the fully staged calibration table.
         staging: String,
+        /// Requested final output path.
         output: String,
+        /// Diagnostic from the publication operation.
         reason: String,
     },
 }

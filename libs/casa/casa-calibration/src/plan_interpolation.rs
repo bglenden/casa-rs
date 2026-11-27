@@ -33,6 +33,8 @@ pub enum ApplyInterpolationMode {
 }
 
 impl ApplyInterpolationMode {
+    /// Parses the CASA calibration interpolation specification and rejects unsupported
+    /// combinations.
     pub fn parse_casa(value: &str) -> Result<Self, String> {
         use crate::table::{FrequencyInterpolation as F, TimeInterpolation as T};
         let (time, frequency) = value.split_once(',').unwrap_or((value, ""));

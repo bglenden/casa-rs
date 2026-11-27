@@ -17,8 +17,11 @@ use crate::paths::{overlap, subtable_owner};
 use crate::solution_edit::{error_text, stage_calibration_table_edit_with_mode};
 
 type Stokes = [f64; 4];
+/// Per-field and per-spectral-window fractional Stokes polarization derived from gain solutions.
 pub type FractionalPolarization = BTreeMap<String, BTreeMap<String, Stokes>>;
 
+/// Estimates source fractional linear polarization from gain amplitude ratios and the observing
+/// geometry, optionally publishing normalized gain solutions.
 pub fn polarization_from_gain(
     ms_path: &Path,
     input: &Path,

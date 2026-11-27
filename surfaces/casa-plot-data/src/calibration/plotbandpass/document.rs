@@ -23,25 +23,43 @@ fn identity_color(index: usize) -> &'static str {
     IDENTITY_COLORS[index % IDENTITY_COLORS.len()]
 }
 
+/// Layout and rendering options for prepared bandpass panels.
 pub struct DisplayOptions<'a> {
+    /// Positive grid dimensions as rows followed by columns.
     pub layout: [u32; 2],
+    /// Base output filename requested by the caller.
     pub figfile: &'a str,
+    /// Whether to number page files sequentially instead of using selection suffixes.
     pub sequential_names: bool,
+    /// Raster output resolution in dots per inch.
     pub density: u32,
+    /// Plotting marker size in points.
     pub markersize: f64,
+    /// Point visibility override, or None to use the panel default.
     pub show_points: Option<bool>,
+    /// Line visibility override, or None to use the panel default.
     pub show_lines: Option<bool>,
+    /// Whether the caller can pause for per-page interaction.
     pub interactive: bool,
+    /// Explicit x-min, x-max, y-min, and y-max in plot units. Paired zeros request automatic
+    /// bounds.
     pub limits: [f64; 4],
+    /// Optional vertical bounds in degrees for phase plots.
     pub phase_limits: Option<[f64; 2]>,
+    /// Optional subset of channels used to choose the plot bounds.
     pub channel_range: Option<ChannelRange>,
+    /// Whether the selected channels also restrict the horizontal range.
     pub limit_channels: bool,
+    /// Resampling factor for placing plotted samples on the calibrated channel grid.
     pub resample: u32,
 }
 
 #[derive(Clone, Copy)]
+/// Spectral span used to compute panel limits.
 pub enum ChannelRange {
+    /// Inclusive zero-based first and last channel indices.
     Indices([usize; 2]),
+    /// Central fraction of the spectral span, expressed as a percentage.
     CentralPercent(f64),
 }
 
@@ -63,6 +81,7 @@ impl ChannelRange {
 }
 
 #[derive(Serialize)]
+/// Serializable page with a plot figure, annotation curves, limits, and interaction state.
 pub struct BandpassPage {
     figure: PlotFigure,
     density: u32,
@@ -97,6 +116,8 @@ struct LegendMarker {
     y: f64,
 }
 
+/// Paginates prepared panels into the requested positive grid and attaches legends and annotations.
+/// Invalid layouts return a diagnostic.
 pub fn pages(
     plot: BandpassPlots,
     display: &DisplayOptions<'_>,

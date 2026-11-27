@@ -51,41 +51,74 @@ pub(super) enum TileCache {
 /// Diagnostic counters for tiled file reads and writes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TiledFileIoStats {
+    /// Slice writes submitted in last-axis-fastest order.
     pub put_slice_c_order_calls: usize,
+    /// Slice writes submitted in first-axis-fastest order.
     pub put_slice_fortran_calls: usize,
+    /// Tile visits during cached slice writes, including repeat visits.
     pub put_slice_tile_visits: usize,
+    /// Element copies into cached tiles during slice writes.
     pub put_slice_copied_elements: usize,
+    /// Whole-file cache allocation count.
     pub flat_allocations: usize,
+    /// Bytes allocated for the whole-file cache.
     pub flat_allocated_bytes: usize,
+    /// Bytes zero-filled during whole-file cache initialization.
     pub flat_zero_fill_bytes: usize,
+    /// Tile-file bytes read in bulk into the whole-file cache.
     pub flat_bulk_read_bytes: usize,
+    /// Flush requests to the whole-file cache.
     pub flat_flush_calls: usize,
+    /// Dirty tiles written by the whole-file cache.
     pub flat_flush_write_tiles: usize,
+    /// Bytes written by the whole-file cache during flush.
     pub flat_flush_write_bytes: usize,
+    /// Tile cache lookups served by a resident LRU entry.
     pub lru_hits: usize,
+    /// Tile cache lookups missing from the LRU.
     pub lru_misses: usize,
+    /// New LRU tile slots filled with zeros instead of read from storage.
     pub lru_zero_fill_tiles: usize,
+    /// Tiles read from storage into the LRU.
     pub lru_read_tiles: usize,
+    /// Bytes read into the LRU from storage.
     pub lru_read_bytes: usize,
+    /// Requests that load a group of tiles into the LRU.
     pub lru_batch_loads: usize,
+    /// Number of tiles read through grouped LRU loads.
     pub lru_batch_load_tiles: usize,
+    /// Bytes read through grouped LRU loads.
     pub lru_batch_load_bytes: usize,
+    /// Dirty LRU tiles written on eviction.
     pub lru_dirty_evictions: usize,
+    /// Flush requests to the LRU cache.
     pub lru_flush_calls: usize,
+    /// Dirty LRU tiles written by a flush.
     pub lru_flush_write_tiles: usize,
+    /// Bytes written by an LRU flush.
     pub lru_flush_write_bytes: usize,
+    /// Grouped dirty-tile writes issued while flushing the LRU.
     pub lru_batch_flushes: usize,
+    /// Tiles written through grouped LRU flushes.
     pub lru_batch_flush_tiles: usize,
+    /// Bytes written through grouped LRU flushes.
     pub lru_batch_flush_bytes: usize,
+    /// Requests to write aligned tiles directly.
     pub direct_tile_write_calls: usize,
+    /// Complete tiles written by the direct-write path.
     pub direct_tile_write_tiles: usize,
+    /// Bytes written by the direct-write path.
     pub direct_tile_write_bytes: usize,
+    /// Nanoseconds spent packing tiles for direct writes.
     pub direct_tile_pack_ns: usize,
+    /// Nanoseconds spent converting byte order on direct writes.
     pub direct_tile_swap_ns: usize,
+    /// Nanoseconds spent writing packed tiles to the backing file.
     pub direct_tile_write_ns: usize,
 }
 
 impl TiledFileIoStats {
+    /// Returns per-counter increments since an earlier sample, saturating at zero after a reset.
     pub fn delta_since(self, before: Self) -> Self {
         Self {
             put_slice_c_order_calls: self

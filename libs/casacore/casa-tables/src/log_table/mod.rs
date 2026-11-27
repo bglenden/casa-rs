@@ -40,16 +40,27 @@ const TIME_COLUMN_COMMENT: &str = "MJD in seconds";
 /// CASA/casacore log-message priority, in ascending severity order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CasaPriority {
+    /// Most verbose debugging level, DEBUGGING.
     Debugging,
+    /// Detailed debugging level, DEBUG2.
     Debug2,
+    /// Routine debugging level, DEBUG1.
     Debug1,
+    /// Most verbose informational level, INFO5.
     Info5,
+    /// Detailed informational level, INFO4.
     Info4,
+    /// Informational detail level INFO3.
     Info3,
+    /// Informational detail level INFO2.
     Info2,
+    /// Informational detail level INFO1, immediately below INFO.
     Info1,
+    /// Default informational level for routine messages.
     Info,
+    /// Warning for a recoverable problem.
     Warn,
+    /// Highest severity for a failed operation.
     Severe,
 }
 
@@ -128,10 +139,15 @@ impl FromStr for CasaPriority {
 /// A CASA log record ready for sink delivery.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CasaLogRecord {
+    /// Timestamp in seconds since MJD zero as stored in a CASA log table.
     pub time_mjd_seconds: f64,
+    /// Severity used to filter and label the record.
     pub priority: CasaPriority,
+    /// Text of the log entry.
     pub message: String,
+    /// Origin or source location supplied by the caller.
     pub location: String,
+    /// CASA object identifier, or an empty string for a source without one.
     pub object_id: String,
 }
 
@@ -183,25 +199,38 @@ fn trim_message(mut message: String) -> String {
 #[derive(Debug, Error)]
 pub enum CasaLoggingError {
     #[error("invalid CASA log priority {0:?}")]
+    /// Unrecognized CASA priority spelling.
     InvalidPriority(String),
     #[error("log table schema is missing required column {0}")]
+    /// A column required by the CASA log schema is absent.
     MissingColumn(&'static str),
     #[error("log table has incompatible TableInfo type {0:?}")]
+    /// Table type or subtype is incompatible with a CASA log table.
     IncompatibleTableInfo(String),
     #[error("log table column {column} has incompatible type")]
-    IncompatibleColumn { column: &'static str },
+    /// A required log column has an incompatible schema.
+    IncompatibleColumn {
+        /// Name of the incompatible column.
+        column: &'static str,
+    },
     #[error("sink lock was poisoned")]
+    /// A logging sink's shared state was poisoned.
     PoisonedLock,
     #[error("log write failed: {0}")]
+    /// The underlying writer could not accept or flush a record.
     Write(#[source] std::io::Error),
     #[error("table error: {0}")]
+    /// Opening, validating, or updating the backing table failed.
     Table(#[from] crate::TableError),
 }
 
 /// Runtime sink for CASA log records.
 pub trait CasaLogSink: Send + Sync {
+    /// Reports whether this sink accepts records at the given priority.
     fn enabled(&self, priority: CasaPriority) -> bool;
+    /// Submits one record to the sink and returns any write or buffering error.
     fn write(&self, record: &CasaLogRecord) -> Result<(), CasaLoggingError>;
+    /// Drains buffered records to the sink's destination. Returns an error if the flush fails.
     fn flush(&self) -> Result<(), CasaLoggingError>;
 }
 
@@ -231,6 +260,7 @@ pub struct MemorySink {
 }
 
 impl MemorySink {
+    /// Creates an empty in-memory sink with the given minimum accepted priority.
     pub fn new(threshold: CasaPriority) -> Self {
         Self {
             threshold,
@@ -238,6 +268,8 @@ impl MemorySink {
         }
     }
 
+    /// Returns an owned snapshot of accepted records in insertion order. A poisoned lock returns an
+    /// error.
     pub fn records(&self) -> Result<Vec<CasaLogRecord>, CasaLoggingError> {
         Ok(self
             .records
@@ -274,6 +306,7 @@ pub struct StderrSink {
 }
 
 impl StderrSink {
+    /// Creates a terminal sink with the given minimum accepted priority.
     pub fn new(threshold: CasaPriority) -> Self {
         Self { threshold }
     }
@@ -315,6 +348,8 @@ pub struct WriterSink<W> {
 }
 
 impl<W> WriterSink<W> {
+    /// Wraps a writer shared with the caller. The sink filters records below the minimum priority
+    /// and locks the writer during access.
     pub fn new(writer: Arc<Mutex<W>>, threshold: CasaPriority) -> Self {
         Self { threshold, writer }
     }
@@ -354,6 +389,7 @@ pub struct CompositeSink {
 }
 
 impl CompositeSink {
+    /// Combines the supplied sinks, retaining their individual priority filters.
     pub fn new(sinks: Vec<Arc<dyn CasaLogSink>>) -> Self {
         Self { sinks }
     }
@@ -384,8 +420,11 @@ impl CasaLogSink for CompositeSink {
 /// Open mode for CASA log-table sinks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TableLogOpenMode {
+    /// Creates a log table when absent or appends to a compatible one.
     CreateOrAppend,
+    /// Requires a new log table at the specified path.
     CreateNew,
+    /// Requires an existing compatible log table.
     AppendExisting,
 }
 
@@ -399,6 +438,7 @@ pub struct CasaTableLogSink {
 }
 
 impl CasaTableLogSink {
+    /// Creates a buffered sink for a CASA log-table path, priority threshold, and open policy.
     pub fn new(path: impl Into<PathBuf>, threshold: CasaPriority, mode: TableLogOpenMode) -> Self {
         Self {
             path: path.into(),
@@ -408,6 +448,7 @@ impl CasaTableLogSink {
         }
     }
 
+    /// Returns the number of queued entries awaiting flush. A poisoned lock returns an error.
     pub fn pending_len(&self) -> Result<usize, CasaLoggingError> {
         Ok(self
             .pending

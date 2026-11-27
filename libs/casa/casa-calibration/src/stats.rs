@@ -46,6 +46,7 @@ impl CalibrationStatsAxis {
         }
     }
 
+    /// Formats the selection label used in calibration statistics reports.
     pub fn display_name(&self) -> String {
         match self {
             Self::Amplitude => "amplitude".to_string(),

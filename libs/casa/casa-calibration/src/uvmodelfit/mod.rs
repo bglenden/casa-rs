@@ -34,6 +34,7 @@ pub enum VisibilityFitShape {
 }
 
 impl VisibilityFitShape {
+    /// Parses the CASA source-shape token and rejects unsupported fit models.
     pub fn parse(name: &str) -> MsResult<Self> {
         match name {
             "P" => Ok(Self::Point),

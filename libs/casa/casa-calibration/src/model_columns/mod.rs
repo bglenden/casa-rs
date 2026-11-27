@@ -50,6 +50,8 @@ impl<'a> ScratchWriteMode<'a> {
     }
 }
 
+/// Resets selected scratch columns using the MeasurementSet's observed visibility layout and the
+/// caller's MAIN-table lock.
 pub fn reset_scratch_columns(
     ms: &mut MeasurementSet,
     selection: &MsSelection,

@@ -41,6 +41,7 @@ use super::{channel_span, invalid, model_entry, spectral_with_runtime};
 /// An uncommitted Fourier image. The scratch path uses it until the write
 /// finishes. The virtual model can keep it once its on-disk record is filed.
 pub struct ImageModel {
+    /// CASA virtual Fourier-model record, including the path to this model's prepared image.
     pub entry: VirtualModelEntry,
     pub(super) nonzero: bool,
     backing: GridLifetime,
@@ -98,6 +99,8 @@ impl ImageModel {
         Ok(())
     }
 
+    /// Copies prepared image storage to a new location for another MeasurementSet and rewrites its
+    /// virtual-model paths. A failed copy releases unretained staging storage.
     pub fn copy_to(&self, target: &MeasurementSet) -> MsResult<Self> {
         let backing = GridLifetime {
             path: virtual_model_image_path(target)?,
@@ -127,6 +130,8 @@ impl ImageModel {
         })
     }
 
+    /// Keeps the staged image after this owner is dropped. Call when a persisted model entry refers
+    /// to the image.
     pub fn retain(&mut self) {
         self.backing.retained = true;
     }
@@ -146,9 +151,13 @@ impl Drop for GridLifetime {
 }
 
 #[derive(Clone, Copy)]
+/// Identifies one term of a multi-frequency Taylor image model.
 pub struct TaylorTerm {
+    /// Number of Taylor coefficients in the model.
     pub count: i32,
+    /// Zero-based polynomial term index.
     pub index: i32,
+    /// Polynomial expansion frequency in hertz.
     pub reference_hz: f64,
 }
 
@@ -175,6 +184,8 @@ fn spectral_reference_frequency(coordinates: &CoordinateSystem) -> MsResult<f64>
     spectral.world_frequency_hz(pixel).map_err(invalid)
 }
 
+/// Prepares an image-backed Fourier model for the selected rows. Owns temporary image storage until
+/// retained for publication and can omit a model with no nonzero pixels.
 pub fn prepare_image(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,

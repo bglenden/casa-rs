@@ -13,12 +13,16 @@ use casa_tables::{RequiredScalarColumnValues, Table, TableOptions};
 use crate::solution_edit::{edit_calibration_table, error_text};
 
 #[derive(Clone, Copy)]
+/// Reduction applied to calibration solutions in each smoothing time window.
 pub enum Smoother {
+    /// Arithmetic mean of usable samples in the window.
     Mean,
+    /// Median of usable samples in the window.
     Median,
 }
 
 impl Smoother {
+    /// Resolves the CASA smoothing token, returning None for unsupported modes.
     pub fn from_name(mode: &str) -> Option<Self> {
         match mode {
             "mean" => Some(Self::Mean),
@@ -28,6 +32,8 @@ impl Smoother {
     }
 }
 
+/// Smooths calibration solutions over a time interval in seconds for the selected fields and
+/// publishes the result.
 pub fn smooth_calibration_table(
     ms_path: &Path,
     input: &Path,

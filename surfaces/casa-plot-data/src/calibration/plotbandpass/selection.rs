@@ -6,20 +6,32 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use super::table::{SolutionRow, Solutions};
 
 #[derive(Debug, Default)]
+/// Lists of CASA selectors used when choosing bandpass table rows.
 pub struct Selectors {
+    /// Antenna names, IDs, or ranges.
     pub antenna: Vec<String>,
+    /// Field names or IDs.
     pub field: Vec<String>,
+    /// Spectral-window IDs or ranges.
     pub spw: Vec<String>,
+    /// Solution time selectors.
     pub time: Vec<String>,
+    /// Scan-number selectors.
     pub scan: Vec<String>,
+    /// Receiver baseband selectors.
     pub baseband: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
+/// Dimensions along which otherwise separate bandpass curves share axes.
 pub struct Overlay {
+    /// Overlay multiple antennas.
     pub antenna: bool,
+    /// Overlay multiple solution times.
     pub time: bool,
+    /// Overlay spectral windows.
     pub window: bool,
+    /// Group spectral windows by receiver baseband.
     pub baseband: bool,
 }
 

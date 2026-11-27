@@ -12,6 +12,7 @@ const COLORS: [&str; 10] = [
     "#0066f0", "#a868d8",
 ];
 
+/// Determines which color axis is represented by the averaged plot series.
 pub fn axis(spec: &MsPlotSpec) -> Option<MsColorAxis> {
     (spec.averaging.avgantenna
         && spec.averaging.avgtime.is_some()
@@ -67,6 +68,7 @@ pub(super) fn groups(
         .collect()
 }
 
+/// Builds the CASA color assignment for series identities of the given color axis.
 pub fn palette(axis: MsColorAxis, series: &[MsScatterSeries]) -> BTreeMap<String, &'static str> {
     let Some(rows) = series
         .iter()

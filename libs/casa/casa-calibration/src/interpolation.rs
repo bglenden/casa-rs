@@ -3,10 +3,15 @@
 use casa_core::Complex32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// One-dimensional interpolation family for calibration or flux coefficients.
 pub enum Curve {
+    /// Take the closest sampled value.
     Nearest,
+    /// Interpolate between adjacent samples with a straight line.
     Linear,
+    /// Fit a cubic over neighboring samples.
     Cubic,
+    /// Use spline interpolation across the available samples.
     Spline,
 }
 

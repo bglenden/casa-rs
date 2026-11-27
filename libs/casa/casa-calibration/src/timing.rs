@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Opt-in phase evidence without changing CASA's return values.
 
+/// Scoped calibration phase timer that records elapsed time when dropped.
 pub struct Phase {
     name: &'static str,
     start: Option<std::time::Instant>,
 }
 
 impl Phase {
+    /// Starts a timer for the named calibration phase.
     pub fn start(name: &'static str) -> Self {
         Self {
             name,

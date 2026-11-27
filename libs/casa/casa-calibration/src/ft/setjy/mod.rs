@@ -16,6 +16,7 @@ pub mod solar2010;
 pub mod solar2012;
 pub mod standards;
 
+/// A manual point-source Stokes flux model with optional spectral and polarization dependence.
 pub struct ManualFlux {
     flux_jy: [f64; 4],
     reference: MFrequency,
@@ -27,6 +28,8 @@ pub struct ManualFlux {
 }
 
 impl ManualFlux {
+    /// Constructs a user-specified Stokes and spectral model. Flux density is in janskys and the
+    /// reference frequency carries its own measure frame.
     pub fn new(
         flux_jy: [f64; 4],
         reference: MFrequency,
@@ -119,20 +122,25 @@ impl ManualFlux {
         ))
     }
 
+    /// Returns the reference Stokes I flux density in janskys.
     pub fn intensity_jy(&self) -> f64 {
         self.flux_jy[0]
     }
 
+    /// Reports whether the result should expose a spectral index to the caller.
     pub fn reports_spectral_index(&self) -> bool {
         self.spectral_index
             .first()
             .is_some_and(|&index| index != 0.0)
     }
 
+    /// Reports whether frequency changes the model intensity or polarization.
     pub fn has_spectral_dependence(&self) -> bool {
         self.spectral_index.iter().any(|&index| index != 0.0)
     }
 
+    /// Evaluates Stokes I in janskys at a measured frequency, converting frames using the supplied
+    /// observing context.
     pub fn intensity_at(&self, frequency: &MFrequency, frame: &MeasFrame) -> MsResult<f64> {
         let i = self.intensity_jy();
         let f = frequency.hz();
@@ -181,6 +189,8 @@ impl ManualFlux {
     }
 }
 
+/// Builds a point component at the supplied sky direction with flux density sampled at the
+/// specified frequencies.
 pub fn sampled_point(
     direction: MDirection,
     frequencies: &[MFrequency],

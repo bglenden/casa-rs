@@ -27,32 +27,56 @@ use joint::SourceFitMode;
 use parallactic::BaselineSegment;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+/// Polarization calibration equation and solution granularity used by CASA.
 pub enum LeakageSolveKind {
+    /// Time-dependent linearized antenna leakage.
     D,
+    /// Channel-dependent linearized antenna leakage.
     Df,
+    /// Linearized leakage with a joint source Q/U fit.
     DQu,
+    /// Channel-dependent linearized leakage with a joint Q/U fit.
     DfQu,
+    /// Linearized leakage with a joint source polarization angle fit.
     DX,
+    /// Channel-dependent linearized leakage with a joint polarization angle fit.
     DfX,
+    /// Time-dependent antenna leakage using the general Jones algebra.
     DGen,
+    /// Channel-dependent antenna leakage using the general Jones algebra.
     DfGen,
+    /// General Jones leakage with a joint source Q/U fit.
     DGenQu,
+    /// Channel-dependent general Jones leakage with a joint Q/U fit.
     DfGenQu,
+    /// General Jones leakage with a joint polarization angle fit.
     DGenX,
+    /// Channel-dependent general Jones leakage with a joint polarization angle fit.
     DfGenX,
+    /// Linear least-squares antenna leakage.
     Dlls,
+    /// Channel-dependent linear least-squares antenna leakage.
     Dflls,
+    /// Frequency-independent cross-hand phase represented as a Jones term.
     Xj,
+    /// Cross-hand phase represented as a baseline Mueller term.
     XMueller,
+    /// Channel-dependent cross-hand phase.
     Xf,
+    /// Channel-dependent correction for polarization position angle.
     PosAng,
+    /// Cross-hand phase fitted from parallactic-angle coverage.
     Xparang,
+    /// Channel-dependent cross-hand phase fitted from parallactic-angle coverage.
     Xfparang,
+    /// Linear-feed cross-hand phase with a joint source polarization solution.
     XY,
+    /// Channel-dependent linear-feed phase with a joint source polarization solution.
     XYf,
 }
 
 impl LeakageSolveKind {
+    /// Returns the CASA calibration table subtype written for this solution.
     pub fn subtype(self) -> &'static str {
         match self {
             Self::D | Self::DQu | Self::DX => "D Jones",
@@ -72,6 +96,7 @@ impl LeakageSolveKind {
         }
     }
 
+    /// Reports whether the solve resolves spectral channels or channel bins.
     pub fn channelized(self) -> bool {
         matches!(
             self,
@@ -93,6 +118,7 @@ impl LeakageSolveKind {
         !matches!(self, Self::Dlls | Self::Dflls) && !self.cross_hand()
     }
 
+    /// Reports whether the solver estimates cross-hand phase rather than antenna leakage.
     pub fn cross_hand(self) -> bool {
         matches!(self, Self::Xj | Self::XMueller | Self::Xf | Self::PosAng) || self.parallactic()
     }
@@ -113,6 +139,7 @@ impl LeakageSolveKind {
         matches!(self, Self::PosAng | Self::Xparang | Self::Xfparang)
     }
 
+    /// Reports whether the mode fits linear-feed gain phase using parallactic-angle coverage.
     pub fn gain_phase(self) -> bool {
         matches!(self, Self::XY | Self::XYf)
     }
@@ -140,24 +167,43 @@ impl LeakageSolveKind {
 }
 
 #[derive(Clone)]
+/// Inputs, grouping, validity thresholds, and output policy for a polarization calibration solve.
 pub struct LeakageSolveRequest {
+    /// Destination calibration table path.
     pub output: PathBuf,
+    /// Native MeasurementSet row and channel selection.
     pub selection: MsSelection,
+    /// Leakage or cross-hand equation family and channel granularity.
     pub kind: LeakageSolveKind,
+    /// Source of model visibilities used to constrain the solution.
     pub model_source: GainSolveModelSource,
+    /// Model Stokes I, Q, U, V in janskys.
     pub stokes: [f32; 4],
+    /// Ordered calibration terms applied before solving.
     pub priors: Vec<ApplyCalibrationTableSpec>,
+    /// Number of parallactic-angle terms already carried by prior calibration.
     pub parang_terms: usize,
+    /// Whether input flags are independent per correlation.
     pub correlation_dependent_flags: bool,
+    /// Requested amplitude and phase solve mode.
     pub solve_mode: GainSolveMode,
+    /// Optional output gain normalization.
     pub normalization: Option<crate::solve::GainNormalization>,
+    /// Time grouping interval for solutions.
     pub interval: GainSolveInterval,
+    /// Optional channel or frequency binning within each spectral window.
     pub frequency_interval: Option<crate::bandpass::BandpassFrequencyInterval>,
+    /// Selection boundaries allowed to share one solution.
     pub combine: GainSolveCombine,
+    /// Preaveraging interval in seconds.
     pub preaverage_seconds: f64,
+    /// Minimum number of usable baselines per antenna.
     pub min_baselines: usize,
+    /// Minimum accepted signal-to-noise ratio, dimensionless.
     pub min_snr: f32,
+    /// Selection and ordering policy for the reference antenna.
     pub refant: RefAntSelector,
+    /// Whether to append solutions to an existing compatible calibration table.
     pub append: bool,
 }
 
@@ -202,15 +248,25 @@ pub(crate) struct LeakageEstimate {
     snr: [f32; 2],
 }
 
+/// Published polarization solution counts and source-polarization diagnostics.
 pub struct PolarizationSolveOutcome {
+    /// Number of calibration rows written.
     pub rows: usize,
+    /// Source polarization estimates by source label and spectral-window ID; complex components
+    /// encode fractional Q and U.
     pub source: BTreeMap<String, BTreeMap<i32, Complex32>>,
+    /// Data selection summary for the solved intervals.
     pub selected: SelectedData,
+    /// Per-antenna gain solution statistics when recorded.
     pub gain_stats: Option<SolveStats>,
+    /// Zero-based MeasurementSet field IDs with solutions.
     pub solved_fields: BTreeSet<i32>,
+    /// Zero-based spectral-window IDs with solutions.
     pub solved_windows: BTreeSet<i32>,
 }
 
+/// Solves selected polarization calibration equations and publishes the calibration table. Invalid
+/// input, insufficient coverage, and write failures return diagnostics.
 pub fn solve_polarization(
     ms: &MeasurementSet,
     request: &LeakageSolveRequest,

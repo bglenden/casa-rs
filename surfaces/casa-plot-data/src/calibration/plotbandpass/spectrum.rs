@@ -6,10 +6,15 @@ use casa_core::{ArrayValue, Complex32, Complex64};
 use super::table::Spectrum;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Quantity displayed on the vertical axis of a bandpass plot.
 pub enum Ordinate {
+    /// Linear gain magnitude.
     Amplitude,
+    /// Logarithmic gain magnitude in decibels.
     Decibels,
+    /// Complex gain argument in degrees.
     Phase,
+    /// Delay in nanoseconds.
     Delay,
 }
 
@@ -213,6 +218,8 @@ fn channel_differences(source: &Curve) -> Curve {
     Curve { x, y }
 }
 
+/// Computes the median, averaging the two middle values for even sample counts.
+/// Empty input or any NaN returns NaN.
 pub fn median(values: &[f64]) -> f64 {
     if values.is_empty() || values.iter().any(|value| value.is_nan()) {
         return f64::NAN;

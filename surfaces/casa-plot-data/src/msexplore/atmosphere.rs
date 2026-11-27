@@ -6,18 +6,26 @@ use casa_atmosphere::{
 };
 
 #[derive(Clone, Copy)]
+/// Atmospheric quantity drawn on a PlotMS frequency axis.
 pub enum Overlay {
+    /// Fraction of radiation transmitted along the line of sight, in percent.
     Transmission,
+    /// Equivalent blackbody sky brightness temperature in kelvins.
     SkyTemperature,
 }
 
+/// Atmospheric profile and observing geometry used to generate a spectral overlay.
 pub struct AtmosphericConditions {
+    /// Pressure, temperature, altitude, and atmosphere type for the profile.
     pub profile: ProfileParameters,
+    /// Zenith precipitable water vapor in meters.
     pub water_m: f64,
+    /// Dimensionless path-length ratio relative to zenith.
     pub airmass: f64,
 }
 
 impl AtmosphericConditions {
+    /// Constructs the CASA default weather model for the named telescope and the supplied airmass.
     pub fn new(telescope: &str, airmass: f64) -> Self {
         let alma = telescope == "ALMA";
         Self {
@@ -33,6 +41,8 @@ impl AtmosphericConditions {
         }
     }
 
+    /// Evaluates an atmospheric overlay at frequencies in hertz. The output retains input length,
+    /// with NaN at unused samples when the model grid is downsampled.
     pub fn curve(
         &self,
         frequencies_hz: &[f64],
@@ -68,6 +78,8 @@ impl AtmosphericConditions {
         }
         Ok(curve)
     }
+    /// Computes an overlay in the reflected sideband at twice the local oscillator frequency minus
+    /// each channel frequency, all in hertz. An unavailable oscillator yields NaN samples.
     pub fn image_curve(
         &self,
         frequencies_hz: &[f64],
