@@ -32,6 +32,23 @@ change: no compatibility layer and no second production route kept for
 comparison (a baseline build serves that). A consumer has not moved while a
 wrapper still leaks physical rows or `DATA_DESC_ID` into its algorithm.
 
+## MSv2 row grids
+
+The adapter separates MAIN rows by `PROCESSOR_ID` so each grid carries one
+processor. If one time within a partition holds more than one field or scan,
+the adapter splits that partition by the conflicting key before allocating
+its grids. Other partitions keep their requested scheme. The field and scan
+splits required to fit the grid share the original partition's spectral-weight
+probe. Imaging keeps its original weight extent across processor and
+field/scan splits.
+
+Two MAIN rows that still claim the same exact `TIME` and ordered baseline in
+one partition produce `ObservationError::InvalidStore` with both row numbers.
+The grid has one cell per time and baseline and no acquisition axis to hold
+both rows. Keeping one or combining the two would discard information.
+Baseline-dependent times retain their exact values. Unoccupied cells are
+padding and are charged at admission.
+
 ## Owner decisions in force
 
 - **Formats** (2026-10-23): MSv2 and MSv4 (XRADIO schema 4.0.1 on local

@@ -20,6 +20,8 @@ mod metadata;
 #[path = "refusals.rs"]
 mod refusals;
 #[cfg(unix)]
+mod row_grid;
+#[cfg(unix)]
 #[path = "sources.rs"]
 mod sources;
 #[path = "split.rs"]

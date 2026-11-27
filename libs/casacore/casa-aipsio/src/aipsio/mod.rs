@@ -717,6 +717,30 @@ impl AipsIo {
         self.get_u32()
     }
 
+    /// The bytes remaining in the current read object with a declared length.
+    ///
+    /// Call after [`getstart`](Self::getstart). Returns `None` for an object
+    /// whose header carries the unknown-length sentinel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error outside a started read object or if a read has
+    /// already exceeded its declared length.
+    pub fn remaining_object_bytes(&self) -> AipsIoObjectResult<Option<u32>> {
+        self.test_get()?;
+        if self.has_cached_type {
+            return Err(AipsIoObjectError::NoGetStart);
+        }
+        let declared = self.objtln[self.level];
+        if declared == MAGIC_VALUE {
+            return Ok(None);
+        }
+        let remaining = declared
+            .checked_sub(self.objlen[self.level])
+            .ok_or(AipsIoObjectError::ReadBeyondEndOfObject)?;
+        Ok(Some(remaining))
+    }
+
     /// Finish reading the current object, validating full consumption.
     pub fn getend(&mut self) -> AipsIoObjectResult<u32> {
         if self.level == 0 {

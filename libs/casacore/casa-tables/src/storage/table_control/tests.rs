@@ -116,6 +116,114 @@ fn an_array_keyword_is_of_variable_shape_in_its_record_desc() {
 }
 
 #[test]
+fn historical_rank_zero_record_keeps_its_type_and_following_scalar() {
+    // Produced by 4ae92b84's serialize_record_to_uchar with a scalar-shaped
+    // Float64 array containing 42.75 and a later Int32 of 0x12345678.
+    // The old writer omitted the array count and value entirely.
+    const BYTES: &[u8] = &[
+        0xbe, 0xbe, 0xbe, 0xbe, 0x00, 0x00, 0x00, 0x96, 0x00, 0x00, 0x00, 0x0b, 0x54, 0x61, 0x62,
+        0x6c, 0x65, 0x52, 0x65, 0x63, 0x6f, 0x72, 0x64, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+        0x5a, 0x00, 0x00, 0x00, 0x0a, 0x52, 0x65, 0x63, 0x6f, 0x72, 0x64, 0x44, 0x65, 0x73, 0x63,
+        0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x06, 0x6c, 0x65, 0x67,
+        0x61, 0x63, 0x79, 0x00, 0x00, 0x00, 0x15, 0x00, 0x00, 0x00, 0x1d, 0x00, 0x00, 0x00, 0x09,
+        0x49, 0x50, 0x6f, 0x73, 0x69, 0x74, 0x69, 0x6f, 0x6e, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+        0x00, 0x01, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x61,
+        0x66, 0x74, 0x65, 0x72, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00, 0x1d, 0x00, 0x00, 0x00, 0x0d, 0x41, 0x72, 0x72, 0x61, 0x79, 0x3c,
+        0x64, 0x6f, 0x75, 0x62, 0x6c, 0x65, 0x3e, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00,
+        0x12, 0x34, 0x56, 0x78,
+    ];
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("record.aips");
+    std::fs::write(&path, BYTES).unwrap();
+    let expected = RecordValue::new(vec![
+        RecordField::new(
+            "legacy",
+            Value::Array(ArrayValue::Float64(
+                ArrayD::from_shape_vec(IxDyn(&[0]), Vec::new()).unwrap(),
+            )),
+        ),
+        RecordField::new("after", Value::Scalar(ScalarValue::Int32(0x1234_5678))),
+    ]);
+    assert_eq!(read_table_record_file(&path).unwrap(), expected);
+    assert_eq!(deserialize_record_from_uchar(BYTES).unwrap(), expected);
+    assert_eq!(std::fs::read(&path).unwrap(), BYTES);
+}
+
+#[test]
+fn rank_zero_record_array_count_may_be_absent_only_in_the_exact_historical_frame() {
+    use std::io::Cursor;
+
+    let cases = [
+        ("Array<short>", 3, true, 0, true),
+        ("Array<short>", 3, true, 1, false),
+        ("Array<short>", 3, true, 2, false),
+        ("Array<short>", 3, true, 3, false),
+        ("Array<short>", 3, true, 4, true),
+        ("Array<short>", 3, true, 5, false),
+        ("Array<short>", 3, false, 0, false),
+        ("Array<short>", 3, false, 4, true),
+        ("Array<short>", 2, true, 0, false),
+        ("Array", 3, true, 0, false),
+        ("Array<float>", 3, true, 0, false),
+        ("Array", 2, true, 4, true),
+    ];
+    for (name, version, known_length, count_bytes, accepted) in cases {
+        let mut writer = AipsIo::new_write_only(Cursor::new(Vec::new()));
+        writer.putstart(name, version).unwrap();
+        writer.put_u32(0).unwrap();
+        writer.put_u8_slice(&[0; 5][..count_bytes], false).unwrap();
+        writer.putend().unwrap();
+        let mut bytes = writer
+            .into_inner_typed::<Cursor<Vec<u8>>>()
+            .unwrap()
+            .into_inner();
+        if !known_length {
+            bytes[4..8].copy_from_slice(&[0xbe; 4]);
+        }
+        let mut reader = AipsIo::new_read_only(Cursor::new(bytes));
+        let result = read_array_record_field(&mut reader, CasacoreDataType::TpArrayUShort);
+        let case =
+            format!("{name} v{version}, known length {known_length}, {count_bytes} count bytes");
+        if accepted {
+            let Value::Array(ArrayValue::UInt16(array)) = result.expect(&case) else {
+                panic!("expected UInt16 array: {case}");
+            };
+            assert_eq!(array.shape(), [0], "{case}");
+        } else {
+            assert!(result.is_err(), "{case}: {result:?}");
+        }
+    }
+}
+
+#[test]
+fn rank_zero_record_array_requires_a_zero_element_count() {
+    let directory = tempfile::tempdir().unwrap();
+    for count in [0, 1] {
+        let path = directory.path().join(format!("rank-zero-{count}.aips"));
+        {
+            let mut writer = AipsIo::open(&path, AipsOpenOption::New).unwrap();
+            writer.putstart("Array<short>", 3).unwrap();
+            writer.put_u32(0).unwrap();
+            writer.put_u32(count).unwrap();
+            writer.putend().unwrap();
+        }
+        let mut reader = AipsIo::open(&path, AipsOpenOption::Old).unwrap();
+        // casacore's RecordRep cannot store UInt16, but the native codec
+        // supports the tag and must retain it when the payload is empty.
+        let decoded = read_array_record_field(&mut reader, CasacoreDataType::TpArrayUShort);
+        if count == 0 {
+            let Value::Array(ArrayValue::UInt16(array)) = decoded.unwrap() else {
+                panic!("expected UInt16 array");
+            };
+            assert_eq!(array.shape(), &[0]);
+        } else {
+            assert!(matches!(decoded, Err(StorageError::FormatMismatch(_))));
+        }
+    }
+}
+
+#[test]
 fn column_keywords_roundtrip_in_table_dat() {
     // Build a ColumnDescContents with nested record keywords
     let mut measinfo = RecordValue::default();

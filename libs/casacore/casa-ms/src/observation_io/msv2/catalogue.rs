@@ -401,15 +401,53 @@ pub(super) fn read_state_modes(ms: &MeasurementSet) -> Result<Vec<String>, Obser
     }
 }
 
-/// The intents an `OBS_MODE` string lists, sorted and deduplicated.
-pub(super) fn intents(mode: &str) -> Vec<String> {
-    let set: BTreeSet<String> = mode
-        .split(',')
+/// The intents an `OBS_MODE` string lists.
+pub(super) fn mode_intents(mode: &str) -> impl Iterator<Item = &str> {
+    mode.split(',')
         .map(str::trim)
         .filter(|intent| !intent.is_empty())
-        .map(str::to_string)
-        .collect();
-    set.into_iter().collect()
+}
+
+/// The intents of the states named by a scan's rows.
+pub(super) fn scan_intents<'a>(
+    states: &'a BTreeSet<i32>,
+    modes: &'a [String],
+) -> impl Iterator<Item = &'a str> {
+    states
+        .iter()
+        .filter_map(|&state| {
+            usize::try_from(state)
+                .ok()
+                .and_then(|state| modes.get(state))
+        })
+        .flat_map(|mode| mode_intents(mode))
+}
+
+/// Bound the owned intent list and the scratch used to deduplicate it.
+pub(super) fn intent_list_bytes<'a>(intents: impl Iterator<Item = &'a str>) -> (usize, usize) {
+    let (count, text) = intents.fold((0, 0), |(count, text), intent| {
+        (count + 1, text + intent.len())
+    });
+    (
+        text + count * size_of::<String>(),
+        casa_core::memory::btree_node_bytes::<&str, ()>(count),
+    )
+}
+
+/// Copy the distinct intents, in lexical order.
+fn owned_intents<'a>(intents: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let mut distinct = BTreeSet::new();
+    for intent in intents {
+        distinct.insert(intent);
+    }
+    let mut owned = Vec::with_capacity(distinct.len());
+    owned.extend(distinct.into_iter().map(str::to_owned));
+    owned
+}
+
+/// The intents an `OBS_MODE` string lists, sorted and deduplicated.
+pub(super) fn intents(mode: &str) -> Vec<String> {
+    owned_intents(mode_intents(mode))
 }
 
 /// Every `ANTENNA` row.
@@ -605,30 +643,16 @@ pub(super) fn scans(
     states_by_number: BTreeMap<i32, BTreeSet<i32>>,
     modes: &[String],
 ) -> (Vec<ScanEntry>, BTreeMap<i32, ScanId>) {
-    let index: BTreeMap<i32, ScanId> = states_by_number
-        .keys()
-        .enumerate()
-        .map(|(index, number)| (*number, ScanId(index as u32)))
-        .collect();
-    let scans = states_by_number
-        .into_iter()
-        .map(|(number, states)| {
-            let intents: BTreeSet<String> = states
-                .into_iter()
-                .filter_map(|state| {
-                    usize::try_from(state)
-                        .ok()
-                        .and_then(|state| modes.get(state))
-                })
-                .flat_map(|mode| intents(mode))
-                .collect();
-            ScanEntry {
-                name: number.to_string(),
-                number: Some(number),
-                intents: intents.into_iter().collect(),
-            }
-        })
-        .collect();
+    let mut index = BTreeMap::new();
+    let mut scans = Vec::with_capacity(states_by_number.len());
+    for (number, states) in states_by_number {
+        index.insert(number, ScanId(scans.len() as u32));
+        scans.push(ScanEntry {
+            name: number.to_string(),
+            number: Some(number),
+            intents: owned_intents(scan_intents(&states, modes)),
+        });
+    }
     (scans, index)
 }
 
