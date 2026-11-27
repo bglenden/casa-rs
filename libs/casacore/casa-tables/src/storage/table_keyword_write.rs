@@ -40,25 +40,3 @@ pub(crate) fn save_keywords(
     staged.persist(&path).map_err(|error| error.error)?;
     Ok(())
 }
-
-pub(crate) fn sync_cache_keywords(file: &File) -> io::Result<()> {
-    #[cfg(target_vendor = "apple")]
-    {
-        use std::os::fd::AsRawFd;
-
-        // File::sync_all requests F_FULLFSYNC on Apple. The sorted cache is
-        // derived from published rows and uses casacore's ordinary fsync.
-        loop {
-            // SAFETY: the borrowed file keeps the descriptor alive.
-            if unsafe { libc::fsync(file.as_raw_fd()) } == 0 {
-                return Ok(());
-            }
-            let error = io::Error::last_os_error();
-            if error.kind() != io::ErrorKind::Interrupted {
-                return Err(error);
-            }
-        }
-    }
-    #[cfg(not(target_vendor = "apple"))]
-    file.sync_all()
-}

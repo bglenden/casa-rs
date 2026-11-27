@@ -18,8 +18,7 @@ use CasaDefault::{
 };
 use Kind as K;
 use Returns as R;
-#[allow(unused_imports)]
-use Status::{Implemented as Yes, NotYetImplemented as No};
+use Status::Implemented as Yes;
 
 /// Every public method of CASA's installed `table` binding.
 const METHODS: &[Method] = &[

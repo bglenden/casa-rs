@@ -153,8 +153,6 @@ pub(crate) enum Status {
     Implemented,
     /// Available with documented gaps in supported values or workflows.
     Partial,
-    /// Raises `NotImplementedError`, naming the issue that records it.
-    NotYetImplemented,
     /// Disabled in CASA itself: logs CASA's error and returns `False`.
     DisabledInCasa,
     /// Deprecated in CASA: raises, naming the replacement.
@@ -166,7 +164,6 @@ impl Status {
         match self {
             Self::Implemented => "implemented",
             Self::Partial => "partial",
-            Self::NotYetImplemented => "not_yet_implemented",
             Self::DisabledInCasa => "disabled_in_casa",
             Self::DeprecatedInCasa => "deprecated_in_casa",
         }

@@ -986,6 +986,7 @@ dependencies = [
  "casa-simulation",
  "casa-tables",
  "casa-tasks",
+ "libc",
  "ndarray",
  "num-complex",
  "numpy",
