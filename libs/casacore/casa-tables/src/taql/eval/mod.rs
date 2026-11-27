@@ -20,7 +20,7 @@ use std::fmt;
 use casa_core::quanta::{Quantity, Unit};
 use casa_core::{RecordValue, ScalarValue, Value};
 use num_complex::Complex64;
-#[path = "eval_arrays.rs"]
+#[path = "../eval_arrays.rs"]
 mod arrays;
 
 use super::ast::{self, *};

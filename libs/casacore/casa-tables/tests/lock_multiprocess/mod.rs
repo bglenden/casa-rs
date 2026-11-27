@@ -5,7 +5,7 @@
 //! fcntl-based table locking works correctly across OS processes.
 //! Because fcntl locks are per-process (not per-fd), single-process
 //! tests cannot exercise true contention.
-#[path = "lock_multiprocess/helper.rs"]
+#[path = "helper.rs"]
 mod helper;
 
 use std::collections::HashMap;

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-#[path = "support/table_demos.rs"]
+#[path = "support/table_demos/mod.rs"]
 mod table_demos;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
