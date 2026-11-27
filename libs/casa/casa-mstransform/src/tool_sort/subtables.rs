@@ -15,22 +15,16 @@ pub(super) fn check_named_output(
     output: &Path,
     replace_keyword: Option<(&Path, &str)>,
 ) -> MsResult<PathBuf> {
-    let root = reference_root(input)?;
     let mut staging_parent = output
         .parent()
         .ok_or_else(|| invalid(output, "output has no parent"))?
         .to_path_buf();
-    let mut visited = BTreeSet::new();
-    let mut pending = vec![(input.to_path_buf(), false)];
-    let standard = SubtableId::ALL_REQUIRED
-        .iter()
-        .chain(SubtableId::ALL_OPTIONAL);
-    while let Some((path, subtable)) = pending.pop() {
-        let path = path.canonicalize().map_err(|error| invalid(&path, error))?;
+    let replacement = replace_keyword.map(|(owner, name)| (output, owner, name));
+    visit_source_tables(input, replacement, |path, subtable| {
         if path.starts_with(output) {
             return Err(invalid(output, "output overlaps a source table"));
         }
-        if subtable && path != root && staging_parent.starts_with(&path) {
+        if subtable && staging_parent.starts_with(path) {
             if replace_keyword.is_none() {
                 return Err(invalid(output, "output overlaps a source table"));
             }
@@ -39,6 +33,25 @@ pub(super) fn check_named_output(
                 .ok_or_else(|| invalid(output, "no staging parent outside the source table"))?
                 .to_path_buf();
         }
+        Ok(())
+    })?;
+    Ok(staging_parent)
+}
+
+pub(super) fn visit_source_tables(
+    input: &Path,
+    replacement: Option<(&Path, &Path, &str)>,
+    mut visit: impl FnMut(&Path, bool) -> MsResult<()>,
+) -> MsResult<()> {
+    let root = reference_root(input)?;
+    let mut visited = BTreeSet::new();
+    let mut pending = vec![(input.to_path_buf(), false)];
+    let standard = SubtableId::ALL_REQUIRED
+        .iter()
+        .chain(SubtableId::ALL_OPTIONAL);
+    while let Some((path, subtable)) = pending.pop() {
+        let path = path.canonicalize().map_err(|error| invalid(&path, error))?;
+        visit(&path, subtable && path != root)?;
         if !visited.insert(path.clone()) {
             continue;
         }
@@ -66,9 +79,9 @@ pub(super) fn check_named_output(
                 // The designated result keyword is republished with the new table.
                 // Protect standard MS subtables and all other names for that table.
                 if standard
-                    || linked != output
-                    || !matches!(replace_keyword,
-                    Some((owner, name)) if name == field.name && Table::keyword_descriptor_path(&path)? == owner)
+                    || !matches!(replacement,
+                    Some((output, owner, name)) if linked == output && name == field.name
+                        && Table::keyword_descriptor_path(&path)? == owner)
                 {
                     pending.push((linked, true));
                 }
@@ -84,7 +97,7 @@ pub(super) fn check_named_output(
             }
         }
     }
-    Ok(staging_parent)
+    Ok(())
 }
 
 fn protect_keyword_links(record: &RecordValue, path: &Path, pending: &mut Vec<(PathBuf, bool)>) {

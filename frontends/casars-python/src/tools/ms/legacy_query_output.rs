@@ -29,6 +29,7 @@ use super::{AttachedMs, runtime_error};
 
 pub(super) struct QueryOutputOptions {
     independent: bool,
+    pub(super) memory: bool,
     overwrite: bool,
     endian: Option<EndianFormat>,
     storage: Option<QueryStorage>,
@@ -60,6 +61,7 @@ impl QueryOutputOptions {
     pub(super) fn parse(giving: &GivingClause) -> PyResult<Self> {
         let mut output = Self {
             independent: false,
+            memory: false,
             overwrite: true,
             endian: None,
             storage: None,
@@ -89,23 +91,20 @@ impl QueryOutputOptions {
                 output.set(name, &value)?;
             }
         }
-        if output.independent && giving.table_name.is_empty() {
+        if output.independent && !output.memory && giving.table_name.is_empty() {
             return Err(runtime_error("TaQL output must name a MeasurementSet"));
         }
         Ok(output)
     }
 
     fn set_mode(&mut self, mode: &str) -> PyResult<()> {
+        self.memory = false;
         match mode.to_ascii_lowercase().as_str() {
             "plain" | "scratch" => (),
             "plain_local" => self.endian = Some(EndianFormat::LocalEndian),
             "plain_big" => self.endian = Some(EndianFormat::BigEndian),
             "plain_little" => self.endian = Some(EndianFormat::LittleEndian),
-            "memory" => {
-                return Err(PyNotImplementedError::new_err(
-                    "ms.selecttaqlold GIVING AS MEMORY is not implemented in casa-rs (#1030)",
-                ));
-            }
+            "memory" => self.memory = true,
             _ => {
                 return Err(runtime_error(format!(
                     "{mode} is an invalid TaQL output type"
@@ -222,8 +221,15 @@ impl AttachedMs {
         let endian = options
             .independent
             .then(|| options.copy_endian())
-            .transpose()?;
+            .transpose()?
+            .or_else(|| self.memory_ms.as_ref().map(|_| EndianFormat::default()));
         let active = self.legacy_selection.query_parent(&self.path);
+        if active.is_none() && self.memory_ms.is_some() && QuerySubtable::has_implicit_parent(name)?
+        {
+            return Err(runtime_error(
+                "the active TaQL view has no persisted directory",
+            ));
+        }
         let subtable = QuerySubtable::resolve(name, active, &self.path)?;
         let output = if let Some(subtable) = &subtable {
             subtable.output.clone()
@@ -246,7 +252,7 @@ impl AttachedMs {
         }
         let stage = tempfile::Builder::new()
             .prefix(".taql-ms-")
-            .tempdir_in(if options.independent {
+            .tempdir_in(if endian.is_some() {
                 &copy_parent
             } else {
                 parent
@@ -260,8 +266,15 @@ impl AttachedMs {
                 .chain(self.write_locks.keys())
                 .cloned()
                 .collect();
-            write_selected_measurement_set_rows(table, rows, &staged, endian, &source_locks)
-                .map_err(runtime_error)?;
+            if let Some(memory) = &self.memory_ms {
+                memory
+                    .to_memory_rows(rows)
+                    .and_then(|mut copy| copy.save_detached_in_stage(&staged, endian))
+                    .map_err(runtime_error)?;
+            } else {
+                write_selected_measurement_set_rows(table, rows, &staged, endian, &source_locks)
+                    .map_err(runtime_error)?;
+            }
             staged
         } else {
             let staged = stage.path().to_owned();
@@ -274,8 +287,8 @@ impl AttachedMs {
         self.working_metadata_link()
             .verify_directory()
             .map_err(runtime_error)?;
-        let stage_lock = options
-            .independent
+        let stage_lock = endian
+            .is_some()
             .then(|| TableWriteLock::acquire_to_reread(&staged, 1))
             .transpose()
             .map_err(runtime_error)?;
@@ -306,6 +319,22 @@ impl AttachedMs {
             .parent()
             .expect("validated output has a parent")
             .to_owned();
+        if self.memory_ms.is_some() {
+            for (source, linked) in &self.memory_source_paths {
+                if source.starts_with(output)
+                    || (*linked && output.starts_with(source) && subtable.is_none())
+                {
+                    return Err(runtime_error("TaQL output overlaps a source table"));
+                }
+                if *linked && parent.starts_with(source) {
+                    parent = source
+                        .parent()
+                        .ok_or_else(|| runtime_error("no staging parent outside the source table"))?
+                        .to_owned();
+                }
+            }
+            return Ok(parent);
+        }
         if let Some(link) = subtable {
             for input in inputs {
                 let outside =

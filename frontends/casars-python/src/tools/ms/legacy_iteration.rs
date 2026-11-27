@@ -19,7 +19,7 @@ pub(super) struct LegacyIteration {
     cursor: LegacyToolIteration,
     restore_rows: Option<Arc<[usize]>>,
     working_rows: Option<Arc<[usize]>>,
-    pub(super) main: Arc<VisibilityMain>,
+    pub(super) main: Option<Arc<VisibilityMain>>,
     pub(super) metadata: Option<Arc<MetadataSnapshot>>,
 }
 
@@ -139,7 +139,6 @@ impl AttachedMs {
         link.verify_directory().map_err(runtime_error)?;
         let working_rows = link.selected_rows().map_err(runtime_error)?;
         let restore_rows = self.legacy_selection.shared_rows();
-        let main = self.visibility.current_main(&self.path)?;
         let options = LegacyIterationOptions {
             selected: restore_rows.as_deref(),
             working_rows: working_rows.as_deref(),
@@ -148,6 +147,22 @@ impl AttachedMs {
             max_rows,
             defaults,
         };
+        if let Some(memory) = &self.memory_ms {
+            let Some(cursor) = LegacyToolIteration::new(memory.main_table(), None, options)
+                .map_err(runtime_error)?
+            else {
+                return Ok(false);
+            };
+            self.legacy_selection.iteration = Some(LegacyIteration {
+                cursor,
+                restore_rows,
+                working_rows,
+                main: None,
+                metadata: None,
+            });
+            return Ok(true);
+        }
+        let main = self.visibility.current_main(&self.path)?;
         let source = self.legacy_sort_source(&main)?;
         let Some(mut cursor) = main.legacy_iteration(options)? else {
             return Ok(false);
@@ -190,7 +205,7 @@ impl AttachedMs {
             cursor,
             restore_rows,
             working_rows,
-            main,
+            main: Some(main),
             metadata,
         });
         Ok(true)
