@@ -25,6 +25,15 @@ use casa_tables::publication::{
 };
 use casa_tables::{Table, TableOptions};
 
+impl ImregridTemplate {
+    /// Reports whether the string is a built-in template selector such as
+    /// `get` or a CASA direction reference. Selectors resolve independently
+    /// of the task workspace; other strings are image paths.
+    pub fn is_selector(value: &str) -> bool {
+        value.eq_ignore_ascii_case("get") || frame_from_template(value).is_some()
+    }
+}
+
 /// Return an image's coordinate template, or regrid its pixels onto a template.
 ///
 /// A dictionary template holds the two fields returned by `template='get'`.
