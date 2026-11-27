@@ -5,7 +5,7 @@
 Run with CASA 6.7.6.14's Python:
 
     CASAPY -I tools/casa-compat/observatories_oracle.py \\
-        --out crates/casars-python/python/tests/data/casa_observatories.json
+        --out frontends/casars-python/python/tests/data/casa_observatories.json
 
 For each name `me.obslist` gives, the record holds `me.observatory(name)`
 as CASA returns it (its tabulated frame) and the table row it came from, so

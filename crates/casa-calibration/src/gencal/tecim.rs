@@ -3,12 +3,12 @@
 
 use std::path::Path;
 
+use casa_core::measures::epoch::{EpochRef, MEpoch};
+use casa_core::measures::ionospheric_pierce_point;
 use casa_images::PagedImage;
 use casa_ms::MeasurementSet;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_tables::RequiredScalarColumnValues::{Float64, Int32};
-use casa_types::measures::epoch::{EpochRef, MEpoch};
-use casa_types::measures::ionospheric_pierce_point;
 use ndarray::ArrayD;
 
 use super::{

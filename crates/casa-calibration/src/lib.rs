@@ -22,48 +22,44 @@
 
 mod accumulate;
 mod antpos_vla;
-mod appendantab;
-mod attachment;
+pub mod appendantab;
+pub mod attachment;
 mod bandpass;
 mod calanalysis;
 mod calibrater_lifecycle;
-mod calibration_service;
-mod callib;
-mod casa_return;
-mod cli;
+pub mod calibration_service;
+pub mod callib;
 pub mod constants;
-mod corrected_export;
-mod execute;
+pub mod continuum;
+pub mod corrected_export;
+pub mod execute;
 mod flagdata_model;
-mod fluxscale;
-mod ft;
-mod gencal;
+pub mod fluxscale;
+pub mod ft;
+pub mod gencal;
 #[cfg(test)]
 mod imaging_memory_test;
-mod initweights;
-mod interpolation;
+pub mod initweights;
+pub mod interpolation;
 mod legacy_spline;
-mod listing;
+pub mod listing;
 mod lookup;
 mod lookup_frequency;
-mod managed_output;
 mod model;
-mod model_columns;
-mod output;
+pub mod model_columns;
+pub mod output;
 mod output_merge;
-mod paths;
-mod pccor;
-mod plan;
-mod plotbandpass;
+pub mod paths;
+pub mod pccor;
+pub mod plan;
 #[doc(hidden)]
 pub mod plotms;
-mod plots;
-mod polfromgain;
-mod rerefant;
+pub mod polfromgain;
+pub mod rerefant;
 mod selected_data;
-mod session;
+pub mod session;
 mod simulated;
-mod single_dish;
+pub mod single_dish;
 pub use single_dish::preparation::atmosphere::SingleDishAtmosphere;
 pub use single_dish::preparation::baseline::{
     SingleDishBaseline, SingleDishBaselineBasis, SingleDishBaselineDiagnostics,
@@ -72,21 +68,20 @@ pub use single_dish::preparation::baseline::{
 pub use single_dish::preparation::import::{import_asap, import_nro};
 pub use single_dish::preparation::line_fit::SingleDishLineFit;
 pub use single_dish::preparation::{SingleDishSession, SingleDishSmoothing};
-mod smooth;
+pub mod smooth;
 mod solution_edit;
-mod solve;
-mod solve_stats;
+pub mod solve;
+pub mod solve_stats;
 mod stats;
-mod statwt;
+pub mod statwt;
 mod summary;
-mod table_maintenance;
-mod task_contract;
-mod timing;
+pub mod table_maintenance;
+pub mod timing;
 mod transform_calibration;
-mod transform_models;
+pub mod transform_models;
 mod uvmodelfit;
 mod uvsub;
-mod weather;
+pub mod weather;
 mod weight_spectra;
 mod writer;
 mod wvr;
@@ -124,7 +119,6 @@ pub use attachment::{
 };
 pub use calanalysis::{CalAnalysis, CalAnalysisFit, CalAnalysisIds, CalAnalysisQuery};
 pub use calibrater_lifecycle::{CalibraterLifecycle, CalibraterLifecycleError};
-pub use cli::{ImagerSetJyRequest, imager_setjy};
 pub use listing::CalibrationListingReport;
 pub use output::CalibrationOutputMode;
 pub use single_dish::tool::SingleDishSolveControls;
@@ -138,17 +132,18 @@ pub use bandpass::{
 };
 pub use callib::{
     CallibError, CallibraryContextMap, CallibraryOptions, load_apply_specs_from_callib,
-    load_callibrary_record, save_apply_specs_to_callib, validate_callibrary_record,
+    load_apply_specs_from_callib_at, load_callibrary_record, parse_apply_specs,
+    save_apply_specs_to_callib, validate_callibrary_record,
 };
-pub use casa_return::{fluxscale_record, solve_record};
-pub use cli::{CALIBRATION_SURFACES, task_front_end};
 pub use corrected_export::{
     ExportCorrectedDataError, ExportCorrectedDataReport, ExportCorrectedDataRequest,
     export_corrected_data,
 };
 pub use execute::{
     ApplyExecutionError, ApplyExecutionOptions, ApplyExecutionReport, ApplyExecutionTimings,
-    execute_apply, execute_apply_from_path, execute_apply_from_path_with_options,
+    EvaluatedApplyRow, PlotWeights, evaluate_plot_rows, execute_apply, execute_apply_from_path,
+    execute_apply_from_path_with_options, execute_apply_with_preparation_error,
+    execute_single_dish_apply, legacy_bpoly_chebyshev_value,
 };
 pub use fluxscale::{
     FluxScaleError, FluxScaleFieldResult, FluxScaleOptions, FluxScaleReport, FluxScaleRequest,
@@ -156,7 +151,7 @@ pub use fluxscale::{
 };
 pub use gencal::{
     AntposInputError, CalibrationSpecification, GencalError, GencalReport, GencalRequest,
-    GencalType, gencal,
+    GencalType, gencal, gencal_with_output_mode,
 };
 pub use legacy_spline::LegacySplineTable;
 pub use lookup::{
@@ -164,26 +159,20 @@ pub use lookup::{
     LOOKUP_KEPT_ROW_BYTES, LOOKUP_LOADING_ROW_BYTES, TimeInterpolation, TimeInterpolationOptions,
 };
 pub use lookup_frequency::FrequencyInterpolation;
-pub use managed_output::{
-    ApplyMultiMsReport, ApplyPartitionReport, CalibrationTaskResult, CrossHandGainSolveReport,
-    CrossHandGainType,
-};
 pub use model::{
     CalibrationColumnSummary, CalibrationIssueSeverity, CalibrationKeywordSummary,
     CalibrationParameterFamily, CalibrationSubtableSummary, CalibrationTableSummary,
     CalibrationValidationIssue, TimeCoverageSummary,
 };
-pub use model_columns::{delete_calibration_model, reset_calibration_set};
-pub use plan::{
-    ApplyCalibrationTablePlan, ApplyCalibrationTableSpec, ApplyChannelSelection,
-    ApplyInterpolationMode, ApplyMode, ApplyPlan, ApplyPlanError, ApplyPlanRequest,
-    ApplyPlanTimings, ApplyRowPlan, ApplySpwMapping, ApplyTableSelection, GainFieldSelector,
-    ResolvedGainField, ResolvedNearestGainField, SpectralWindowPlan, plan_apply,
-    plan_apply_from_path, plan_apply_with_timings,
+pub use model_columns::{
+    delete_calibration_model, initialize_hanning_scratch_holding, reset_calibration_set,
 };
-pub use plots::{
-    CalibrationPlotError, CalibrationPlotPreset, CalibrationPlotRequest,
-    build_calibration_plot_payload,
+pub use plan::{
+    ApplyArgumentError, ApplyCalibrationTablePlan, ApplyCalibrationTableSpec,
+    ApplyChannelSelection, ApplyInterpolationMode, ApplyMode, ApplyPlan, ApplyPlanError,
+    ApplyPlanRequest, ApplyPlanTimings, ApplyPreparationError, ApplyRowPlan, ApplySpwMapping,
+    ApplyTableSelection, GainFieldSelector, ResolvedGainField, ResolvedNearestGainField,
+    SpectralWindowPlan, plan_apply, plan_apply_from_path, plan_apply_with_timings,
 };
 pub use selected_data::SelectedData;
 pub use session::{
@@ -207,13 +196,6 @@ pub use stats::{
     CalibrationStatsRequest, CalibrationValueStats, calibration_stats,
 };
 pub use summary::{CalibrationTableError, summarize_table, summarize_tables};
-pub use task_contract::{
-    ApplyArgumentError, CALIBRATION_TASK_PROTOCOL_NAME, CALIBRATION_TASK_PROTOCOL_VERSION,
-    CalibrationTaskRequest, ExecuteApplyTaskRequest, ExportCorrectedDataTaskRequest,
-    GencalTaskRequest, PlanApplyTaskRequest, SolveBandpassTaskRequest, SolveGainTaskRequest,
-    StatsTaskRequest, SummaryTaskRequest, calibration_protocol_descriptor,
-    calibration_task_schema_bundle,
-};
 pub use uvmodelfit::{
     VisibilityComponentFit, VisibilityFitRequest, VisibilityFitShape, fit_visibility_component,
 };

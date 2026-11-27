@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
 use super::{
@@ -231,8 +231,7 @@ pub(crate) fn tool_library_specs(
                         let ids = values
                             .iter()
                             .copied()
-                            .map(casa_provider_contracts::casa_variant_integer)
-                            .map(|id| id.to_string())
+                            .map(|value| (value as i32).to_string())
                             .collect::<Vec<_>>();
                         format!("[{}]", ids.join(","))
                     }

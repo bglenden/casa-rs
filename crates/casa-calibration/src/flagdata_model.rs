@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Bind the shared virtual visibility predictor for the flagdata task.
 
-use casa_ms::flagging::FlagDataModelPredictor;
+use casa_core::Complex32;
+use casa_flagging::FlagDataModelPredictor;
 use casa_ms::{MeasurementSet, ResolvedMsSelectionRow};
-use casa_types::Complex32;
 use ndarray::{ArrayD, Axis};
 
 use crate::solve::grouping::VisibilityModels;

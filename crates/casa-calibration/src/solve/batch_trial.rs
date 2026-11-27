@@ -18,7 +18,7 @@ mod feed;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
-use casa_ms::ms::MeasurementSet;
+use casa_ms::MeasurementSet;
 use casa_ms::observation_io::{GroupClosure, OpenOptions};
 use casa_ms::selection::MsSelection;
 use casa_observation::{
@@ -35,7 +35,7 @@ use feed::{solve_concurrent, solve_sequential};
 
 fn fixture(root: &Path, name: &str) -> PathBuf {
     let archive = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../casa-ms/tests/fixtures/ms_trial")
+        .join("../../libs/casacore/casa-ms/tests/fixtures/ms_trial")
         .join(format!("{name}.tgz"));
     tar::Archive::new(flate2::read::GzDecoder::new(
         File::open(archive).expect("fixture"),
@@ -378,7 +378,7 @@ fn rewrite_sigmas(path: &Path) {
         ms.main_table_mut()
             .cell_accessor_mut(row, "SIGMA")
             .and_then(|mut cell| {
-                cell.set(casa_types::Value::Array(casa_types::ArrayValue::Float32(
+                cell.set(casa_core::Value::Array(casa_core::ArrayValue::Float32(
                     sigma,
                 )))
             })
@@ -433,7 +433,7 @@ fn sigma_weighted_batch_solves_equal_the_production_gaincal() {
 /// A row flagged only by FLAG_ROW is also excluded by the batch reader.
 #[test]
 fn row_flagged_outlier_is_excluded_from_production_and_batch_gaincal() {
-    use casa_types::{ArrayValue, ScalarValue, Value};
+    use casa_core::{ArrayValue, ScalarValue, Value};
 
     let root = tempfile::tempdir().expect("root");
     let path = fixture(root.path(), "ms_trial.ms");
@@ -592,7 +592,7 @@ fn solutions_recover_the_fixture_gains() {
     let manifest: serde_json::Value = serde_json::from_reader(
         File::open(
             Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../casa-ms/tests/fixtures/ms_trial/manifest.json"),
+                .join("../../libs/casacore/casa-ms/tests/fixtures/ms_trial/manifest.json"),
         )
         .expect("manifest"),
     )

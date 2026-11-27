@@ -12,22 +12,27 @@ coordinates, measures, and related workflows.
 
 ## Major modules / crates / packages
 
+The casacore foundation libraries live in `libs/casacore/`. CASA component models and image analysis live in `libs/casa/`. Both use versioned workspace dependencies.
+
 | Module | Responsibility | May depend on |
 |---|---|---|
-| core codecs (`casa-values`, `casa-aipsio`) | Internal generic value model and AipsIO framing used by higher layers | Rust ecosystem crates only |
-| foundation crates (`casa-types`, `casa-measures-data`, `casa-measures-tools`) | Scalars, quanta and measures algorithms and contracts; validation, loading, installation and maintenance of measures runtime data | core codecs; `casa-measures-data` also uses `casa-tables` accessors |
+| Values and codecs (`casa-core`, `casa-aipsio`) | Generic CASA values, quanta and measures, and the AipsIO wire codec | `casa-aipsio` uses `casa-core` |
+| Measures persistence (`casa-measures`) | Load, install and package measures runtime data and read and write MEASINFO columns | `casa-core`, `casa-tables` |
 | shared numerics (`casa-numerics`, `casa-fft`) | Domain-neutral numerical algorithms and CASA's common primary-beam patterns; direct, reusable FFTW plans | Rust ecosystem crates and FFTW only |
-| logging (`casa-logging`) | CASA's priority model, log tables and sinks under `tracing` | `casa-tables`, `casa-types` |
 | atmosphere (`casa-atmosphere`) | The native port of ATM, CASA's atmospheric transmission model | Rust ecosystem crates only (a science-layer leaf) |
-| persistent storage (`casa-tables`) | CASA table persistence, data managers, schema and mutation APIs, TaQL | core codecs, foundation crates |
-| observation boundary (`casa-observation`) | The contracts MSv2 and MSv4 stores share: catalogue, `AccessRequest`, traversal and `VisibilityBatch` | `casa-types` |
+| persistent storage (`casa-tables`) | CASA table persistence, data managers, schema and mutation APIs, TaQL, and the `log_table` tracing sink | `casa-core`, `casa-aipsio` |
+| observation boundary (`casa-observation`) | The contracts MSv2 and MSv4 stores share: catalogue, `AccessRequest`, traversal and `VisibilityBatch` | `casa-core` |
 | native imaging (`casa-imaging-model`, `-operator`, `-deconvolution`, `-products`, `-runtime`, `-metal`) | Request science and compiled problem; the measurement operator; image-domain reconstruction; normalization and products; host resources, admission and the major-cycle pass; the Metal backend (see Imaging ownership) | the ADR-0016 layering below |
 | single-dish imaging (`casa-imaging-singledish`) | CASA's `SDGrid` as its own operator family (ADR-0016 decision 13) | execution layer of the ADR-0016 layering |
-| imaging application (`casa-imaging-application`) | Sole production composition of observation, reconstruction, products, resources and execution | native imaging owners, `casa-ms`, `casa-observation` |
+| imaging application (`casa-imaging`) | Sole production composition of observation, reconstruction, products, resources and execution | native imaging owners, `casa-ms`, `casa-observation` |
 | simulation (`casa-simulation`) | CASA's `sm` tool, `simutil`, `simobserve`, multi-array/TP `simanalyze`, `simalma`, and native developer fixtures | an application of the ADR-0016 layering |
-| domain libraries (`casa-ms`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-calibration`, `casa-vla`, `casa-components`) | Astronomy data models and algorithms over table and image persistence | foundation crates, `casa-tables`, documented peer domain crates |
-| boundary contracts (`casa-provider-contracts`) | Task-provider envelope, parameter and application catalogs, task surfaces, the task-executable resolver | domain libraries and foundation crates; never a second source of truth |
-| parameter and task runtime (`casa-task-runtime`) | Parameter resolution, current sparse TOML profiles, Last/Last Successful, the shared task front end and its `--json-run` invocation | boundary contracts, `casa-types`, `casa-logging`; no provider science |
+| image persistence (`casa-images`) | Typed images, expression evaluation, image I/O and sampling pixel planes | casacore foundations |
+| CASA image analysis (`casa-imageanalysis`) | Component-backed virtual images, convolution, mosaics, high-level regridding and analysis tasks | `casa-components` and casacore foundations including `casa-images` |
+| MeasurementSet storage (`casa-ms`) | Schema, row selection, subtable access and bounded MSv2/MSv4 observation I/O | casacore foundations, `casa-tables`, `casa-measures`, `casa-observation` |
+| MeasurementSet operations (`casa-flagging`, `casa-mstransform`) | Flag agents and version storage, visibility materialization, concatenation and format conversion | `casa-ms` storage, `casa-numerics` row fits and domain primitives |
+| domain libraries (`casa-lattices`, `casa-coordinates`, `casa-calibration`, `casa-vla`, `casa-components`) | Astronomy data models and algorithms over table and image persistence | foundation crates, `casa-tables`, documented peer domain crates |
+| boundary contracts (`casa-contracts`) | Task-provider envelope, task surfaces, parameter catalog and CLI inventory | domain libraries and foundation crates; never a second source of truth |
+| parameter and task runtime (`casa-task-runtime`) | Parameter resolution, current sparse TOML profiles, Last/Last Successful, the shared task front end and its `--json-run` invocation | boundary contracts, `casa-core`, `casa-tables::log_table`; no provider science |
 | apps and runtimes (`casars-imager`, `casars-imexplore`, `casars-msconvert`, `casars-simulation`, `casars-python`) | Task executables that are not binaries of a domain crate, each on the shared task front end, and the Python package with its PyO3 extension `casars._core` | boundary contracts, domain libraries, foundation crates |
 | test support (`casa-test-support`) | Cross-language parity harnesses, fixtures, integration helpers | any workspace crate, for tests only |
 
@@ -49,7 +54,7 @@ crates that reach beyond one another or do I/O, device APIs outside
 `casa-imaging-metal`, and environment reads, `eprintln!` and content hashing
 in imaging crates. Its grandfathered-file lists only shrink.
 
-The definitional crates, `casa-values`, `casa-types` and `casa-coordinates`,
+The definitional crates, `casa-core` and `casa-coordinates`,
 sit beneath every layer: they define values, units, quanta, measures and
 coordinate systems and the pure functions on them, do no file, network,
 process or environment I/O, start no threads, use no device and depend only
@@ -60,11 +65,11 @@ decision 10). Adding a crate to that set is the owner's decision.
 
 ### Crate boundaries
 
-- `casa-values` and `casa-aipsio` stay internal. `casa-aipsio` owns the one
+- `casa-aipsio` owns the one
   framed, bounded-buffer AipsIO codec; storage managers select byte order
   explicitly and keep no local codecs.
-- `casa-types` owns the pure measures algorithms and the `MeasuresProvider`
-  contract; `casa-measures-data::MeasuresRuntime` is its fallible I/O
+- `casa-core` owns the pure measures algorithms and the `MeasuresProvider`
+  contract; `casa-measures::MeasuresRuntime` is its fallible I/O
   implementation. An application acquires one runtime at an operation
   boundary and passes it inward. Discovery never installs data; installation
   is an explicit maintenance action.
@@ -75,15 +80,9 @@ decision 10). Adding a crate to that set is the owner's decision.
   images cross it through the typed `TiledArrayStorage` seam.
 - Provider bundles are versioned boundary contracts; CLI parsers are views
   derived from them.
-- `casa-provider-contracts::ApplicationCatalog` is the one application
-  inventory; every entry is a task. `resolve_task_executable` is the one
-  resolver of a task's executable: the catalog override
-  (`CASARS_<APP>_BIN`), else a suite root's `bin/` (`CASARS_SUITE_ROOT`, or
-  the installed suite the Python package belongs to), else the newest
-  `debug` or `release` build of the development checkout the package was
-  built from. The first step that applies decides; a missing file is an
-  error naming the fix, never a fall-through to a later step, `PATH` or
-  `cargo run`.
+- `casa-contracts::ApplicationCatalog` maps task surfaces to the standalone
+  CLI and suite inventory. Python runs the adapters in `casa-tasks` through
+  the wheel's `casars._core` extension.
 - Parameter concepts live in the checked `ParameterCatalog`; each provider
   bundle embeds the concepts it references. A task's `SurfaceDefinition`
   supplies defaults, activation, narrowing and presentation, but
@@ -126,7 +125,7 @@ decision 10). Adding a crate to that set is the owner's decision.
 - `casa-imaging-runtime` owns host resources, admission, the major-cycle
   pass and its worker teams, cancellation, the paged cube state and the run
   summary. `casa-imaging-metal` implements `GridBackend` on Metal.
-- `casa-imaging-application` is the sole production composition. Its input
+- `casa-imaging` is the sole production composition. Its input
   is one `ImagingRequest`, made from the `tclean` parameters the provider
   catalog resolves; every route (command line, `--json-run`, Python) reaches
   it through that resolution, so the catalog is the only source of defaults.
@@ -338,7 +337,7 @@ the dependency checker. They are numbered so that code can cite them.
 
 ## Public interfaces
 
-- published Rust library crates, especially `casa-types`, `casa-tables`,
+- published Rust library crates, especially `casa-core`, `casa-tables`,
   `casa-ms`, `casa-lattices`, `casa-coordinates` and `casa-images`
 - the task executables serving the catalog's tasks, each on the shared task
   front end (for example `msexplore`, `imexplore`, `calibrate`, `importvla`,

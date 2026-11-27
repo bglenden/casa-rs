@@ -136,7 +136,7 @@ with tempfile.TemporaryDirectory(prefix="componentlist-bench-", dir=args.workdir
     add("close", lambda cl: cl.close(log=False))
     add("done", lambda cl: cl.done())
     add("construction", lambda cl: cleanup(cltool()), lambda: None)
-    inventory = json.loads((Path(__file__).resolve().parents[2] / "crates/casars-python/python/tests/data/casa_componentlist_signatures.json").read_text())["methods"]
+    inventory = json.loads((Path(__file__).resolve().parents[2] / "frontends/casars-python/python/tests/data/casa_componentlist_signatures.json").read_text())["methods"]
     assert {name.split("(")[0] for name in cases if name != "construction"} == set(inventory)
     chosen = args.cases or list(cases)
     results = {}
@@ -165,6 +165,6 @@ with tempfile.TemporaryDirectory(prefix="componentlist-bench-", dir=args.workdir
         gc.enable()
     repository = Path(__file__).resolve().parents[2]
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip()
-    changes = subprocess.check_output(["git", "status", "--porcelain", "--", "crates", "tools/simulation"], cwd=repository, text=True)
+    changes = subprocess.check_output(["git", "status", "--porcelain", "--", "crates", "libs", "tools/simulation"], cwd=repository, text=True)
     args.out.write_text(json.dumps({"revision": revision, "source_dirty": bool(changes), "python": sys.executable, "platform": platform.platform(), "backend": args.backend, "module": module, "casa_version": version_string(), "command": __import__("sys").argv, "cases": results}, indent=2) + "\n")
     print(f"Wrote {len(results)} cases to {args.out}")

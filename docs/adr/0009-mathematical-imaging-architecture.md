@@ -23,7 +23,7 @@ CASA-RS imaging follows one normative mathematical and ownership architecture.
 
 ### Ownership and dependency direction
 
-Application and frontend layers may version-migrate and validate request syntax,
+Application and frontend layers may validate request syntax,
 select a Resource Policy, invoke compile and run, and present results. They do
 not query devices, evaluate scientific capability/backend eligibility, select
 gridders or solvers, construct science caches, allocate imaging work buffers, or
@@ -38,7 +38,8 @@ implement declarative work and operator interfaces and do not own modes,
 coordinates, weighting, normalization, or products.
 
 There is one production engine behind the application-owned typed
-installed-implementation availability boundary. `casa-imaging-application`
+installed-implementation availability boundary. `casa-imaging` (formerly
+`casa-imaging-application`)
 checks compiled and task-only requirements against the implementation installed
 in the build before any work. Capabilities whose owners have not landed are
 returned typed unavailable rather than delegated to an alternate

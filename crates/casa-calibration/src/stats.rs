@@ -9,8 +9,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use casa_core::{ArrayValue, ScalarValue};
 use casa_tables::{Table, TableError, TableOptions};
-use casa_types::{ArrayValue, ScalarValue};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

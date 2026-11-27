@@ -5,8 +5,8 @@ use casa_components::{
     ComponentList, ComponentShape, Ellipse, EllipseErrors, Flux, ShapeKind, SkyComponent,
     SpectralKind, SpectralModel, TabularSpectrum,
 };
+use casa_core::measures::frequency::MFrequency;
 use casa_imaging_runtime::{Demand, admit};
-use casa_types::measures::frequency::MFrequency;
 use std::path::Path;
 
 pub(super) fn predict(

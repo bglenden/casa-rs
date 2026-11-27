@@ -17,9 +17,9 @@
 
 use std::sync::Arc;
 
-use casa_ms::shadowing::{ProjectedBaseline, ShadowedAntenna, shadowed_antennas};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame, MeasuresProvider, UvwFrame};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{EpochRef, MEpoch, MPosition, MeasFrame, MeasuresProvider, UvwFrame};
+use casa_flagging::shadowing::{ProjectedBaseline, ShadowedAntenna, shadowed_antennas};
 
 use crate::corrupt::{RowNoise, airmass};
 use crate::session::array::Antenna;
@@ -252,7 +252,7 @@ impl<'a> ArrayGeometry<'a> {
             let (s, c) = angle.sin_cos();
             (x, y) = (c * x - s * y, s * x + c * y);
         }
-        let shifted = casa_types::measures::ephemeris::offset_true_angle(&direction, [-x, y])
+        let shifted = casa_core::measures::ephemeris::offset_true_angle(&direction, [-x, y])
             .map_err(|e| SimulatorError::raised(format!("feed pointing: {e}")))?;
         let (longitude, latitude) = shifted.as_angles();
         Ok([longitude, latitude])

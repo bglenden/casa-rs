@@ -3,8 +3,8 @@
 
 use std::path::{Path, PathBuf};
 
+use casa_core::quanta::{Quantity, Unit};
 use casa_ms::MeasurementSet;
-use casa_types::quanta::{Quantity, Unit};
 
 use super::{edges, gain, lock_solve_output, position_switch};
 use crate::execute::SolvePriorApply;
@@ -147,7 +147,7 @@ impl Solver {
                 controls,
                 Some(activity),
             )
-            .map_err(|error| error.message)?;
+            .map_err(|error| error.into_message())?;
             return Ok(stats);
         }
         let rows = selection.row_indices().collect::<Vec<_>>();

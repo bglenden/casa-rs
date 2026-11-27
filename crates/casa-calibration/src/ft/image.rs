@@ -8,6 +8,9 @@ use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate, ObsInfo,
     SpectralCoordinate, StokesCoordinate, StokesType,
 };
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::record::direction_from_record;
+use casa_core::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use casa_images::PagedImage;
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
@@ -20,7 +23,7 @@ use casa_imaging_operator::{
 use casa_imaging_runtime::pass::{WORKER_STACK_BYTES, WorkerTeam};
 use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_ms::derived::engine::MsCalEngine;
-use casa_ms::virtual_model::ft_record::{
+use casa_ms::schema::ft_record::{
     FirstBuffer, GridFt, casa_spectral, legacy_common_mosaic, legacy_image_mosaic, legacy_mosaic,
     legacy_multi_term, set_grid_motion, set_grid_tangent,
 };
@@ -28,9 +31,6 @@ use casa_ms::{
     MeasurementSet, MsResult, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
     convert_frequency_to_frame_with_frame, virtual_model_image_path,
 };
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::record::direction_from_record;
-use casa_types::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, ArrayD, IxDyn, ShapeBuilder};
 
 use super::moving_source::MovingSourceAnchor;
@@ -40,8 +40,8 @@ use super::{channel_span, invalid, model_entry, spectral_with_runtime};
 
 /// An uncommitted Fourier image. The scratch path uses it until the write
 /// finishes. The virtual model can keep it once its on-disk record is filed.
-pub(crate) struct ImageModel {
-    pub(crate) entry: VirtualModelEntry,
+pub struct ImageModel {
+    pub entry: VirtualModelEntry,
     pub(super) nonzero: bool,
     backing: GridLifetime,
 }
@@ -98,7 +98,7 @@ impl ImageModel {
         Ok(())
     }
 
-    pub(crate) fn copy_to(&self, target: &MeasurementSet) -> MsResult<Self> {
+    pub fn copy_to(&self, target: &MeasurementSet) -> MsResult<Self> {
         let backing = GridLifetime {
             path: virtual_model_image_path(target)?,
             retained: false,
@@ -127,7 +127,7 @@ impl ImageModel {
         })
     }
 
-    pub(crate) fn retain(&mut self) {
+    pub fn retain(&mut self) {
         self.backing.retained = true;
     }
 }
@@ -146,14 +146,14 @@ impl Drop for GridLifetime {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct TaylorTerm {
-    pub(crate) count: i32,
-    pub(crate) index: i32,
-    pub(crate) reference_hz: f64,
+pub struct TaylorTerm {
+    pub count: i32,
+    pub index: i32,
+    pub reference_hz: f64,
 }
 
 /// The image spectral coordinate determines the default Taylor frequency.
-pub(crate) fn reference_frequency(path: &Path) -> MsResult<f64> {
+pub fn reference_frequency(path: &Path) -> MsResult<f64> {
     if path.is_file() {
         let fits = casa_images::fits_read::FitsToolImport::open(path, 0, -1).map_err(invalid)?;
         return spectral_reference_frequency(fits.coordinates());
@@ -175,7 +175,7 @@ fn spectral_reference_frequency(coordinates: &CoordinateSystem) -> MsResult<f64>
     spectral.world_frequency_hz(pixel).map_err(invalid)
 }
 
-pub(crate) fn prepare_image(
+pub fn prepare_image(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
     path: &Path,

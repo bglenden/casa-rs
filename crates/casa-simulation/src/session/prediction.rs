@@ -41,13 +41,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_components::ComponentList;
+use casa_core::Correlation;
 use casa_imaging_operator::{
     ConvolutionFunctionSet, GridPrecision, MAX_W_PLANES, MosaicPb, MosaicRules, OperatorError,
     PaddingFactor, PreparedModelGrids, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{Demand, Reservation, admit, charge_process_caches, free_memory};
-use casa_types::Correlation;
 
 use super::Simulator;
 use super::error::{SimulatorError, SimulatorResult};
@@ -215,8 +215,8 @@ impl Default for VoltagePatternSpec {
 pub(crate) struct Prediction {
     pub(crate) model: ModelOperator,
     /// The model's tangent point (pixel `(nx/2, ny/2)`) in its native frame.
-    pub(crate) tangent: casa_types::measures::direction::MDirection,
-    frame_measures: std::sync::Arc<dyn casa_types::measures::MeasuresProvider>,
+    pub(crate) tangent: casa_core::measures::direction::MDirection,
+    frame_measures: std::sync::Arc<dyn casa_core::measures::MeasuresProvider>,
     frame_position_itrf_m: [f64; 3],
     phase_centres: Option<super::from_ms::polynomial::PhaseCentres>,
     pub(crate) focus: Option<super::focus::Positions>,
@@ -321,22 +321,22 @@ impl Prediction {
         covered
             && (!matches!(self.grids, StepGrids::ImageBeam(_))
                 || self.image_visit(scan, None).is_some())
-            && (self.tangent.refer() == casa_types::measures::direction::DirectionRef::J2000
+            && (self.tangent.refer() == casa_core::measures::direction::DirectionRef::J2000
                 || super::from_ms::polynomial::epoch(self.phase_centres.as_ref(), scan).is_some())
     }
 
     pub(crate) fn frame(
         &self,
         scan: &super::observe::Scan,
-    ) -> SimulatorResult<casa_types::measures::MeasFrame> {
-        use casa_types::measures::{EpochRef, MEpoch, MeasFrame};
+    ) -> SimulatorResult<casa_core::measures::MeasFrame> {
+        use casa_core::measures::{EpochRef, MEpoch, MeasFrame};
         let frame = MeasFrame::new()
             .with_measures(self.frame_measures.clone())
             .with_position({
                 let [x, y, z] = self.frame_position_itrf_m;
-                casa_types::measures::MPosition::new_itrf(x, y, z)
+                casa_core::measures::MPosition::new_itrf(x, y, z)
             });
-        if self.tangent.refer() == casa_types::measures::direction::DirectionRef::J2000 {
+        if self.tangent.refer() == casa_core::measures::direction::DirectionRef::J2000 {
             return Ok(frame);
         }
         let time = super::from_ms::polynomial::epoch(self.phase_centres.as_ref(), scan)
@@ -390,12 +390,12 @@ impl Prediction {
     ) -> SimulatorResult<Option<[f64; 2]>> {
         let frame = self
             .frame(scan)?
-            .with_epoch(casa_types::measures::MEpoch::from_mjd(
+            .with_epoch(casa_core::measures::MEpoch::from_mjd(
                 time / 86400.,
-                casa_types::measures::EpochRef::UTC,
+                casa_core::measures::EpochRef::UTC,
             ));
         let [x, y, z] = observer;
-        let frame = frame.with_position(casa_types::measures::MPosition::new_itrf(x, y, z));
+        let frame = frame.with_position(casa_core::measures::MPosition::new_itrf(x, y, z));
         self.mosaic_geometry
             .as_ref()
             .expect("a timed mosaic")
@@ -575,8 +575,7 @@ impl Simulator {
             .map(|path| SkyModel::open(path).map_err(model_error))
             .transpose()?;
         let mut frame_epoch = model.as_ref().is_some_and(|model| {
-            model.tangent_direction().refer()
-                != casa_types::measures::direction::DirectionRef::J2000
+            model.tangent_direction().refer() != casa_core::measures::direction::DirectionRef::J2000
         });
         // Validate every header before changing the DATA plan. Later
         // images are reopened for preparation, one at a time, so the
@@ -586,7 +585,7 @@ impl Simulator {
                 .map_err(model_error)?
                 .tangent_direction()
                 .refer()
-                != casa_types::measures::direction::DirectionRef::J2000;
+                != casa_core::measures::direction::DirectionRef::J2000;
         }
         if self.planned_rows() == 0 {
             return Err(SimulatorError::refused(
@@ -623,7 +622,7 @@ impl Simulator {
             || list.as_ref().is_some_and(|(_, list, _)| {
                 list.components().iter().any(|component| {
                     component.shape().reference_direction().refer()
-                        != casa_types::measures::direction::DirectionRef::J2000
+                        != casa_core::measures::direction::DirectionRef::J2000
                 })
             });
         let phase_centres = if list.is_some() {
@@ -700,8 +699,8 @@ impl Simulator {
     fn prediction_frame(
         &self,
         phase_centres: Option<&super::from_ms::polynomial::PhaseCentres>,
-    ) -> casa_types::measures::MeasFrame {
-        use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
+    ) -> casa_core::measures::MeasFrame {
+        use casa_core::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
         let mut frame = MeasFrame::new()
             .with_measures(self.options.measures.clone())
             .with_position({
@@ -977,7 +976,7 @@ impl Simulator {
         let [x, y, z] = self.antennas[0].position_itrf_m;
         let frame = self
             .prediction_frame(phase_centres)
-            .with_position(casa_types::measures::MPosition::new_itrf(x, y, z));
+            .with_position(casa_core::measures::MPosition::new_itrf(x, y, z));
         let targets = ComponentTargets {
             windows: &windows,
             pointings: &pointings,

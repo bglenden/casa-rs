@@ -9,8 +9,8 @@ Usage: scripts/test-install-suite.sh [--hide-checkout]
 Builds the suite's release binaries and wheel, packages and installs the
 suite into a temporary root, and checks the installed suite from outside the
 checkout: the commands on PATH (never split, feather, immath or impv), every
-executable's discovery, a task run from its command and from the suite's
-Python, and the executable Python chose.
+executable's discovery, and a task run from its command and from the
+suite's Python after the CLI commands have been hidden.
 
 --hide-checkout moves the source checkout aside while the installed suite is
 checked, and back afterwards, so nothing the suite runs can reach it. CI
@@ -83,7 +83,7 @@ while read -r binary; do
 done < <(scripts/list-suite-binaries.py)
 work="$tmp_root/work"
 mkdir -p "$work" "$bin_dir"
-tar -xzf crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz -C "$work"
+tar -xzf libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz -C "$work"
 cp scripts/install-suite.sh "$tmp_root/install-suite.sh"
 # A link an older suite left for the retired casars launcher, and a user's
 # own command with a suite command's name, which the installer must keep.
@@ -149,34 +149,33 @@ grep -q '"name": "main"' flagmanager.txt
 # The command line records Last in its workspace.
 test -f .casa-rs/parameters/flagmanager/last-successful.toml
 
-echo "==> Verifying installed Python package"
-source "$install_root/$version/python/bin/activate"
-python - "$install_root/$version" <<'PY'
+echo "==> Verifying installed Python package with CLI commands unavailable"
+mv "$install_root/$version/bin" "$install_root/$version/bin-hidden-for-test"
+no_cli_path="$tmp_root/no-commands"
+mkdir "$no_cli_path"
+PATH="$no_cli_path" "$install_root/$version/python/bin/python" -I - "${suite_binaries[@]}" <<'PY'
 import inspect
 import pathlib
+import shutil
 import sys
 
 import casars
 from casars import tasks
 from casars.parameters import TaskParameters
 
-suite = pathlib.Path(sys.argv[1]).resolve()
 assert casars.__version__
+assert all(shutil.which(binary) is None for binary in sys.argv[1:])
 for name in ("calibrate", "importvla", "msexplore", "tclean", "immoments", "impv", "imsubimage", "immath", "exportfits", "importfits"):
     assert callable(getattr(tasks, name))
 assert "vis" in inspect.signature(tasks.calibrate).parameters
 assert TaskParameters.defaults("calibrate").surface == "calibrate"
 
-# The suite's Python runs the suite's own executable.
 completion = tasks.run("flagmanager", vis="mssel_test_small.ms", mode="list")
 assert completion.successful, completion.describe()
-executable = pathlib.Path(completion.command[0]).resolve()
-assert executable.parent == suite / "bin", executable
 # The CASA-signature wrapper returns CASA's value: no saved versions, and
 # the MeasurementSet's absolute path.
 ms = str(pathlib.Path("mssel_test_small.ms").resolve())
 assert tasks.flagmanager(vis="mssel_test_small.ms", mode="list") == {"MS": ms}
 PY
-deactivate
 
 echo "==> Suite install smoke test completed"

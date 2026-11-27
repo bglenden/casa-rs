@@ -6,23 +6,20 @@ use std::sync::{Arc, Mutex};
 
 use casa_components::{ComponentList, Flux, Polarisation, SkyComponent, SpectralKind, stokes_in};
 use casa_coordinates::{Coordinate, DirectionCoordinate};
+use casa_core::measures::ephemeris::offset_true_angle;
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::measures::{
+    MeasFrame,
+    direction::{DirectionRef, MDirection},
+};
+use casa_core::{Correlation, RecordValue, ScalarValue, Value};
 use casa_images::PagedImage;
 use casa_imaging_operator::GridPolarization;
 use casa_imaging_runtime::{Admitted, Demand, HostResources, ResourcePolicy, admit};
 use casa_ms::derived::engine::MsCalEngine;
-use casa_ms::{
-    MeasurementSet, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow, SubtableId,
-    voltage_pattern,
-};
+use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow, SubtableId};
 use casa_numerics::{BeamPattern, PrimaryBeam};
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::ephemeris::offset_true_angle;
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::measures::{
-    MeasFrame,
-    direction::{DirectionRef, MDirection},
-};
-use casa_types::{Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, ArrayD};
 use num_complex::Complex64;
 
@@ -32,7 +29,7 @@ use crate::execute::{load_parallactic_angle_state, single_receptor_angle};
 const MANAGED_VP_TABLE: &str = "CASARS_VOLTAGE_PATTERNS";
 
 pub(super) fn legacy_mosaic_table(source: &Path, grid: &Path) -> MsResult<PathBuf> {
-    let table = voltage_pattern::VoltagePatternTable::open(source).map_err(invalid)?;
+    let table = casa_ms::VoltagePatternTable::open(source).map_err(invalid)?;
     let definitions = table.definitions().map_err(invalid)?;
     let mut replacements = Vec::new();
     let destination = grid.join(MANAGED_VP_TABLE);
@@ -120,7 +117,7 @@ fn text<'a>(record: &'a RecordValue, key: &str) -> Option<&'a str> {
 pub(super) fn legacy_radial_pattern(path: &Path, telescope: &str) -> MsResult<PrimaryBeam> {
     let host = HostResources::detect().map_err(invalid)?;
     read_legacy_radial(&host, path, telescope, |record| {
-        voltage_pattern::radial_pattern(record).map_err(invalid)
+        casa_ms::radial_pattern(record).map_err(invalid)
     })
 }
 
@@ -135,7 +132,7 @@ fn read_legacy_radial<T>(
         &ResourcePolicy::Balanced,
         &Demand {
             phase: "legacy voltage-pattern table",
-            memory: voltage_pattern::VoltagePatternTable::reading_bytes(path).map_err(invalid)?,
+            memory: casa_ms::VoltagePatternTable::reading_bytes(path).map_err(invalid)?,
         },
     )
     .map_err(invalid)?;
@@ -165,7 +162,7 @@ fn legacy_radial_setup(
     requested_squint: bool,
     allow_curves: bool,
 ) -> MsResult<TableVoltagePattern> {
-    let (peak, retained) = voltage_pattern::radial_curve_storage(record);
+    let (peak, retained) = casa_ms::radial_curve_storage(record);
     let mut reservation = admit(
         host,
         &ResourcePolicy::Balanced,
@@ -176,14 +173,14 @@ fn legacy_radial_setup(
     )
     .map_err(invalid)?;
     let value = if allow_curves {
-        voltage_pattern::radial_lookup(record)
+        casa_ms::radial_lookup(record)
     } else {
-        voltage_pattern::radial_pattern(record).map(PrimaryBeam::pattern)
+        casa_ms::radial_pattern(record).map(PrimaryBeam::pattern)
     }
     .map_err(invalid)?;
     reservation.retain(retained);
     let squint = if requested_squint {
-        voltage_pattern::radial_squint(record)
+        casa_ms::radial_squint(record)
             .map_err(invalid)?
             .map(|(offset_rad, reference_hz)| BeamSquintLaw::Table {
                 offset_rad,
@@ -854,7 +851,7 @@ impl PreparedVoltagePattern {
 
     #[cfg(test)]
     pub(super) fn test_pattern() -> Self {
-        use casa_types::measures::direction::DirectionRef;
+        use casa_core::measures::direction::DirectionRef;
 
         Self {
             pattern: Arc::new(Admitted {
@@ -1056,8 +1053,8 @@ fn projected_radius(
 mod tests {
     use super::*;
     use crate::imaging_memory_test::{isolated_test, peak_since, reset_peak};
+    use casa_core::ArrayValue;
     use casa_imaging_runtime::ReservationWindow;
-    use casa_types::ArrayValue;
 
     #[test]
     fn legacy_pattern_table_decode_fits_its_reservation() {
@@ -1092,7 +1089,7 @@ mod tests {
         }
         let root = tempfile::tempdir().unwrap();
         let archive = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../casa-ms/tests/fixtures/mssel_test_small.ms.tgz");
+            .join("../../libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz");
         tar::Archive::new(flate2::read::GzDecoder::new(
             std::fs::File::open(archive).unwrap(),
         ))
@@ -1111,30 +1108,30 @@ mod tests {
         for i in 1..=16_384 {
             let time = first + f64::from(i);
             let record = RecordValue::new(vec![
-                casa_types::RecordField::new(
+                casa_core::RecordField::new(
                     "ANTENNA_ID",
                     Value::Scalar(ScalarValue::Int32(row.antenna2_id)),
                 ),
-                casa_types::RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time))),
-                casa_types::RecordField::new("INTERVAL", Value::Scalar(ScalarValue::Float64(1.))),
-                casa_types::RecordField::new(
+                casa_core::RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time))),
+                casa_core::RecordField::new("INTERVAL", Value::Scalar(ScalarValue::Float64(1.))),
+                casa_core::RecordField::new(
                     "TIME_ORIGIN",
                     Value::Scalar(ScalarValue::Float64(time)),
                 ),
-                casa_types::RecordField::new(
+                casa_core::RecordField::new(
                     "NAME",
                     Value::Scalar(ScalarValue::String(String::new())),
                 ),
-                casa_types::RecordField::new("NUM_POLY", Value::Scalar(ScalarValue::Int32(0))),
-                casa_types::RecordField::new(
+                casa_core::RecordField::new("NUM_POLY", Value::Scalar(ScalarValue::Int32(0))),
+                casa_core::RecordField::new(
                     "DIRECTION",
                     Value::Array(ArrayValue::Float64(ArrayD::zeros(vec![2, 1]))),
                 ),
-                casa_types::RecordField::new(
+                casa_core::RecordField::new(
                     "TARGET",
                     Value::Array(ArrayValue::Float64(ArrayD::zeros(vec![2, 1]))),
                 ),
-                casa_types::RecordField::new("TRACKING", Value::Scalar(ScalarValue::Bool(true))),
+                casa_core::RecordField::new("TRACKING", Value::Scalar(ScalarValue::Bool(true))),
             ]);
             pointing.table_mut().add_row(record).unwrap();
         }

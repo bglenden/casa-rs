@@ -4,9 +4,9 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use casa_core::ArrayValue;
 use casa_ms::MeasurementSet;
 use casa_tables::RequiredScalarColumnValues::{Bool, Float64, Int32};
-use casa_types::ArrayValue;
 
 use super::spectrum::{self, ReferenceTimestamp, SkySpectrum};
 use crate::CalibrationOutputMode;
@@ -19,10 +19,21 @@ mod mask;
 mod otf;
 mod raster;
 
+/// Selected reference-spectrum integration strategy for mapping modes.
 #[derive(Clone, Copy)]
-pub(super) enum Selection {
-    Otf { fraction: f64 },
-    Raster { fraction: f64, noff: i64 },
+pub enum Selection {
+    /// On-the-fly scanning edge fraction.
+    Otf {
+        /// Edge fraction in `[0, 0.5)`.
+        fraction: f64,
+    },
+    /// Raster scanning edge fraction and explicit integration count.
+    Raster {
+        /// Edge fraction in `[0, 0.5)`.
+        fraction: f64,
+        /// Explicit edge integration count (`<= 0` selects automatic).
+        noff: i64,
+    },
 }
 
 pub(super) struct Integration {
@@ -43,7 +54,8 @@ pub(super) struct Integration {
     pub(super) flagged: bool,
 }
 
-pub(super) fn generate(
+/// Solve and write edge-referenced total-power sky spectra (`SDSKY_OTF` or `SDSKY_RASTER`).
+pub fn generate(
     ms: &MeasurementSet,
     selected: &[usize],
     destination: &Path,

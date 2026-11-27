@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CONTRACT_ROOT = REPO_ROOT / "crates" / "casa-provider-contracts" / "resources"
+CONTRACT_ROOT = REPO_ROOT / "surfaces" / "casa-contracts" / "resources"
 APPLICATIONS_PATH = CONTRACT_ROOT / "application-catalog.json"
 SURFACES_PATH = CONTRACT_ROOT / "parameter-surfaces.json"
 
@@ -33,8 +33,8 @@ def load(path: Path) -> dict[str, object]:
 def main() -> int:
     applications = load(APPLICATIONS_PATH)
     surfaces = load(SURFACES_PATH)
-    if applications.get("schema_version") != 2:
-        fail("application catalog schema_version must be 2")
+    if applications.get("schema_version") != 3:
+        fail("application catalog schema_version must be 3")
     if surfaces.get("schema_version") != 1:
         fail("parameter surface schema_version must be 1")
 
@@ -48,9 +48,7 @@ def main() -> int:
     if duplicates:
         fail(f"duplicate application IDs: {duplicates}")
 
-    # Every application is a task: Python starts each one directly, and the
-    # casars launcher is retired (#931). Version 2 keeps only what a launch
-    # and the suite read (#972).
+    # Every task surface has one CLI inventory entry.
     task_ids = {entry["id"] for entry in entries if isinstance(entry, dict)}
     fields = {"id", "launch", "dataset_kinds", "include_in_suite"}
     for entry in entries:
@@ -73,7 +71,7 @@ def main() -> int:
         launch = entry.get("launch")
         if not isinstance(launch, dict) or not all(
             isinstance(launch.get(field), str) and launch[field]
-            for field in ("executable", "cargo_package", "override_env")
+            for field in ("executable", "cargo_package")
         ):
             fail(f"application {entry.get('id')!r} has an incomplete launch descriptor")
 

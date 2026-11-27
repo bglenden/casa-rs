@@ -5,21 +5,21 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::{PI, TAU};
 use std::path::Path;
 
-use casa_ms::{MeasurementSet, derived::engine::MsCalEngine, subtables::MsField};
-use casa_tables::{RequiredScalarColumnValues, Table, TableOptions};
-use casa_types::{
+use casa_core::{
     ArrayValue, Complex32, Value,
     measures::{EpochRef, MEpoch},
 };
+use casa_ms::{MeasurementSet, derived::engine::MsCalEngine, subtables::MsField};
+use casa_tables::{RequiredScalarColumnValues, Table, TableOptions};
 
 use crate::CalibrationOutputMode;
 use crate::paths::{overlap, subtable_owner};
 use crate::solution_edit::{error_text, stage_calibration_table_edit_with_mode};
 
 type Stokes = [f64; 4];
-pub(crate) type FractionalPolarization = BTreeMap<String, BTreeMap<String, Stokes>>;
+pub type FractionalPolarization = BTreeMap<String, BTreeMap<String, Stokes>>;
 
-pub(crate) fn polarization_from_gain(
+pub fn polarization_from_gain(
     ms_path: &Path,
     input: &Path,
     output: Option<&Path>,

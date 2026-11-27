@@ -1,0 +1,174 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! UVFITS and FITS-IDI visibility exchange through the Python MS tool.
+
+use std::path::{Path, PathBuf};
+
+use casa_ms::MsSelection;
+use casa_ms::fits_visibility::{
+    UvFitsExportOptions, UvFitsImportOptions, export_uvfits, import_uvfits,
+};
+use casa_mstransform::fits_idi::{FitsIdiOptions, stage_fits_idi};
+use pyo3::prelude::*;
+
+use super::partition::{all_if_minus_one, optional_expression};
+use super::{AttachedMs, PyMsTool, runtime_error, strict_bool, table_cache_name};
+use crate::tools::{LogLine, emit};
+
+#[pymethods]
+impl PyMsTool {
+    /// Import a UVFITS data set and attach the created MeasurementSet.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (msfile = "", fitsfile = "", nomodify = true, lock = false, obstype = 0, host = "", forcenewserver = false, antnamescheme = "old"), text_signature = "($self, msfile='', fitsfile='', nomodify=True, lock=False, obstype=0, host='', forcenewserver=False, antnamescheme='old')")]
+    fn fromfits(
+        &self,
+        py: Python<'_>,
+        msfile: &str,
+        fitsfile: &str,
+        #[pyo3(from_py_with = strict_bool)] nomodify: bool,
+        #[pyo3(from_py_with = strict_bool)] lock: bool,
+        obstype: i64,
+        host: &str,
+        #[pyo3(from_py_with = strict_bool)] forcenewserver: bool,
+        antnamescheme: &str,
+    ) -> PyResult<bool> {
+        let _ = (host, forcenewserver);
+        let options = UvFitsImportOptions {
+            observation_type: obstype as i32,
+            new_antenna_names: antnamescheme.eq_ignore_ascii_case("new"),
+        };
+        py.detach(|| {
+            let mut attached = self.attached.lock().map_err(runtime_error)?;
+            let output = Path::new(msfile);
+            import_uvfits(Path::new(fitsfile), output, options).map_err(runtime_error)?;
+            let output = table_cache_name(output).map_err(runtime_error)?;
+            *attached = Some(AttachedMs::open(output, !nomodify, lock, false)?);
+            Ok(true)
+        })
+    }
+
+    /// Import a FITS-IDI data set and attach the created MeasurementSet.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (msfile = "", fitsfile = "", nomodify = true, lock = false, obstype = 0), text_signature = "($self, msfile='', fitsfile='', nomodify=True, lock=False, obstype=0)")]
+    fn fromfitsidi(
+        &self,
+        py: Python<'_>,
+        msfile: &str,
+        fitsfile: &str,
+        #[pyo3(from_py_with = strict_bool)] nomodify: bool,
+        #[pyo3(from_py_with = strict_bool)] lock: bool,
+        obstype: i64,
+    ) -> PyResult<bool> {
+        let options = FitsIdiOptions {
+            observation_type: obstype as i32,
+            overwrite: !nomodify,
+        };
+        let diagnostics = py.detach(|| -> PyResult<_> {
+            let mut attached = self.attached.lock().map_err(runtime_error)?;
+            let output = Path::new(msfile);
+            check_fits_idi_replacement(output, options.overwrite)?;
+            let staged =
+                stage_fits_idi(Path::new(fitsfile), output, options).map_err(runtime_error)?;
+            let diagnostics = {
+                let _publication = crate::tools::table::lock_attachment_publication();
+                check_fits_idi_replacement(output, options.overwrite)?;
+                staged.publish().map_err(runtime_error)?
+            };
+            *attached = Some(AttachedMs::open(
+                table_cache_name(output).map_err(runtime_error)?,
+                !nomodify,
+                lock,
+                false,
+            )?);
+            Ok(diagnostics)
+        })?;
+        let logs = diagnostics
+            .into_iter()
+            .map(LogLine::error)
+            .collect::<Vec<_>>();
+        emit(py, "casars.tools.ms", &logs)?;
+        Ok(true)
+    }
+
+    /// Export the current MeasurementSet view as a UVFITS file.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (fitsfile = "", column = "corrected", field = None, spw = None, baseline = None, time = "", scan = None, uvrange = None, taql = "", writesyscal = false, multisource = false, combinespw = false, writestation = false, padwithflags = false, overwrite = false), text_signature = "($self, fitsfile='', column='corrected', field=[], spw=[], baseline=[], time='', scan=[], uvrange=[], taql='', writesyscal=False, multisource=False, combinespw=False, writestation=False, padwithflags=False, overwrite=False)")]
+    fn tofits(
+        &self,
+        py: Python<'_>,
+        fitsfile: &str,
+        column: &str,
+        field: Option<&Bound<'_, PyAny>>,
+        spw: Option<&Bound<'_, PyAny>>,
+        baseline: Option<&Bound<'_, PyAny>>,
+        time: &str,
+        scan: Option<&Bound<'_, PyAny>>,
+        uvrange: Option<&Bound<'_, PyAny>>,
+        taql: &str,
+        #[pyo3(from_py_with = strict_bool)] writesyscal: bool,
+        #[pyo3(from_py_with = strict_bool)] multisource: bool,
+        #[pyo3(from_py_with = strict_bool)] combinespw: bool,
+        #[pyo3(from_py_with = strict_bool)] writestation: bool,
+        #[pyo3(from_py_with = strict_bool)] padwithflags: bool,
+        #[pyo3(from_py_with = strict_bool)] overwrite: bool,
+    ) -> PyResult<bool> {
+        let options = UvFitsExportOptions {
+            column,
+            selection: MsSelection {
+                field: all_if_minus_one(field)?,
+                spw: all_if_minus_one(spw)?,
+                antenna: optional_expression(baseline)?,
+                timerange: (!time.is_empty()).then(|| time.to_owned()),
+                scan: optional_expression(scan)?,
+                uvrange: optional_expression(uvrange)?,
+                msselect: (!taql.is_empty()).then(|| taql.to_owned()),
+                ..MsSelection::default()
+            },
+            writesyscal,
+            multisource,
+            combinespw,
+            writestation,
+            padwithflags,
+            overwrite,
+        };
+        py.detach(|| {
+            let attached = self.attached.lock().map_err(runtime_error)?;
+            let Some(attached) = attached.as_ref() else {
+                return Ok(true);
+            };
+            let output = if fitsfile.is_empty() {
+                default_fits_path(&attached.path)
+            } else {
+                PathBuf::from(fitsfile)
+            };
+            let snapshot = attached.selection_snapshot()?;
+            export_uvfits(&snapshot.ms, &output, &options).map_err(runtime_error)?;
+            Ok(true)
+        })
+    }
+}
+
+fn check_fits_idi_replacement(output: &Path, overwrite: bool) -> PyResult<()> {
+    if overwrite && output.try_exists().map_err(runtime_error)? {
+        let path = output.canonicalize().map_err(runtime_error)?;
+        if crate::tools::table::replacement_target_is_in_use(&path) {
+            return Err(runtime_error(format!(
+                "Table {} cannot be deleted: table is still open in this process",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn default_fits_path(source: &Path) -> PathBuf {
+    if source
+        .extension()
+        .is_some_and(|extension| extension == "ms")
+    {
+        source.with_extension("fits")
+    } else {
+        let mut path = source.as_os_str().to_os_string();
+        path.push(".fits");
+        path.into()
+    }
+}

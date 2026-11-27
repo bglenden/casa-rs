@@ -7,15 +7,15 @@ use casa_coordinates::{
     CoordinateSystem, DirectionCoordinate, ObsInfo, Projection, ProjectionType, SpectralCoordinate,
     StokesCoordinate, StokesType,
 };
+use casa_core::ArrayValue;
+use casa_core::measures::direction::MDirection;
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::position::MPosition;
 use casa_ms::derived::engine::{MsCalEngine, raw_field_phase_direction};
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, CubeSpectralSetup, MeasurementSet, MsResult,
     ResolvedMsSelection, combine_spectral_windows, convert_frequency_to_frame_with_frame,
 };
-use casa_types::ArrayValue;
-use casa_types::measures::direction::MDirection;
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::measures::position::MPosition;
 
 use super::{ImagerImageDefinition, invalid};
 
@@ -256,7 +256,7 @@ impl ImagerDefinitionRequest {
                 let (first, increment) = single_frequency.unwrap_or((first, width));
                 let axis = if values.len() > 1
                     && matches!(config.start, Some(CubeAxisValue::VelocityMs { .. }))
-                    && config.veltype != casa_types::measures::doppler::DopplerRef::RADIO
+                    && config.veltype != casa_core::measures::doppler::DopplerRef::RADIO
                 {
                     SpectralCoordinate::from_tabular(
                         report_frame,

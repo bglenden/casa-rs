@@ -8,14 +8,10 @@ use std::f64::consts::PI;
 use std::path::Path;
 
 use casa_images::{ImageBeamSet, PagedImage};
-use casa_imaging_application::{
-    BackendRequest as ImagingBackend, Cancel, ImagingRequest, RunContext, execute,
-};
+use casa_imaging::{BackendRequest as ImagingBackend, Cancel, ImagingRequest, RunContext, execute};
 use casa_imaging_runtime::charge_process_caches;
 use casa_ms::MeasurementSet;
 use casa_ms::columns::uvw_column::UvwColumn;
-use casa_provider_contracts::builtin_surface_bundle;
-use casa_task_runtime::resolve_plain_values;
 use serde_json::json;
 
 use super::sky::Sky;
@@ -60,7 +56,11 @@ fn image_size(
         .ok_or_else(|| failure("the requested PSF size is not representable"))
 }
 
-pub(super) fn prepare(run: &mut Run<'_>, sky: &Sky) -> Result<(), SimobserveError> {
+pub(super) fn prepare(
+    run: &mut Run<'_>,
+    sky: &Sky,
+    cancel: &Cancel,
+) -> Result<(), SimobserveError> {
     if !run.predict
         || !run.uvmode
         || !matches!(run.parameters.graphics.as_str(), "both" | "file" | "screen")
@@ -84,21 +84,16 @@ pub(super) fn prepare(run: &mut Run<'_>, sky: &Sky) -> Result<(), SimobserveErro
         "gridder": "standard", "weighting": "natural", "stokes": "I",
         "niter": 0, "calcpsf": true, "calcres": false, "restoration": false,
     });
-    let workspace = std::env::current_dir().map_err(failure)?;
-    let resolved = resolve_plain_values(
-        builtin_surface_bundle("tclean").map_err(failure)?,
-        workspace,
-        values.as_object().expect("an object"),
-    )
-    .map_err(failure)?;
-    let mut request = ImagingRequest::from_tclean(&resolved).map_err(failure)?;
+    let mut request =
+        ImagingRequest::from_tclean_with_defaults(values.as_object().expect("an object"))
+            .map_err(failure)?;
     let resources = run.request.options.resources;
     // This small diagnostic follows the legacy imager's double-precision
     // grid. At padding 1.0 the edge correction amplifies Metal FFT rounding
     // past the backend law (4.27e-4 versus 1e-4 on the CASA fixture).
     // The preceding simulation still predicts DATA on its requested device.
     request.backend = ImagingBackend::Cpu;
-    request.gridprecision = Some(casa_imaging_application::GridPrecision::F64);
+    request.gridprecision = Some(casa_imaging::GridPrecision::F64);
     // Imager::createFTMachine uses padding=1.0 for a single field,
     // unlike tclean's 1.2. Both still use composite-sized FFT grids.
     request.ft_padding = Some(casa_imaging_operator::PaddingFactor::new(1.0).map_err(failure)?);
@@ -107,7 +102,7 @@ pub(super) fn prepare(run: &mut Run<'_>, sky: &Sky) -> Result<(), SimobserveErro
         RunContext {
             host: *resources.host(),
             policy: *resources.policy(),
-            cancel: Cancel::new(),
+            cancel: cancel.clone(),
             summary: None,
         },
     )

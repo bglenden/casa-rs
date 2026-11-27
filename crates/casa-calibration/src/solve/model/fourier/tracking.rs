@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Recover FTMachine's moving-source rotation from a stored Fourier model.
 
+use casa_core::measures::MeasFrame;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::position::MPosition;
+use casa_core::measures::record::{direction_from_record, position_from_record};
+use casa_core::{RecordValue, ScalarValue, Value};
 use casa_ms::{EphemerisBudget, PhaseCentreEphemeris, PlanetaryEphemeris};
-use casa_types::measures::MeasFrame;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::position::MPosition;
-use casa_types::measures::record::{direction_from_record, position_from_record};
-use casa_types::{RecordValue, ScalarValue, Value};
 
 use crate::ft::moving_source::ObservedSource;
 

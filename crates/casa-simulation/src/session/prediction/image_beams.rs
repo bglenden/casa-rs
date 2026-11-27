@@ -3,8 +3,8 @@
 use super::super::observe::{Scan, ScanRows};
 use super::*;
 use crate::predict::image_beam::ImageBeam;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, MEpoch, MPosition};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::{EpochRef, MEpoch, MPosition};
 use std::collections::HashMap;
 
 pub(super) type VisitKey = ([u64; 2], usize, i32, usize, u64, bool);

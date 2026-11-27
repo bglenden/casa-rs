@@ -191,8 +191,8 @@ fn mixed_shape_close_holds_main_lock() {
 /// Reorder a small actual CASA input, keeping the independent per-window
 /// science reference and giving every alternating row a scan of its own.
 fn alternating(path: &Path, rows: usize) -> serde_json::Value {
+    use casa_core::{ScalarValue, Value};
     use casa_tables::{ColumnOverrides, DataManagerKind, Table, TableOptions};
-    use casa_types::{ScalarValue, Value};
     copy(&inputs().join("sm_mixed_correlations/full_linear.ms"), path);
     let source = Table::open(TableOptions::new(path)).unwrap();
     let mut table = Table::open_metadata_for_construction(TableOptions::new(path), 0).unwrap();

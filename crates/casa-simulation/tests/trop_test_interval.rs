@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Actual CASA iterator times and source-defined ramp through independent CASA ATM.
 mod predict_support;
+use casa_core::{ArrayValue, Complex32, ScalarValue};
 use casa_simulation::{PredictSpec, Simulator, SimulatorOptions, TroposphereSpec};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, Complex32, ScalarValue};
 use flate2::read::GzDecoder;
 use ndarray::IxDyn;
 use predict_support::{REFERENCE_MJD, Row, resources};
@@ -142,9 +142,9 @@ fn custom_intervals_follow_casas_iterator_and_source_defined_ramp() {
                     SimulatorOptions {
                         resources: resources(workers, 512 << 20),
                         measures: casa_test_support::deterministic_measures_provider(),
-                        now: casa_types::measures::MEpoch::from_mjd(
+                        now: casa_core::measures::MEpoch::from_mjd(
                             REFERENCE_MJD,
-                            casa_types::measures::EpochRef::UTC,
+                            casa_core::measures::EpochRef::UTC,
                         ),
                     },
                 )

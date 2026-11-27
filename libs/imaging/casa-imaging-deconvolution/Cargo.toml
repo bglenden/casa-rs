@@ -1,0 +1,41 @@
+[package]
+name = "casa-imaging-deconvolution"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Image-domain reconstruction: normal and model state, masks, the major-cycle pairing, and the minor-cycle driver, controller and solvers"
+repository.workspace = true
+publish = true
+autotests = false
+
+[lints]
+workspace = true
+
+[dependencies]
+bytemuck = { version = "1.25", features = ["extern_crate_alloc"] }
+casa-coordinates.workspace = true
+casa-fft.workspace = true
+casa-imaging-model.workspace = true
+casa-numerics.workspace = true
+libm = "0.2"
+ndarray.workspace = true
+num-complex = { workspace = true, features = ["bytemuck"] }
+rayon = "1"
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+casa-core.workspace = true
+
+[[test]]
+name = "api"
+path = "tests/api.rs"
+
+[[test]]
+name = "auto_mask_memory"
+path = "tests/auto_mask_memory.rs"
+
+[[test]]
+name = "solve_memory"
+path = "tests/solve_memory.rs"

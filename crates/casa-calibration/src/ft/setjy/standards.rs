@@ -3,30 +3,30 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_measures_data::MeasuresRuntime;
+use casa_core::measures::direction::MDirection;
+use casa_core::{ArrayValue, ScalarValue};
+use casa_measures::MeasuresRuntime;
 use casa_ms::MsResult;
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::direction::MDirection;
-use casa_types::{ArrayValue, ScalarValue};
 use time::{Date, Month};
 
 use crate::ft::invalid;
 use crate::interpolation::{self, Curve};
 
-pub(crate) mod fixed;
+pub mod fixed;
 mod sources;
-pub(crate) use sources::source_direction;
+pub use sources::source_direction;
 
 use fixed::{FixedScale, FixedSpectrum};
 
 #[derive(Clone, Copy)]
-pub(crate) enum FluxScale {
+pub enum FluxScale {
     Table(CatalogScale),
     Fixed(FixedScale),
 }
 
 /// Match the descriptive scale strings accepted by the legacy imager.
-pub(crate) fn canonical_tool_standard(name: &str) -> Option<&'static str> {
+pub fn canonical_tool_standard(name: &str) -> Option<&'static str> {
     let name = name.to_ascii_lowercase();
     let patterns: &[(&str, &[&str])] = &[
         ("Perley 90", &["perley", "90"]),
@@ -50,7 +50,7 @@ pub(crate) fn canonical_tool_standard(name: &str) -> Option<&'static str> {
 }
 
 impl FluxScale {
-    pub(crate) fn named(name: &str) -> Option<Self> {
+    pub fn named(name: &str) -> Option<Self> {
         Some(match name {
             "Perley-Butler 2017" => Self::Table(CatalogScale::PerleyButler2017),
             "Perley-Butler 2013" => Self::Table(CatalogScale::PerleyButler2013),
@@ -65,13 +65,13 @@ impl FluxScale {
         })
     }
 
-    pub(crate) fn time_interpolation(self) -> bool {
+    pub fn time_interpolation(self) -> bool {
         matches!(self, Self::Table(scale) if scale.time_interpolation())
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CatalogScale {
+pub enum CatalogScale {
     PerleyButler2017,
     PerleyButler2013,
     ScaifeHeald2012,
@@ -91,7 +91,7 @@ impl CatalogScale {
     }
 }
 
-pub(crate) struct FluxCatalog {
+pub struct FluxCatalog {
     cone_table: Option<PathBuf>,
     coefficients: Coefficients,
 }
@@ -107,18 +107,18 @@ struct TabulatedCoefficients {
     epochs: Vec<f64>,
 }
 
-pub(crate) enum CatalogMatch<'a> {
+pub enum CatalogMatch<'a> {
     Spectrum(CalibratorSpectrum<'a>),
     UnknownSource,
     MissingCoefficients(&'static str),
 }
 
-pub(crate) enum CalibratorSpectrum<'a> {
+pub enum CalibratorSpectrum<'a> {
     Table(TabulatedSpectrum<'a>),
     Fixed(FixedSpectrum),
 }
 
-pub(crate) struct TabulatedSpectrum<'a> {
+pub struct TabulatedSpectrum<'a> {
     scale: CatalogScale,
     coefficients: Vec<Vec<f32>>,
     epochs: &'a [f64],
@@ -127,7 +127,7 @@ pub(crate) struct TabulatedSpectrum<'a> {
 }
 
 impl FluxCatalog {
-    pub(crate) fn open(scale: FluxScale) -> MsResult<Self> {
+    pub fn open(scale: FluxScale) -> MsResult<Self> {
         let candidates = MeasuresRuntime::discover_candidates().map_err(invalid)?;
         let roots: Vec<_> = candidates
             .into_iter()
@@ -146,7 +146,7 @@ impl FluxCatalog {
         })
     }
 
-    pub(crate) fn standard_name(&self) -> &'static str {
+    pub fn standard_name(&self) -> &'static str {
         match &self.coefficients {
             Coefficients::Table(table) => match table.scale {
                 CatalogScale::PerleyButler2017 => "Perley-Butler 2017",
@@ -164,7 +164,7 @@ impl FluxCatalog {
         }
     }
 
-    pub(crate) fn missing_coefficients(&self, source: &str) -> casa_ms::MsError {
+    pub fn missing_coefficients(&self, source: &str) -> casa_ms::MsError {
         let table = match &self.coefficients {
             Coefficients::Table(coefficients) => coefficients.table.path().map_or_else(
                 || coefficients.scale.table().into(),
@@ -175,7 +175,7 @@ impl FluxCatalog {
         invalid(format!("{source} does not appears to be in {table}"))
     }
 
-    pub(crate) fn spectrum(
+    pub fn spectrum(
         &self,
         field: &str,
         direction: &MDirection,
@@ -266,7 +266,7 @@ impl TabulatedCoefficients {
 }
 
 impl CalibratorSpectrum<'_> {
-    pub(crate) fn flux(&self, frequency_hz: f64) -> f64 {
+    pub fn flux(&self, frequency_hz: f64) -> f64 {
         match self {
             Self::Table(spectrum) => spectrum.flux(frequency_hz),
             Self::Fixed(spectrum) => spectrum.flux(frequency_hz),

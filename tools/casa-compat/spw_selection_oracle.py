@@ -10,7 +10,7 @@ and `ms.msselectedindices()` report: the spectral windows (`getSpwList`),
 their data descriptions (`getSPWDDIDList`), the channel list
 (`getChanList`) and the data descriptions whose MAIN rows are selected, or
 that CASA refused the expression. casa-ms's `selection::spw_expr` tests
-(`crates/casa-ms/tests/spw_selection_oracle.rs`) replay every case.
+(`libs/casacore/casa-ms/tests/spw_selection_oracle.rs`) replay every case.
 
   python -I tools/casa-compat/spw_selection_oracle.py --work DIR --out FILE
 

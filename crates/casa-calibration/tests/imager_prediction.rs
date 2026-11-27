@@ -7,10 +7,10 @@ use casa_calibration::{
     ImagerPrediction, ImagerPredictionModel, ImagerTransformOptions, ImagerVoltagePattern,
 };
 use casa_coordinates::{CoordinateModel, CoordinateType};
+use casa_core::ScalarValue;
 use casa_images::PagedImage;
 use casa_imaging_operator::WPlaneCount;
 use casa_ms::{MeasurementSet, MsSelection};
-use casa_types::ScalarValue;
 
 fn attachment(path: &Path) -> CalibrationAttachment {
     CalibrationAttachment::attach(

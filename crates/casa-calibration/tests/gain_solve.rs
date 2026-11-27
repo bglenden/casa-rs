@@ -11,10 +11,10 @@ use casa_calibration::{
     GainSolveRequest, GainType, RefAntSelector, execute_apply_from_path, solve_calibration,
     summarize_table,
 };
-use casa_ms::ms::MeasurementSet;
+use casa_core::{ArrayValue, ScalarValue, Value};
+use casa_ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 fn run_gain_solve(
@@ -120,7 +120,7 @@ fn unavailable_prior_spectral_window_excludes_data_from_solving() {
             field_id: 0,
             spectral_window_id: 1,
             antenna_id,
-            scale_factor: casa_types::Complex32::new(1., 0.),
+            scale_factor: casa_core::Complex32::new(1., 0.),
             valid_domain_hz: [1.0e9, 1.2e9],
             amp_coefficients: vec![vec![0.]; 2],
             phase_coefficients: vec![vec![0.]; 2],
@@ -247,10 +247,10 @@ fn solve_gain_phase_g_uses_model_data_column_downstream() {
     let ms_path = common::create_gain_solve_model_column_fixture_ms(
         dir.path(),
         [
-            casa_types::Complex32::new(2.0, 0.0),
-            casa_types::Complex32::new(3.0, 0.0),
-            casa_types::Complex32::new(4.0, 0.0),
-            casa_types::Complex32::new(5.0, 0.0),
+            casa_core::Complex32::new(2.0, 0.0),
+            casa_core::Complex32::new(3.0, 0.0),
+            casa_core::Complex32::new(4.0, 0.0),
+            casa_core::Complex32::new(5.0, 0.0),
         ],
     );
     let caltable_path = dir.path().join("solved-model.gcal");
@@ -362,10 +362,10 @@ fn solve_gain_phase_t_uses_per_correlation_model_data_column_downstream() {
         dir.path(),
         common::SyntheticGainFixtureKind::T,
         [
-            casa_types::Complex32::new(1.0, 0.0),
-            casa_types::Complex32::new(0.0, 2.0),
-            casa_types::Complex32::new(1.0, 0.0),
-            casa_types::Complex32::new(0.0, 2.0),
+            casa_core::Complex32::new(1.0, 0.0),
+            casa_core::Complex32::new(0.0, 2.0),
+            casa_core::Complex32::new(1.0, 0.0),
+            casa_core::Complex32::new(0.0, 2.0),
         ],
     );
     let caltable_path = dir.path().join("solved-model.tcal");
@@ -846,30 +846,30 @@ fn solve_gain_phase_g_solint_integration_writes_per_integration_solutions() {
     let dir = TempDir::new().expect("tempdir");
     let gains_a = [
         [
-            casa_types::Complex32::new(1.0, 0.0),
-            casa_types::Complex32::new(1.0, 0.0),
+            casa_core::Complex32::new(1.0, 0.0),
+            casa_core::Complex32::new(1.0, 0.0),
         ],
         [
-            casa_types::Complex32::new(0.9553365, 0.29552022),
-            casa_types::Complex32::new(0.921061, -0.38941833),
+            casa_core::Complex32::new(0.9553365, 0.29552022),
+            casa_core::Complex32::new(0.921061, -0.38941833),
         ],
         [
-            casa_types::Complex32::new(0.9800666, -0.19866933),
-            casa_types::Complex32::new(0.87758255, 0.47942555),
+            casa_core::Complex32::new(0.9800666, -0.19866933),
+            casa_core::Complex32::new(0.87758255, 0.47942555),
         ],
     ];
     let gains_b = [
         [
-            casa_types::Complex32::new(1.0, 0.0),
-            casa_types::Complex32::new(1.0, 0.0),
+            casa_core::Complex32::new(1.0, 0.0),
+            casa_core::Complex32::new(1.0, 0.0),
         ],
         [
-            casa_types::Complex32::new(0.6967067, 0.7173561),
-            casa_types::Complex32::new(0.7648422, -0.64421767),
+            casa_core::Complex32::new(0.6967067, 0.7173561),
+            casa_core::Complex32::new(0.7648422, -0.64421767),
         ],
         [
-            casa_types::Complex32::new(0.5403023, -0.84147096),
-            casa_types::Complex32::new(0.8253356, 0.5646425),
+            casa_core::Complex32::new(0.5403023, -0.84147096),
+            casa_core::Complex32::new(0.8253356, 0.5646425),
         ],
     ];
     let ms_path = common::create_gain_solve_fixture_ms_from_clusters(
@@ -943,30 +943,30 @@ fn solve_gain_phase_g_solint_seconds_groups_nearby_integrations() {
     let dir = TempDir::new().expect("tempdir");
     let gains_a = [
         [
-            casa_types::Complex32::new(1.0, 0.0),
-            casa_types::Complex32::new(1.0, 0.0),
+            casa_core::Complex32::new(1.0, 0.0),
+            casa_core::Complex32::new(1.0, 0.0),
         ],
         [
-            casa_types::Complex32::new(0.9553365, 0.29552022),
-            casa_types::Complex32::new(0.921061, -0.38941833),
+            casa_core::Complex32::new(0.9553365, 0.29552022),
+            casa_core::Complex32::new(0.921061, -0.38941833),
         ],
         [
-            casa_types::Complex32::new(0.9800666, -0.19866933),
-            casa_types::Complex32::new(0.87758255, 0.47942555),
+            casa_core::Complex32::new(0.9800666, -0.19866933),
+            casa_core::Complex32::new(0.87758255, 0.47942555),
         ],
     ];
     let gains_b = [
         [
-            casa_types::Complex32::new(1.0, 0.0),
-            casa_types::Complex32::new(1.0, 0.0),
+            casa_core::Complex32::new(1.0, 0.0),
+            casa_core::Complex32::new(1.0, 0.0),
         ],
         [
-            casa_types::Complex32::new(0.6967067, 0.7173561),
-            casa_types::Complex32::new(0.7648422, -0.64421767),
+            casa_core::Complex32::new(0.6967067, 0.7173561),
+            casa_core::Complex32::new(0.7648422, -0.64421767),
         ],
         [
-            casa_types::Complex32::new(0.5403023, -0.84147096),
-            casa_types::Complex32::new(0.8253356, 0.5646425),
+            casa_core::Complex32::new(0.5403023, -0.84147096),
+            casa_core::Complex32::new(0.8253356, 0.5646425),
         ],
     ];
     let ms_path = common::create_gain_solve_fixture_ms_from_clusters(
@@ -1044,16 +1044,16 @@ fn solve_gain_phase_g_combine_scans_writes_one_solution_group_across_scans() {
     let dir = TempDir::new().expect("tempdir");
     let gains = [
         [
-            casa_types::Complex32::new(1.0, 0.0),
-            casa_types::Complex32::new(1.0, 0.0),
+            casa_core::Complex32::new(1.0, 0.0),
+            casa_core::Complex32::new(1.0, 0.0),
         ],
         [
-            casa_types::Complex32::new(0.9553365, 0.29552022),
-            casa_types::Complex32::new(0.921061, -0.38941833),
+            casa_core::Complex32::new(0.9553365, 0.29552022),
+            casa_core::Complex32::new(0.921061, -0.38941833),
         ],
         [
-            casa_types::Complex32::new(0.9800666, -0.19866933),
-            casa_types::Complex32::new(0.87758255, 0.47942555),
+            casa_core::Complex32::new(0.9800666, -0.19866933),
+            casa_core::Complex32::new(0.87758255, 0.47942555),
         ],
     ];
     let ms_path = common::create_gain_solve_fixture_ms_from_clusters(
@@ -1121,16 +1121,16 @@ fn solve_gain_phase_g_combine_scan_and_field_writes_one_solution_group_across_fi
     let dir = TempDir::new().expect("tempdir");
     let gains = [
         [
-            casa_types::Complex32::new(1.0, 0.0),
-            casa_types::Complex32::new(1.0, 0.0),
+            casa_core::Complex32::new(1.0, 0.0),
+            casa_core::Complex32::new(1.0, 0.0),
         ],
         [
-            casa_types::Complex32::new(0.9553365, 0.29552022),
-            casa_types::Complex32::new(0.921061, -0.38941833),
+            casa_core::Complex32::new(0.9553365, 0.29552022),
+            casa_core::Complex32::new(0.921061, -0.38941833),
         ],
         [
-            casa_types::Complex32::new(0.9800666, -0.19866933),
-            casa_types::Complex32::new(0.87758255, 0.47942555),
+            casa_core::Complex32::new(0.9800666, -0.19866933),
+            casa_core::Complex32::new(0.87758255, 0.47942555),
         ],
     ];
     let ms_path = common::create_gain_solve_fixture_ms_from_clusters(
@@ -1202,30 +1202,30 @@ fn solve_gain_phase_g_with_prior_caltable_corrects_residual_downstream() {
     let dir = TempDir::new().expect("tempdir");
     let prior_gains = [
         [
-            casa_types::Complex32::new(1.0, 0.0),
-            casa_types::Complex32::new(1.0, 0.0),
+            casa_core::Complex32::new(1.0, 0.0),
+            casa_core::Complex32::new(1.0, 0.0),
         ],
         [
-            casa_types::Complex32::new(0.9887711, 0.14943813),
-            casa_types::Complex32::new(0.9689124, -0.24740396),
+            casa_core::Complex32::new(0.9887711, 0.14943813),
+            casa_core::Complex32::new(0.9689124, -0.24740396),
         ],
         [
-            casa_types::Complex32::new(0.9950042, -0.09983342),
-            casa_types::Complex32::new(0.9393727, 0.3428978),
+            casa_core::Complex32::new(0.9950042, -0.09983342),
+            casa_core::Complex32::new(0.9393727, 0.3428978),
         ],
     ];
     let residual_gains = [
         [
-            casa_types::Complex32::new(1.0, 0.0),
-            casa_types::Complex32::new(1.0, 0.0),
+            casa_core::Complex32::new(1.0, 0.0),
+            casa_core::Complex32::new(1.0, 0.0),
         ],
         [
-            casa_types::Complex32::new(0.99875027, 0.04997917),
-            casa_types::Complex32::new(0.9800666, -0.19866933),
+            casa_core::Complex32::new(0.99875027, 0.04997917),
+            casa_core::Complex32::new(0.9800666, -0.19866933),
         ],
         [
-            casa_types::Complex32::new(0.9921977, -0.12467473),
-            casa_types::Complex32::new(0.9553365, 0.29552022),
+            casa_core::Complex32::new(0.9921977, -0.12467473),
+            casa_core::Complex32::new(0.9553365, 0.29552022),
         ],
     ];
     let total_gains = [

@@ -48,10 +48,10 @@
   ]
  },
  "package_layers": {
-  "casa-provider-contracts": "science",
+  "casa-contracts": "science",
   "casa-observation": "science",
   "casa-ms": "observation",
-  "casa-imaging-application": "application",
+  "casa-imaging": "application",
   "casa-imaging-model": "science",
   "casa-imaging-operator": "reconstruction",
   "casa-imaging-deconvolution": "reconstruction",
@@ -61,13 +61,14 @@
   "casa-imaging-metal": "backend",
   "casa-simulation": "application",
   "casa-atmosphere": "science",
-  "casars-imager": "frontend",
-  "casars-imexplore": "frontend",
-  "casars-python": "frontend"
+  "casa-tasks": "frontend",
+  "casars-cli": "frontend",
+  "casars-python": "frontend",
+  "casa-mstransform": "observation",
+  "casa-flagging": "observation"
  },
  "definitional_packages": [
-  "casa-values",
-  "casa-types",
+  "casa-core",
   "casa-coordinates"
  ],
  "native_package_workspace_dependencies": {
@@ -112,7 +113,8 @@
    "casa-imaging-runtime",
    "casa-numerics"
   ],
-  "casa-imaging-application": [
+  "casa-imaging": [
+   "casa-imageanalysis",
    "casa-images",
    "casa-imaging-deconvolution",
    "casa-imaging-model",
@@ -130,20 +132,58 @@
    "casa-calibration",
    "casa-components",
    "casa-fft",
+   "casa-imageanalysis",
+   "casa-flagging",
    "casa-images",
-   "casa-imaging-application",
+   "casa-imaging",
    "casa-imaging-model",
    "casa-imaging-operator",
    "casa-imaging-products",
    "casa-imaging-runtime",
    "casa-imaging-singledish",
    "casa-lattices",
-   "casa-logging",
+   "casa-measures",
+   "casa-ms",
+   "casa-mstransform",
+   "casa-numerics",
+   "casa-tables"
+  ],
+  "casa-images": [
+   "casa-lattices",
+   "casa-numerics",
+   "casa-tables"
+  ],
+  "casa-imageanalysis": [
+   "casa-components",
+   "casa-fft",
+   "casa-images",
+   "casa-lattices",
+   "casa-numerics",
+   "casa-tables"
+  ],
+  "casa-components": [
+   "casa-measures",
+   "casa-tables"
+  ],
+  "casa-ms": [
+   "casa-measures",
+   "casa-numerics",
+   "casa-observation",
+   "casa-tables"
+  ],
+  "casa-flagging": [
+   "casa-components",
    "casa-ms",
    "casa-numerics",
-   "casa-provider-contracts",
-   "casa-tables",
-   "casa-task-runtime"
+   "casa-tables"
+  ],
+  "casa-mstransform": [
+   "casa-fft",
+   "casa-measures",
+   "casa-ms",
+   "casa-numerics",
+   "casa-observation",
+   "casa-tables"
   ]
  },
  "device_dependency_prefixes": [
@@ -169,17 +209,17 @@
    "id": "device-api-only-in-metal",
    "message": "device APIs are confined to casa-imaging-metal",
    "roots": [
-    "crates/casa-imaging-model/src",
-    "crates/casa-imaging-operator/src",
-    "crates/casa-imaging-deconvolution/src",
-    "crates/casa-imaging-products/src",
-    "crates/casa-imaging-singledish/src",
-    "crates/casa-imaging-application/src",
+    "libs/imaging/casa-imaging-model/src",
+    "libs/imaging/casa-imaging-operator/src",
+    "libs/imaging/casa-imaging-deconvolution/src",
+    "libs/imaging/casa-imaging-products/src",
+    "libs/imaging/casa-imaging-singledish/src",
+    "libs/imaging/casa-imaging/src",
     "crates/casa-simulation/src",
-    "crates/casa-provider-contracts/src",
-    "crates/casars-imager/src",
-    "crates/casars-imexplore/src",
-    "crates/casars-python/src"
+    "surfaces/casa-contracts/src",
+    "surfaces/casa-tasks/src",
+    "frontends/casars-cli/src",
+    "frontends/casars-python/src"
    ],
    "extensions": [
     ".rs"
@@ -191,13 +231,13 @@
    "id": "no-displaced-imaging-imports",
    "message": "native imaging crates and frontends must not import a displaced or execution API across the layer boundary",
    "roots": [
-    "crates/casa-imaging-model/src",
-    "crates/casa-imaging-operator/src",
-    "crates/casa-imaging-deconvolution/src",
-    "crates/casa-provider-contracts/src",
-    "crates/casars-imager/src",
-    "crates/casars-imexplore/src",
-    "crates/casars-python/src"
+    "libs/imaging/casa-imaging-model/src",
+    "libs/imaging/casa-imaging-operator/src",
+    "libs/imaging/casa-imaging-deconvolution/src",
+    "surfaces/casa-contracts/src",
+    "surfaces/casa-tasks/src",
+    "frontends/casars-cli/src",
+    "frontends/casars-python/src"
    ],
    "extensions": [
     ".rs"
@@ -209,72 +249,67 @@
    "id": "no-env-in-imaging-libraries",
    "message": "library crates on the imaging path read no environment variables: switches are request fields or caller configuration, diagnostics are tracing events (ADR-0016, #658); resolving a relative path against the working directory (std::env::current_dir) is allowed, and the grandfathered data and state discovery waits for #709",
    "roots": [
-    "crates/casa-imaging-model/src",
-    "crates/casa-imaging-operator/src",
-    "crates/casa-imaging-deconvolution/src",
-    "crates/casa-imaging-products/src",
-    "crates/casa-imaging-runtime/src",
-    "crates/casa-imaging-singledish/src",
-    "crates/casa-imaging-metal/src",
-    "crates/casa-imaging-application/src",
+    "libs/imaging/casa-imaging-model/src",
+    "libs/imaging/casa-imaging-operator/src",
+    "libs/imaging/casa-imaging-deconvolution/src",
+    "libs/imaging/casa-imaging-products/src",
+    "libs/imaging/casa-imaging-runtime/src",
+    "libs/imaging/casa-imaging-singledish/src",
+    "libs/imaging/casa-imaging-metal/src",
+    "libs/imaging/casa-imaging/src",
     "crates/casa-simulation/src",
-    "crates/casa-fft/src",
-    "crates/casa-ms/src",
-    "crates/casa-tables/src",
-    "crates/casa-images/src",
-    "crates/casa-coordinates/src",
-    "crates/casa-lattices/src",
-    "crates/casa-numerics/src",
-    "crates/casa-types/src",
-    "crates/casa-values/src",
-    "crates/casa-aipsio/src",
-    "crates/casa-measures-data/src",
-    "crates/casa-task-runtime/src"
+    "libs/casacore/casa-fft/src",
+    "libs/casacore/casa-ms/src",
+    "libs/casa/casa-mstransform/src",
+    "libs/casa/casa-flagging/src",
+    "libs/casacore/casa-tables/src",
+    "libs/casacore/casa-images/src",
+    "libs/casa/casa-imageanalysis/src",
+    "libs/casacore/casa-coordinates/src",
+    "libs/casacore/casa-lattices/src",
+    "libs/casacore/casa-numerics/src",
+    "libs/casacore/casa-core/src",
+    "libs/casacore/casa-aipsio/src",
+    "libs/casacore/casa-measures/src"
    ],
-   "exclude_roots": [
-    "crates/casa-ms/src/bin",
-    "crates/casa-tables/src/bin",
-    "crates/casa-images/src/bin"
-   ],
+   "exclude_roots": [],
    "extensions": [
     ".rs"
    ],
    "regex": "\\benv::var(?:_os)?\\s*\\(|\\bstd::env\\b(?!::current_dir\\b)",
    "grandfathered": [
-    "crates/casa-measures-data/src/lib.rs",
-    "crates/casa-task-runtime/src/storage.rs"
+    "libs/casacore/casa-measures/src/lib.rs"
    ]
   },
   {
    "id": "no-eprintln-in-imaging-crates",
-   "message": "library crates on the imaging path emit through tracing, never eprintln! (ADR-0016, #658); casa-logging, the tracing sink itself, is not on the list",
+   "message": "library crates on the imaging path emit through tracing, never eprintln! (ADR-0016, #658); the log sink is an output boundary",
    "roots": [
-    "crates/casa-imaging-model/src",
-    "crates/casa-imaging-operator/src",
-    "crates/casa-imaging-deconvolution/src",
-    "crates/casa-imaging-products/src",
-    "crates/casa-imaging-runtime/src",
-    "crates/casa-imaging-singledish/src",
-    "crates/casa-imaging-metal/src",
-    "crates/casa-imaging-application/src",
+    "libs/imaging/casa-imaging-model/src",
+    "libs/imaging/casa-imaging-operator/src",
+    "libs/imaging/casa-imaging-deconvolution/src",
+    "libs/imaging/casa-imaging-products/src",
+    "libs/imaging/casa-imaging-runtime/src",
+    "libs/imaging/casa-imaging-singledish/src",
+    "libs/imaging/casa-imaging-metal/src",
+    "libs/imaging/casa-imaging/src",
     "crates/casa-simulation/src",
-    "crates/casa-fft/src",
-    "crates/casa-ms/src",
-    "crates/casa-tables/src",
-    "crates/casa-images/src",
-    "crates/casa-coordinates/src",
-    "crates/casa-lattices/src",
-    "crates/casa-numerics/src",
-    "crates/casa-types/src",
-    "crates/casa-values/src",
-    "crates/casa-aipsio/src",
-    "crates/casa-measures-data/src",
-    "crates/casa-task-runtime/src"
+    "libs/casacore/casa-fft/src",
+    "libs/casacore/casa-ms/src",
+    "libs/casa/casa-mstransform/src",
+    "libs/casa/casa-flagging/src",
+    "libs/casacore/casa-tables/src",
+    "libs/casacore/casa-images/src",
+    "libs/casa/casa-imageanalysis/src",
+    "libs/casacore/casa-coordinates/src",
+    "libs/casacore/casa-lattices/src",
+    "libs/casacore/casa-numerics/src",
+    "libs/casacore/casa-core/src",
+    "libs/casacore/casa-aipsio/src",
+    "libs/casacore/casa-measures/src"
    ],
    "exclude_roots": [
-    "crates/casa-ms/src/bin",
-    "crates/casa-tables/src/bin",
-    "crates/casa-images/src/bin"
+    "libs/casacore/casa-tables/src/log_table.rs"
    ],
    "extensions": [
     ".rs"
@@ -286,14 +321,14 @@
    "id": "no-content-hashing-in-imaging-crates",
    "message": "no SHA-256 or CRC over scientific arrays, plans, receipts or spill (ADR-0014/0016)",
    "roots": [
-    "crates/casa-imaging-model/src",
-    "crates/casa-imaging-operator/src",
-    "crates/casa-imaging-deconvolution/src",
-    "crates/casa-imaging-products/src",
-    "crates/casa-imaging-runtime/src",
-    "crates/casa-imaging-singledish/src",
-    "crates/casa-imaging-metal/src",
-    "crates/casa-imaging-application/src",
+    "libs/imaging/casa-imaging-model/src",
+    "libs/imaging/casa-imaging-operator/src",
+    "libs/imaging/casa-imaging-deconvolution/src",
+    "libs/imaging/casa-imaging-products/src",
+    "libs/imaging/casa-imaging-runtime/src",
+    "libs/imaging/casa-imaging-singledish/src",
+    "libs/imaging/casa-imaging-metal/src",
+    "libs/imaging/casa-imaging/src",
     "crates/casa-simulation/src"
    ],
    "extensions": [
@@ -306,8 +341,8 @@
    "id": "observation-geometry-provider-injection",
    "message": "the observation boundary's adapters and the batch geometry receive an injected Measures provider and cannot discover MeasuresRuntime",
    "roots": [
-    "crates/casa-ms/src/observation_io",
-    "crates/casa-imaging-model/src/batch_geometry"
+    "libs/casacore/casa-ms/src/observation_io",
+    "libs/imaging/casa-imaging-model/src/batch_geometry"
    ],
    "extensions": [
     ".rs"

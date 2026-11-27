@@ -509,7 +509,7 @@ fn selected_scope(
         let observation_path = metadata
             .keywords()
             .get("OBSERVATION")
-            .and_then(casa_types::Value::as_table_ref)
+            .and_then(casa_core::Value::as_table_ref)
             .map(|name| casa_tables::add_directory(name, &owner))
             .unwrap_or_else(|| owner.join("OBSERVATION"));
         let count =
@@ -539,7 +539,7 @@ fn headers(path: &Path, baseline: bool) -> Result<Vec<[i32; 5]>, ApplyExecutionE
                         .cell_accessor(row, column)
                         .and_then(|cell| cell.scalar())
                         .map_err(|error| invalid(path, &error.to_string()))?;
-                    let casa_types::ScalarValue::Int32(cell) = cell else {
+                    let casa_core::ScalarValue::Int32(cell) = cell else {
                         return Err(invalid(path, "invalid calibration context scalar"));
                     };
                     Ok(*cell)
@@ -687,7 +687,7 @@ fn phase_cycles(
 }
 
 fn real_parameters(table: &Table) -> bool {
-    use casa_types::{ScalarValue, Value};
+    use casa_core::{ScalarValue, Value};
     match table.keywords().get("ParType") {
         Some(Value::Scalar(ScalarValue::String(kind))) if kind == "Float" => true,
         Some(Value::Scalar(ScalarValue::String(kind))) if kind == "Complex" => false,

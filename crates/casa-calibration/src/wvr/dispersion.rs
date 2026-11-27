@@ -16,7 +16,7 @@ impl DispersionTable {
                 return Ok(explicit);
             }
         }
-        let roots = casa_measures_data::MeasuresRuntime::discover_candidates()
+        let roots = casa_measures::MeasuresRuntime::discover_candidates()
             .map_err(|error| WvrError::Invalid(error.to_string()))?;
         roots.into_iter()
             .map(|root| root.path.join("alma/wvrgcal").join(filename))

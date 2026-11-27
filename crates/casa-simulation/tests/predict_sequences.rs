@@ -22,13 +22,13 @@ use std::path::{Path, PathBuf};
 use casa_components::{
     ComponentList, ComponentShape, Flux, SkyComponent, SpectralKind, SpectralModel,
 };
+use casa_core::Correlation;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
 use casa_simulation::{
     CasaOutcome, NoiseSpec, ObserveManySpec, Pointing, PredictSpec, PredictionOptions, Simulator,
     SimulatorResult, VoltagePatternSpec,
 };
-use casa_types::Correlation;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use num_complex::Complex32;
 use predict_support::{
     CENTRE_RAD, FREQUENCY_HZ, Row, bits, cube_model, data, extended_model, predict_spec, read_main,
@@ -645,10 +645,10 @@ fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
     near.observe(&scan("target", 0.0, 20.0)).expect("observe");
     near.set_field(
         "comet",
-        &casa_types::measures::direction::MDirection::from_angles(
+        &casa_core::measures::direction::MDirection::from_angles(
             predict_support::CENTRE_RAD[0],
             predict_support::CENTRE_RAD[1],
-            casa_types::measures::direction::DirectionRef::J2000,
+            casa_core::measures::direction::DirectionRef::J2000,
         ),
         "",
         3.0e11,

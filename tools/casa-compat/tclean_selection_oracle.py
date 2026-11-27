@@ -109,7 +109,7 @@ def main():
     if not field_metadata:
         assert recorded["field_id"]["rows"] == recorded["field_name"]["rows"]
         assert recorded["field_id_and_name"]["rows"] == recorded["all"]["rows"]
-    archive = repo / "crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz"
+    archive = repo / "libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz"
     output = dict(casa_tasks=casatasks.version_string(), casa_tools=casatools.version_string(),
                   oracle_script_revision=revision, fixture=archive.name,
                   fixture_archive_sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),

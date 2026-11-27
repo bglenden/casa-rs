@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Resolve which scalar and spectral weight columns statwt writes.
 
+use casa_core::{ArrayValue, Value};
 use casa_ms::{MsError, MsResult};
 use casa_tables::{Table, TableWriteLock};
-use casa_types::{ArrayValue, Value};
 use ndarray::{Array1, ArrayD, IxDyn, ShapeBuilder};
 
 use crate::weight_spectra::{NewSpectra, SIGMA_SPECTRUM, WEIGHT_SPECTRUM, has_column};
@@ -187,7 +187,7 @@ fn initialize_spectrum(
     }
     let mut new_spectrum = NewSpectra::prepare(table, &[spectrum], shapes.iter().copied())?;
     let max_cell = shapes.iter().map(|[a, b]| a * b).max().unwrap_or(1).max(1);
-    let batch_size = (casa_ms::write_session::TARGET_BATCH_BYTES / (4 * max_cell)).clamp(1, 8192);
+    let batch_size = (casa_ms::TARGET_BATCH_BYTES / (4 * max_cell)).clamp(1, 8192);
     for selected in rows.chunks(batch_size) {
         let input = table
             .column_accessor(scalar)?

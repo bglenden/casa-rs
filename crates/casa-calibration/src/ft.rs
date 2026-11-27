@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Publish CASA's virtual source recipes or their sampled scratch visibilities.
 
-pub(crate) mod image;
+pub mod image;
 mod imager;
 mod imager_definition;
 mod imager_sources;
@@ -9,10 +9,10 @@ pub(crate) mod legacy_aw;
 pub(crate) mod legacy_pbw;
 pub(crate) mod moving_source;
 pub(crate) mod predictcomp;
-pub(crate) mod setjy;
+pub mod setjy;
 pub(crate) mod settings;
 pub(crate) mod single_dish;
-pub(crate) mod virtual_publication;
+pub mod virtual_publication;
 mod voltage_pattern;
 
 pub use imager::{ImagerImageDefinition, ImagerPrediction, ImagerPredictionModel};
@@ -25,20 +25,20 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 use casa_coordinates::SpectralCoordinate;
+use casa_core::{ArrayValue, Complex32};
 use casa_ms::schema::main_table::VisibilityDataColumn;
-use casa_ms::virtual_model::selected_model_combinations;
-use casa_ms::write_session::{
-    MeasurementSetMutationBatch, MeasurementSetWriteError, MeasurementSetWriteSession,
-};
+use casa_ms::selected_model_combinations;
 use casa_ms::{
     MeasurementSet, MsError, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow,
     VirtualModelEntry,
 };
+use casa_ms::{MeasurementSetMutationBatch, MeasurementSetWriteError, MeasurementSetWriteSession};
 use casa_tables::TableWriteLock;
-use casa_types::{ArrayValue, Complex32};
 use ndarray::{ArrayD, Axis, IxDyn};
 
-use crate::model_columns::{ScratchDestination, scratch_write_plan};
+use crate::model_columns::{
+    ScratchDestination, ScratchWriteMode, observed_column, scratch_write_plan,
+};
 use crate::solve::grouping::VisibilityModels;
 
 const MODEL: VisibilityDataColumn = VisibilityDataColumn::ModelData;
@@ -63,11 +63,11 @@ pub(crate) fn spectral_with_runtime(
     }
 }
 
-pub(crate) fn model_entry(
+pub fn model_entry(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
     kind: casa_ms::VirtualModelKind,
-    container: casa_types::RecordValue,
+    container: casa_core::RecordValue,
 ) -> MsResult<VirtualModelEntry> {
     let windows: BTreeSet<_> = selected
         .selected_rows
@@ -100,7 +100,7 @@ pub(crate) fn model_entry(
     })
 }
 
-pub(crate) fn write_model_scratch(
+pub fn write_model_scratch(
     ms: &mut MeasurementSet,
     selected: &ResolvedMsSelection,
     entries: &[VirtualModelEntry],
@@ -126,7 +126,8 @@ pub(crate) fn write_model_scratch(
         ms,
         selected.row_indices().collect(),
         &[MODEL],
-        false,
+        observed_column(ms),
+        ScratchWriteMode::Replace,
         clear_virtual,
         lock,
     )?;
@@ -191,7 +192,7 @@ fn prepare_mosaic_models(
 
 struct Prediction<'a> {
     models: VisibilityModels,
-    destination: &'a ScratchDestination,
+    destination: &'a ScratchDestination<'a>,
     channels: BTreeMap<i32, (Range<usize>, usize)>,
     correlations: BTreeMap<i32, Vec<i32>>,
     incremental: bool,

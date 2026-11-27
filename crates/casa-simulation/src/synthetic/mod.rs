@@ -13,12 +13,12 @@ use crate::{
     ArrayConfig, BackendRequest, CoordinateSystem, ExecutionControls, ObserveSpec,
     SessionResources, Simulator, SimulatorError, SimulatorOptions, SpectralWindowSpec, StateSpec,
 };
-use casa_ms::MeasurementSet;
-use casa_types::measures::{
+use casa_core::measures::{
     EpochRef, MEpoch,
     direction::{DirectionRef, MDirection},
     frequency::FrequencyRef,
 };
+use casa_ms::MeasurementSet;
 use serde::{Deserialize, Serialize};
 use std::{num::NonZeroUsize, path::PathBuf, time::Instant};
 
@@ -247,7 +247,7 @@ fn run(request: &ObservationRequest, unflagged: bool) -> Result<Report> {
                 .map_err(error)?
                 .scalar()
                 .map_err(error)?,
-            casa_types::ScalarValue::Bool(true)
+            casa_core::ScalarValue::Bool(true)
         ) {
             flagged_row_count += 1;
         }

@@ -2,11 +2,11 @@
 //! Saved Jones-image inputs modify simulated image and component signals.
 mod existing_ms_calculations;
 
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{
     BackendRequest, PredictSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions,
     VoltagePatternSpec,
 };
-use casa_types::measures::{EpochRef, MEpoch};
 use existing_ms_calculations::{copy, predict_support as support};
 use flate2::read::GzDecoder;
 use serde_json::Value;
@@ -86,7 +86,7 @@ fn run(operation: &str) {
                 .record()
                 .unwrap();
             for key in ["realimage", "imagimage", "compleximage"] {
-                if let Some(casa_types::Value::Scalar(casa_types::ScalarValue::String(path))) =
+                if let Some(casa_core::Value::Scalar(casa_core::ScalarValue::String(path))) =
                     record.get_mut(key)
                     && !path.is_empty()
                 {

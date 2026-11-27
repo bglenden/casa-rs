@@ -3,12 +3,12 @@
 
 use std::path::Path;
 
+use casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
 use casa_tables::{
     ColumnSchema, Table, TableError, TableInfo, TableOptions, TableSchema, strip_directory,
 };
-use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 use thiserror::Error;
 

@@ -4,15 +4,15 @@
 use std::path::PathBuf;
 
 use casa_components::{ComponentShape, Flux, ShapeType, SkyComponent, SpectralKind, SpectralModel};
-use casa_measures_data::MeasuresRuntime;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::doppler::{DopplerRef, MDoppler};
+use casa_core::measures::frame::MeasFrame;
+use casa_core::measures::frequency::MFrequency;
+use casa_core::measures::radial_velocity::{MRadialVelocity, RadialVelocityRef};
+use casa_core::{ArrayValue, ScalarValue, Value};
+use casa_measures::MeasuresRuntime;
 use casa_ms::MsResult;
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::doppler::{DopplerRef, MDoppler};
-use casa_types::measures::frame::MeasFrame;
-use casa_types::measures::frequency::MFrequency;
-use casa_types::measures::radial_velocity::{MRadialVelocity, RadialVelocityRef};
-use casa_types::{ArrayValue, ScalarValue, Value};
 
 use crate::ft::{invalid, setjy::sampled_shape};
 
@@ -27,13 +27,13 @@ use interpolate::window;
 const AU_METRES: f64 = 1.495_978_706_6e11;
 const LIGHT_SPEED: f64 = 299_792_458.;
 
-pub(crate) struct Solar2012 {
+pub struct Solar2012 {
     ephemeris: Ephemeris,
     brightness: Brightness,
 }
 
 impl Solar2012 {
-    pub(crate) fn open(body: &str, mjd: f64) -> MsResult<Self> {
+    pub fn open(body: &str, mjd: f64) -> MsResult<Self> {
         let body = canonical_body(body).ok_or_else(|| {
             invalid(format!(
                 "Solar System object {body:?} is not supported by Butler-JPL-Horizons 2012"
@@ -57,11 +57,11 @@ impl Solar2012 {
         })
     }
 
-    pub(crate) fn direction(&self) -> &MDirection {
+    pub fn direction(&self) -> &MDirection {
         &self.ephemeris.direction
     }
 
-    pub(crate) fn component(
+    pub fn component(
         &self,
         direction: MDirection,
         frame: &MeasFrame,
@@ -273,7 +273,7 @@ fn radii_km(table: &Table) -> MsResult<[f64; 3]> {
         .map_err(|_| invalid("expected three 2012 ephemeris radii"))
 }
 
-pub(crate) fn bands(centers: &[f64], widths: &[f64], by_channel: bool) -> Vec<[f64; 2]> {
+pub fn bands(centers: &[f64], widths: &[f64], by_channel: bool) -> Vec<[f64; 2]> {
     if by_channel || centers.len() == 1 {
         centers
             .iter()

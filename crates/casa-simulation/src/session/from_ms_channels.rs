@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Admit explicit channel axes before decoding their uncached numerical cells.
+use casa_core::ArrayValue;
 use casa_imaging_runtime::{Demand, Reservation, admit};
 use casa_tables::Table;
-use casa_types::ArrayValue;
 
 use super::super::SessionResources;
 use super::{SimulatorError, SimulatorResult};

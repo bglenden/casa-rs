@@ -10,13 +10,13 @@ mod common;
 use std::path::{Path, PathBuf};
 
 use casa_calibration::{
-    ApplyCalibrationTableSpec, ApplyMode, CalibrationTaskRequest, CalibrationTaskResult,
-    ExecuteApplyTaskRequest,
+    ApplyCalibrationTableSpec, ApplyExecutionOptions, ApplyExecutionReport, ApplyMode,
+    ApplyPlanRequest, execute_apply_from_path_with_options,
 };
-use casa_ms::ms::MeasurementSet;
+use casa_core::ArrayValue;
+use casa_flagging::{FlagMerge, list_flag_versions, restore_flag_version};
+use casa_ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
-use casa_ms::{FlagMerge, list_flag_versions, restore_flag_version};
-use casa_types::ArrayValue;
 use tempfile::TempDir;
 
 /// An MS whose row 0 has no solution for antenna 1, so `calflag` flags it.
@@ -31,8 +31,8 @@ fn fixture(dir: &Path) -> (PathBuf, PathBuf) {
             spectral_window_id: 0,
             antenna_id: 0,
             gains: vec![
-                casa_types::Complex32::new(2.0, 0.0),
-                casa_types::Complex32::new(4.0, 0.0),
+                casa_core::Complex32::new(2.0, 0.0),
+                casa_core::Complex32::new(4.0, 0.0),
             ],
             flags: vec![false, false],
         }],
@@ -45,24 +45,23 @@ fn applycal(
     caltable_path: &Path,
     apply_mode: ApplyMode,
     flagbackup: bool,
-) -> Result<CalibrationTaskResult, String> {
-    CalibrationTaskRequest::ExecuteApply(ExecuteApplyTaskRequest {
-        callibrary_error: None,
-        argument_error: None,
-        measurement_set: ms_path.to_path_buf(),
-        selection: MsSelection::new().spw(&[0]),
-        calibration_tables: vec![ApplyCalibrationTableSpec::new(caltable_path)],
-        apply_mode,
-        parang: false,
-        flagbackup,
-    })
-    .execute()
+) -> Result<ApplyExecutionReport, String> {
+    execute_apply_from_path_with_options(
+        ms_path,
+        &ApplyPlanRequest {
+            selection: MsSelection::new().spw(&[0]),
+            apply_mode,
+            parang: false,
+            calibration_tables: vec![ApplyCalibrationTableSpec::new(caltable_path)],
+        },
+        ApplyExecutionOptions {
+            flag_backup: flagbackup,
+        },
+    )
+    .map_err(|error| error.to_string())
 }
 
-fn backup_version(result: &CalibrationTaskResult) -> Option<&str> {
-    let CalibrationTaskResult::Apply(report) = result else {
-        panic!("expected an apply report");
-    };
+fn backup_version(report: &ApplyExecutionReport) -> Option<&str> {
     report.flag_backup_version.as_deref()
 }
 

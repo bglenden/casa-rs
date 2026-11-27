@@ -9,9 +9,9 @@ use casa_coordinates::{
     CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate,
     StokesCoordinate, StokesType,
 };
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::frequency::FrequencyRef;
 use casa_images::PagedImage;
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::frequency::FrequencyRef;
 use ndarray::{ArrayD, IxDyn};
 
 use super::*;

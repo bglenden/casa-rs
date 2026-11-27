@@ -29,8 +29,8 @@ fn existing_rows_are_copied_within_append_admission() {
         initial.observe(&scan(integrations)).unwrap();
         initial.close().unwrap();
         if name == "oversized" {
+            use casa_core::{ArrayValue, PrimitiveType, ScalarValue, Value};
             use casa_tables::{ColumnSchema, Table, TableOptions};
-            use casa_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
             let mut table = Table::open(TableOptions::new(&path)).unwrap();
             table
                 .add_column(

@@ -12,23 +12,24 @@ default = []
 slow-tests = []
 
 [dependencies]
-casa-atmosphere = { path = "../casa-atmosphere" }
-casa-components = { path = "../casa-components" }
-casa-coordinates = { path = "../casa-coordinates" }
-casa-images = { path = "../casa-images" }
-casa-lattices = { path = "../casa-lattices" }
-casa-fft = { path = "../casa-fft" }
-casa-imaging-model = { path = "../casa-imaging-model" }
-casa-imaging-operator = { path = "../casa-imaging-operator" }
-casa-imaging-runtime = { path = "../casa-imaging-runtime" }
-casa-imaging-singledish = { path = "../casa-imaging-singledish" }
-casa-provider-contracts = { path = "../casa-provider-contracts" }
-casa-task-runtime = { path = "../casa-task-runtime" }
-casa-measures-data = { path = "../casa-measures-data" }
-casa-ms = { path = "../casa-ms" }
-casa-numerics = { path = "../casa-numerics" }
-casa-tables = { path = "../casa-tables" }
-casa-types = { path = "../casa-types" }
+casa-imageanalysis.workspace = true
+casa-components.workspace = true
+casa-flagging.workspace = true
+casa-mstransform.workspace = true
+casa-atmosphere.workspace = true
+casa-coordinates.workspace = true
+casa-images.workspace = true
+casa-lattices.workspace = true
+casa-fft.workspace = true
+casa-imaging-model.workspace = true
+casa-imaging-operator.workspace = true
+casa-imaging-runtime.workspace = true
+casa-imaging-singledish.workspace = true
+casa-measures.workspace = true
+casa-ms.workspace = true
+casa-numerics.workspace = true
+casa-tables.workspace = true
+casa-core.workspace = true
 libm = "0.2"
 ndarray.workspace = true
 num-complex.workspace = true
@@ -47,26 +48,14 @@ csv-core = "0.1.13"
 libc = "0.2"
 
 [dev-dependencies]
-casa-logging = { path = "../casa-logging" }
+casa-mstransform = { workspace = true, features = ["msv4"] }
 casa-simulation = { path = "../casa-simulation" }
-casa-ms = { path = "../casa-ms", features = ["msv4"] }
-casa-observation = { path = "../casa-observation" }
+casa-ms = { workspace = true, features = ["msv4"] }
+casa-observation.workspace = true
 flate2 = "1"
 tar = "0.4"
-casa-test-support = { path = "../casa-test-support" }
+casa-test-support = { path = "../../dev/casa-test-support" }
 ndarray.workspace = true
-
-[[bin]]
-name = "calibrate"
-path = "src/bin/calibrate.rs"
-
-[[bin]]
-name = "flagdata"
-path = "src/bin/flagdata.rs"
-
-[[bin]]
-name = "mstransform"
-path = "src/bin/mstransform.rs"
 
 [lints]
 workspace = true

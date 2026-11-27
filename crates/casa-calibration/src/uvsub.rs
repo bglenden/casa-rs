@@ -4,16 +4,16 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use casa_core::{ArrayValue, Complex32, ScalarValue};
 use casa_ms::schema::main_table::{VisibilityDataColumn, initial_model_visibility};
-use casa_ms::write_session::{
-    MeasurementSetMutationBatch, MeasurementSetWriteError, MeasurementSetWriteSession,
-};
 use casa_ms::{MeasurementSet, MsError, MsResult, MsSelection, ResolvedMsSelectionRow};
+use casa_ms::{MeasurementSetMutationBatch, MeasurementSetWriteError, MeasurementSetWriteSession};
 use casa_tables::{Table, TableInfo, TableWriteLock};
-use casa_types::{ArrayValue, Complex32, ScalarValue};
 use ndarray::{ArrayD, Axis, IxDyn};
 
-use crate::model_columns::{ScratchDestination, has_column, observed_column, scratch_write_plan};
+use crate::model_columns::{
+    ScratchDestination, ScratchWriteMode, has_column, observed_column, scratch_write_plan,
+};
 use crate::session::resolve_casa_calibration_selection;
 use crate::solve::grouping::VisibilityModels;
 
@@ -151,7 +151,12 @@ fn write_subtraction(
         ms,
         rows.iter().map(|row| row.row_index).collect(),
         &[CORRECTED],
-        create,
+        input,
+        if create {
+            ScratchWriteMode::Create
+        } else {
+            ScratchWriteMode::Replace
+        },
         false,
         lock,
     )?;
@@ -255,7 +260,7 @@ fn subtract_batch(
     input: &str,
     models: &VisibilityModels,
     correlations: &BTreeMap<i32, Vec<i32>>,
-    destination: &ScratchDestination,
+    destination: &ScratchDestination<'_>,
     subtraction: &mut Subtraction<'_>,
 ) -> MsResult<MeasurementSetMutationBatch> {
     let row_indices: Vec<_> = rows.iter().map(|row| row.row_index).collect();

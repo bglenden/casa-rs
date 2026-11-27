@@ -7,14 +7,15 @@ fn request(parameters: SimobserveParameters) -> SimobserveRequest {
     let resources = crate::SessionResources::from_controls(&crate::ExecutionControls::default())
         .expect("session resources");
     SimobserveRequest {
+        workspace: None,
         parameters,
         data_roots: Vec::new(),
         options: SimulatorOptions {
             measures: casa_test_support::deterministic_measures_provider(),
             resources,
-            now: casa_types::measures::MEpoch::from_mjd(
+            now: casa_core::measures::MEpoch::from_mjd(
                 60_000.0,
-                casa_types::measures::EpochRef::UTC,
+                casa_core::measures::EpochRef::UTC,
             ),
         },
     }

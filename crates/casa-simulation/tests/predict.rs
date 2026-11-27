@@ -23,14 +23,14 @@ use casa_coordinates::{
     CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate,
     StokesCoordinate, StokesType,
 };
+use casa_core::Correlation;
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::frequency::FrequencyRef;
 use casa_images::PagedImage;
 use casa_simulation::predict::{
     ModelPredictor, PredictError, PredictOptions, PredictRow, PredictionWorkspace, PrimaryBeam,
     SkyModel,
 };
-use casa_types::Correlation;
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::frequency::FrequencyRef;
 use ndarray::{ArrayD, IxDyn};
 use num_complex::Complex32;
 

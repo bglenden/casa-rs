@@ -5,9 +5,9 @@ mod multiband;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use casa_core::Complex32;
 use casa_fft::Fft2;
 use casa_ms::MeasurementSet;
-use casa_types::Complex32;
 
 use super::grouping::{
     DelaySpectrum, PriorCalibrationMode, SelectedSolveRow, SolveAccumulator, SolveGroupOptions,

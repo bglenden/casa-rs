@@ -165,7 +165,7 @@ def main() -> None:
     subprocess.run(["git", "-C", str(repo), "cat-file", "-e", args.revision + "^{commit}"], check=True)
     subprocess.run(["git", "-C", str(repo), "diff", "--exit-code", args.revision, "--",
                     ":(glob)crates/*/src/**", ":(glob)crates/*/resources/**",
-                    ":(glob)crates/*/Cargo.toml", "Cargo.toml", "Cargo.lock"], check=True)
+                    ":(glob)crates/*/Cargo.toml", "libs", "Cargo.toml", "Cargo.lock"], check=True)
     assert casatasks.version_string() == "6.7.6.14"
     assert casatools.version_string() == "6.7.6-14"
     args.work.mkdir(parents=True, exist_ok=False)

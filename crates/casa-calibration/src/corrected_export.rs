@@ -4,15 +4,16 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use casa_ms::ms::MeasurementSet;
+use casa_ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
+use casa_ms::selection::MsSelection;
 use casa_ms::{
     MeasurementSetColumnStorage, MeasurementSetColumnWriteMode, MeasurementSetMutationBatch,
     MeasurementSetMutationColumnBatch, MeasurementSetMutationColumnValues,
     MeasurementSetWriteColumnPlan, MeasurementSetWritePlan, MeasurementSetWriteResources,
-    MeasurementSetWriteSession, MsError, MsTransformRequest, TransformDataColumn,
-    maximum_visibility_cell_elements, mstransform, selection::MsSelection,
+    MeasurementSetWriteSession, MsError, maximum_visibility_cell_elements,
 };
+use casa_mstransform::{MsTransformRequest, TransformDataColumn, mstransform};
 use casa_tables::TableError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -127,7 +128,7 @@ pub fn export_corrected_data(
     export_corrected_data_with_overwrite(request, false)
 }
 
-pub(crate) fn export_corrected_data_with_overwrite(
+pub fn export_corrected_data_with_overwrite(
     request: &ExportCorrectedDataRequest,
     overwrite: bool,
 ) -> Result<ExportCorrectedDataReport, ExportCorrectedDataError> {
@@ -431,7 +432,7 @@ fn clone_corrected_tiles(
         .add_column(
             casa_tables::ColumnSchema::array_variable(
                 &temporary,
-                casa_types::PrimitiveType::Complex32,
+                casa_core::PrimitiveType::Complex32,
                 Some(2),
             ),
             None,

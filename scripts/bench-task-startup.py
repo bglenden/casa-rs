@@ -4,7 +4,7 @@
 Build both binaries in release mode, then run the benchmark against the
 included small CASA image::
 
-    cargo build --release -p casars-imexplore -p casars-msconvert --bins
+    cargo build --release -p casars-cli --bin imexplore --bin msconvert
     python scripts/bench-task-startup.py
 
 The image and the repository's small MSv2 fixture are copied to a temporary
@@ -22,8 +22,8 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-MS_FIXTURE = ROOT / "crates/casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz"
-IMAGE_FIXTURE = ROOT / "crates/casa-images/tests/data/casa-6.7.6/axis_maps/transposed.image"
+MS_FIXTURE = ROOT / "libs/casacore/casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz"
+IMAGE_FIXTURE = ROOT / "libs/casacore/casa-images/tests/data/casa-6.7.6/axis_maps/transposed.image"
 
 
 def measure(command, *, cwd, request, warmup, iterations, cleanup=None):

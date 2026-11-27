@@ -171,7 +171,7 @@ rerun an eight-stage ladder or broaden the ticket's gates.
 CASA comparisons must preserve the mode's selection, weighting, normalization,
 products, and scientific tolerances. For a parity difference, instrument the
 first divergent computation in both implementations rather than trying blind
-parameter changes. Use `tools/perf/imager/run_workload.py` bundles when useful.
+parameter changes. Use `suites/perf/imager/run_workload.py` bundles when useful.
 
 Compare every required image/product numerically and visually at acceptance.
 Use shared scales for CASA/casa-rs panels and labelled differences. Prefer

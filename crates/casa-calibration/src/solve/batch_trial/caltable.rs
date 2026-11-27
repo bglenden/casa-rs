@@ -6,14 +6,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::{Complex32, ScalarValue};
+use casa_ms::MeasurementSet;
 use casa_ms::MeasurementSetBuilder;
-use casa_ms::ms::MeasurementSet;
-use casa_ms::observation_io::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
 use casa_ms::observation_io::{
     Msv4Codec, NamespaceAntenna, NamespaceRows, NamespaceWindow, OpenOptions, PersistedNamespace,
     open, persisted_namespace,
 };
 use casa_ms::selection::MsSelection;
+use casa_mstransform::convert::{ConversionOptions, LossKind, PaddingRows, to_msv4};
 use casa_observation::{
     AccessRequest, AntennaId, BatchBuffers, BindingTolerance, CorrelationRequest, Grouping,
     Observation, ObservationError, PartitionId, ReadEvent, Roles, TimeSelection, WeightRequest,
@@ -21,8 +23,6 @@ use casa_observation::{
 use casa_simulation::synthetic::{
     Antenna, Field, ObservationRequest, SpectralSetup, generate_unflagged,
 };
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::{Complex32, ScalarValue};
 
 use super::binding::{CalibrationBinding, StatedAssociations, write_gain_table};
 use super::feed::solve_sequential;
@@ -117,7 +117,7 @@ fn corrected(
             let ReadEvent::Batch(batch) = event else {
                 continue;
             };
-            let zero = casa_types::measures::MjdHighPrec::new(0.0, 0.0);
+            let zero = casa_core::measures::MjdHighPrec::new(0.0, 0.0);
             for sample in 0..batch.samples() {
                 let baseline = batch.sample(sample).baseline;
                 let key = (
@@ -174,7 +174,7 @@ fn through_binding(
     let baseline = batch.sample(sample).baseline;
     let time = batch.time.seconds_since(
         sample / batch.samples_per_time(),
-        casa_types::measures::MjdHighPrec::new(0.0, 0.0),
+        casa_core::measures::MjdHighPrec::new(0.0, 0.0),
     );
     // A field or antenna the table lacks has no solutions, and its samples
     // are flagged; gainfield and nearest-field policy are not trialled.
@@ -372,7 +372,7 @@ fn a_caltable_rebinds_to_a_store_numbered_otherwise() {
             ],
             ..conversion_options()
         };
-        casa_ms::observation_io::convert::to_msv2(
+        casa_mstransform::convert::to_msv2(
             &converted,
             &Path::new(&keep).join("without_v4.ms"),
             &options,
@@ -1045,7 +1045,7 @@ fn the_writer_refuses_a_namespace_of_another_opening() {
         .fill_column_range(
             "SCAN_NUMBER",
             casa_tables::RowRange::new(60, 120),
-            casa_types::Value::Scalar(ScalarValue::Int32(2)),
+            casa_core::Value::Scalar(ScalarValue::Int32(2)),
         )
         .expect("scan");
     ms.save().expect("save");
@@ -1257,13 +1257,13 @@ fn an_unbound_field_takes_no_solutions() {
     .expect("gaincal");
     let target = fixture(&root.path().join("moved"), "ms_trial.ms");
     let mut ms = MeasurementSet::open(&target).expect("ms");
-    let moved = casa_types::ArrayValue::Float64(
+    let moved = casa_core::ArrayValue::Float64(
         ndarray::ArrayD::from_shape_vec(vec![2, 1], vec![0.3, -0.7]).expect("shape"),
     );
     ms.subtable_mut(casa_ms::SubtableId::Field)
         .expect("FIELD")
         .cell_accessor_mut(0, "PHASE_DIR")
-        .and_then(|mut cell| cell.set(casa_types::Value::Array(moved)))
+        .and_then(|mut cell| cell.set(casa_core::Value::Array(moved)))
         .expect("move the field");
     ms.save().expect("save");
     drop(ms);
@@ -1305,7 +1305,7 @@ fn the_binding_refuses_an_applier_of_another_opening() {
         .fill_column_range(
             "SCAN_NUMBER",
             casa_tables::RowRange::new(60, 120),
-            casa_types::Value::Scalar(ScalarValue::Int32(2)),
+            casa_core::Value::Scalar(ScalarValue::Int32(2)),
         )
         .expect("scan");
     ms.save().expect("save");

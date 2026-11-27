@@ -5,10 +5,10 @@ use super::*;
 fn model(path: &Path, n: usize, local: bool, measures: &Arc<dyn MeasuresProvider>) {
     let mut coordinates = ImageCoordinates::new();
     let direction = MDirection::from_angles(CENTRE_RAD[0], CENTRE_RAD[1], DirectionRef::J2000);
-    let frame = casa_types::measures::MeasFrame::new()
+    let frame = casa_core::measures::MeasFrame::new()
         .with_measures(measures.clone())
         .with_epoch(MEpoch::from_mjd(REFERENCE_MJD + 5. / 86400., EpochRef::UTC))
-        .with_position(casa_types::measures::MPosition::new_itrf(
+        .with_position(casa_core::measures::MPosition::new_itrf(
             -1601185., -5041977., 3554875.,
         ));
     let reference = if local {

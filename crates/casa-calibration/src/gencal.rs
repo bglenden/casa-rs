@@ -4,7 +4,7 @@
 mod antpos_evla;
 mod antpos_file;
 mod eop;
-pub(crate) mod jyperk;
+pub mod jyperk;
 mod power_curve;
 mod specify_tool;
 mod spectral_axis;
@@ -23,12 +23,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::path::{Path, PathBuf};
 
-use casa_ms::ms::MeasurementSet;
-use casa_ms::schema::SubtableId;
-use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
-use casa_types::{
+use casa_core::{
     ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
+use casa_ms::MeasurementSet;
+use casa_ms::schema::SubtableId;
+use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -125,7 +125,7 @@ impl GencalType {
         }
     }
 
-    pub(crate) fn is_gain_curve(self) -> bool {
+    pub fn is_gain_curve(self) -> bool {
         matches!(self, Self::Gc | Self::Gceff | Self::Eff)
     }
 
@@ -310,7 +310,8 @@ pub fn gencal(request: &GencalRequest) -> Result<GencalReport, GencalError> {
     )
 }
 
-pub(crate) fn gencal_with_output_mode(
+/// Generate a prior calibration table using an explicit output conflict policy.
+pub fn gencal_with_output_mode(
     request: &GencalRequest,
     polarization: &str,
     infile: Option<&Path>,
@@ -742,7 +743,7 @@ fn antpos_rows(
     let rotate = if request.caltype == GencalType::AntposVla {
         let provider =
             casa_ms::open_measures_runtime().map_err(|error| invalid(error.to_string()))?;
-        let vla = casa_types::measures::position::MPosition::from_observatory_name(
+        let vla = casa_core::measures::position::MPosition::from_observatory_name(
             "VLA",
             provider.as_ref(),
         )
@@ -932,7 +933,7 @@ fn open_measurement_set(path: &Path) -> Result<MeasurementSet, GencalError> {
     })
 }
 
-pub(crate) fn prior_inputs_for_report(
+pub fn prior_inputs_for_report(
     request: &GencalRequest,
     infile: Option<&Path>,
 ) -> Result<Vec<PathBuf>, GencalError> {
@@ -990,19 +991,19 @@ fn write_prior_caltable(
 ) -> Result<GencalReport, GencalError> {
     let (parameter_column, parameter_type, parameter_name) = request.caltype.parameter_column();
     let schema = TableSchema::new(vec![
-        ColumnSchema::scalar(COL_TIME, casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar(COL_FIELD_ID, casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_SPECTRAL_WINDOW_ID, casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_ANTENNA1, casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_ANTENNA2, casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_INTERVAL, casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar(COL_SCAN_NUMBER, casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_OBSERVATION_ID, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_TIME, casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar(COL_FIELD_ID, casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_SPECTRAL_WINDOW_ID, casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_ANTENNA1, casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_ANTENNA2, casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_INTERVAL, casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar(COL_SCAN_NUMBER, casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_OBSERVATION_ID, casa_core::PrimitiveType::Int32),
         ColumnSchema::array_variable(parameter_column, parameter_type, Some(2)),
-        ColumnSchema::array_variable(COL_PARAMERR, casa_types::PrimitiveType::Float32, Some(2)),
-        ColumnSchema::array_variable(COL_FLAG, casa_types::PrimitiveType::Bool, Some(2)),
-        ColumnSchema::array_variable(COL_SNR, casa_types::PrimitiveType::Float32, Some(2)),
-        ColumnSchema::array_variable(COL_WEIGHT, casa_types::PrimitiveType::Float32, Some(2)),
+        ColumnSchema::array_variable(COL_PARAMERR, casa_core::PrimitiveType::Float32, Some(2)),
+        ColumnSchema::array_variable(COL_FLAG, casa_core::PrimitiveType::Bool, Some(2)),
+        ColumnSchema::array_variable(COL_SNR, casa_core::PrimitiveType::Float32, Some(2)),
+        ColumnSchema::array_variable(COL_WEIGHT, casa_core::PrimitiveType::Float32, Some(2)),
     ])
     .expect("valid gencal caltable schema");
     let mut writer = CalibrationTableWriter::staged(
@@ -1402,7 +1403,7 @@ fn f32_column(values: &[f32]) -> ArrayValue {
     )
 }
 
-pub(crate) fn default_vla_gaincurve_table() -> Option<PathBuf> {
+pub fn default_vla_gaincurve_table() -> Option<PathBuf> {
     if let Ok(path) = env::var("CASA_RS_VLA_GAINCURVES") {
         return Some(PathBuf::from(path));
     }

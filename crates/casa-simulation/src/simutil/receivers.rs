@@ -2,7 +2,7 @@
 //! What `simobserve` assumes of each telescope's antennas and receivers:
 //! `simutil.noisetemp`, `bandname` and `polsettings`.
 
-use casa_types::quanta::Quantity;
+use casa_core::quanta::Quantity;
 
 use super::{SimutilError, qa};
 

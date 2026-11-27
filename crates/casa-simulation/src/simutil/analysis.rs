@@ -49,10 +49,10 @@ mod fidelity;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_core::ArrayValue;
 use casa_images::{GaussianBeam, ImageError, ImageInfo, ImageInterface, PagedImage};
 use casa_lattices::LatticeError;
 use casa_ms::MeasurementSet;
-use casa_types::ArrayValue;
 use ndarray::ArrayD;
 use thiserror::Error;
 
@@ -261,7 +261,7 @@ fn both(a: Option<ArrayD<bool>>, b: Option<ArrayD<bool>>) -> Option<ArrayD<bool>
 
 /// Write `pixels` as a new single-precision image at `path`, replacing what
 /// is there, with `info` and, when given, `mask` as the default `mask0`.
-pub(crate) fn write_product(
+pub fn write_product(
     path: &Path,
     pixels: &ArrayD<f32>,
     coordinates: CoordinateSystem,

@@ -13,8 +13,8 @@ def load_catalog() -> list[dict[str, object]]:
     repo_root = pathlib.Path(__file__).resolve().parents[1]
     catalog_path = (
         repo_root
-        / "crates"
-        / "casa-provider-contracts"
+        / "surfaces"
+        / "casa-contracts"
         / "resources"
         / "application-catalog.json"
     )

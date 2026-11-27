@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-25",
+  "revision": "04c1219c08095474242bb41b961bb2b2b3019718",
+  "source_revision": "04c1219c08095474242bb41b961bb2b2b3019718",
+  "baseline_revision": "479e7638fa0eac7e9946c6ab80e2f6044498b983",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only pointing-lists --work <new-dir> --native-bin <msexplore>",
+  "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs on the four-epoch ALMA POINTING fixture. Time and antenna longitude versus scalar antenna latitude with scalar, empty and parallel controls.",
+  "result": "passed",
+  "baseline_result": "The native public task rejects the one-entry yframe list after the reference exports 12 samples.",
+  "paired_text_exports": 4,
+  "paired_points": 48,
+  "scalar_reference_exports": 7,
+  "corrected_text_exports": 3,
+  "corrected_points": 84,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "rendered_coordinates": 108,
+  "paired_refusals": 9,
+  "reference_backend_refusals": 2
+}

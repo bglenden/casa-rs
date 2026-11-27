@@ -16,13 +16,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use casa_core::{ArrayValue, ScalarValue};
 use casa_ms::ChannelSelection;
-use casa_ms::ms::MeasurementSet;
+use casa_ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::selection::{MsSelection, ResolvedMsSelection};
 use casa_ms::{MsError, MsSpectralWindow};
 use casa_tables::{Table, TableError, TableOptions};
-use casa_types::{ArrayValue, ScalarValue};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -99,7 +99,7 @@ pub enum GainFieldSelector {
 }
 
 impl GainFieldSelector {
-    pub(crate) fn parse_casa(value: &str) -> Option<Self> {
+    pub fn parse_casa(value: &str) -> Option<Self> {
         match value {
             "" => None,
             "nearest" => Some(Self::Nearest),
@@ -407,7 +407,7 @@ pub enum ApplyPlanError {
 
     /// One traditional argument failed after opening and selecting the MS.
     #[error(transparent)]
-    Argument(crate::ApplyArgumentError),
+    Argument(ApplyArgumentError),
 
     /// The MeasurementSet is outside the supported complex-DATA surface.
     #[error("MeasurementSet is missing required MAIN.DATA column")]
@@ -528,10 +528,24 @@ pub fn plan_apply_with_timings(
     plan_apply_with_preparation_error(ms, request, None)
 }
 
+/// A traditional applycal argument whose error follows MS setup and selection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, thiserror::Error)]
+pub enum ApplyArgumentError {
+    /// A table's positional calwt element was missing.
+    #[error("list index out of range")]
+    MissingCalwt,
+    /// A spwmap variant could not be read as a window map.
+    #[error("{0}")]
+    SpwMap(String),
+}
+
+/// Deferred preparation failure raised after MS opening and selection succeed.
 #[derive(Clone, Copy)]
-pub(crate) enum ApplyPreparationError<'a> {
+pub enum ApplyPreparationError<'a> {
+    /// Callibrary parse failure.
     Callibrary(&'a str),
-    Argument(&'a crate::ApplyArgumentError),
+    /// Traditional argument parse failure.
+    Argument(&'a ApplyArgumentError),
 }
 
 pub(crate) fn plan_apply_with_preparation_error(
@@ -1143,8 +1157,8 @@ fn scalar_kind(value: &ScalarValue) -> &'static str {
 mod tests {
     use std::path::PathBuf;
 
+    use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
     use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
-    use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
     use ndarray::{ArrayD, IxDyn, ShapeBuilder};
     use tempfile::tempdir;
 
@@ -1233,7 +1247,7 @@ mod tests {
         std::fs::create_dir_all(&cal_desc_root).unwrap();
         let cal_desc_schema = TableSchema::new(vec![ColumnSchema::array_variable(
             "SPECTRAL_WINDOW_ID",
-            casa_types::PrimitiveType::Int32,
+            casa_core::PrimitiveType::Int32,
             Some(1),
         )])
         .unwrap();
@@ -1266,7 +1280,7 @@ mod tests {
         std::fs::create_dir_all(&bad_root).unwrap();
         let bad_schema = TableSchema::new(vec![ColumnSchema::array_variable(
             "SPECTRAL_WINDOW_ID",
-            casa_types::PrimitiveType::Float32,
+            casa_core::PrimitiveType::Float32,
             Some(1),
         )])
         .unwrap();
@@ -1296,7 +1310,7 @@ mod tests {
         let mut field_table = Table::with_schema_memory(
             TableSchema::new(vec![ColumnSchema::scalar(
                 "NAME",
-                casa_types::PrimitiveType::String,
+                casa_core::PrimitiveType::String,
             )])
             .unwrap(),
         );
@@ -1310,11 +1324,11 @@ mod tests {
         let spw_path = temp.path().join("SPECTRAL_WINDOW");
         let mut spw_table = Table::with_schema_memory(
             TableSchema::new(vec![
-                ColumnSchema::scalar("NUM_CHAN", casa_types::PrimitiveType::Int32),
-                ColumnSchema::scalar("REF_FREQUENCY", casa_types::PrimitiveType::Float64),
+                ColumnSchema::scalar("NUM_CHAN", casa_core::PrimitiveType::Int32),
+                ColumnSchema::scalar("REF_FREQUENCY", casa_core::PrimitiveType::Float64),
                 ColumnSchema::array_variable(
                     "CHAN_FREQ",
-                    casa_types::PrimitiveType::Float64,
+                    casa_core::PrimitiveType::Float64,
                     Some(1),
                 ),
             ])
@@ -1425,9 +1439,7 @@ mod tests {
         assert_eq!(unique_i32([5, 3, 5, 1, 3]), vec![1, 3, 5]);
         assert_eq!(scalar_kind(&ScalarValue::Bool(true)), "Bool");
         assert_eq!(
-            scalar_kind(&ScalarValue::Complex64(casa_types::Complex64::new(
-                1.0, 2.0
-            ))),
+            scalar_kind(&ScalarValue::Complex64(casa_core::Complex64::new(1.0, 2.0))),
             "Complex64"
         );
     }

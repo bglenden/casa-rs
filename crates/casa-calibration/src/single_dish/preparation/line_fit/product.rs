@@ -3,12 +3,10 @@
 
 use std::path::Path;
 
-use casa_ms::{
-    MsDataDescription, MsDataDescriptionMut, MsPolarization,
-    transform::ensure_stokes_i_polarization,
-};
+use casa_core::Correlation;
+use casa_ms::{MsDataDescription, MsDataDescriptionMut, MsPolarization};
+use casa_mstransform::ensure_stokes_i_polarization;
 use casa_tables::{Table, TableOptions};
-use casa_types::Correlation;
 
 use super::error_text;
 

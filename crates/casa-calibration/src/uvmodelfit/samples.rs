@@ -5,11 +5,11 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 
 use casa_components::ShapeTransform;
+use casa_core::{ArrayValue, Complex32, Complex64};
+use casa_ms::maximum_visibility_cell_elements;
 use casa_ms::schema::main_table::VisibilityDataColumn;
-use casa_ms::write_session::maximum_visibility_cell_elements;
 use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow};
 use casa_tables::{SelectedArray1DCells, Table};
-use casa_types::{ArrayValue, Complex32, Complex64};
 use ndarray::{ArrayD, Axis};
 
 use super::{Equations, FitModel, PARAMETERS, invalid};

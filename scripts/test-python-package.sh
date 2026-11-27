@@ -23,8 +23,8 @@ python_bin="$("$repo_root/scripts/resolve-python.sh" 3.10)"
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/casars-python.XXXXXXXX")"
 cleanup() {
   rm -rf "$tmp_root"
-  rm -rf crates/casars-python/.pytest_cache crates/casars-python/python/casars/__pycache__
-  find crates/casars-python/python/casars -maxdepth 1 \( -name '_core*.so' -o -name '_core*.pyd' \) -delete
+  rm -rf frontends/casars-python/.pytest_cache frontends/casars-python/python/casars/__pycache__
+  find frontends/casars-python/python/casars -maxdepth 1 \( -name '_core*.so' -o -name '_core*.pyd' \) -delete
 }
 trap cleanup EXIT
 
@@ -33,31 +33,19 @@ trap cleanup EXIT
 if [[ -z "${CASA_RS_MEASURESPATH:-}" ]]; then
   measures_root="$tmp_root/casa-measures"
   mkdir -p "$measures_root"
-  tar -xzf crates/casa-measures-data/data/casa-measures-runtime.tar.gz -C "$measures_root"
-  cp crates/casa-measures-data/data/casa-measures-runtime.provenance.json \
+  tar -xzf libs/casacore/casa-measures/data/casa-measures-runtime.tar.gz -C "$measures_root"
+  cp libs/casacore/casa-measures/data/casa-measures-runtime.provenance.json \
     "$measures_root/.casa-rs-measures-provenance.json"
   export CASA_RS_MEASURESPATH="$measures_root"
 fi
-
-# The end-to-end tests start a real task executable, which a development
-# checkout's resolver finds in this build (#931); they must not skip here.
-echo "==> Building the task executables the end-to-end tests run"
-cargo build -q -p casa-ms --bin flagmanager --bin msexplore -p casa-calibration --bin calibrate --bin flagdata
-cargo build -q -p casa-images --bin immath --bin exportfits --bin imsubimage --bin importfits --bin impv
-cargo build -q -p casars-imexplore --bin imexplore
-cargo build -q -p casa-images --bin imregrid
-cargo build -q -p casars-msconvert --bin msconvert
-cargo build -q -p casars-simulation --bin simobserve --bin simanalyze --bin simalma
-cargo build -q -p casa-images --bin immoments --bin impbcor --bin feather
-export CASARS_REQUIRE_TASK_BINARIES=1
 
 editable_venv="$tmp_root/editable-venv"
 
 echo "==> Installing editable casars package and running Python tests"
 "$python_bin" -m venv "$editable_venv"
 source "$editable_venv/bin/activate"
-python -m pip install -e "crates/casars-python[$extras]"
-pytest crates/casars-python/python/tests -q
+python -m pip install -e "frontends/casars-python[$extras]"
+pytest frontends/casars-python/python/tests -q
 deactivate
 if [[ "$editable_only" == true ]]; then
   exit 0
@@ -66,7 +54,7 @@ fi
 # The built wheel and sdist are tested too: an editable checkout can import
 # files a packaged install lacks. Their tests run from outside the source tree
 # and first prove that `casars` and `casars._core` come from the install.
-tests_dir="$repo_root/crates/casars-python/python/tests"
+tests_dir="$repo_root/frontends/casars-python/python/tests"
 test_installed() {
   local venv="$1"
   shift
@@ -106,6 +94,37 @@ wheel_venv="$tmp_root/wheel-venv"
 echo "==> Installing the built wheel and running Python tests"
 "$python_bin" -m venv "$wheel_venv"
 "$wheel_venv/bin/python" -m pip install "${wheels[0]}[$extras]"
+
+# Run from a separate workspace with an empty PATH, even if the caller
+# already has a suite installed or task binaries built in the checkout.
+echo "==> Running an installed wheel task with CLI commands unavailable"
+no_cli_workspace="$tmp_root/wheel-workspace"
+no_cli_path="$tmp_root/no-commands"
+mkdir "$no_cli_workspace" "$no_cli_path"
+tar -xzf libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz -C "$no_cli_workspace"
+(
+  cd "$no_cli_workspace"
+  for variable in $(compgen -e); do
+    case "$variable" in
+      CASARS_*) unset "$variable" ;;
+    esac
+  done
+  PATH="$no_cli_path" CARGO_TARGET_DIR="$no_cli_path" "$wheel_venv/bin/python" -I - "$wheel_venv" <<'PY'
+from pathlib import Path
+import shutil
+import sys
+
+import casars._core
+from casars import tasks
+
+assert Path(sys.argv[1]).resolve() in Path(casars._core.__file__).resolve().parents
+assert shutil.which("flagmanager") is None
+ms = Path("mssel_test_small.ms")
+completion = tasks.run("flagmanager", vis=ms, mode="list")
+assert completion.successful, completion.describe()
+assert tasks.flagmanager(vis=ms, mode="list") == {"MS": str(ms.resolve())}
+PY
+)
 test_installed "$wheel_venv" "$tests_dir"
 
 # A development build is enough to prove that the sdist is complete and

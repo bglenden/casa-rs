@@ -4,9 +4,9 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use casa_core::ArrayValue;
 use casa_ms::MeasurementSet;
 use casa_tables::RequiredScalarColumnValues;
-use casa_types::ArrayValue;
 
 use super::spectrum::{self, ReferenceTimestamp, SkySpectrum};
 use crate::CalibrationOutputMode;
@@ -28,7 +28,8 @@ struct ReferenceGroup {
     state: i32,
 }
 
-pub(super) fn generate(
+/// Solve and write position-switch sky spectra (`SDSKY_PS`) from OFF integrations.
+pub fn generate(
     ms: &MeasurementSet,
     rows: &[usize],
     destination: &Path,

@@ -8,11 +8,11 @@ use std::str::SplitWhitespace;
 use casa_coordinates::{
     CoordinateSystem, CoordinateType, LinearCoordinate, StokesCoordinate, StokesType,
 };
+use casa_core::Complex32;
 use casa_images::{ImagePixel, PagedImage};
 use casa_imaging_operator::LegacyEpConvolution;
 use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_ms::{MsError, MsResult};
-use casa_types::Complex32;
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 const AUX: &str = "aux.dat";

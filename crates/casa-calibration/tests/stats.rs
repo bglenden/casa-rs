@@ -4,29 +4,29 @@ mod common;
 
 use std::path::PathBuf;
 
+use casa_core::Complex32;
 use casa_tables::{ColumnSchema, DataManagerKind, Table, TableInfo, TableOptions, TableSchema};
-use casa_types::Complex32;
 #[cfg(feature = "slow-tests")]
 use serde_json::Value as JsonValue;
 use tempfile::TempDir;
 
 use casa_calibration::{CalibrationStatsAxis, CalibrationStatsRequest, calibration_stats};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 fn create_misc_stats_table(root: &std::path::Path) -> PathBuf {
     let schema = TableSchema::new(vec![
-        ColumnSchema::scalar("FIELD_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("SPECTRAL_WINDOW_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("ANTENNA1", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("OBSERVATION_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::array_variable("FLAG", casa_types::PrimitiveType::Int32, Some(1)),
-        ColumnSchema::array_variable("ARRAY_I32", casa_types::PrimitiveType::Int32, Some(1)),
-        ColumnSchema::array_variable("ARRAY_I64", casa_types::PrimitiveType::Int64, Some(1)),
-        ColumnSchema::array_variable("ARRAY_F64", casa_types::PrimitiveType::Float64, Some(1)),
-        ColumnSchema::scalar("SCALAR_BOOL", casa_types::PrimitiveType::Bool),
-        ColumnSchema::scalar("SCALAR_I64", casa_types::PrimitiveType::Int64),
-        ColumnSchema::scalar("SCALAR_F32", casa_types::PrimitiveType::Float32),
-        ColumnSchema::scalar("SCALAR_STR", casa_types::PrimitiveType::String),
+        ColumnSchema::scalar("FIELD_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("SPECTRAL_WINDOW_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("ANTENNA1", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("OBSERVATION_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::array_variable("FLAG", casa_core::PrimitiveType::Int32, Some(1)),
+        ColumnSchema::array_variable("ARRAY_I32", casa_core::PrimitiveType::Int32, Some(1)),
+        ColumnSchema::array_variable("ARRAY_I64", casa_core::PrimitiveType::Int64, Some(1)),
+        ColumnSchema::array_variable("ARRAY_F64", casa_core::PrimitiveType::Float64, Some(1)),
+        ColumnSchema::scalar("SCALAR_BOOL", casa_core::PrimitiveType::Bool),
+        ColumnSchema::scalar("SCALAR_I64", casa_core::PrimitiveType::Int64),
+        ColumnSchema::scalar("SCALAR_F32", casa_core::PrimitiveType::Float32),
+        ColumnSchema::scalar("SCALAR_STR", casa_core::PrimitiveType::String),
     ])
     .expect("valid misc stats schema");
     let mut table = Table::with_schema(schema);
@@ -74,10 +74,10 @@ fn create_misc_stats_table(root: &std::path::Path) -> PathBuf {
 
 fn create_grouping_fallback_stats_table(root: &std::path::Path) -> PathBuf {
     let schema = TableSchema::new(vec![
-        ColumnSchema::scalar("FIELD_ID", casa_types::PrimitiveType::Int64),
-        ColumnSchema::scalar("SPECTRAL_WINDOW_ID", casa_types::PrimitiveType::String),
-        ColumnSchema::scalar("OBSERVATION_ID", casa_types::PrimitiveType::String),
-        ColumnSchema::array_variable("CPARAM", casa_types::PrimitiveType::Complex32, Some(1)),
+        ColumnSchema::scalar("FIELD_ID", casa_core::PrimitiveType::Int64),
+        ColumnSchema::scalar("SPECTRAL_WINDOW_ID", casa_core::PrimitiveType::String),
+        ColumnSchema::scalar("OBSERVATION_ID", casa_core::PrimitiveType::String),
+        ColumnSchema::array_variable("CPARAM", casa_core::PrimitiveType::Complex32, Some(1)),
     ])
     .expect("valid grouping fallback schema");
     let mut table = Table::with_schema(schema);

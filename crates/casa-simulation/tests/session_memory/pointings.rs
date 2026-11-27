@@ -6,8 +6,8 @@ use super::{
     SimulatorOptions, VoltagePatternSpec, alone, charge_process_caches, configured, resources,
     scan, write_components,
 };
+use casa_core::{ScalarValue, Value};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ScalarValue, Value};
 
 #[test]
 fn stored_pointing_rows_are_admitted_before_beam_preparation() {

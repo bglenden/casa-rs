@@ -7,33 +7,33 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "slow-tests")]
 use std::process::Command;
 
+use casa_core::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
+use casa_ms::MeasurementSet;
 use casa_ms::MeasurementSetBuilder;
-use casa_ms::column_def::{ColumnDef, ColumnKind, build_table_schema};
-use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::main_table::OptionalMainColumn;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::schema::{self as ms_schema, SubtableId};
+use casa_ms::{ColumnDef, ColumnKind, build_table_schema};
 use casa_tables::{ColumnSchema, DataManagerKind, Table, TableInfo, TableOptions, TableSchema};
-use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 #[cfg(feature = "slow-tests")]
 use serde_json::Value as JsonValue;
 
 pub fn create_minimal_complex_caltable(root: &Path) -> PathBuf {
     let schema = TableSchema::new(vec![
-        ColumnSchema::scalar("TIME", casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar("FIELD_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("SPECTRAL_WINDOW_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("ANTENNA1", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("ANTENNA2", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("INTERVAL", casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar("SCAN_NUMBER", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("OBSERVATION_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::array_variable("CPARAM", casa_types::PrimitiveType::Complex32, Some(1)),
-        ColumnSchema::array_variable("PARAMERR", casa_types::PrimitiveType::Float32, Some(1)),
-        ColumnSchema::array_variable("FLAG", casa_types::PrimitiveType::Bool, Some(1)),
-        ColumnSchema::array_variable("SNR", casa_types::PrimitiveType::Float32, Some(1)),
-        ColumnSchema::array_variable("WEIGHT", casa_types::PrimitiveType::Float32, Some(1)),
+        ColumnSchema::scalar("TIME", casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar("FIELD_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("SPECTRAL_WINDOW_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("ANTENNA1", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("ANTENNA2", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("INTERVAL", casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar("SCAN_NUMBER", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("OBSERVATION_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::array_variable("CPARAM", casa_core::PrimitiveType::Complex32, Some(1)),
+        ColumnSchema::array_variable("PARAMERR", casa_core::PrimitiveType::Float32, Some(1)),
+        ColumnSchema::array_variable("FLAG", casa_core::PrimitiveType::Bool, Some(1)),
+        ColumnSchema::array_variable("SNR", casa_core::PrimitiveType::Float32, Some(1)),
+        ColumnSchema::array_variable("WEIGHT", casa_core::PrimitiveType::Float32, Some(1)),
     ])
     .expect("valid schema");
     let mut table = Table::with_schema(schema);
@@ -258,21 +258,21 @@ pub fn create_apply_fixture_caltable(
     );
 
     let schema = TableSchema::new(vec![
-        ColumnSchema::scalar("TIME", casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar("FIELD_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("SPECTRAL_WINDOW_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("ANTENNA1", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("ANTENNA2", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("INTERVAL", casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar("SCAN_NUMBER", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("OBSERVATION_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("ARRAY_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("TIME_EXTRA_PREC", casa_types::PrimitiveType::Float64),
-        ColumnSchema::array_variable("CPARAM", casa_types::PrimitiveType::Complex32, Some(1)),
-        ColumnSchema::array_variable("PARAMERR", casa_types::PrimitiveType::Float32, Some(1)),
-        ColumnSchema::array_variable("FLAG", casa_types::PrimitiveType::Bool, Some(1)),
-        ColumnSchema::array_variable("SNR", casa_types::PrimitiveType::Float32, Some(1)),
-        ColumnSchema::array_variable("WEIGHT", casa_types::PrimitiveType::Float32, Some(1)),
+        ColumnSchema::scalar("TIME", casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar("FIELD_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("SPECTRAL_WINDOW_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("ANTENNA1", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("ANTENNA2", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("INTERVAL", casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar("SCAN_NUMBER", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("OBSERVATION_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("ARRAY_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("TIME_EXTRA_PREC", casa_core::PrimitiveType::Float64),
+        ColumnSchema::array_variable("CPARAM", casa_core::PrimitiveType::Complex32, Some(1)),
+        ColumnSchema::array_variable("PARAMERR", casa_core::PrimitiveType::Float32, Some(1)),
+        ColumnSchema::array_variable("FLAG", casa_core::PrimitiveType::Bool, Some(1)),
+        ColumnSchema::array_variable("SNR", casa_core::PrimitiveType::Float32, Some(1)),
+        ColumnSchema::array_variable("WEIGHT", casa_core::PrimitiveType::Float32, Some(1)),
     ])
     .expect("valid schema");
     let mut table = Table::with_schema(schema);
@@ -447,21 +447,21 @@ pub fn create_apply_gain_caltable(
     rows: &[SyntheticGainSolutionRow],
 ) -> PathBuf {
     let schema = TableSchema::new(vec![
-        ColumnSchema::scalar("TIME", casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar("FIELD_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("SPECTRAL_WINDOW_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("ANTENNA1", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("ANTENNA2", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("INTERVAL", casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar("SCAN_NUMBER", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("OBSERVATION_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("ARRAY_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("TIME_EXTRA_PREC", casa_types::PrimitiveType::Float64),
-        ColumnSchema::array_variable("CPARAM", casa_types::PrimitiveType::Complex32, Some(1)),
-        ColumnSchema::array_variable("PARAMERR", casa_types::PrimitiveType::Float32, Some(1)),
-        ColumnSchema::array_variable("FLAG", casa_types::PrimitiveType::Bool, Some(1)),
-        ColumnSchema::array_variable("SNR", casa_types::PrimitiveType::Float32, Some(1)),
-        ColumnSchema::array_variable("WEIGHT", casa_types::PrimitiveType::Float32, Some(1)),
+        ColumnSchema::scalar("TIME", casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar("FIELD_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("SPECTRAL_WINDOW_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("ANTENNA1", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("ANTENNA2", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("INTERVAL", casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar("SCAN_NUMBER", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("OBSERVATION_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("ARRAY_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("TIME_EXTRA_PREC", casa_core::PrimitiveType::Float64),
+        ColumnSchema::array_variable("CPARAM", casa_core::PrimitiveType::Complex32, Some(1)),
+        ColumnSchema::array_variable("PARAMERR", casa_core::PrimitiveType::Float32, Some(1)),
+        ColumnSchema::array_variable("FLAG", casa_core::PrimitiveType::Bool, Some(1)),
+        ColumnSchema::array_variable("SNR", casa_core::PrimitiveType::Float32, Some(1)),
+        ColumnSchema::array_variable("WEIGHT", casa_core::PrimitiveType::Float32, Some(1)),
     ])
     .expect("valid gain caltable schema");
     let mut table = Table::with_schema(schema);
@@ -580,18 +580,18 @@ pub fn create_apply_delay_caltable(
     rows: &[SyntheticDelaySolutionRow],
 ) -> PathBuf {
     let schema = TableSchema::new(vec![
-        ColumnSchema::scalar("TIME", casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar("FIELD_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("SPECTRAL_WINDOW_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("ANTENNA1", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("ANTENNA2", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("INTERVAL", casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar("SCAN_NUMBER", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("OBSERVATION_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("ARRAY_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("TIME_EXTRA_PREC", casa_types::PrimitiveType::Float64),
-        ColumnSchema::array_variable("FPARAM", casa_types::PrimitiveType::Float32, Some(1)),
-        ColumnSchema::array_variable("FLAG", casa_types::PrimitiveType::Bool, Some(1)),
+        ColumnSchema::scalar("TIME", casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar("FIELD_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("SPECTRAL_WINDOW_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("ANTENNA1", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("ANTENNA2", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("INTERVAL", casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar("SCAN_NUMBER", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("OBSERVATION_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("ARRAY_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("TIME_EXTRA_PREC", casa_core::PrimitiveType::Float64),
+        ColumnSchema::array_variable("FPARAM", casa_core::PrimitiveType::Float32, Some(1)),
+        ColumnSchema::array_variable("FLAG", casa_core::PrimitiveType::Bool, Some(1)),
     ])
     .expect("valid delay caltable schema");
     let mut table = Table::with_schema(schema);
@@ -698,24 +698,20 @@ pub fn create_apply_delay_caltable(
 
 pub fn create_apply_bpoly_caltable(root: &Path, rows: &[SyntheticBPolySolutionRow]) -> PathBuf {
     let schema = TableSchema::new(vec![
-        ColumnSchema::scalar("TIME", casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar("FIELD_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("ANTENNA1", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("INTERVAL", casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar("CAL_DESC_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("SCALE_FACTOR", casa_types::PrimitiveType::Complex32),
-        ColumnSchema::scalar("N_POLY_AMP", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("N_POLY_PHASE", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("PHASE_UNITS", casa_types::PrimitiveType::String),
-        ColumnSchema::array_variable("VALID_DOMAIN", casa_types::PrimitiveType::Float64, Some(1)),
-        ColumnSchema::array_variable(
-            "POLY_COEFF_AMP",
-            casa_types::PrimitiveType::Float64,
-            Some(4),
-        ),
+        ColumnSchema::scalar("TIME", casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar("FIELD_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("ANTENNA1", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("INTERVAL", casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar("CAL_DESC_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("SCALE_FACTOR", casa_core::PrimitiveType::Complex32),
+        ColumnSchema::scalar("N_POLY_AMP", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("N_POLY_PHASE", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("PHASE_UNITS", casa_core::PrimitiveType::String),
+        ColumnSchema::array_variable("VALID_DOMAIN", casa_core::PrimitiveType::Float64, Some(1)),
+        ColumnSchema::array_variable("POLY_COEFF_AMP", casa_core::PrimitiveType::Float64, Some(4)),
         ColumnSchema::array_variable(
             "POLY_COEFF_PHASE",
-            casa_types::PrimitiveType::Float64,
+            casa_core::PrimitiveType::Float64,
             Some(4),
         ),
     ])
@@ -2057,10 +2053,10 @@ fn write_bpoly_cal_desc_subtable(
     rows: &[SyntheticBPolySolutionRow],
 ) {
     let schema = TableSchema::new(vec![
-        ColumnSchema::scalar("NUM_RECEPTORS", casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar("NUM_RECEPTORS", casa_core::PrimitiveType::Int32),
         ColumnSchema::array_variable(
             "SPECTRAL_WINDOW_ID",
-            casa_types::PrimitiveType::Int32,
+            casa_core::PrimitiveType::Int32,
             Some(1),
         ),
     ])
@@ -2258,11 +2254,11 @@ pub fn make_subtable_row(columns: &[ColumnDef], overrides: &[(&str, Value)]) -> 
 fn default_value_for_column(column: &ColumnDef) -> Value {
     match column.column_kind {
         ColumnKind::Scalar => match column.data_type {
-            casa_types::PrimitiveType::Bool => Value::Scalar(ScalarValue::Bool(false)),
-            casa_types::PrimitiveType::Int32 => Value::Scalar(ScalarValue::Int32(0)),
-            casa_types::PrimitiveType::Float64 => Value::Scalar(ScalarValue::Float64(0.0)),
-            casa_types::PrimitiveType::Float32 => Value::Scalar(ScalarValue::Float32(0.0)),
-            casa_types::PrimitiveType::String => Value::Scalar(ScalarValue::String(String::new())),
+            casa_core::PrimitiveType::Bool => Value::Scalar(ScalarValue::Bool(false)),
+            casa_core::PrimitiveType::Int32 => Value::Scalar(ScalarValue::Int32(0)),
+            casa_core::PrimitiveType::Float64 => Value::Scalar(ScalarValue::Float64(0.0)),
+            casa_core::PrimitiveType::Float32 => Value::Scalar(ScalarValue::Float32(0.0)),
+            casa_core::PrimitiveType::String => Value::Scalar(ScalarValue::String(String::new())),
             _ => Value::Scalar(ScalarValue::Int32(0)),
         },
         ColumnKind::FixedArray { shape } => {
@@ -2274,19 +2270,19 @@ fn default_value_for_column(column: &ColumnDef) -> Value {
         ColumnKind::VariableArray { ndim } => {
             let shape = vec![0; ndim];
             match column.data_type {
-                casa_types::PrimitiveType::Bool => Value::Array(ArrayValue::Bool(
+                casa_core::PrimitiveType::Bool => Value::Array(ArrayValue::Bool(
                     ArrayD::from_shape_vec(IxDyn(&shape).f(), Vec::<bool>::new()).unwrap(),
                 )),
-                casa_types::PrimitiveType::Int32 => Value::Array(ArrayValue::Int32(
+                casa_core::PrimitiveType::Int32 => Value::Array(ArrayValue::Int32(
                     ArrayD::from_shape_vec(IxDyn(&shape).f(), Vec::<i32>::new()).unwrap(),
                 )),
-                casa_types::PrimitiveType::Float32 => Value::Array(ArrayValue::Float32(
+                casa_core::PrimitiveType::Float32 => Value::Array(ArrayValue::Float32(
                     ArrayD::from_shape_vec(IxDyn(&shape).f(), Vec::<f32>::new()).unwrap(),
                 )),
-                casa_types::PrimitiveType::Float64 => Value::Array(ArrayValue::Float64(
+                casa_core::PrimitiveType::Float64 => Value::Array(ArrayValue::Float64(
                     ArrayD::from_shape_vec(IxDyn(&shape).f(), Vec::<f64>::new()).unwrap(),
                 )),
-                casa_types::PrimitiveType::String => Value::Array(ArrayValue::String(
+                casa_core::PrimitiveType::String => Value::Array(ArrayValue::String(
                     ArrayD::from_shape_vec(IxDyn(&shape).f(), Vec::<String>::new()).unwrap(),
                 )),
                 _ => Value::Array(ArrayValue::Float64(
@@ -2304,11 +2300,11 @@ fn default_value_for_column_name(name: &str, columns: &[casa_tables::ColumnSchem
         .expect("column present in schema");
     match column.column_type() {
         casa_tables::ColumnType::Scalar => match column.data_type() {
-            Some(casa_types::PrimitiveType::Bool) => Value::Scalar(ScalarValue::Bool(false)),
-            Some(casa_types::PrimitiveType::Int32) => Value::Scalar(ScalarValue::Int32(0)),
-            Some(casa_types::PrimitiveType::Float32) => Value::Scalar(ScalarValue::Float32(0.0)),
-            Some(casa_types::PrimitiveType::Float64) => Value::Scalar(ScalarValue::Float64(0.0)),
-            Some(casa_types::PrimitiveType::String) => {
+            Some(casa_core::PrimitiveType::Bool) => Value::Scalar(ScalarValue::Bool(false)),
+            Some(casa_core::PrimitiveType::Int32) => Value::Scalar(ScalarValue::Int32(0)),
+            Some(casa_core::PrimitiveType::Float32) => Value::Scalar(ScalarValue::Float32(0.0)),
+            Some(casa_core::PrimitiveType::Float64) => Value::Scalar(ScalarValue::Float64(0.0)),
+            Some(casa_core::PrimitiveType::String) => {
                 Value::Scalar(ScalarValue::String(String::new()))
             }
             _ => Value::Scalar(ScalarValue::Int32(0)),
@@ -2321,18 +2317,18 @@ fn default_value_for_column_name(name: &str, columns: &[casa_tables::ColumnSchem
                 }
             };
             match column.data_type() {
-                Some(casa_types::PrimitiveType::Bool) => Value::Array(ArrayValue::Bool(
+                Some(casa_core::PrimitiveType::Bool) => Value::Array(ArrayValue::Bool(
                     ArrayD::from_shape_vec(IxDyn(&shape).f(), vec![false; shape.iter().product()])
                         .unwrap(),
                 )),
-                Some(casa_types::PrimitiveType::Float32) => Value::Array(ArrayValue::Float32(
+                Some(casa_core::PrimitiveType::Float32) => Value::Array(ArrayValue::Float32(
                     ArrayD::from_shape_vec(
                         IxDyn(&shape).f(),
                         vec![0.0_f32; shape.iter().product()],
                     )
                     .unwrap(),
                 )),
-                Some(casa_types::PrimitiveType::Complex32) => Value::Array(ArrayValue::Complex32(
+                Some(casa_core::PrimitiveType::Complex32) => Value::Array(ArrayValue::Complex32(
                     ArrayD::from_shape_vec(
                         IxDyn(&shape).f(),
                         vec![Complex32 { re: 0.0, im: 0.0 }; shape.iter().product()],
@@ -2375,6 +2371,7 @@ pub fn discover_casa_python() -> Option<PathBuf> {
 
     candidates.into_iter().find(|program| {
         Command::new(program)
+            .current_dir(casa_test_support::test_log_dir())
             .arg("-c")
             .arg("import casatasks")
             .output()
@@ -2452,6 +2449,7 @@ bandpass(
 )
 "#;
     let output = Command::new(&python)
+        .current_dir(output_dir)
         .env("CASA_RS_CAL_MS", &ms_path)
         .env("CASA_RS_CAL_OUT", output_dir)
         .arg("-c")
@@ -2532,6 +2530,7 @@ gaincal(
 "#;
     let caltable = output_dir.join("phase.gcal");
     let output = Command::new(&python)
+        .current_dir(output_dir)
         .env("CASA_RS_CAL_MS", &ms_path)
         .env("CASA_RS_CALTABLE", &caltable)
         .env("CASA_RS_CAL_FIELD", field)
@@ -2606,6 +2605,7 @@ applycal(
 )
 "#;
     let output = Command::new(&python)
+        .current_dir(casa_test_support::test_log_dir())
         .env("CASA_RS_APPLY_MS", ms_path)
         .env("CASA_RS_APPLY_FIELD", field)
         .env("CASA_RS_APPLY_SPW", spw)
@@ -2657,6 +2657,7 @@ applycal(
 )
 "#;
     let output = Command::new(&python)
+        .current_dir(casa_test_support::test_log_dir())
         .env("CASA_RS_APPLY_MS", ms_path)
         .env("CASA_RS_APPLY_FIELD", field)
         .env("CASA_RS_APPLY_SPW", spw)
@@ -2712,6 +2713,7 @@ applycal(
 )
 "#;
     let mut command = Command::new(&python);
+    command.current_dir(casa_test_support::test_log_dir());
     let gaintables_json = serde_json::to_string(
         &caltables
             .iter()
@@ -2793,6 +2795,7 @@ gaincal(
     )
     .expect("serialize gaincal prior gaintables");
     let output = Command::new(&python)
+        .current_dir(output_dir)
         .env("CASA_RS_GAIN_MS", ms_path)
         .env("CASA_RS_GAIN_CALTABLE", &caltable)
         .env("CASA_RS_GAIN_FIELD", options.field)
@@ -2863,6 +2866,7 @@ gaincal(
 )
 "#;
     let output = Command::new(&python)
+        .current_dir(output_dir)
         .env("CASA_RS_FLUXSCALE_MS", &ms_copy)
         .env("CASA_RS_FLUXSCALE_GCAL", &gain_table)
         .env("CASA_RS_FLUXSCALE_REFERENCE", reference_field)
@@ -2918,6 +2922,7 @@ result = fluxscale(
 print(json.dumps(normalize(result), sort_keys=True))
 "#;
     let output = Command::new(&python)
+        .current_dir(casa_test_support::test_log_dir())
         .env("CASA_RS_FLUXSCALE_MS", ms_path)
         .env("CASA_RS_FLUXSCALE_INPUT", caltable)
         .env("CASA_RS_FLUXSCALE_OUTPUT", fluxtable)
@@ -2982,6 +2987,7 @@ bandpass(
     )
     .expect("serialize bandpass prior gaintables");
     let output = Command::new(&python)
+        .current_dir(output_dir)
         .env("CASA_RS_BANDPASS_MS", ms_path)
         .env("CASA_RS_BANDPASS_CALTABLE", &caltable)
         .env("CASA_RS_BANDPASS_FIELD", field)
@@ -3054,6 +3060,7 @@ bandpass(
     )
     .expect("serialize BPOLY prior gaintables");
     let output = Command::new(&python)
+        .current_dir(output_dir)
         .env("CASA_RS_BPOLY_MS", ms_path)
         .env("CASA_RS_BPOLY_CALTABLE", &caltable)
         .env("CASA_RS_BPOLY_FIELD", field)
@@ -3103,6 +3110,7 @@ result = calstat(
 print(json.dumps(normalize(result), sort_keys=True))
 "#;
     let output = Command::new(&python)
+        .current_dir(casa_test_support::test_log_dir())
         .env("CASA_RS_CALSTAT_TABLE", caltable)
         .env("CASA_RS_CALSTAT_AXIS", axis)
         .env("CASA_RS_CALSTAT_DATACOLUMN", datacolumn)

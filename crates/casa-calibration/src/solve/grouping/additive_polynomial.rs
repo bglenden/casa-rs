@@ -3,8 +3,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use casa_core::Complex32;
 use casa_numerics::solve_weighted_least_squares;
-use casa_types::Complex32;
 
 use super::{SelectedChannels, SolveAccumulator, SolveSampleRow, SolveSamples, WeightedTime};
 use crate::solve::{GainSolveError, GainSolveMode, kernel::SolutionRow};

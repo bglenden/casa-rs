@@ -2,14 +2,12 @@
 //! Simulator::getVPRecord and VPManager saved-table selection.
 use std::{path::Path, sync::Arc};
 
-use casa_imaging_runtime::{Admitted, Demand, Reservation, admit};
-use casa_ms::voltage_pattern::{
-    VoltagePatternTable, radial_curve_storage, radial_lookup, radial_pattern,
-};
-use casa_types::{
+use casa_core::{
     RecordValue, ScalarValue, Value,
     quanta::{Quantity, Unit},
 };
+use casa_imaging_runtime::{Admitted, Demand, Reservation, admit};
+use casa_ms::{VoltagePatternTable, radial_curve_storage, radial_lookup, radial_pattern};
 
 use super::{
     Simulator, VoltagePatternSpec,
@@ -157,7 +155,7 @@ pub(super) fn read(session: &Simulator, path: &Path) -> SimulatorResult<Resolved
         && let Some(Value::Record(direction)) = record.get("squintdir")
     {
         let offset =
-            casa_types::measures::record::direction_from_record(direction).map_err(raised)?;
+            casa_core::measures::record::direction_from_record(direction).map_err(raised)?;
         if offset.as_angles() != (0., 0.) {
             let reference = quantity(&record, "squintreffreq", "Hz")?;
             // A squint is a signed tangent offset. MVDirection::getAngle

@@ -57,7 +57,7 @@ impl ImagePlane {
         pointing: [f64; 2],
         angle: f64,
         frequency: f64,
-        frame: Option<&casa_types::measures::MeasFrame>,
+        frame: Option<&casa_core::measures::MeasFrame>,
     ) -> Result<DirectionCoordinate, super::PredictError> {
         let source = model.direction_coordinate();
         let increment = self.direction.increment();
@@ -106,7 +106,7 @@ impl JonesImage {
         images: Vec<ndarray::Array2<f32>>,
         pointing: [f64; 2],
         angle: f64,
-        frame: Option<&casa_types::measures::MeasFrame>,
+        frame: Option<&casa_core::measures::MeasFrame>,
     ) -> Result<Vec<ndarray::Array2<f32>>, super::PredictError> {
         let frequency = model.plane_frequency_hz(plane);
         let real = self

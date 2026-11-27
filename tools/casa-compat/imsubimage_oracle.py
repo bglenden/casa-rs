@@ -23,8 +23,8 @@ import casatools
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
-DATA = ROOT / "crates/casa-images/tests/data/imsubimage"
-AXIS_MAPS = ROOT / "crates/casa-images/tests/data/casa-6.7.6/axis_maps"
+DATA = ROOT / "libs/casacore/casa-images/tests/data/imsubimage"
+AXIS_MAPS = ROOT / "libs/casacore/casa-images/tests/data/casa-6.7.6/axis_maps"
 HISTORY = "imsubimage oracle input history"
 BOX = "box[[1pix, 0pix], [3pix, 2pix]]"
 CIRCLE = "circle[[4pix, 4pix], 1.5pix]"

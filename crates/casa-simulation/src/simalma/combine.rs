@@ -2,11 +2,12 @@
 //! Regrid TP, multiply by the synthesis PB, feather, and divide by PB.
 use super::{failure, plan::Plan};
 use crate::{SessionResources, simobserve::SimobserveError, simutil::analysis};
-use casa_images::{
-    ImpbcorRequest, PagedImage, RegridMethod, RegridTemplate,
+use casa_imageanalysis::{
+    ImpbcorRequest, RegridTemplate,
     analysis::{FeatherRequest, feather},
     impbcor, regrid,
 };
+use casa_images::{PagedImage, RegridMethod};
 use casa_imaging_runtime::{Demand, admit};
 use std::path::{Path, PathBuf};
 

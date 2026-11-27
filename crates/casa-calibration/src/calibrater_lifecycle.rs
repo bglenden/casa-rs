@@ -5,10 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use casa_components::ComponentList;
+use casa_core::{RecordValue, ScalarValue, Value};
 use casa_ms::{MeasurementSet, MsSelection, SubtableId};
-use casa_provider_contracts::CasaValue;
 use casa_tables::RequiredScalarColumnValues;
-use casa_types::{ScalarValue, Value};
 
 use crate::attachment::OpenedMs;
 use crate::bandpass::{BandpassFrequencyInterval, BandpassSolveControls, GatherFrequencyLayout};
@@ -39,8 +38,8 @@ use legacy_ep::LegacyEpSolver;
 pub struct CalibraterLifecycle {
     legacy_iterator: bool,
     equation: Option<VisibilityEquation>,
-    last_activity: Option<CasaValue>,
-    last_solve_stats: Option<CasaValue>,
+    last_activity: Option<RecordValue>,
+    last_solve_stats: Option<RecordValue>,
     correlation_dependent_flags: Option<bool>,
     using_callibrary: bool,
 }
@@ -1204,7 +1203,7 @@ impl CalibraterLifecycle {
             CalibrationSolveResult::LegacyEp { .. } => return Ok(()),
         };
         if !self.legacy_iterator && !stats.windows.is_empty() {
-            self.last_solve_stats = Some(crate::casa_return::solvestats(stats));
+            self.last_solve_stats = Some(crate::solve_stats::solvestats_record(stats));
         }
         if let Some(record) = activity.record() {
             self.last_activity = Some(record);
@@ -1240,7 +1239,7 @@ impl CalibraterLifecycle {
         match solve {
             Ok(stats) => {
                 if let Some(stats) = &stats {
-                    self.last_solve_stats = Some(crate::casa_return::solvestats(stats));
+                    self.last_solve_stats = Some(crate::solve_stats::solvestats_record(stats));
                 }
                 if let Some(record) = activity.record() {
                     self.last_activity = Some(record);
@@ -1303,7 +1302,7 @@ impl CalibraterLifecycle {
         match gathered {
             Ok(stats) => {
                 if !self.legacy_iterator {
-                    self.last_solve_stats = Some(crate::casa_return::solvestats(&stats));
+                    self.last_solve_stats = Some(crate::solve_stats::solvestats_record(&stats));
                 }
                 self.last_activity = activity.record();
                 Ok(())

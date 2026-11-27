@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Scalar amplitude/phase curves shared by time and coordinate interpolation.
-use casa_types::Complex32;
+use casa_core::Complex32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Curve {
+pub enum Curve {
     Nearest,
     Linear,
     Cubic,

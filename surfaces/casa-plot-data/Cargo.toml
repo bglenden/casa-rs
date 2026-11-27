@@ -1,0 +1,106 @@
+[package]
+name = "casa-plot-data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Feature-gated renderer-neutral plot data DTOs and MeasurementSet plot builders"
+repository.workspace = true
+publish = false
+
+[features]
+default = []
+ms = [
+    "dep:casa-mstransform",
+    "dep:casa-atmosphere",
+    "dep:casa-ms",
+    "dep:casa-tables",
+    "dep:casa-core",
+    "dep:ndarray",
+    "dep:serde_json",
+    "dep:tracing",
+]
+calibration = [
+    "ms",
+    "dep:casa-calibration",
+    "dep:casa-measures",
+    "dep:num-complex",
+]
+simulation = [
+    "ms",
+    "dep:casa-components",
+    "dep:casa-images",
+    "dep:casa-imaging-products",
+    "dep:casa-imaging-runtime",
+    "dep:casa-simulation",
+    "dep:tempfile",
+]
+slow-tests = []
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-mstransform = { workspace = true, optional = true }
+casa-atmosphere = { workspace = true, optional = true }
+casa-calibration = { path = "../../crates/casa-calibration", optional = true }
+casa-components = { workspace = true, optional = true }
+casa-images = { workspace = true, optional = true }
+casa-imaging-products = { workspace = true, optional = true }
+casa-imaging-runtime = { workspace = true, optional = true }
+casa-measures = { workspace = true, optional = true }
+casa-ms = { workspace = true, optional = true }
+casa-simulation = { path = "../../crates/casa-simulation", optional = true }
+casa-tables = { workspace = true, optional = true }
+casa-core = { workspace = true, optional = true }
+ndarray = { workspace = true, optional = true }
+num-complex = { workspace = true, optional = true }
+schemars = { version = "0.8", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", optional = true }
+tempfile = { version = "3", optional = true }
+thiserror.workspace = true
+tracing = { workspace = true, optional = true }
+
+[dev-dependencies]
+casa-coordinates.workspace = true
+casa-images.workspace = true
+casa-imaging-runtime.workspace = true
+casa-tables.workspace = true
+casa-test-support = { path = "../../dev/casa-test-support" }
+casa-core.workspace = true
+flate2 = "1"
+ndarray.workspace = true
+num-complex.workspace = true
+serde_json = "1"
+tar = "0.4"
+tempfile = "3"
+
+[[example]]
+name = "profile_msexplore"
+required-features = ["ms"]
+
+[[test]]
+name = "ms_plots"
+path = "tests/ms_plots.rs"
+required-features = ["ms"]
+
+[[test]]
+name = "calibration_plots"
+path = "tests/calibration_plots.rs"
+required-features = ["calibration"]
+
+[[test]]
+name = "simulation_graphics_modes"
+path = "tests/simulation_graphics_modes.rs"
+required-features = ["simulation"]
+
+[[test]]
+name = "simulation_plots"
+path = "tests/simulation_plots.rs"
+required-features = ["simulation"]
+
+[[test]]
+name = "simulation_figure_memory"
+path = "tests/simulation_figure_memory.rs"
+required-features = ["simulation"]

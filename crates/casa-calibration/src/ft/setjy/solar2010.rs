@@ -4,15 +4,15 @@
 use std::path::{Path, PathBuf};
 
 use casa_components::{ComponentShape, ShapeType, SkyComponent};
-use casa_measures_data::MeasuresRuntime;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::epoch::{EpochRef, MEpoch};
+use casa_core::measures::frame::MeasFrame;
+use casa_core::measures::frequency::MFrequency;
+use casa_core::quanta::{Quantity, Unit};
+use casa_core::{ScalarValue, Value};
+use casa_measures::MeasuresRuntime;
 use casa_ms::{MsError, MsResult};
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::epoch::{EpochRef, MEpoch};
-use casa_types::measures::frame::MeasFrame;
-use casa_types::measures::frequency::MFrequency;
-use casa_types::quanta::{Quantity, Unit};
-use casa_types::{ScalarValue, Value};
 
 use crate::ft::{invalid, setjy::sampled_shape};
 
@@ -20,19 +20,14 @@ const LIGHT_SPEED: f64 = 299_792_458.;
 const PLANCK: f64 = 6.626_075_5e-34;
 const BOLTZMANN: f64 = 1.380_657_798_751_064_7e-23;
 
-pub(crate) struct Solar2010 {
+pub struct Solar2010 {
     direction: MDirection,
     diameter_rad: f64,
     temperature: Temperature,
 }
 
 impl Solar2010 {
-    pub(crate) fn open(
-        workspace: &Path,
-        body: &str,
-        epoch: &MEpoch,
-        frame: &MeasFrame,
-    ) -> MsResult<Self> {
+    pub fn open(workspace: &Path, body: &str, epoch: &MEpoch, frame: &MeasFrame) -> MsResult<Self> {
         let mut temperature = Temperature::for_body(body).ok_or_else(|| {
             invalid(format!(
                 "Solar System object {body:?} is not supported by Butler-JPL-Horizons 2010"
@@ -79,7 +74,7 @@ impl Solar2010 {
         })
     }
 
-    pub(crate) fn component(
+    pub fn component(
         &self,
         position: Option<MDirection>,
         frequencies: &[MFrequency],

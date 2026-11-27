@@ -7,22 +7,22 @@ pub(crate) mod imaging;
 mod inputs;
 mod memory;
 mod plan;
-pub(crate) mod plots;
 mod preflight;
 mod total_power;
 
+use crate::plot_sink::{SimanalyzePlotInput, SimulationPlotSink};
 use crate::simobserve::SimobserveError;
 use crate::simutil::analysis::{self, Fidelity};
 use crate::{SessionResources, simutil};
 use casa_imaging_runtime::{Demand, admit, charge_process_caches};
-use casa_ms::plot_document::PlotFigure;
-use casa_provider_contracts::builtin_surface_bundle;
-use casa_task_runtime::resolve_plain_values;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
 
 /// One task invocation, with CASA-named parameters and explicit resources.
 pub struct SimanalyzeRequest {
+    /// Base directory for a relative project and files outside the project.
+    /// Library callers can omit it to use their current working directory.
+    pub workspace: Option<PathBuf>,
     /// Sparse or resolved CASA parameters; the catalog supplies defaults.
     pub parameters: Map<String, Value>,
     /// Admission, worker and backend policy shared with simulation.
@@ -39,20 +39,89 @@ pub struct SimanalyzeOutcome {
     pub products: Vec<PathBuf>,
     /// Informational diagnostics and explicitly unavailable displays.
     pub warnings: Vec<String>,
-    /// Figures referencing the caller's binary payload.
-    pub plots: Vec<PlotFigure>,
     /// Analysis statistics, when requested.
     pub fidelity: Option<Fidelity>,
     /// The resolved tclean call, useful for dry runs.
     pub imaging_parameters: Map<String, Value>,
 }
 
+/// Return the canonical CASA 6.7.6 `simanalyze` parameter defaults as plain JSON.
+#[must_use]
+pub fn default_parameters() -> Map<String, Value> {
+    let value = json!({
+        "project": "sim",
+        "image": true,
+        "imagename": "default",
+        "skymodel": "",
+        "vis": "default",
+        "modelimage": "",
+        "imsize": [0, 0],
+        "imdirection": "",
+        "cell": [""],
+        "interactive": false,
+        "niter": 0,
+        "threshold": "0.0001Jy",
+        "weighting": "natural",
+        "mask": [],
+        "outertaper": [],
+        "pbcor": true,
+        "stokes": "I",
+        "featherimage": "",
+        "analyze": false,
+        "showuv": true,
+        "showpsf": true,
+        "showmodel": true,
+        "showconvolved": false,
+        "showclean": true,
+        "showresidual": false,
+        "showdifference": true,
+        "showfidelity": true,
+        "graphics": "both",
+        "verbose": false,
+        "overwrite": true,
+        "dryrun": false,
+        "logfile": ""
+    });
+    match value {
+        Value::Object(map) => map,
+        _ => unreachable!("default map is an object"),
+    }
+}
+
+fn resolve_defaults(overrides: &Map<String, Value>) -> Map<String, Value> {
+    let mut merged = default_parameters();
+    for (key, value) in overrides {
+        merged.insert(key.clone(), value.clone());
+    }
+    if let Some(imsize) = merged.get_mut("imsize")
+        && !imsize.is_array()
+    {
+        *imsize = Value::Array(vec![imsize.clone()]);
+    }
+    merged
+}
+
 pub(super) fn failure(error: impl std::fmt::Display) -> SimobserveError {
     SimobserveError::raised(format!("simanalyze: {error}"))
 }
 
-pub(super) struct Parameters<'a>(pub &'a Map<String, Value>);
+pub(super) struct Parameters<'a>(pub &'a Map<String, Value>, Option<&'a Path>);
 impl Parameters<'_> {
+    fn workspace_path(&self, path: &str) -> PathBuf {
+        crate::simobserve::path_at(self.1, Path::new(path))
+    }
+
+    fn locate(&self, directory: &Path, value: &str) -> PathBuf {
+        let project = directory.file_name().unwrap_or_default().to_string_lossy();
+        let name = value.replace("$project", &project);
+        let in_project = directory.join(&name);
+        if in_project.exists() {
+            in_project
+        } else {
+            self.workspace_path(&name)
+        }
+    }
+
     fn text(&self, key: &str) -> &str {
         self.0[key].as_str().expect("resolved string")
     }
@@ -77,32 +146,48 @@ impl Parameters<'_> {
 /// Invalid parameters, missing inputs, unsupported input metadata or selections,
 /// resource admission or native imaging/analysis failures.
 pub fn simanalyze(request: &SimanalyzeRequest) -> Result<SimanalyzeOutcome, SimobserveError> {
-    run(request, None, false)
+    simanalyze_with_controls(request, None, &casa_imaging::Cancel::new())
 }
 
-/// As [`simanalyze`], with complete native plot arrays in the caller's file.
+/// Image, analyze, and emit figure inputs through `sink`.
 ///
 /// # Errors
-/// The numerical errors above, or an unwritable plot payload.
-pub fn simanalyze_with_plots(
+/// Numerical errors, invalid parameters, or any error reported by `sink`.
+pub fn simanalyze_with_plot_sink(
     request: &SimanalyzeRequest,
-    payload: &Path,
+    sink: &mut dyn SimulationPlotSink,
 ) -> Result<SimanalyzeOutcome, SimobserveError> {
-    run(request, Some(payload), false)
+    simanalyze_with_controls(request, Some(sink), &casa_imaging::Cancel::new())
 }
 
-pub(crate) fn simanalyze_append_plots(
+/// Analyze a simulation with caller-owned cancellation and an optional
+/// plot sink. The imaging passes observe the same token.
+///
+/// # Errors
+/// Analysis errors, cancellation, or figure sink errors.
+pub fn simanalyze_with_controls<'a, 'b>(
     request: &SimanalyzeRequest,
-    payload: &Path,
+    sink: Option<&'a mut (dyn SimulationPlotSink + 'b)>,
+    cancel: &casa_imaging::Cancel,
 ) -> Result<SimanalyzeOutcome, SimobserveError> {
-    run(request, Some(payload), true)
+    run(request, sink.map(|sink| (sink, None)), cancel)
 }
 
-fn run(
+pub(crate) fn simanalyze_with_plot_sink_and_override(
     request: &SimanalyzeRequest,
-    payload: Option<&Path>,
-    append: bool,
+    sink: &mut dyn SimulationPlotSink,
+    output_file_override: Option<PathBuf>,
+    cancel: &casa_imaging::Cancel,
 ) -> Result<SimanalyzeOutcome, SimobserveError> {
+    run(request, Some((sink, output_file_override)), cancel)
+}
+
+fn run<'a, 'b>(
+    request: &SimanalyzeRequest,
+    plot_sink: Option<(&'a mut (dyn SimulationPlotSink + 'b), Option<PathBuf>)>,
+    cancel: &casa_imaging::Cancel,
+) -> Result<SimanalyzeOutcome, SimobserveError> {
+    crate::simobserve::check_cancel(cancel)?;
     let resources = request.resources;
     charge_process_caches(resources.host(), resources.policy()).map_err(failure)?;
     // Fixed provider/planning metadata plus four live representations of
@@ -122,13 +207,8 @@ fn run(
         },
     )
     .map_err(failure)?;
-    let values = resolve_plain_values(
-        builtin_surface_bundle("simanalyze").map_err(failure)?,
-        std::env::current_dir().map_err(failure)?,
-        &request.parameters,
-    )
-    .map_err(failure)?;
-    let parameters = Parameters(&values);
+    let values = resolve_defaults(&request.parameters);
+    let parameters = Parameters(&values, request.workspace.as_deref());
     let mut report = if parameters.text("logfile").is_empty() {
         None
     } else {
@@ -136,7 +216,7 @@ fn run(
         let mut report = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(parameters.text("logfile"))
+            .open(parameters.workspace_path(parameters.text("logfile")))
             .map_err(failure)?;
         writeln!(report, "simanalyze project={}", parameters.text("project")).map_err(failure)?;
         Some(report)
@@ -147,7 +227,6 @@ fn run(
         stem: plan.stem.clone(),
         products: Vec::new(),
         warnings: Vec::new(),
-        plots: Vec::new(),
         fidelity: None,
         imaging_parameters: plan.imaging.clone(),
     };
@@ -158,7 +237,8 @@ fn run(
         return Ok(outcome);
     }
     if parameters.flag("image") {
-        outcome.products = imaging::execute(&parameters, &plan, resources)?;
+        outcome.products = imaging::execute(&parameters, &plan, resources, cancel)?;
+        crate::simobserve::check_cancel(cancel)?;
         outcome.products.extend(plan.products()?);
         let originals = [plan.file(".image.flat"), plan.file(".residual.flat")];
         feather::combine(&parameters, &mut plan, resources)?;
@@ -201,9 +281,29 @@ fn run(
         );
     }
     if graphics {
-        if let Some(payload) = payload {
-            outcome.plots =
-                plots::prepare(&parameters, &plan, &model_flat, payload, resources, append)?;
+        if let Some((sink, output_file_override)) = plot_sink {
+            sink.record_simanalyze(SimanalyzePlotInput {
+                graphics_mode: parameters.text("graphics"),
+                directory: &plan.directory,
+                stem: &plan.stem,
+                root: &plan.root,
+                model: &plan.model,
+                ms: &plan.ms,
+                model_flat: &model_flat,
+                has_synthesis: !plan.inputs.synthesis.is_empty(),
+                image: parameters.flag("image"),
+                analyze: parameters.flag("analyze"),
+                showuv: parameters.flag("showuv"),
+                showpsf: parameters.flag("showpsf"),
+                showmodel: parameters.flag("showmodel"),
+                showconvolved: parameters.flag("showconvolved"),
+                showclean: parameters.flag("showclean"),
+                showresidual: parameters.flag("showresidual"),
+                showdifference: parameters.flag("showdifference"),
+                showfidelity: parameters.flag("showfidelity"),
+                output_file_override,
+                resources,
+            })?;
         } else {
             outcome
                 .warnings

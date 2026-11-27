@@ -3,7 +3,7 @@
 use std::sync::Mutex;
 
 use casa_components::{ComponentError, Polarisation, stokes_in};
-use casa_types::measures::{EpochRef, MEpoch, MeasFrame, direction::MDirection};
+use casa_core::measures::{EpochRef, MEpoch, MeasFrame, direction::MDirection};
 use num_complex::Complex64;
 
 use super::{BeamPattern, PrimaryBeam, separation_rad};
@@ -140,7 +140,7 @@ impl Squint {
         frame: &MeasFrame,
         time_s: f64,
     ) -> Result<([f64; 2], [f64; 2]), ComponentError> {
-        use casa_types::measures::direction::DirectionRef;
+        use casa_core::measures::direction::DirectionRef;
         let dynamic = !super::super::fixed_direction_frame(direction.refer());
         let frame = if dynamic {
             frame

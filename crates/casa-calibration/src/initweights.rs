@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Initialize the MeasurementSet's visibility weights without loading visibilities.
 
+use casa_core::{ArrayValue, Value};
 use casa_ms::{MeasurementSet, MsError, MsResult};
 use casa_tables::{RequiredScalarColumnValues, Table, TableWriteLock};
-use casa_types::{ArrayValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use crate::weight_spectra::{NewSpectra, SIGMA_SPECTRUM, WEIGHT_SPECTRUM, has_column};
 use crate::{ApplyCalibrationTableSpec, execute::tsys_weights::TsysPlan};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Mode {
+pub enum Mode {
     Nyquist,
     Sigma,
     Weight,
@@ -20,7 +20,7 @@ pub(crate) enum Mode {
 }
 
 impl Mode {
-    pub(crate) fn from_name(mode: &str) -> Option<Self> {
+    pub fn from_name(mode: &str) -> Option<Self> {
         Some(match mode {
             "nyq" => Self::Nyquist,
             "sigma" => Self::Sigma,
@@ -32,7 +32,7 @@ impl Mode {
         })
     }
 
-    pub(crate) fn removed_column(self) -> &'static str {
+    pub fn removed_column(self) -> &'static str {
         match self {
             Self::DeleteWeightSpectrum => WEIGHT_SPECTRUM,
             _ => SIGMA_SPECTRUM,
@@ -53,7 +53,7 @@ impl Mode {
     }
 }
 
-pub(crate) fn initialize(
+pub fn initialize(
     ms: &mut MeasurementSet,
     mode: Mode,
     create_spectrum: bool,
@@ -101,7 +101,7 @@ pub(crate) fn initialize(
     spectra.publish(main, lock)
 }
 
-pub(crate) fn initialize_tsys(
+pub fn initialize_tsys(
     ms: &mut MeasurementSet,
     spec: ApplyCalibrationTableSpec,
     by_exposure: bool,

@@ -6,18 +6,18 @@ use std::fs;
 use std::path::PathBuf;
 
 use casa_calibration::{CalibrationIssueSeverity, summarize_tables};
+use casa_core::{Complex32, RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{ColumnSchema, DataManagerKind, Table, TableInfo, TableOptions, TableSchema};
-use casa_types::{Complex32, RecordField, RecordValue, ScalarValue, Value};
 use tempfile::TempDir;
 
 use casa_calibration::{CalibrationParameterFamily, summarize_table};
 
 fn create_malformed_summary_table(root: &std::path::Path) -> PathBuf {
     let schema = TableSchema::new(vec![
-        ColumnSchema::scalar("TIME", casa_types::PrimitiveType::String),
-        ColumnSchema::scalar("FIELD_ID", casa_types::PrimitiveType::String),
-        ColumnSchema::scalar("ANTENNA1", casa_types::PrimitiveType::String),
-        ColumnSchema::scalar("INTERVAL", casa_types::PrimitiveType::String),
+        ColumnSchema::scalar("TIME", casa_core::PrimitiveType::String),
+        ColumnSchema::scalar("FIELD_ID", casa_core::PrimitiveType::String),
+        ColumnSchema::scalar("ANTENNA1", casa_core::PrimitiveType::String),
+        ColumnSchema::scalar("INTERVAL", casa_core::PrimitiveType::String),
     ])
     .expect("valid malformed schema");
     let mut table = Table::with_schema(schema);
@@ -62,15 +62,15 @@ fn create_malformed_summary_table(root: &std::path::Path) -> PathBuf {
 
 fn create_sparse_unsupported_float_summary_table(root: &std::path::Path) -> PathBuf {
     let schema = TableSchema::new(vec![
-        ColumnSchema::scalar("TIME", casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar("FIELD_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("SPECTRAL_WINDOW_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("ANTENNA1", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("ANTENNA2", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("INTERVAL", casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar("OBSERVATION_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::array_variable("FPARAM", casa_types::PrimitiveType::Float32, Some(1)),
-        ColumnSchema::array_variable("FLAG", casa_types::PrimitiveType::Bool, Some(1)),
+        ColumnSchema::scalar("TIME", casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar("FIELD_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("SPECTRAL_WINDOW_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("ANTENNA1", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("ANTENNA2", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("INTERVAL", casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar("OBSERVATION_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::array_variable("FPARAM", casa_core::PrimitiveType::Float32, Some(1)),
+        ColumnSchema::array_variable("FLAG", casa_core::PrimitiveType::Bool, Some(1)),
     ])
     .expect("valid sparse float schema");
     let mut table = Table::with_schema(schema);
@@ -121,11 +121,11 @@ fn create_sparse_unsupported_float_summary_table(root: &std::path::Path) -> Path
             RecordField::new("OBSERVATION_ID", Value::Scalar(ScalarValue::Int32(0))),
             RecordField::new(
                 "FPARAM",
-                Value::Array(casa_types::ArrayValue::from_f32_vec(vec![1.0, 2.0])),
+                Value::Array(casa_core::ArrayValue::from_f32_vec(vec![1.0, 2.0])),
             ),
             RecordField::new(
                 "FLAG",
-                Value::Array(casa_types::ArrayValue::from_bool_vec(vec![false, true])),
+                Value::Array(casa_core::ArrayValue::from_bool_vec(vec![false, true])),
             ),
         ]))
         .expect("insert sparse float row");
@@ -150,15 +150,15 @@ fn create_sparse_unsupported_float_summary_table(root: &std::path::Path) -> Path
 
 fn create_empty_inferred_complex_summary_table(root: &std::path::Path) -> PathBuf {
     let schema = TableSchema::new(vec![
-        ColumnSchema::scalar("TIME", casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar("FIELD_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("SPECTRAL_WINDOW_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("ANTENNA1", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("ANTENNA2", casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar("INTERVAL", casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar("OBSERVATION_ID", casa_types::PrimitiveType::Int32),
-        ColumnSchema::array_variable("CPARAM", casa_types::PrimitiveType::Complex32, Some(1)),
-        ColumnSchema::array_variable("FLAG", casa_types::PrimitiveType::Bool, Some(1)),
+        ColumnSchema::scalar("TIME", casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar("FIELD_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("SPECTRAL_WINDOW_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("ANTENNA1", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("ANTENNA2", casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar("INTERVAL", casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar("OBSERVATION_ID", casa_core::PrimitiveType::Int32),
+        ColumnSchema::array_variable("CPARAM", casa_core::PrimitiveType::Complex32, Some(1)),
+        ColumnSchema::array_variable("FLAG", casa_core::PrimitiveType::Bool, Some(1)),
     ])
     .expect("valid inferred complex schema");
     let mut table = Table::with_schema(schema);
@@ -215,8 +215,8 @@ fn create_empty_inferred_complex_summary_table(root: &std::path::Path) -> PathBu
 
 fn create_invalid_bpoly_summary_table(root: &std::path::Path) -> PathBuf {
     let schema = TableSchema::new(vec![
-        ColumnSchema::scalar("TIME", casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar("FIELD_ID", casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar("TIME", casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar("FIELD_ID", casa_core::PrimitiveType::Int32),
     ])
     .expect("valid invalid-bpoly schema");
     let mut table = Table::with_schema(schema);

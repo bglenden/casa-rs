@@ -1,41 +1,43 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/casa-provider-contracts",
-    "crates/casa-task-runtime",
-    "crates/casars-imager",
-    "crates/casars-imexplore",
-    "crates/casars-msconvert",
-    "crates/casars-simulation",
-    "crates/casars-python",
-    "crates/casa-types",
-    "crates/casa-vla",
-    "crates/casa-values",
-    "crates/casa-aipsio",
-    "crates/casa-logging",
-    "crates/casa-numerics",
-    "crates/casa-fft",
+    "surfaces/casa-contracts",
+    "surfaces/casa-plot-data",
+    "surfaces/casa-tasks",
+    "frontends/casars-cli",
+    "frontends/casars-python",
+    "libs/casacore/casa-core",
+    "libs/casa/casa-vla",
+    "libs/casacore/casa-aipsio",
+    "libs/casacore/casa-numerics",
+    "libs/casacore/casa-fft",
     "crates/casa-calibration",
-    "crates/casa-components",
-    "crates/casa-measures-tools",
-    "crates/casa-tables",
-    "crates/casa-lattices",
-    "crates/casa-coordinates",
-    "crates/casa-images",
-    "crates/casa-imaging-model",
-    "crates/casa-imaging-operator",
-    "crates/casa-imaging-deconvolution",
-    "crates/casa-imaging-products",
-    "crates/casa-imaging-application",
-    "crates/casa-imaging-runtime",
-    "crates/casa-imaging-singledish",
-    "crates/casa-imaging-metal",
+    "libs/casa/casa-components",
+    "libs/casa/casa-imageanalysis",
+    "libs/casacore/casa-tables",
+    "libs/casacore/casa-lattices",
+    "libs/casacore/casa-coordinates",
+    "libs/casacore/casa-images",
+    "libs/imaging/casa-imaging-model",
+    "libs/imaging/casa-imaging-operator",
+    "libs/imaging/casa-imaging-deconvolution",
+    "libs/imaging/casa-imaging-products",
+    "libs/imaging/casa-imaging",
+    "libs/imaging/casa-imaging-runtime",
+    "libs/imaging/casa-imaging-singledish",
+    "libs/imaging/casa-imaging-metal",
     "crates/casa-simulation",
-    "crates/casa-atmosphere",
-    "crates/casa-measures-data",
-    "crates/casa-test-support",
-    "crates/casa-ms",
-    "crates/casa-observation",
+    "libs/casa/casa-atmosphere",
+    "libs/casacore/casa-measures",
+    "libs/casacore/casa-ms",
+    "libs/casa/casa-mstransform",
+    "libs/casa/casa-flagging",
+    "libs/casacore/casa-observation",
+    "dev/casa-test-support",
+    "dev/casa-dev-tools",
+    "suites/casacore-interop",
+    "suites/casa-parity",
+    "suites/perf",
 ]
 
 [workspace.package]
@@ -47,6 +49,31 @@ description = "Rust implementation of casacore-compatible persistent data I/O"
 repository = "https://github.com/bglenden/casa-rs"
 
 [workspace.dependencies]
+casa-atmosphere = { path = "libs/casa/casa-atmosphere", version = "0.27.0" }
+casa-flagging = { path = "libs/casa/casa-flagging", version = "0.27.0" }
+casa-ms = { path = "libs/casacore/casa-ms", version = "0.27.0" }
+casa-mstransform = { path = "libs/casa/casa-mstransform", version = "0.27.0" }
+casa-vla = { path = "libs/casa/casa-vla", version = "0.27.0" }
+casa-aipsio = { path = "libs/casacore/casa-aipsio", version = "0.27.0" }
+casa-components = { path = "libs/casa/casa-components", version = "0.27.0" }
+casa-coordinates = { path = "libs/casacore/casa-coordinates", version = "0.27.0" }
+casa-core = { path = "libs/casacore/casa-core", version = "0.27.0" }
+casa-fft = { path = "libs/casacore/casa-fft", version = "0.27.0" }
+casa-imageanalysis = { path = "libs/casa/casa-imageanalysis", version = "0.27.0" }
+casa-images = { path = "libs/casacore/casa-images", version = "0.27.0" }
+casa-imaging = { path = "libs/imaging/casa-imaging", version = "0.27.0" }
+casa-imaging-deconvolution = { path = "libs/imaging/casa-imaging-deconvolution", version = "0.27.0" }
+casa-imaging-metal = { path = "libs/imaging/casa-imaging-metal", version = "0.27.0" }
+casa-imaging-model = { path = "libs/imaging/casa-imaging-model", version = "0.27.0" }
+casa-imaging-operator = { path = "libs/imaging/casa-imaging-operator", version = "0.27.0" }
+casa-imaging-products = { path = "libs/imaging/casa-imaging-products", version = "0.27.0" }
+casa-imaging-runtime = { path = "libs/imaging/casa-imaging-runtime", version = "0.27.0" }
+casa-imaging-singledish = { path = "libs/imaging/casa-imaging-singledish", version = "0.27.0" }
+casa-lattices = { path = "libs/casacore/casa-lattices", version = "0.27.0" }
+casa-measures = { path = "libs/casacore/casa-measures", version = "0.27.0" }
+casa-numerics = { path = "libs/casacore/casa-numerics", version = "0.27.0" }
+casa-observation = { path = "libs/casacore/casa-observation", version = "0.27.0" }
+casa-tables = { path = "libs/casacore/casa-tables", version = "0.27.0" }
 nalgebra = "0.33"
 ndarray = "0.17"
 num-complex = "0.4"
@@ -68,11 +95,15 @@ codegen-units = 1
 # their key dependencies so perf comparisons are apples-to-apples.
 [profile.test.package.sofars]
 opt-level = 2
-[profile.test.package.casa-types]
+[profile.test.package.casa-core]
 opt-level = 2
 [profile.test.package.casa-tables]
 opt-level = 2
 [profile.test.package.casa-aipsio]
+opt-level = 2
+[profile.test.package.casa-flagging]
+opt-level = 2
+[profile.test.package.casa-mstransform]
 opt-level = 2
 [profile.test.package.casa-ms]
 opt-level = 2
@@ -82,6 +113,10 @@ opt-level = 2
 [profile.test.package.casa-atmosphere]
 opt-level = 3
 [profile.test.package.casa-test-support]
+opt-level = 2
+[profile.test.package.casacore-interop]
+opt-level = 2
+[profile.test.package.casa-perf-suite]
 opt-level = 2
 
 # Imaging end-to-end tests (T1 tier) must finish within about ten minutes on
@@ -98,9 +133,11 @@ opt-level = 3
 opt-level = 3
 [profile.test.package.casa-imaging-metal]
 opt-level = 3
-[profile.test.package.casa-imaging-application]
+[profile.test.package.casa-imaging]
 opt-level = 3
-[profile.test.package.casars-imager]
+[profile.test.package.casa-tasks]
+opt-level = 3
+[profile.test.package.casars-cli]
 opt-level = 3
 [profile.test.package.casa-fft]
 opt-level = 3

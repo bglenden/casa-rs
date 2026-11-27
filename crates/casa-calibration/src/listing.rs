@@ -7,11 +7,11 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::Path;
 
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_ms::MeasurementSet;
 use casa_ms::selection::ChannelRange;
 use casa_ms::subtables::{MsAntenna, MsField, MsSpectralWindow};
 use casa_tables::{Table, TableOptions, add_directory};
-use casa_types::{ArrayValue, ScalarValue, Value};
 use serde::Serialize;
 use tempfile::NamedTempFile;
 
@@ -25,29 +25,29 @@ use format::{Line, Listing, Window};
 /// One piece of a CASA listing. Pagination pauses at a page boundary and
 /// finishes the current integration when the reader chooses to quit.
 #[derive(Serialize)]
-pub(crate) struct ListingPart {
-    text: String,
-    prompt: bool,
-    last_in_integration: bool,
-    solutions: usize,
+pub struct ListingPart {
+    pub text: String,
+    pub prompt: bool,
+    pub last_in_integration: bool,
+    pub solutions: usize,
 }
 
 #[derive(Serialize)]
-pub(crate) struct CalibrationListing {
-    pub(crate) parts: Vec<ListingPart>,
-    pub(crate) solutions: usize,
-    pub(crate) error: Option<String>,
+pub struct CalibrationListing {
+    pub parts: Vec<ListingPart>,
+    pub solutions: usize,
+    pub error: Option<String>,
 }
 
 /// Text listing prepared for the Python task or tool, including its terminal
 /// page boundaries or the output file already published.
 #[derive(Serialize)]
 pub struct CalibrationListingReport {
-    pub(crate) listing: Option<CalibrationListing>,
-    pub(crate) listfile: Option<String>,
+    pub listing: Option<CalibrationListing>,
+    pub listfile: Option<String>,
 }
 
-pub(crate) fn publish_listing(path: &Path, text: &str) -> Result<(), String> {
+pub fn publish_listing(path: &Path, text: &str) -> Result<(), String> {
     let fail = |error: std::io::Error| {
         format!("could not create listing file {}: {error}", path.display(),)
     };
@@ -64,7 +64,7 @@ pub(crate) fn publish_listing(path: &Path, text: &str) -> Result<(), String> {
 }
 
 impl CalibrationListing {
-    pub(crate) fn lines(&self) -> String {
+    pub fn lines(&self) -> String {
         let mut text = self
             .parts
             .iter()
@@ -78,7 +78,7 @@ impl CalibrationListing {
     }
 }
 
-pub(crate) fn list_calibration(
+pub fn list_calibration(
     ms: &MeasurementSet,
     input: &Path,
     field: &str,

@@ -1451,7 +1451,7 @@ process with signal 11 for `cl.select(float("nan"))`,
 `cl.select([float("nan")])` selects index 0, and a 100-level acyclic nested
 list containing 1 selects index 1. The isolated probe and its receipt are
 `tools/simulation/componentlist_selection_crashes_oracle.py` and
-`crates/casars-python/python/tests/data/casa_componentlist_selection_crashes.json`.
+`frontends/casars-python/python/tests/data/casa_componentlist_selection_crashes.json`.
 
 casa-rs raises `ValueError` for scalar non-finite or cyclic selections and
 leaves the selection unchanged. It continues to accept nested acyclic lists
@@ -4420,7 +4420,7 @@ value as a Python `int` and `getcol` of an `Int` (32-bit) column returns an
 `int64` array. `fromValueHolder`, which turns the column's `ValueHolder` into
 the Python value, has a `TpInt64` case for a scalar but none for `TpArrayInt64`
 (the converter for records in the same file has both). The recording is
-`crates/casars-python/python/tests/data/casa_table_tool.json` (`cells`,
+`frontends/casars-python/python/tests/data/casa_table_tool.json` (`cells`,
 `getcol('id')`; the fixture's `id` column is `Int64`). casa-rs returns the
 `int64` array, as it does for every other integer column. This also
 affects the `_COUNT_` column of a result from TaQL `COUNT`:
@@ -4436,7 +4436,7 @@ returns the count. See `taql_count_int64` in that recording (#1028).
 `tb.putkeyword('name', 2**40)` returns `True` and `tb.getkeyword('name')` then
 gives `0`, both for a new keyword and for an existing 32-bit `Int` one
 (CASA 6.7.6.14; the `casa_bugs` scenario of
-`crates/casars-python/python/tests/data/casa_table_tool.json`). The Python
+`frontends/casars-python/python/tests/data/casa_table_tool.json`). The Python
 `int` is narrowed to casacore's 32-bit `Int` without a range check. casa-rs
 stores a new keyword whose value does not fit 32 bits as a 64-bit integer, and
 refuses such a value for an existing 32-bit keyword with
@@ -4480,7 +4480,7 @@ the last element of that axis. casa-rs follows both conventions.
 `tb.putcell('ANTENNA1', 0, 2147483648)` returns `True` and the cell then holds
 `-2147483648`; `-2147483649` becomes `2147483647` and `4294967297` becomes `1`
 (CASA 6.7.6.14; the `int_overflow` scenario of
-`crates/casars-python/python/tests/data/casa_table_tool.json`, which the
+`frontends/casars-python/python/tests/data/casa_table_tool.json`, which the
 replay leaves out). `putcol` wraps the same way. A Python `int` is narrowed
 to the 32-bit column type without a range check, as for `putkeyword` above.
 casa-rs raises `RuntimeError: a value is out of range for a column of Int` and
@@ -4663,7 +4663,7 @@ data type`; an `int` output column for a `float` array input,
 `TableRecordRep::get_pointer - incorrect data type used for field ...`), the
 call raises with the rows already added and their cells never set: reading
 them gives whatever the heap held (`copyrows_types` scenario of
-`crates/casars-python/python/tests/data/casa_table_tool.json`, which does not
+`frontends/casars-python/python/tests/data/casa_table_tool.json`, which does not
 compare the table after a refusal). casa-rs checks the types before it changes
 anything and raises with the output table as it was.
 
@@ -4751,6 +4751,27 @@ casa-rs reads an antenna and feed's rows in the window, else its rows for
 every window, and states no receptors where it has neither. Where `FEED`'s
 rows are all -1 or all name windows, which is how CASA's simulator, ALMA
 and casa-rs's MSv2 writer write it, the receptors are the same.
+
+## PlotMS refuses valid parallel antenna direction controls
+
+- Date noted: 2026-11-25
+- Status: casa-rs applies each requested frame and interpolation to both axes of its layer (#1032)
+
+On the four-epoch ALMA POINTING fixture, CASA 6.7.6.14 with casaplotms
+2.9.1 accepts `yaxis='ant-dec'` with one `yframe` and `yinterp` list
+entry. With `xaxis='ant-ra'`, `yframe=['j2000','galactic']`,
+`yinterp=['nearest','spline']` and `yaxislocation=['left','right']`, the
+public task sends the documented per-layer settings but receives
+`INVALID_ARGUMENT: plot parameters failed` before TXT or PNG export.
+A fresh PlotMS process also refuses two identical valid entries and a
+Time plot with two interpolations and a scalar or omitted frame.
+
+casa-rs uses the requested frame and interpolation on both pointing axes
+for each layer, broadcasts a scalar frame and side and keeps the layer
+order. The paired oracle checks each layer against its own scalar CASA
+request, including sample identifiers, rendered degree coordinates and
+axis sides. List-valued `xframe` and `xinterp` remain public type errors
+and mismatched parallel Y lengths remain validation errors.
 
 ## PlotMS reuses antenna angles when fields share a timestamp
 
@@ -5607,7 +5628,7 @@ isolated crash. casa-rs returns the placeholder's empty float array instead.
 - Date noted: 2026-11-06
 - Status: CASA crashes; casa-rs handles the inputs safely (#1053).
 - Owner decision: Correct CASA crashes as a class; see `docs/simulation/owner-decisions-20261105.md`.
-- Evidence: `tools/simulation/componentlist_replace_crashes_oracle.py` and `crates/casars-python/python/tests/data/casa_componentlist_replace_crashes.json`, CASA 6.7.6-14 on the Mac mini, with isolated processes and core dumps disabled.
+- Evidence: `tools/simulation/componentlist_replace_crashes_oracle.py` and `frontends/casars-python/python/tests/data/casa_componentlist_replace_crashes.json`, CASA 6.7.6-14 on the Mac mini, with isolated processes and core dumps disabled.
 
 `cl.replace(0, record)` with a record containing itself, a cyclic list of
 `whichones`, and scalar NaN or infinity as `whichones` each terminate CASA's
@@ -5628,7 +5649,7 @@ zero and warning without reading a file or changing the list.
 - Date noted: 2026-11-06
 - Status: CASA uses an uninitialized frame after a parse failure; casa-rs rejects it before mutation (#1053).
 - Owner decision: Correct CASA crashes and corruption as a class; see `docs/simulation/owner-decisions-20261105.md`.
-- Evidence: `tools/simulation/componentlist_setrefdirframe_invalid_oracle.py` and `crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe_invalid.json`, CASA 6.7.6-14 on the Mac mini.
+- Evidence: `tools/simulation/componentlist_setrefdirframe_invalid_oracle.py` and `frontends/casars-python/python/tests/data/casa_componentlist_setrefdirframe_invalid.json`, CASA 6.7.6-14 on the Mac mini.
 
 `componentlist.setrefdirframe(0, "bad")` logs that the direction frame was
 not changed, but the C++ code continues with `newFrame` uninitialized after
@@ -5942,7 +5963,7 @@ changing any components, and reports the crashes as catchable errors.
 - Date noted: 2026-11-06
 - Status: CASA copies unintended rows; casa-rs copies the requested rows (#1053).
 - Owner decision: Correct CASA data loss and contradictions of evident intent as classes; see `docs/simulation/owner-decisions-20261105.md`.
-- Evidence: `tools/simulation/componentlist_concatenate_oracle.py` and `crates/casars-python/python/tests/data/casa_componentlist_concatenate.json`, CASA 6.7.6-14 on the Mac mini.
+- Evidence: `tools/simulation/componentlist_concatenate_oracle.py` and `frontends/casars-python/python/tests/data/casa_componentlist_concatenate.json`, CASA 6.7.6-14 on the Mac mini.
 
 For a source list labeled `source0`, `source1`, `source2`, CASA's
 `concatenate(source, [2, 0])` appends `source0`, `source1`; the source loop
@@ -6050,7 +6071,7 @@ offset. The correction follows the standing rule to correct scientific
 data loss and behavior that contradicts CASA's evident intent (#1252).
 
 Evidence: `tools/simulation/measures_spectral_oracle.py`,
-`crates/casars-python/python/tests/data/casa_measures_spectral.json`, and
+`frontends/casars-python/python/tests/data/casa_measures_spectral.json`, and
 `test_measures_spectral.py` (the `scalar_controls` cases).
 
 ### Cyclic spectral arguments terminate the process
@@ -6100,7 +6121,7 @@ original type. casa-rs refuses the incompatible input.
 
 The inputs, raw outputs and independent controls are in
 `tools/simulation/measures_geometry_oracle.py` and
-`crates/casars-python/python/tests/data/casa_measures_geometry.json`.
+`frontends/casars-python/python/tests/data/casa_measures_geometry.json`.
 These corrections follow the standing rule on data loss, unit corruption,
 and behavior contradicting evident intent (#1252).
 
@@ -7756,7 +7777,7 @@ lists, CASA silently discards trailing elements in longer rows (`[[1.0, 2.0],
 [3.0]]` becomes `array([[1.], [3.]])`) or zero-pads shorter rows (`[[1.0], [2.0,
 3.0]]` becomes `array([[1., 0.], [2., 3.]])`).
 
-casa-rs checks nesting depth and row shapes in `crates/casars-python/src/convert.rs`
+casa-rs checks nesting depth and row shapes in `frontends/casars-python/src/convert.rs`
 and rejects empty or ragged nested Python sequences with CASA's catchable
 `Illegal Quantum record in QuantumHolder::fromRecord` `RuntimeError` instead of
 crashing or corrupting values (#1252, #1170).
@@ -7795,7 +7816,7 @@ appending it. Valid components retain CASA's geometry and position-angle
 normalization. This follows the standing rule to correct CASA crashes; callers
 retain their existing list and Python session. The isolated CASA subprocess
 receipts are in
-`crates/casars-python/python/tests/data/casa_componentlist_record_validation.json`,
+`frontends/casars-python/python/tests/data/casa_componentlist_record_validation.json`,
 regenerated by `tools/simulation/componentlist_record_validation_oracle.py`.
 ## Duplicated `imstat` axes crash CASA
 
@@ -7810,7 +7831,7 @@ duplicated axis. An out-of-range or negative axis is refused with the catchable
 uncontrolled path, not a policy.
 
 casa-rs refuses a duplicated axis with `Invalid cursor axes: [0, 0]: an axis
-is named twice; CASA 6.7.6.14 aborts on it` (crates/casa-images/src/analysis.rs,
+is named twice; CASA 6.7.6.14 aborts on it` (libs/casa/casa-imageanalysis/src/analysis.rs,
 `parse_axes`), keeping every other axes form CASA accepts, including the
 minimum-forms `-1` for all axes (#977).
 
@@ -7874,7 +7895,7 @@ wraps both unit conversion and `mypo.linpolint(..., outfile=lpol)`, yet the
 later `if (polithresh):` block unconditionally evaluates `lpol` and raises
 `UnboundLocalError: cannot access local variable 'lpol'`.
 
-casa-rs parses `polithresh` as an optional-unit quantity (`crates/casa-images/src/analysis/immath/pol.rs`),
+casa-rs parses `polithresh` as an optional-unit quantity (`libs/casa/casa-imageanalysis/src/analysis/immath/pol.rs`),
 treats a unitless `polithresh` as already expressed in the input image's
 brightness unit, and thresholds linear polarized intensity normally (#977).
 
@@ -7892,7 +7913,7 @@ In CASA 6.7.6.14, `_immath_new_poli` converts a positive `sigma` via
 silently over-thresholds and masks the entire output plane.
 
 casa-rs validates unit conformance via `get_conformant_value` when `sigma > 0`
-(`crates/casa-images/src/analysis/immath/pol.rs`) and refuses non-conforming or
+(`libs/casa/casa-imageanalysis/src/analysis/immath/pol.rs`) and refuses non-conforming or
 unitless `sigma` against non-empty image `bunit` with a clear error (#977).
 
 ## Median fringe smoothing wraps delay values as phase
@@ -8101,14 +8122,14 @@ In CASA 6.7.6.14, `exportfits(..., history=True)` wraps logtable lines across
 80-byte FITS `HISTORY` cards by placing 72 characters on the first card and
 `>` followed by 71 characters on continuation cards, but skips character index
 143 on card 3 and subsequent continuation cards when the wrapped line spans
-more than 143 characters. On `cube_i.im` (`crates/casa-images/tests/data/exportfits/cube_i.im`),
+more than 143 characters. On `cube_i.im` (`libs/casacore/casa-images/tests/data/exportfits/cube_i.im`),
 CASA drops `'y'` from `csys={...}` in the 202-character `ia.fromshape(...)`
 message and drops the closing `')'` of the 144-character
 `ia.setrestoringbeam(...)` message (emitting 47 `HISTORY` cards instead of 48);
 on a synthetic 160-digit `"0123..."` history entry, CASA drops `'3'` at index
 143 between `>...012` and `>456...`.
 
-casa-rs (`crates/casa-images/src/analysis/exportfits.rs`, `wrap_fits_history_text`)
+casa-rs (`libs/casa/casa-imageanalysis/src/analysis/exportfits.rs`, `wrap_fits_history_text`)
 splits at 72 characters on the first card and `>` plus 71 characters on each
 continuation card without skipping characters, emitting all 48 cards on
 `cube_i.im` so both casa-rs and CASA 6.7.6.14 `ia.history(list=False)` read back
@@ -9008,7 +9029,7 @@ output. The upstream suite checks each implementation's error (#977).
 In CASA 6.7.6.14, `imregrid` with a one-channel input, an explicitly selected
 spectral axis and a multi-channel output replicates the data and mask. During
 that copy it loses the brightness unit and restoring beam. The `singleton`
-case in `crates/casa-images/tests/data/imregrid/expected.json` records a
+case in `libs/casacore/casa-images/tests/data/imregrid/expected.json` records a
 `Jy/beam` image with a 4 by 3 arcsec beam becoming a unitless image without a
 beam. casa-rs matches the samples, mask and template frequency grid and retains
 the original units and beam. Copying channels does not change the calibration
@@ -9029,7 +9050,7 @@ the shifted fixture with an all-masked result and published no output.
 CASA 6.7.6.14 can copy pixels and masks unchanged when regridding a leading
 axis of a three-axis linear coordinate at the same shape. The
 `same_shape_linear_shift` case in
-`crates/casa-images/tests/data/imregrid/expected.json` changes the first
+`libs/casacore/casa-images/tests/data/imregrid/expected.json` changes the first
 axis's reference value by 0.25 m on a 7 × 6 × 5 image. CASA reports the new
 reference value but retains the source samples. In casacore's
 `LinearCoordinate::near`, the exclusion loop marks consecutive entries
@@ -11115,6 +11136,42 @@ paired fixture checks the selected bins and metadata in both modes (#1032).
 [Pinned transform setup](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/mstransform/MSTransform/MSTransformManager.cc?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
 [Pinned time averager](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/msvis/MSVis/AveragingTvi2.cc?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
 
+## PlotMS can terminate while exporting Real from FLOAT_DATA
+
+With CASA 6.7.6.14 and casaplotms 2.9.1, select XX and channels 1 through
+3 from a float-only MeasurementSet. Use Channel versus Real with
+`ydatacolumn="float"` and `avgchannel="2"`. The CASA plot server
+terminates with signal 11 and returns an unavailable RPC without a text
+product. The explicit float cache fills the signed amplitude cube for
+both amplitude and real, then the Real export requests its own cube.
+
+casa-rs exports the same signed real samples for the Real and Amp axes
+on an explicit float column, keeping each axis label. The paired test
+reproduces the failed Real request and uses the signed CASA Amp export
+to check the corrected native values and point IDs (#1032).
+[Pinned PlotMS cache](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/MSCache.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
+
+## PlotMS can stall during a transformed spectral text export
+
+- Date noted: 2026-11-25
+- Status: casa-rs exports the selected reporting grid in both products (#1032)
+
+On the two-window VLA fixture with `xaxis='frequency'`, `yaxis='amp'`,
+`transform=True` and active `freqframe='TOPO'` or `'LSRK'`, the pinned
+CASA 6.7.6.14 / casaplotms 2.9.1 public task starts its TXT file and leaves
+only the selection header. Fresh offscreen servers reproduce the stall
+in verbose and compact TXT and when an explicit rest frequency is used.
+The LSRK velocity request with `restfreq='95GHz'` also stalls in TXT.
+The equivalent PNG requests complete.
+
+casa-rs exports the plotted reporting frequencies and uses the same
+channel grid for verbose TXT metadata. The oracle pairs the reference
+PNG and the same-selection untransformed TXT, then verifies each active
+plotted coordinate with pinned CASA measures and the Doppler or
+wavelength formula. It also directly pairs untransformed velocity,
+including the upper middle frequency of the selected buffer when the
+task uses the implicit rest frequency.
+
 ## PlotMS can stall while exporting phase-shifted coordinates to text
 
 In CASA 6.7.6.14 with casaplotms 2.9.1, plot U in metres against observed
@@ -11128,8 +11185,70 @@ test compares them with pinned PlotMS on a separate MS written by the
 CASA `phaseshift` task. Both CASA paths use the same phase-shifting
 visibility iterator. The test also compares PNG export using the original
 MS and active transform in both public PlotMS tasks (#1032).
+
+The composition regression also uses pinned `mstransformer` for a FIELD
+table with both constant and polynomial directions. The `phaseshift`
+wrapper writes the shifted visibilities, then fails while reading the
+mixed-shape FIELD direction column for its final update. The visibility
+iterator uses the first selected epoch of each chunk to evaluate the
+polynomial.
+
+With `avgtime="20"` alone, the pinned iterator rotates each averaged
+baseline and its complex data. With `avgchannel="2"` alone, the channel
+reducer runs after the rotation. On the same four selected channels,
+combining the two averages with `phasecenter` fails in pinned PlotMS
+with `INVALID_ARGUMENT`, for both equal and independent X/Y visibility
+columns. casa-rs reports the refused combination before export.
+
+The time-and-phase iterator limits its input chunks to the time bin.
+An absent baseline at a chunk's first integration leaves that baseline
+with a separate centroid within the chunk. The regression compares its
+shifted coordinates using the materialized iterator and verifies the
+first-baseline epoch in verbose PlotMS output. The pinned time averager
+retains its polynomial phase direction across time chunks within the
+same field selection.
+
 [Pinned PlotMS iterator setup](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/MSCache.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
 [Pinned phase-shifting iterator](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/msvis/MSVis/PhaseShiftingTVI.cc?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
+
+## PlotMS can close its server on text export from an offset row
+
+In CASA 6.7.6.14 with casaplotms 2.9.1, put a Channel versus Amp
+MeasurementSet plot in a two-by-two grid with `rowindex=1`,
+`colindex=0` and `iteraxis="scan"`. The pinned PNG places the first
+two scans in the lower row and advances the other scans to the next
+page. The equivalent TXT call terminates the server and reports
+`UNAVAILABLE` with a closed socket. Field and correlation iteration
+show the same offset behavior.
+
+casa-rs writes the selected coordinates to text. The paired test uses
+the centered CASA grid to compare the numeric text and the active
+offset CASA PNGs to check pagination and placement (#1032).
+[Pinned export action](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Actions/ActionExport.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
+
+## PlotMS writes PDF bytes for a PostScript export
+
+CASA 6.7.6.14 with casaplotms 2.9.1 exports the selected Channel versus Amp
+figure as a PDF when `expformat="ps"` or when `expformat=""` and the filename
+ends with `.ps`. The bytes begin with `%PDF-1.4` and identify Qt as the PDF
+producer. The public format catalog describes these exports as PostScript.
+
+Casa-rs writes the requested PostScript encoding. The paired oracle decodes
+both single-page products and compares their visible visibility marks.
+[Paired public PlotMS oracle](https://github.com/bglenden/casa-rs/blob/6f642950ee05c792902fcde050d29e973967ac38/tools/casa-compat/plotms_ms_exports_oracle.py)
+
+## PlotMS can ignore the requested major grid color
+
+CASA 6.7.6.14 with casaplotms 2.9.1 draws gray major grid lines for the static
+Columns MeasurementSet with `showmajorgrid=True`, `majorstyle="solid"`,
+`majorwidth=2` and `majorcolor="red"`. The same export uses gray for
+`majorcolor="aa4455"` and `majorcolor="#aa4455"`. The admitted options describe
+the color of those lines. With the major stroke disabled and the grid enabled,
+the dotted minor grid uses the requested `minorcolor="#338844"`.
+
+Casa-rs applies the requested grid colors. The paired test checks the pinned
+gray major stroke and the requested native major color. Both exports show the
+dotted minor grid with its requested color. [Paired public PlotMS oracle](https://github.com/bglenden/casa-rs/blob/6f642950ee05c792902fcde050d29e973967ac38/tools/casa-compat/plotms_ms_axes_presentation_oracle.py)
 
 ## PlotMS SPW averaging can repeat the first window's channel selection
 
@@ -11526,6 +11645,39 @@ an ambiguous trailing axis using the most recent read of writable
 visibility data. A subsequent ordinary row-axis read restores row
 ordering for such arrays (#1030).
 
+## Adding an attached ephemeris can delete its source or change FIELD TIME outside the observation
+
+In CASA 6.7.6.14, call `ms.addephemeris()` with an ephemeris table
+already installed under the requested ID in FIELD. CASA removes the
+original before copying the input. The copy then fails and existing
+fields lose their ephemeris. Casa-rs copies the source to a staged FIELD
+before publishing the replacement. A selected FIELD on a read-only
+attachment fails before replacing any existing ephemeris.
+
+When FIELD TIME falls outside the observation, CASA's bounds test uses
+`minimum <= start || start <= maximum`. It can assign an ephemeris start
+that also falls outside the observation. Casa-rs updates FIELD TIME only
+when the ephemeris start lies within both observation bounds (#1030).
+
+Calling `addephemeris()` on an attached MS with the default empty
+`ephemerisname` can abort CASA with an uncaught string-range exception.
+Casa-rs raises a Python error before writing FIELD or HISTORY (#1030).
+
+## Uppercase DATA can crash `ms.hanningsmooth()`
+
+In CASA 6.7.6.14, open an MS with DATA and without CORRECTED_DATA for
+writing and call `ms.hanningsmooth("DATA")`. The wrapper uses lowercase
+to decide against creating scratch columns. The smoothing iterator then
+compares the original argument to lowercase `data` and can access the
+absent corrected column. Casa-rs uses the same case-insensitive route
+for both decisions (#1030).
+
+When an MS already has MODEL_DATA and lacks CORRECTED_DATA, the default
+corrected smoothing path in CASA removes the model while initializing
+the missing column. A non-unity model is replaced by unity. Casa-rs
+initializes the missing corrected column and keeps the existing model
+samples (#1030).
+
 ## An MS write after baseline downsampling can overwrite omitted rows with zeros
 
 On a writable MeasurementSet, read `getdata('data', ifraxis=True,
@@ -11690,6 +11842,30 @@ is not a table. casa-rs refuses that destination. It publishes a
 complete stage atomically and can replace an otherwise eligible table
 or an empty directory (#1030).
 
+## MultiMS creation can destroy a destination or strand moved members
+
+In CASA 6.7.6.14, `ms.createmultims(out, members, [])` can overwrite a
+nonempty directory containing unrelated files. Distinct members with
+the same basename can abort after moving the first member. A relative
+symbolic-link member can also abort after the move, and a saved reference
+to an external sibling table can leave a published MultiMS with a broken
+parent link. Calling with a writable, permanently locked member already
+attached to the same tool can abort while flushing its moved subtables.
+An ANTENNA subtable linked by a relative symbolic link can be reported
+missing at reopen after CASA has moved its containing member.
+
+casa-rs refuses the destination or basename collision before moving
+members, keeps existing outputs until the new table is ready, and puts
+members back if publication fails. It preserves a symbolic link's target
+and a saved reference's parent across the move. The tool releases its own
+affected locks before moving their tables and acquires the requested
+locks on the completed MultiMS (#1030).
+
+When copying subtables into a saved reference that points outside the
+input members, CASA can first rewrite the external parent's keyword set
+and then strand the reference during relocation. casa-rs gives the
+staged member its own selected rows and subtable bindings in that case.
+
 ## MS sorting a transient selection checks a nonexistent table path
 
 In CASA 6.7.6.14, after `ms.select({'rows': [21, 3, 8, 1]})`,
@@ -11786,7 +11962,7 @@ Spectral metadata still describes the initialized window, as in CASA
 
 CASA 6.7.6.14 with casaplotms 2.9.1 terminates its PlotMS process with signal 11 for `xaxis='frequency'`, `yaxis=['real','imag']`, `ydatacolumn=['model','corrected']`, `spw='0:0;3;6'` and `showatm=True` on the paired weather fixture. The public task reports a closed RPC connection and leaves no TXT export. The same failure occurs with two stored ordinates. [Pinned overlay setup](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Plots/PlotMSPlot.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
 
-Casa-rs exports both visibility ordinates and the transmission curve. The paired check compares the visibility axes to CASA's two-ordinate export with transmission disabled and the curve to its single-ordinate transmission export on the same channels. Both checks preserve the virtual model reference and stored visibility cells. [Paired public PlotMS oracle](../tools/casa-compat/plotms_ms_atmosphere_oracle.py)
+Casa-rs exports both visibility ordinates and the transmission curve. The paired check compares the visibility axes to CASA's two-ordinate export with transmission disabled and the curve to its single-ordinate transmission export on the same channels. Both checks preserve the virtual model reference and stored visibility cells. [Paired public PlotMS oracle](https://github.com/bglenden/casa-rs/blob/6f642950ee05c792902fcde050d29e973967ac38/tools/casa-compat/plotms_ms_atmosphere_oracle.py)
 
 ## The first MS history write can create HISTORY and then fail
 
@@ -11813,3 +11989,568 @@ reports original row numbers `[3, 3, 8, 7]`. Both occurrences of row 3
 sort together even though they occupy separate positions in the selector.
 casa-rs applies the same view-relative row IDs used by a WHERE predicate
 and returns `[3, 8, 7, 3]` (#1030).
+
+## Duplicate observations can interrupt a subtable-only concatenation
+
+With two identical OBSERVATION rows in the attached MeasurementSet and
+a matching row in the donor, CASA 6.7.6.14 schedules the donor row for
+deletion twice. `ms.testconcatenate()` can fail with a row-index error
+after changing FIELD. casa-rs maps the donor observation to the first
+equivalent attached row and keeps the existing row numbers so MAIN
+references remain valid (#1030).
+
+## Self-concatenation can fill the disk by growing OBSERVATION
+
+With a writable MeasurementSet containing an OBSERVATION row, pass its
+own path to `ms.testconcatenate()` in CASA 6.7.6.14. The tool can append
+to OBSERVATION while iterating over the same live row count. A probe
+was stopped after the private subtable grew to about 15 GiB. Casa-rs
+rejects identical input directories, including symbolic aliases, before
+changing either table (#1030).
+
+## Metadata-only concatenation can change FIELD before donor HISTORY fails
+
+In CASA 6.7.6.14, call `ms.testconcatenate()` with a donor that has no
+HISTORY table, or whose MAIN descriptor lacks write permission. Use
+default direction tolerance so the donor field is added. CASA errors
+when it reaches the HISTORY step, after persisting the additional
+attached FIELD row. Casa-rs checks the donor and stages its HISTORY
+append before publishing the attached metadata changes (#1030).
+
+## A partial FEED match can discard a donor feed during concatenation
+
+In CASA 6.7.6.14, place feed IDs 17 and 0 for an antenna at attached
+FEED rows 0 and 4. Place donor feed IDs 0 and 19 for the same antenna
+at donor FEED rows 0 and 4. CASA matches donor row 0 to attached row 4,
+then treats donor row 4 as matched. The result appends a duplicate feed
+0 and loses feed 19. CASA can also test the wrong antenna when matching
+reordered antennas. Casa-rs compares feeds using the mapped antenna
+and records donor and attached row numbers separately (#1030).
+
+## Concatenating distinct MeasurementSets can change their shared FIELD table
+
+Point the attached MeasurementSet's FIELD keyword at the donor's FIELD
+and call `ms.testconcatenate()` with default tolerances in CASA 6.7.6.14.
+The tool appends a field to the linked table, which also adds it to the
+donor. Casa-rs checks the physical destinations against both inputs and
+refuses changes to a table used by the other input (#1030).
+
+## Physical MS concatenation can misalign visibility flags when it reverses channels
+
+In CASA 6.7.6.14, concatenate two MeasurementSets that match spectrally
+with their channel frequencies in opposite orders. CASA reverses
+the DATA channels while FLAG remains in the donor's original channel
+order. The same happens with defined FLAG_CATEGORY, WEIGHT_SPECTRUM,
+and SIGMA_SPECTRUM cells. When the antenna mapping also reverses a
+baseline, CASA swaps correlations and leaves the channel axes out of
+step. Casa-rs applies the same channel permutation to the visibility,
+flag, weight, and sigma spectra (#1030).
+
+## An invalid named concatenation destination can change the attached MS
+
+With nonempty POINTING tables, call `ms.concatenate()` in CASA 6.7.6.14
+with a named output that already exists as an ordinary file or populated
+directory. CASA can append donor POINTING rows to the attached MS before
+it reports that the output cannot be replaced. Casa-rs checks the
+destination before writing and retains the previous table edits for
+rollback until the output is published (#1030).
+
+## Concatenating a donor with no MAIN rows can abort CASA
+
+In CASA 6.7.6.14, call `ms.concatenate()` with an empty donor MAIN
+created by deep-copying an empty row selection of a valid MeasurementSet.
+The scan-offset calculation takes the minimum of the empty SCAN_NUMBER
+column. The uncaught casacore ArrayError aborts the process after CASA
+has started reconciling subtables. Casa-rs completes the requested
+metadata reconciliation and appends zero visibility rows (#1030).
+
+## Physical concatenation can zero manually scaled compressed visibilities
+
+In CASA 6.7.6.14, append a MeasurementSet with MODEL_DATA cells filled
+with `3+4j` to a MeasurementSet whose CompressComplex MODEL_DATA uses
+per-row scale and offset columns with autoscaling disabled. CASA reports
+success and reads back `0+0j` in the appended cells because the new row
+scales remain zero. Casa-rs chooses a scale and offset for each new cell,
+writes both physical scalar columns and preserves the configured policy
+for subsequent writes (#1030).
+
+## Virtual concatenation can scale sigma from the weight spectrum
+
+In CASA 6.7.6.14, call `ms.virtconcatenate()` without reversing a baseline
+and with `weightscale=4`. With WEIGHT_SPECTRUM equal to 4 and SIGMA_SPECTRUM
+equal to 2, CASA updates the weight to 16 and writes sigma 8 by scaling
+the updated weight. Casa-rs scales the original sigma and writes 1 (#1030).
+
+## Virtual concatenation can leave later spectra unscaled
+
+Give CASA 6.7.6.14 `ms.virtconcatenate()` a variable spectrum column whose
+first cell is undefined and a later cell is populated. With weight scaling
+enabled, CASA scales ordinary weights and sigmas but leaves later spectral
+cells unchanged. Casa-rs applies the transformation to defined cells and
+preserves undefined cells (#1030).
+
+## Virtual concatenation can leave flags on the wrong channels
+
+Give CASA 6.7.6.14 `ms.virtconcatenate()` a donor with a reversed channel
+grid, a reversed baseline, and flags that differ between channels. CASA
+reverses both visibility axes but only reorders the correlations in FLAG.
+Casa-rs applies the same channel and correlation permutations to the flags
+and their visibilities (#1030).
+
+## Virtual concatenation can leave feed IDs on the wrong antennas
+
+Give CASA 6.7.6.14 `ms.virtconcatenate()` a donor baseline that reverses
+after antenna remapping, with different feed IDs at its endpoints. CASA
+reverses the antennas and visibilities while retaining the old FEED1 and
+FEED2 order. The resulting antenna and feed pairs may be absent from the
+merged FEED table. Casa-rs swaps the feed IDs with their antennas (#1030).
+
+## Virtual concatenation can retain invalid IDs after removing duplicate rows
+
+Give CASA 6.7.6.14 `ms.virtconcatenate()` two identical attached OBSERVATION
+or PROCESSOR rows and a distinct incoming row. CASA removes the duplicate
+but can leave attached IDs unchanged when the scan file is omitted, and
+can store a donor ID of 2 for a two-row merged subtable. Stale observation
+IDs can also refer to the wrong record in HISTORY, EARTH_ORIENTATION, and
+a reused scan file. Casa-rs computes the final IDs after removing duplicates,
+updates those references, and combines the ranges of observations that
+now share an ID (#1030).
+
+## Virtual concatenation can overwrite a truncated auxiliary scan file
+
+Give `ms.virtconcatenate()` in CASA 6.7.6.14 an auxiliary file that declares
+two observation ranges and contains only one. CASA warns, discards the
+partial scan data, and rewrites the file after changing the MeasurementSets.
+Casa-rs reports the invalid auxiliary file and preserves it and both
+MeasurementSets (#1030).
+
+## Partition can crash while averaging into time bins
+
+On the upstream `ngc5921_ut.ms` fixture, call CASA 6.7.6.14
+`ms.partition(outputms, timebin="120s")`. The process exits with
+SIGSEGV and leaves a partial output directory. Casa-rs keeps the legacy
+visibility chunk boundaries, averages each processor and feed pair on
+its own baseline, and normalizes spectral weights within each integration.
+The time-bin calculations are checked against the shared CASA averager
+through `ms.split()` and against analytic fixtures. Casa-rs publishes the
+output after the write completes (#1030).
+
+## Split can write HISTORY to the input when output is omitted
+
+CASA 6.7.6.14 opens a scratch output for `ms.split()`, then passes the
+original empty output name to the HISTORY writer. That writer appends to
+the attached input's HISTORY. Casa-rs discards the unnamed scratch result
+without changing the input. Named outputs retain the split HISTORY row
+(#1030).
+
+When a named split uses an attached working selection, CASA 6.7.6.14
+records the generated scratch table in HISTORY. Casa-rs records the
+attached input's path so that the provenance survives scratch cleanup
+(#1030).
+
+## Split can leave a partial output after a time and channel stride error
+
+With a positive time bin and a channel selection such as `0:0~3^2`, CASA
+6.7.6.14 can create the output before raising the unsupported-combination
+error. Casa-rs raises the same error and preserves any existing output
+(#1030).
+
+## Split can report averaged channels without averaging their visibilities
+
+For four input channels, CASA 6.7.6.14 can give `ms.split(step=[3],
+timebin="120s")` two output channel coordinates for bins of three and one
+channels, while reading the first two raw channel values. Casa-rs forms
+both channel bins within each integration before averaging in time.
+The output coordinates, flags, and visibilities describe the same bins
+(#1030).
+
+## Split can write an output while returning a step error
+
+With a tuple such as `step=(2,)`, the CASA 6.7.6.14 binding runs the
+split before Python raises `SystemError` for the pending conversion
+exception. A negative width also leaves a partial output before CASA raises
+`RuntimeError`. Casa-rs raises the corresponding error and preserves the
+destination. Scalar integers, numeric lists, and NumPy arrays still work
+(#1030).
+
+## Channel split can write dangling STATE_ID references
+
+The CASA 6.7.6.14 `ms.split(field=[0], step=[5])` path maps the only
+input `STATE_ID` of `-1` to output row zero, even when the STATE subtable
+is empty. Casa-rs retains `-1`, the missing-state marker. The output
+STATE table remains empty (#1030).
+
+## Split can replace effective bandwidth with spectral resolution
+
+For a channel selection or average, CASA 6.7.6.14 computes each output
+channel's effective bandwidth for the total bandwidth, then writes the
+resolution array into the EFFECTIVE_BW column. For descending 1 MHz
+channels with 0.75 MHz effective bandwidth and 1.2 MHz resolution,
+`ms.split(step=[2])` reports 2.2 MHz effective bandwidth per output bin
+and a 3 MHz total for two bins. Casa-rs writes the summed 1.5 MHz effective
+bandwidth per bin, retains 2.2 MHz resolution, and reports the same 3 MHz
+total (#1030).
+
+## Frequency-grid verbosity can change the observatory position
+
+CASA 6.7.6.14 `ms.cvelfreqs()` reads the observatory position in both modes
+but assigns it to the frequency-conversion frame only with `verbose=True`.
+For a TOPO to BARY conversion this changes the computed grid when logging
+is disabled. Casa-rs uses the observatory position with either verbosity
+setting (#1030).
+
+## Frequency-grid queries can crash on an empty MeasurementSet
+
+In CASA 6.7.6.14, create a persistent zero-row view of a valid
+MeasurementSet with `table.selectrows`, open it in the MS tool, and call
+`cvelfreqs()` without an explicit epoch. CASA accesses MAIN row zero
+when reading the observation epoch and segfaults. Casa-rs returns the
+persisted spectral grid for unframed queries and an empty float64 axis
+when conversion needs an observation epoch. The empty view remains
+attached (#1030).
+
+
+## Spectral regridding can leave later fields on the original noise scale
+
+In CASA 6.7.6.14, regrid a MeasurementSet with several fields sharing one
+spectral window through `ms.regridspw(mode="chan", chanwidth=2, hanning=False)`
+without changing its frequency reference. CASA doubles the per-row and
+spectral weights and scales sigma by the inverse square root of two for
+the first field. It reuses the same grid for later fields while leaving
+their weights and sigma at the original scale. Casa-rs applies the same
+bandwidth ratio to all fields that use the same spectral grid (#1030).
+
+## Legacy spectral writers can modify an MS after a read-only open or a failed selection
+
+CASA 6.7.6.14 `ms.cvel(mode="channel", width=2)` can reopen and rewrite a
+MeasurementSet after the tool was opened with `nomodify=True`. On the pinned
+`ngc5921_ut.ms` fixture the overload changed the source from 63 to 31 channels.
+With a row selection active, `ms.regridspw(chanwidth=2)` can change the parent
+spectral-window table and then fail while the parent DATA cells still have their
+original shape.
+
+casa-rs honors the attachment's write mode and requires the complete attached MS
+for a spectral rewrite. It prepares and checks a private output before
+publication so a failed operation keeps the original MS usable (#1030).
+
+An LSRK input also reproduces the detached state with
+`ms.cvel(outframe="REST", width=2, hanning=False)`. CASA closes the tool
+before calling `SubMS::regridSpw`, and the unsupported conversion raises
+`No MeasFrame specified for conversion of Frequency`. The caller receives the
+same error from casa-rs and can continue using the original attachment (#1030).
+
+On a two-window LSRK input, `ms.cvel(width=2, interp="invalid",
+hanning=False)` combines the two windows before SubMS rejects the interpolation.
+CASA returns `True` with one combined window and fewer MAIN rows. Casa-rs
+keeps both windows and the original rows when it declines the unsupported
+interpolation. The same ordering issue occurs with an unknown `outframe`
+(#1030).
+
+## A converted regridspw channel midpoint can address a channel past the input band
+
+In CASA 6.7.6.14, `ms.regridspw(outframe="BARY", chanwidth=2,
+hanning=False)` on `ngc5921_ut.ms` selects original channel 32 as the
+midpoint of the first field's 63-channel band after frame conversion.
+`SubMS::regridChanBounds` accepts a 63-channel span centered there and
+calculates an inclusive range of 1 through 63, although the last input
+index is 62. The reference run logged an upper bound of 0 Hz and a
+negative span of about 1.41 GHz.
+
+casa-rs clips the requested range to the available input grid. When the
+midpoint would select the same out-of-range endpoint, that field has
+31 valid two-channel bins. Explicitly setting `center=31` covers all
+63 input channels and yields 32 output channels, including the partial
+edge, with valid bounds (#1030).
+
+## Regridspw can flag a new data description that was valid in the input
+
+Run `ms.regridspw(outframe="BARY", center=31, chanwidth=2, hanning=False)`
+on pinned CASA 6.7.6.14's `ngc5921_ut.ms`. The one input DATA_DESCRIPTION
+record has `FLAG_ROW=False`. SubMS intends to copy that flag when it creates
+the three output records, but the persisted flag is `True` on the third
+record. Both readers observe the same flag in CASA's output. Casa-rs keeps
+all three output data descriptions valid, as in the input (#1030).
+
+## In-place spectral resampling can reverse values on a descending grid
+
+A four-channel MeasurementSet with descending frequencies 1403, 1402,
+1401, and 1400 MHz and input visibility samples 0, 1, 2, and 3 exercises
+this in CASA 6.7.6.14. A width-two linear regrid through either
+`ms.cvel(hanning=False)` or `ms.regridspw(outframe="", hanning=False)`
+writes descending output frequencies 1402.5 and 1400.5 MHz, with
+visibility samples 2.5 and 0.5 in those slots. In
+`SubMS::regridChanBounds`, reversing the casacore Vector used to calculate
+bounds also reverses the shared input coordinate array used for
+interpolation, while the input visibility array retains its original order.
+
+casa-rs retains the association between frequencies and input samples.
+On this input it writes 0.5 at 1402.5 MHz and 2.5 at 1400.5 MHz (#1030).
+
+## Spectral width regridding can widen a table descriptor's permissions
+
+On CASA 6.7.6.14, set a writable MeasurementSet's directory mode to 0700
+and its `table.dat` mode to 0600. With umask 022,
+`ms.regridspw(outframe="", chanwidth=2, hanning=False)` can recreate
+`table.dat` with mode 0644. Casa-rs retains the original directory and table
+file modes when publishing the rewritten MeasurementSet (#1030).
+
+## Frame-only regridding can write through a linked MAIN storage file
+
+In CASA 6.7.6.14, bind `DATA_DESC_ID` to an IncrementalStMan file, then
+replace that file in the MeasurementSet with a symbolic link to a copy
+outside the MS. With two fields sharing one input window,
+`ms.regridspw(outframe="BARY", mode="")` returns `True`, preserves the link,
+and changes its external target while assigning the new data-description IDs.
+Casa-rs requires a private writable payload for the replacement and refuses
+this linked layout before changing the original MeasurementSet or its external
+file (#1030).
+
+## MS listfits can read beyond a short FITS random group
+
+In CASA 6.7.6.14, `FITSReader::showPrimaryGroup` always accesses 18 values
+in each displayed group. The casacore `PrimaryArray` element accessor has
+no bounds check, and a valid random group can store fewer than 18 values.
+Casa-rs displays up to 18 values from each of the first two groups, bounded
+by the group's actual dimensions. A three-value group has three displayed
+values (#1030).
+
+## MS listfits can report an extra Primary Table HDU at end of file
+
+CASA 6.7.6.14 lists two Primary Table HDUs for a file containing only
+the legacy primary-table marker (`NAXIS1=777777701` and `NAXIS2=0`).
+The second listing has an empty header after the file's only `END` card.
+Casa-rs emits one listing for the stored HDU, then reports end of file
+(#1030).
+
+## `ms.putdata()` can assign reordered Multi-MS view records to the wrong rows
+
+In CASA 6.7.6.14 a persisted reference across two Multi-MS members can
+return visibilities in the saved row order through `getdata()`, then assign
+an edited cube to different physical rows through `putdata()`. With saved
+rows `[43, 2, 30, 1, 43]` on two 30-row members, the pinned `putdata()`
+places the third and first logical inputs in rows 1 and 2 of the first
+member. Both inputs belong to the second member. Opening with automatic
+or permanent locking, or reading the cube before the write, gives the same
+result. The monotone view puts the values in the expected cells.
+
+`ms::putdata` advances its visibility iterator and passes consecutive
+sections of the input cube to `putitem`. The writer's iterator can visit the
+rows in a different order than `getdata()` exposed. casa-rs writes each cube
+position through the saved reference to its physical cell. The last logical
+position wins when multiple positions address the same physical cell, as in
+the CASA monotone case.
+
+
+## `oldstatwt()` can crash, bypass read-only access and overwrite correlation flags
+
+In CASA 6.7.6.14, `ms.oldstatwt()` defaults to `corrected_data` and requests
+that data cube even when `CORRECTED_DATA` is absent. On the stock
+`ngc5921_ut.ms` this terminates the Python process. The same method with
+`datacolumn='data'` updates `WEIGHT` and `SIGMA` when the tool was opened with
+`nomodify=True`. It reopens the attached table with `Table::Update` in the
+`Reweighter` constructor, and the tool reports itself writable afterward.
+
+casa-rs raises `RuntimeError` for an absent input column or a read-only
+attachment. Both errors preserve the attachment and leave the MAIN table
+unchanged. The missing-column case applies to input data required by the fit.
+
+When correlations have different `FLAG` values in the same channel,
+`StatWT::apply_variances` writes the collapsed `VisBuffer::flag()` matrix
+and broadcasts its flags to every correlation. A pinned paired test with
+one flagged correlation confirms that this can flag previously valid
+visibility samples. Changes made in that routine to the cached per-correlation
+flag cube for insufficient samples do not drive this write. casa-rs leaves
+`FLAG` and `FLAG_ROW` intact and marks unavailable estimates through the
+same zero `WEIGHT` and `SIGMA=-1` values.
+
+`VisBuffGroupAcc::fillChanMask` also uses the inclusive range width as the
+number of elements in a strided casacore slice. `fitspw='0:2~7^2'` reads
+channels 2, 4, 6, 8, 10 and 12 instead of 2, 4 and 6. With
+`fitspw='0:0~32^2'` on `ngc5921_ut.ms`, the slice overruns the 63-channel
+window and raises `Unknown exception caught`. casa-rs selects channels
+from the requested start through the inclusive stop, spaced by the step.
+
+CASA can reweight rows outside a saved reference. A four-row RefTable over
+`ngc5921_ut.ms` with `fitspw='0:0~32'` and `datacolumn='data'` changed the
+first correlation's weight on 12,855 backing rows. `Reweighter::makeSelection`
+constructs a visibility iterator to create `SORTED_TABLE` and then chooses
+between that table and the attached view. casa-rs fits the attached
+projection and writes only its selected physical rows.
+
+An unnamed selection made by `msselect()` or `selecttaql()` also fails in
+CASA when `Reweighter` tries to reopen its generated `tab…` name from disk.
+A selection of the three rows for baseline `0&1` on a synthetic MS gives
+`Table … does not exist`. casa-rs applies the same named-table reweighting
+to the active selection. An empty active selection returns `False` and
+preserves every weight and sigma.
+
+Two legacy integration edge cases affect scientific output. The triangular
+index in `StatWT::hashFunction` assumes antennas are supplied in ascending
+order. For four antennas, it pools `(3,1)` with `(2,3)`. With four
+unflagged unit visibilities on the first baseline and four visibilities of
+magnitude 2 on the second, `dorms=True` yields a pooled weight of 0.75 on
+both. casa-rs keys the recorded antenna pair and obtains the independent
+weights 1.75 and 0.4375. If a later integration combines incompatible
+correlation types, `StatWT::process` reports failure to `GroupProcessor`,
+whose return value `Reweighter::reweight` discards. CASA returns `True`
+after publishing the earlier integrations. casa-rs raises `RuntimeError`
+and leaves the whole update unpublished.
+
+
+## Legacy continuum scratch fitting and failed output publication
+
+CASA 6.7.6.14 `continuumsubold()` obtains a `WEIGHT` cube with axes
+`(correlation, baseline, time)` from `MSSelector::getData`.
+`MSSelUtil2<Complex>::timeAverage` advances its weight offset once per
+baseline and time, reusing one value for every correlation. This also shifts
+weights between baselines and times in the cube. A three-integration fit
+with distinct per-hand weights on baseline `0&1` returned real model values
+121.285713 and 136.333328. The per-correlation weighted means are 128.031738
+and 113.587639, as pinned `continuumsub()` also confirms. casa-rs uses each
+sample's own weight with both methods. It keeps the legacy method's
+all-flagged channel behavior and its time bins.
+
+`continuumsub()` and `continuumsubold()` pass a negative `fitorder` to
+the casacore polynomial constructor. The type expects a nonnegative degree.
+CASA 6.7.6.14 terminates the process on the paired four-channel fixture.
+casa-rs raises `RuntimeError` and preserves the attached MS. The named-output
+`contsub()` deliberately uses a negative degree to copy the selection with
+the continuum retained, and casa-rs follows that behavior.
+
+Both in-place methods can also terminate CASA when the attachment is a
+saved RefTable over an MMS and its constituents lack scratch columns. The
+pinned test used a six-row view spanning two 30-row constituent tables.
+CASA completes the same fit if both columns are installed on the constituents
+first. casa-rs initializes the visible physical rows under the constituent
+locks, publishes the saved column projection, and fits across both members.
+Both readers can reopen the fitted cells and the unselected scratch cells
+remain undefined.
+
+With `contsub(outputms, fitspw='0', spw='99', whichcol='data')` on a
+single-window MS, `SubMS` creates the named output before checking whether
+the output window exists. Pinned CASA raises a selection error and leaves a
+zero-row MS at `outputms`. casa-rs checks and writes through the MS transform's
+private stage. The selection error leaves the requested output unpublished.
+
+On an MS with only one physical scratch column, pinned CASA can replace a
+preexisting `MODEL_DATA` with unity when it creates `CORRECTED_DATA`, or
+terminate during modelling when only `CORRECTED_DATA` exists. casa-rs
+initializes the missing column and preserves the existing cells.
+
+The scratch continuum subtractors in CASA 6.7.6.14 assume a data-description
+identifier also identifies its spectral window. When the two DATA_DESCRIPTION
+entries reference windows `[1, 0]`, `continuumsubold(fitspw='0', mode='model')`
+fits rows from window 1. casa-rs follows the DATA_DESCRIPTION mapping and
+fits window 0.
+
+## UVFITS import can lose fully flagged initial visibility rows
+
+CASA 6.7.6.14's column-wise UVFITS importer can leave `FLAG_ROW` false
+while every channel and correlation in the row is flagged. Export the
+upstream `uvfits_test.ms` with `ms.tofits()` and import the result with
+`ms.fromfits()`. In the 630-row export, this happens on rows 1 through 29.
+The signed per-sample weights and `FLAG` agree across readers. casa-rs
+derives `FLAG_ROW` from all the flags in each persisted visibility cell.
+
+## WSRT UVFITS output can shift channel frequencies and antenna positions
+
+CASA 6.7.6.14 dispatches `ms.tofits()` to `MSFitsOutputAstron` when
+`OBSERVATION.TELESCOPE_NAME` is `WSRT`. Its output can contain an extra IF
+for a selected single spectral window. For a one-channel stride-two export
+of a topocentric window, its frequency reference pixel and AIPS FQ offset
+can cancel the absolute frequency. Its private antenna coordinate rotation
+also changes the positions obtained by the pinned UVFITS reader.
+
+The repository test reproduces the WSRT dispatch by labelling the upstream
+`uvfits_test.ms` as WSRT and selecting `spw='1:0~2^2'`. The pinned reader
+reports two windows near −0.0123 Hz and changed antenna positions for the
+pinned writer's file. The native file has one window at the mean of the
+two averaged channel centres, about 230.508 GHz, in the original
+topocentric frame. Antenna positions round-trip in ITRF. The native
+writer emits the actual selected windows and uses standard UVFITS antenna
+coordinates.
+
+The Astron averaging loop also indexes the selected channels' weights
+without the correlation stride. On the two-correlation fixture with a
+flagged channel and unequal weights, the native file has independently
+weighted means of 1 and 24, with weights 2 and 10. These values are the
+means and summed weights of the unflagged samples for each correlation.
+## Legacy AIPS visibility tables can fail after preceding metadata
+
+CASA 6.7.6.14 accepts the legacy primary-array marker `NAXIS1=777777701`
+and looks for visibility data in an AIPS binary table. If AIPS FQ precedes
+AIPS UV in the fixture, its deferred FQ reader can advance to the wrong
+HDU and raise `NAXIS keyword missing`. casa-rs locates the visibility
+extension independently of the metadata order. It interprets the table's
+scaled parameters and signed weights and produces a normal MSv2 that the
+pinned reader can open.
+
+## UVFITS import can fail for apparent directions and shift separate subarrays
+
+For a nonzero proper motion in an AIPS SU row, CASA 6.7.6.14 attempts to
+convert the apparent direction without an observation frame. It raises
+`Missing information in Frame specified for conversion` and removes the
+incomplete output. casa-rs supplies the FITS observation epoch and
+converts the direction and its rate into the primary direction frame.
+The regression compares both coefficients with pinned CASA's measures
+tool using an explicit epoch.
+
+The pinned exporter writes a one-based `SUBARRAY` random-group parameter
+when antenna station numbers require separate `ANTENNA1` and `ANTENNA2`
+parameters. Its importer then uses that parameter as a zero-based MS ID.
+On the eight-antenna stock fixture with a station renamed to 300, the
+pinned reader imports `ARRAY_ID` 1 for the original array 0. Native
+import converts the one-based FITS parameter back to the original MS ID.
+
+## FITS-IDI overwrite can discard the previous MeasurementSet when conversion fails
+
+CASA 6.7.6.14 deletes a detached destination before reading the FITS-IDI
+payload when `ms.fromfitsidi(nomodify=False)` is called. Import the upstream
+`emerlin_multiuv.IDI1`, close the tool, and attempt to replace its 504-row
+MeasurementSet using a copy of the FITS primary header with no UV_DATA
+extension. The pinned reader raises and the original table disappears.
+casa-rs completes conversion in a private sibling directory and publishes the
+replacement atomically. A failed conversion leaves the original table readable.
+
+## FITS-IDI weather can treat missing data as measurements and duplicate electron values
+
+The WEATHER extension of the upstream
+`VLBA_TL015A_tl015arecor_BIN0_SRC0_1_201020T164655.idifits` fixture declares
+`WVR_H2O` and `IONOS_ELECTRON` as zero-width FITS columns. CASA 6.7.6.14
+creates output columns for both and copies values despite the missing FITS
+payload. When both inputs contain real values, the same reader attaches the
+water-vapor column handle to the electron column and writes the electron value
+to both outputs. casa-rs omits zero-width measurements and reads each defined
+column independently.
+
+## FITS-IDI channel flags can save an invalid spectral selection
+
+The pinned FITS-IDI importer appends a quote when it finishes a channel
+range and a second quote when it finishes the spectral-window expression.
+It also replaces a selected frequency setup with a wildcard when all its
+bands are flagged. On an upstream e-MERLIN file with a flag extension for
+channels 2 through 4 of all four bands in frequency setup 1, casa-rs
+persists `spw='0:1~3,1:1~3,2:1~3,3:1~3'` with a single closing quote and
+a channel range for each window. The pinned selection parser confirms all
+four ranges.
+
+## FITS-IDI interval inference can leave inconsistent centroids and weights
+
+For FITS-IDI visibility rows with no `INTTIM` column, CASA 6.7.6.14 starts
+with a one-second integration. When it reaches a later timestamp, it
+fills INTERVAL and EXPOSURE with the timestamp difference. The initial
+TIME_CENTROID, visibility weights and interval-dependent digital scaling
+still reflect one second. The fill can also change durations from an
+earlier UV_DATA extension. On two integrations four seconds apart,
+the first persisted CASA exposure is four seconds, but the centroid is only
+half a second after its start. casa-rs determines each extension's inferred
+interval before decoding its visibilities and uses that interval throughout.
+
+## FITS-IDI import can persist inconsistent visibility and FIELD references
+
+Changing only `FREQUENCY.NO_CHAN` from 512 to 511 in the upstream
+`emerlin_multiuv.IDI1` file leaves CASA 6.7.6.14 with 512-channel DATA cells
+and a SPECTRAL_WINDOW row that declares 511 channels. Changing the first
+`UV_DATA.SOURCE_ID` to 311 separately yields MAIN.FIELD_ID 310 with only two
+FIELD rows. casa-rs checks each visibility layout against the frequency and
+source tables and rejects either file before publishing the result.

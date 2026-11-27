@@ -4,11 +4,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use casa_ms::ms::MeasurementSet;
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
 use casa_ms::{MeasurementSetBuilder, MsError};
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::additive_polynomial::TableGrid;
@@ -182,33 +182,33 @@ fn write_gain_table(
             "G Jones" | "T Jones" | "Accor Jones" | "M Mueller" | "Mf Mueller" | "A Mueller"
         );
     let (parameter_column, parameter_type) = if delay {
-        (COL_FPARAM, casa_types::PrimitiveType::Float32)
+        (COL_FPARAM, casa_core::PrimitiveType::Float32)
     } else {
-        (COL_CPARAM, casa_types::PrimitiveType::Complex32)
+        (COL_CPARAM, casa_core::PrimitiveType::Complex32)
     };
     let mut columns = vec![
-        ColumnSchema::scalar(COL_TIME, casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar(COL_FIELD_ID, casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_SPECTRAL_WINDOW_ID, casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_ANTENNA1, casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_ANTENNA2, casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_INTERVAL, casa_types::PrimitiveType::Float64),
-        ColumnSchema::scalar(COL_SCAN_NUMBER, casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_OBSERVATION_ID, casa_types::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_TIME, casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar(COL_FIELD_ID, casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_SPECTRAL_WINDOW_ID, casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_ANTENNA1, casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_ANTENNA2, casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_INTERVAL, casa_core::PrimitiveType::Float64),
+        ColumnSchema::scalar(COL_SCAN_NUMBER, casa_core::PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_OBSERVATION_ID, casa_core::PrimitiveType::Int32),
     ];
     if legacy_gain_metadata {
         columns.extend([
-            ColumnSchema::scalar(COL_ARRAY_ID, casa_types::PrimitiveType::Int32),
-            ColumnSchema::scalar(COL_TIME_EXTRA_PREC, casa_types::PrimitiveType::Float64),
+            ColumnSchema::scalar(COL_ARRAY_ID, casa_core::PrimitiveType::Int32),
+            ColumnSchema::scalar(COL_TIME_EXTRA_PREC, casa_core::PrimitiveType::Float64),
         ]);
     }
     columns.extend([
         ColumnSchema::array_variable(parameter_column, parameter_type, Some(2)),
-        ColumnSchema::array_variable(COL_PARAMERR, casa_types::PrimitiveType::Float32, Some(2)),
-        ColumnSchema::array_variable(COL_FLAG, casa_types::PrimitiveType::Bool, Some(2)),
-        ColumnSchema::array_variable(COL_SNR, casa_types::PrimitiveType::Float32, Some(2)),
+        ColumnSchema::array_variable(COL_PARAMERR, casa_core::PrimitiveType::Float32, Some(2)),
+        ColumnSchema::array_variable(COL_FLAG, casa_core::PrimitiveType::Bool, Some(2)),
+        ColumnSchema::array_variable(COL_SNR, casa_core::PrimitiveType::Float32, Some(2)),
         // CASA declares WEIGHT but leaves it undefined in ordinary G/T solutions.
-        ColumnSchema::array_variable(COL_WEIGHT, casa_types::PrimitiveType::Float32, Some(2)),
+        ColumnSchema::array_variable(COL_WEIGHT, casa_core::PrimitiveType::Float32, Some(2)),
     ]);
     let schema = TableSchema::new(columns).expect("valid gain caltable schema");
     let mut writer = CalibrationTableWriter::with_mode(

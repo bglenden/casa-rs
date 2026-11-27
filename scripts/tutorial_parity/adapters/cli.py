@@ -11,7 +11,7 @@ from ..model import Operation, RuntimeResources, SectionManifest, Surface
 from ..resources import binary
 from .base import AdapterPlan, execute_plan
 
-SURFACES = Path(__file__).resolve().parents[3] / "crates/casa-provider-contracts/resources/parameter-surfaces.json"
+SURFACES = Path(__file__).resolve().parents[3] / "surfaces/casa-contracts/resources/parameter-surfaces.json"
 
 
 BINARY_BY_TASK = {

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-25",
+  "revision": "63981363ba31b2ebef6970a09e209bb05d14a8f0",
+  "source_revision": "63981363ba31b2ebef6970a09e209bb05d14a8f0",
+  "baseline_revision": "f0eff2cdf5dc1f25c503913dbc24639d67ef0bab",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_iteration_axes_oracle.py --work <new-dir> --native-bin <msexplore> and casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only array-horizontal-axes --work <new-dir> --native-bin <msexplore>",
+  "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Two-by-two MeasurementSet grids with a lower-row offset, five scans, reversed Field and Corr data, centered Spw, Antenna, Baseline and Time panels, and Channel versus array Elevation by correlation.",
+  "result": "passed",
+  "baseline_result": "Native refuses the lower-row offset, more scans than the centered grid capacity, and Antenna, Baseline and Time iteration. Reversed Field panels were encountered in physical order. The centered Spw control already paired.",
+  "matched_text_coordinates": 374,
+  "distinct_rendered_coordinates": 386,
+  "png_pairs": 15,
+  "array_elevation_xx_coordinates": 24,
+  "array_elevation_yy_coordinates": 36,
+  "paired_refusals": 2,
+  "figure_size_px": [
+    500,
+    360
+  ]
+}

@@ -8,10 +8,10 @@ use casa_calibration::{
     ApplyMode, ApplyPlanRequest, execute_apply_from_path, load_apply_specs_from_callib,
     plan_apply_from_path,
 };
-use casa_ms::ms::MeasurementSet;
+use casa_core::ArrayValue;
+use casa_ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::selection::MsSelection;
-use casa_types::ArrayValue;
 
 #[test]
 fn plan_apply_from_callib_tracks_per_table_applicability_and_absolute_paths() {
@@ -71,8 +71,8 @@ fn execute_apply_from_callib_respects_field_selectors_and_absolute_paths() {
         panic!("expected complex corrected row 1");
     };
 
-    assert_eq!(row0[[0, 0]], casa_types::Complex32::new(0.5, 0.0));
-    assert_eq!(row1[[0, 0]], casa_types::Complex32::new(0.05, 0.0));
+    assert_eq!(row0[[0, 0]], casa_core::Complex32::new(0.5, 0.0));
+    assert_eq!(row1[[0, 0]], casa_core::Complex32::new(0.05, 0.0));
 }
 
 fn create_two_table_callib_fixture(
@@ -93,13 +93,11 @@ fn create_two_table_callib_fixture(
                 &[
                     (
                         "NAME",
-                        casa_types::Value::Scalar(casa_types::ScalarValue::String(format!(
-                            "A{id}"
-                        ))),
+                        casa_core::Value::Scalar(casa_core::ScalarValue::String(format!("A{id}"))),
                     ),
                     (
                         "FLAG_ROW",
-                        casa_types::Value::Scalar(casa_types::ScalarValue::Bool(false)),
+                        casa_core::Value::Scalar(casa_core::ScalarValue::Bool(false)),
                     ),
                 ],
             ))
@@ -118,8 +116,8 @@ fn create_two_table_callib_fixture(
                 spectral_window_id: 0,
                 antenna_id: 0,
                 gains: vec![
-                    casa_types::Complex32::new(1.0, 0.0),
-                    casa_types::Complex32::new(1.0, 0.0),
+                    casa_core::Complex32::new(1.0, 0.0),
+                    casa_core::Complex32::new(1.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -129,8 +127,8 @@ fn create_two_table_callib_fixture(
                 spectral_window_id: 0,
                 antenna_id: 1,
                 gains: vec![
-                    casa_types::Complex32::new(2.0, 0.0),
-                    casa_types::Complex32::new(4.0, 0.0),
+                    casa_core::Complex32::new(2.0, 0.0),
+                    casa_core::Complex32::new(4.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -146,8 +144,8 @@ fn create_two_table_callib_fixture(
                 spectral_window_id: 1,
                 antenna_id: 0,
                 gains: vec![
-                    casa_types::Complex32::new(2.0, 0.0),
-                    casa_types::Complex32::new(2.0, 0.0),
+                    casa_core::Complex32::new(2.0, 0.0),
+                    casa_core::Complex32::new(2.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -157,8 +155,8 @@ fn create_two_table_callib_fixture(
                 spectral_window_id: 1,
                 antenna_id: 1,
                 gains: vec![
-                    casa_types::Complex32::new(10.0, 0.0),
-                    casa_types::Complex32::new(20.0, 0.0),
+                    casa_core::Complex32::new(10.0, 0.0),
+                    casa_core::Complex32::new(20.0, 0.0),
                 ],
                 flags: vec![false, false],
             },
@@ -202,7 +200,7 @@ fn library_antenna_broadcast_uses_the_mapped_gain_for_both_partners() {
         panic!("complex");
     };
     // DATA=1 and both mapped R gains are 2: V/(2*conj(2))=1/4.
-    assert_eq!(row[[0, 0]], casa_types::Complex32::new(0.25, 0.));
+    assert_eq!(row[[0, 0]], casa_core::Complex32::new(0.25, 0.));
 }
 
 #[test]
@@ -237,7 +235,7 @@ fn library_joint_context_preserves_valid_samples_and_skips_absent_axes() {
         let ArrayValue::Complex32(row) = corrected.get(0).unwrap() else {
             panic!("complex");
         };
-        assert_eq!(row[[0, 0]], casa_types::Complex32::new(expected, 0.));
+        assert_eq!(row[[0, 0]], casa_core::Complex32::new(expected, 0.));
         let flags = ms
             .main_table()
             .cell_accessor(0, "FLAG")

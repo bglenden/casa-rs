@@ -10,15 +10,15 @@
 
 mod pointing;
 
-use casa_ms::column_def::{ColumnDef, ColumnKind, column_schema};
-use casa_ms::schema::{self, SubtableId};
-use casa_ms::{MeasurementSet, SubtableColumnOverrides};
-use casa_tables::table_measures::{MeasureType, TableMeasDesc};
-use casa_tables::{ColumnOverrides, ColumnSchema, GeneratedScalarColumn};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::{
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::{
     ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
+use casa_measures::table_measures::{MeasureType, TableMeasDesc};
+use casa_ms::schema::{self, SubtableId};
+use casa_ms::{ColumnDef, ColumnKind, column_schema};
+use casa_ms::{MeasurementSet, SubtableColumnOverrides};
+use casa_tables::{ColumnOverrides, ColumnSchema, GeneratedScalarColumn};
 use ndarray::ArrayD;
 
 use crate::session::Simulator;

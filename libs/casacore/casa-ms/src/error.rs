@@ -1,0 +1,121 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Error types for MeasurementSet operations.
+
+use casa_core::measures::MeasureError;
+use casa_tables::TableError;
+
+/// Errors produced by MeasurementSet operations.
+///
+/// Wraps [`TableError`] for low-level table I/O and adds MS-specific variants
+/// for schema validation, missing subtables, and column type mismatches.
+#[derive(Debug, thiserror::Error)]
+pub enum MsError {
+    /// An error from the underlying table system.
+    #[error(transparent)]
+    Table(#[from] TableError),
+
+    /// A required subtable is missing from the MS.
+    #[error("required subtable \"{0}\" not found")]
+    MissingSubtable(String),
+
+    /// A required column is missing from a table.
+    #[error("required column \"{column}\" not found in {table}")]
+    MissingColumn {
+        /// The missing column name.
+        column: String,
+        /// The table or subtable where the column was expected.
+        table: String,
+    },
+
+    /// A column exists but has the wrong data type.
+    #[error("column \"{column}\" in {table}: expected {expected}, found {found}")]
+    ColumnTypeMismatch {
+        /// The column name.
+        column: String,
+        /// The table or subtable name.
+        table: String,
+        /// Expected type description.
+        expected: String,
+        /// Actual type description.
+        found: String,
+    },
+
+    /// The MS_VERSION keyword is missing or has an unexpected value.
+    #[error("MS_VERSION: {0}")]
+    VersionError(String),
+
+    /// An optional column was requested but is not present.
+    #[error("optional column \"{0}\" is not present")]
+    ColumnNotPresent(String),
+
+    /// A stored casacore measure reference code is not recognized.
+    #[error("invalid measure reference code {code} in {table}.{column}")]
+    InvalidMeasureCode {
+        /// The table or subtable name.
+        table: String,
+        /// The column name.
+        column: String,
+        /// The invalid integer code.
+        code: i32,
+    },
+
+    /// An index (antenna, field, etc.) is out of range.
+    #[error("{context}: index {index} out of range (max {max})")]
+    InvalidIndex {
+        /// The out-of-range index value.
+        index: usize,
+        /// The maximum valid index (exclusive).
+        max: usize,
+        /// What the index represents (e.g. "antenna_id", "field_id").
+        context: String,
+    },
+
+    /// A measure conversion error.
+    #[error("measure conversion: {0}")]
+    Measure(#[from] MeasureError),
+
+    /// Measures runtime discovery, validation, or table loading failed.
+    #[error("measures runtime: {0}")]
+    MeasuresRuntime(String),
+
+    /// A schema construction error.
+    #[error("schema error: {0}")]
+    Schema(#[from] casa_tables::SchemaError),
+
+    /// Invalid caller input for a MeasurementSet read or write request.
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
+
+    /// The published MultiMS could not be reopened with the requested access.
+    #[error("{0}")]
+    MultiMsAttachment(String),
+
+    /// A concurrent path change blocked rollback of a staged MultiMS.
+    #[error("{cause}. MultiMS rollback failed: {restore}. Staging retained at {staging}")]
+    MultiMsRecovery {
+        /// The failure that prevented publication.
+        cause: String,
+        /// Errors encountered while putting the original members back.
+        restore: String,
+        /// Private staging directory retained for recovery.
+        staging: std::path::PathBuf,
+    },
+
+    /// The polarization expression found no matching recorded correlations.
+    #[error("Poln. expression error: No match for polarization ID(s) (named {0})")]
+    NoPolarizationMatch(String),
+
+    /// A read that would hold more bytes than its caller's budget allows.
+    #[error("{what} requires {required} bytes but the planner supplied {available} bytes")]
+    OverBudget {
+        /// What the bytes are for.
+        what: &'static str,
+        /// The bytes the read needs.
+        required: usize,
+        /// The bytes the budget allows.
+        available: usize,
+    },
+}
+
+/// Convenience type alias for MS operations.
+pub type MsResult<T> = Result<T, MsError>;

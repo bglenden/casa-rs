@@ -4,8 +4,8 @@ use super::*;
 use casa_calibration::{
     SimulatedJones, SimulatedSolution, SolutionValues, write_simulated_jones_table,
 };
+use casa_core::measures::frequency::FrequencyRef;
 use casa_simulation::{ApplySpec, SpectralWindowSpec};
-use casa_types::measures::frequency::FrequencyRef;
 
 #[test]
 fn actual_metal_prediction_preserves_whole_step_window_coverage() {

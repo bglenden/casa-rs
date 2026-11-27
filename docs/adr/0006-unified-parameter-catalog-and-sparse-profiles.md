@@ -2,17 +2,26 @@
 
 Status: accepted
 Date: 2026-11-12
+Amended: 2026-11-25, clean-sheet module reorganization: retire
+`ProviderContractEnvelope`, `build.rs` JSON-fingerprinting, and the mandatory
+24-binary `ApplicationCatalog` launcher once Python completes in-process cutover.
 Truth class: normative
 
-The CLI, Python, and task providers share Rust definitions for parameter
-names, types, defaults, normalization, and validation. Share concepts by
-meaning; each task supplies its own bindings and defaults. Runtime controls
-such as executable selection and telemetry stay out of saved parameters.
+The CLI (`casars-cli`), Python (`casars.tasks`), and task adapters share one
+Rust parameter model (`ParameterCatalog`, typed `SurfaceDefinition`) for
+parameter names, types, defaults, normalization, and validation. Share concepts
+by meaning; each task supplies its own bindings and defaults. Runtime controls
+such as telemetry stay out of saved parameters.
 
 Profiles are sparse TOML. They store required values and explicit differences
-from defaults. Provider JSON is a machine transport. The common task runtime
-owns resolution and any managed Last state; ordinary Python task calls leave
-Last alone.
+from defaults. Provider JSON is a machine transport. `surfaces/casa-tasks`
+owns resolution and any managed Last state; ordinary Python task calls isolate
+Last state from CLI runs.
+
+`ProviderContractEnvelope`, `build.rs` JSON-fingerprinting probes (such as
+`IMAGE_PROVIDER_PROBES`), and the mandatory 24-binary `ApplicationCatalog`
+subprocess launcher and executable resolver are retired. Python executes the
+task adapters in-process (ADR-0017).
 
 A profile must name the current task and use the current file format and task
 profile version. Refuse stale files and tell the user to recreate them. Bump

@@ -22,6 +22,8 @@
 
 use std::path::{Path, PathBuf};
 
+use casa_core::quanta::casacore::casacore_unit;
+use casa_core::quanta::{Quantity, casacore};
 use casa_simulation::readantenna::read_antenna_config;
 use casa_simulation::simutil::baselines::{approximate_beam, baseline_lengths};
 use casa_simulation::simutil::direction::{
@@ -32,8 +34,6 @@ use casa_simulation::simutil::pointings::{
 };
 use casa_simulation::simutil::receivers::{band_name, noise_temperature, polarization_settings};
 use casa_simulation::simutil::{SimutilError, python_float};
-use casa_types::quanta::casacore::casacore_unit;
-use casa_types::quanta::{Quantity, casacore};
 use serde_json::Value;
 
 #[path = "support/casa_observatories.rs"]

@@ -23,13 +23,13 @@ mod predict_support;
 
 use std::path::Path;
 
+use casa_core::Correlation;
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_simulation::predict::{FtMachine, ModelPredictor, PredictOptions, PrimaryBeam, SkyModel};
 use casa_simulation::{
     BackendRequest, CasaOutcome, PredictionOptions, SessionResources, Simulator, SimulatorResult,
     VoltagePatternSpec,
 };
-use casa_types::Correlation;
 use num_complex::Complex32;
 use predict_support::{
     CENTRE_RAD, bits, data, extended_model, predict_spec, read_main, reference_through, resources,

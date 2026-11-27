@@ -11,78 +11,103 @@ use std::f64::consts::{PI, TAU};
 use std::path::PathBuf;
 
 use casa_ms::MeasurementSet;
-use casa_provider_contracts::{CasaFloat, CasaValue, FloatDtype};
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
-use serde::Serialize;
 use thiserror::Error;
 
 use self::fringe::FringeSolution;
 use self::pulse::PulseSeries;
 use self::selection::Selection;
 
-struct PccorRequest {
-    vis: PathBuf,
-    output: PathBuf,
-    refant: String,
-    timerange: String,
-    scan: String,
-    spw: String,
-    antenna: String,
-    cable: bool,
-    fringe_table: Option<PathBuf>,
+/// Request to execute pulse-calibration alignment against a fringe solution.
+pub struct PccorRequest {
+    /// Input MeasurementSet.
+    pub vis: PathBuf,
+    /// Output calibration table.
+    pub output: PathBuf,
+    /// Reference antenna selector.
+    pub refant: String,
+    /// Time range selector.
+    pub timerange: String,
+    /// Scan selector.
+    pub scan: String,
+    /// Spectral window selector.
+    pub spw: String,
+    /// Antenna selector.
+    pub antenna: String,
+    /// Apply cable-cal correction.
+    pub cable: bool,
+    /// Optional fringe-fit calibration table.
+    pub fringe_table: Option<PathBuf>,
 }
 
+/// Errors returned by `run_pccor`.
 #[derive(Debug, Error)]
-enum PccorError {
+pub enum PccorError {
+    /// Invalid selection.
     #[error("{0}")]
     Selection(String),
+    /// Invalid or missing fringe-fit table.
     #[error("{0}")]
     FringeTable(String),
+    /// Index failure.
     #[error("{0}")]
     Index(String),
+    /// Execution failure.
     #[error("{0}")]
     Execution(String),
+    /// MeasurementSet error.
     #[error(transparent)]
     MeasurementSet(#[from] casa_ms::MsError),
+    /// Table error.
     #[error(transparent)]
     Table(#[from] casa_tables::TableError),
 }
 
-#[derive(Serialize)]
-struct Summary {
-    output_table: PathBuf,
-    rows_written: usize,
+/// Per-window aligned pulse-calibration report for one antenna.
+pub struct PccorWindowReport {
+    /// Spectral window id.
+    pub window: i32,
+    /// Sample timestamps.
+    pub time: Vec<f64>,
+    /// Scan numbers (`NaN` when unavailable).
+    pub scan: Vec<f64>,
+    /// Field ids (`NaN` when unavailable).
+    pub field_id: Vec<f64>,
+    /// Aligned phase values shaped `[2, samples]` row-major by hand.
+    pub phase: Vec<f64>,
+    /// Aligned delay values shaped `[2, samples]` row-major by hand.
+    pub delay: Vec<f64>,
+    /// Wrapped fringe phase `[hand 0, hand 1]`.
+    pub ff_phase: Vec<f64>,
+    /// Fringe delay `[hand 0, hand 1]`.
+    pub ff_delay: Vec<f64>,
+    /// Mean pulse-cal phase tones per hand.
+    pub pc_mean_phase: [Vec<f64>; 2],
+    /// Mean pulse-cal delay `[hand 0, hand 1]`.
+    pub pc_mean_delay: Vec<f64>,
+    /// Reference antenna mean pulse-cal phase tones per hand.
+    pub pc_refant_phase: [Vec<f64>; 2],
+    /// Reference antenna mean pulse-cal delay `[hand 0, hand 1]`.
+    pub pc_refant_delay: Vec<f64>,
 }
 
-pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    let fringe = task.required_text("ff_table")?;
-    let request = PccorRequest {
-        vis: task.input_path("vis")?,
-        output: task.path("pccor_caltable")?,
-        refant: task.required_text("refant")?,
-        timerange: task.required_text("timerange")?,
-        scan: task.required_text("scan")?,
-        spw: task.required_text("spw")?,
-        antenna: task.required_text("antenna")?,
-        cable: task.flag("cablecal_correction")?,
-        fringe_table: (fringe != "none").then(|| PathBuf::from(fringe)),
-    };
-    let (result, rows_written) = execute(&request).map_err(|error| match error {
-        PccorError::Selection(message) => TaskFailure::execution(message).at("selection"),
-        PccorError::FringeTable(message) => TaskFailure::execution(message).at("ff_table"),
-        PccorError::Index(message) => TaskFailure::execution(message).at("pccor_index"),
-        _ => TaskFailure::execution(error.to_string()),
-    })?;
-    TaskSuccess::new(
-        result,
-        &Summary {
-            output_table: request.output,
-            rows_written,
-        },
-    )
+/// Per-antenna pulse-calibration report.
+pub struct PccorAntennaReport {
+    /// Antenna name.
+    pub name: String,
+    /// Per-window reports.
+    pub windows: Vec<PccorWindowReport>,
 }
 
-fn execute(request: &PccorRequest) -> Result<(CasaValue, usize), PccorError> {
+/// Output of `run_pccor`.
+pub struct PccorReport {
+    /// Antenna reports in table-return order.
+    pub antennas: Vec<PccorAntennaReport>,
+    /// Number of rows written to `output`.
+    pub rows_written: usize,
+}
+
+/// Execute `pccor` alignment and write the calibration table.
+pub fn run_pccor(request: &PccorRequest) -> Result<PccorReport, PccorError> {
     let open = crate::timing::Phase::start("pccor_select_read");
     let ms = MeasurementSet::open(&request.vis)?;
     let selection = Selection::read(&ms, request)?;
@@ -130,12 +155,12 @@ fn execute(request: &PccorRequest) -> Result<(CasaValue, usize), PccorError> {
                 })
             }));
             if first_antenna && seen_windows.insert(window) {
-                windows.push((format!("spw_{window}"), options.record(aligned)));
+                windows.push(options.report(window, aligned));
             }
         }
         if first_antenna {
-            let name = &selection.antenna_names[antenna as usize];
-            antennas.push((format!("ant_{name}"), CasaValue::dict(windows)));
+            let name = selection.antenna_names[antenna as usize].clone();
+            antennas.push(PccorAntennaReport { name, windows });
         }
     }
     drop(align);
@@ -143,7 +168,10 @@ fn execute(request: &PccorRequest) -> Result<(CasaValue, usize), PccorError> {
     let rows_written = table_rows.len();
     table::write(&ms, &request.output, selection.reference, table_rows)?;
     drop(publish);
-    Ok((CasaValue::dict(antennas), rows_written))
+    Ok(PccorReport {
+        antennas,
+        rows_written,
+    })
 }
 
 struct Alignment<'a> {
@@ -201,73 +229,30 @@ impl Alignment<'_> {
             .collect()
     }
 
-    fn record(&self, aligned: Vec<Aligned<'_>>) -> CasaValue {
-        let vector = CasaValue::float64_vector;
-        CasaValue::dict([
-            (
-                "time",
-                vector(aligned.iter().map(|row| row.time).collect::<Vec<_>>()),
-            ),
-            (
-                "scan",
-                vector(
-                    aligned
-                        .iter()
-                        .map(|row| row.scan.map_or(f64::NAN, |scan| f64::from(scan.number)))
-                        .collect(),
-                ),
-            ),
-            (
-                "field_id",
-                vector(
-                    aligned
-                        .iter()
-                        .map(|row| row.scan.map_or(f64::NAN, |scan| f64::from(scan.field)))
-                        .collect(),
-                ),
-            ),
-            (
-                "phase",
-                hand_array(aligned.len(), aligned.iter().flat_map(|row| row.phase)),
-            ),
-            (
-                "delay",
-                hand_array(aligned.len(), aligned.iter().flat_map(|row| row.delay)),
-            ),
-            (
-                "ff_phase",
-                vector(self.fringe.phase.map(wrap_phase).to_vec()),
-            ),
-            ("ff_delay", vector(self.fringe.delay.to_vec())),
-            ("pc_mean_phase", tone_array(&self.pulse.mean_phase)),
-            ("pc_mean_delay", vector(self.pulse.mean_delay.to_vec())),
-            ("pc_refant_phase", tone_array(&self.reference.mean_phase)),
-            (
-                "pc_refant_delay",
-                vector(self.reference.mean_delay.to_vec()),
-            ),
-        ])
+    fn report(&self, window: i32, aligned: Vec<Aligned<'_>>) -> PccorWindowReport {
+        PccorWindowReport {
+            window,
+            time: aligned.iter().map(|row| row.time).collect(),
+            scan: aligned
+                .iter()
+                .map(|row| row.scan.map_or(f64::NAN, |scan| f64::from(scan.number)))
+                .collect(),
+            field_id: aligned
+                .iter()
+                .map(|row| row.scan.map_or(f64::NAN, |scan| f64::from(scan.field)))
+                .collect(),
+            phase: aligned.iter().flat_map(|row| row.phase).collect(),
+            delay: aligned.iter().flat_map(|row| row.delay).collect(),
+            ff_phase: self.fringe.phase.map(wrap_phase).to_vec(),
+            ff_delay: self.fringe.delay.to_vec(),
+            pc_mean_phase: self.pulse.mean_phase.clone(),
+            pc_mean_delay: self.pulse.mean_delay.to_vec(),
+            pc_refant_phase: self.reference.mean_phase.clone(),
+            pc_refant_delay: self.reference.mean_delay.to_vec(),
+        }
     }
 }
 
 fn wrap_phase(phase: f64) -> f64 {
     (phase + PI).rem_euclid(TAU) - PI
-}
-
-fn hand_array(columns: usize, values: impl Iterator<Item = f64>) -> CasaValue {
-    CasaValue::FloatArray {
-        dtype: FloatDtype::Float64,
-        shape: vec![2, columns],
-        data: values.map(CasaFloat).collect(),
-    }
-}
-
-fn tone_array(hands: &[Vec<f64>; 2]) -> CasaValue {
-    hand_array(
-        hands[0].len(),
-        hands[0]
-            .iter()
-            .zip(&hands[1])
-            .flat_map(|(&first, &second)| [first, second]),
-    )
 }

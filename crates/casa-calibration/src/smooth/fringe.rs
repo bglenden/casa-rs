@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Track fringe phase using the solution rates before filtering the parameters.
 
-use casa_types::ArrayValue;
+use casa_core::ArrayValue;
 use ndarray::ArrayD;
 
 use super::{Smoother, smooth_series};

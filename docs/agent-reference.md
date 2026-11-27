@@ -54,7 +54,7 @@ are:
 - Measures runtime data: an explicit root supplied to `MeasuresRuntime::open`,
   or a complete `CASA_RS_MEASURESPATH` / `~/.casa/data` candidate selected by
   the application before opening the runtime. Discovery never installs data.
-- Small bundled real-MS CI fixtures: `crates/casa-ms/tests/fixtures/`.
+- Small bundled real-MS CI fixtures: `libs/casacore/casa-ms/tests/fixtures/`.
 
 Slow, release, parity, and tutorial gates run shared-data preflight and report
 the selected root. Do not use `/private/tmp` as a canonical dataset location or
@@ -170,7 +170,7 @@ record. Locations on this workstation:
     built from the committed state; both take about 15 minutes.
   - **A jumped result:** check the case's `image.summary.json` `backend`. A
     case that names no backend runs on `auto`.
-- **T2 matrix**: `tools/perf/imager/run_workload.py` with
+- **T2 matrix**: `suites/perf/imager/run_workload.py` with
   `CASA_RS_IMPERF_DATA_ROOT` set to a staged copy of the inputs on
   GLENDENNING (`casa-rs-imperformance`, from its NAS mirror) and
   `CASA_RS_CASA_PYTHON`.

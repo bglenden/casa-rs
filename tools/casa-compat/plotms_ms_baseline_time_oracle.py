@@ -838,14 +838,12 @@ def compare_scalar_antenna_time_averages(root, native, weighted, start, base):
                                     lambda table: table.getcol("FLAG_ROW"))
     compare_average_shape_refusal(root, native, controls | dict(vis=str(mixed), expformat="txt"))
     print("scalar-antenna-time: matching unequal-shape refusal in a row-flagged buffer", flush=True)
-    compare_averaged_virtual_model_guard(root, native, source, controls, "scalar-antenna-time-virtual", 6)
+    compare_averaged_virtual_model(root, native, source, controls, "scalar-antenna-time-virtual", 6)
     compare_vector_antenna_time_averages(root, native, source, start, controls, amplitudes, turns)
     compare_antenna_scan_field_spans(root, native, source, start, controls, amplitudes, turns)
 
 
-def compare_averaged_virtual_model_guard(root, native, source, base, name, reference_points):
-    from casars.tasks import TaskExecutionError
-
+def compare_averaged_virtual_model(root, native, source, base, name, reference_points):
     virtual = root / f"{name}.ms"
     copy_ms(source, virtual)
     with opened(virtual, True) as table:
@@ -859,16 +857,11 @@ def compare_averaged_virtual_model_guard(root, native, source, base, name, refer
     assert reference(**request_args, plotfile=str(expected)) is None
     assert len(rows(expected)) == reference_points
     assert {float(point[1]) for point in rows(expected)} == {7.25}
-    try:
-        native(**request_args, plotfile=str(actual))
-    except TaskExecutionError as error:
-        assert "PlotMS virtual MeasurementSet models are pending #1032" in str(error), error
-    else:
-        raise AssertionError("PlotMS used stored MODEL_DATA for an averaged virtual-model field")
-    assert not actual.exists()
+    assert native(**request_args, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == reference_points
     with opened(virtual) as table:
         np.testing.assert_array_equal(table.getcol("MODEL_DATA"), physical)
-    print(f"{name}: refusing the pending averaged virtual model", flush=True)
+    print(f"{name}: {reference_points} matching virtual-model coordinates", flush=True)
 
 
 def compare_vector_antenna_time_averages(root, native, source, start, base, amplitudes, turns):
@@ -1130,7 +1123,7 @@ def compare_vector_antenna_time_channels(root, native, source, controls, start, 
         assert native(**request_args, plotfile=str(actual), expformat="txt") is None
         assert compare_text(actual, expected) == len(coordinates)
         if request_args["xaxis"] == "frequency":
-            compare_figure(root, native, request_args, expected, (args["title"], "Frequency (GHz)", "Imag:corrected"))
+            compare_figure(root, native, request_args, expected, (args["title"], "Frequency (GHz) TOPO", "Imag:corrected"))
         print(f"{name}: {len(coordinates)} matching vector time, channel and antenna coordinates", flush=True)
     compare_empty_export(root, native, "vector-time-channel-antenna-zero-corrected",
                          args | dict(vis=str(zero_corrected)), ("Real", "Imag:corrected"))
@@ -1370,8 +1363,8 @@ def compare_direct_stored_vector_time_channels(
                          ("Real", "Imag:corrected"))
     compare_empty_export(root, native, "direct-vector-time-channel-zero-observed",
                          base | dict(vis=str(zero_observed)), ("Real", "Imag:corrected"))
-    compare_averaged_virtual_model_guard(root, native, Path(base["vis"]), base,
-                                         "direct-vector-time-channel-virtual", 12)
+    compare_averaged_virtual_model(root, native, Path(base["vis"]), base,
+                                   "direct-vector-time-channel-virtual", 12)
 
 
 def compare_stored_model_time_channels(root, native, vis, base, start):
@@ -1393,12 +1386,79 @@ def compare_stored_model_time_channels(root, native, vis, base, start):
     print("stored-model-time-channel: 12 matching arithmetic channel coordinates", flush=True)
 
 
+def compare_separated_antenna_shapes(root, native):
+    from casars.tasks import TaskExecutionError
+    from grpc import RpcError, StatusCode
+    from plotms_ms_spw_average_oracle import make_fixture as make_window_fixture
+
+    root.mkdir()
+    windows = make_window_fixture(root, antenna_count=3, integrations=6, stokes="XX XY YX YY")
+    with opened(windows, True) as table:
+        descriptions = table.getcol("DATA_DESC_ID")
+        times = table.getcol("TIME")
+        earlier = times - np.where(descriptions == 1, 90, 0)
+        table.putcol("TIME", earlier)
+        table.putcol("TIME_CENTROID", earlier)
+        changed = (descriptions == 0) & (times == np.unique(times[descriptions == 0])[2])
+        table.putcol("FLAG_ROW", changed)
+    mixed = make_mixed_polarization(windows, root / "same-window-mixed-shape.ms",
+                                    lambda table: table.getcol("FLAG_ROW"))
+    separate = root / "separate-window-mixed-shape.ms"
+    copy_ms(mixed, separate)
+    with opened(separate / "SPECTRAL_WINDOW", True) as table:
+        window = table.nrows()
+        table.addrows(1)
+        for column in table.colnames():
+            if table.iscelldefined(column, 0):
+                table.putcell(column, window, table.getcell(column, 0))
+    with opened(separate / "DATA_DESCRIPTION", True) as table:
+        table.putcell("SPECTRAL_WINDOW_ID", table.nrows() - 1, window)
+
+    base = request(windows) | dict(xaxis="amp", yaxis="phase", antenna="A0&A1;A0&A2",
+                                   avgtime="20", avgantenna=True, expformat="txt")
+    positives = (
+        ("equal-channels", base | dict(spw="0:1~3,1:1~3"), 36),
+        ("different-channels", base | dict(spw="0:1~3,1:1"), 24),
+        ("same-window-selected-xx", base | dict(vis=str(mixed), spw="0:1"), 9),
+        ("different-window-mixed-correlations", base | dict(vis=str(separate), spw=f"0:1,{window}:1",
+                                                           correlation=""), 27),
+    )
+    for mode, scalar in (("vector", False), ("scalar", True)):
+        for name, options, count in positives:
+            expected, actual = (root / f"{mode}-{name}.{engine}.txt" for engine in ("casa", "native"))
+            controls = options | dict(scalar=scalar)
+            assert reference(**controls, plotfile=str(expected)) is None
+            assert native(**controls, plotfile=str(actual)) is None
+            assert compare_text(actual, expected) == count
+            print(f"{mode}-{name}: {count} matching coordinates and IDs", flush=True)
+        name = f"{mode}-same-window-mixed-correlations"
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        controls = base | dict(vis=str(mixed), spw="0:1", correlation="", scalar=scalar)
+        try:
+            reference(**controls, plotfile=str(expected))
+        except RpcError as error:
+            assert error.code() == StatusCode.INVALID_ARGUMENT, error
+        else:
+            raise AssertionError("CASA accepted two selected correlation counts for one window")
+        assert not expected.exists()
+        try:
+            native(**controls, plotfile=str(actual))
+        except TaskExecutionError as error:
+            assert "selected correlation count within spectral window 0 (#1032)" in str(error), error
+        else:
+            count = len(rows(actual))
+            raise AssertionError(f"native PlotMS exported {count} points for the incompatible window")
+        assert not actual.exists()
+        print(f"{name}: matching refusal before export", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
+    parser.add_argument("--only", choices=("separated-antenna-shapes",))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -1410,6 +1470,9 @@ def main():
     from casars.tasks import plotms as native
 
     with chdir(root), plotms_launcher(args.app_run):
+        if args.only == "separated-antenna-shapes":
+            compare_separated_antenna_shapes(root / "separated-antenna-shapes", native)
+            return
         compare(root, native)
         compare_time_channel_baselines(root, native)
         scalar = root / "scalar-baselines"
@@ -1418,6 +1481,7 @@ def main():
         antennas = root / "antenna-averages"
         antennas.mkdir()
         compare_antenna_averaged_export(antennas, native)
+        compare_separated_antenna_shapes(root / "separated-antenna-shapes", native)
 
 
 if __name__ == "__main__":

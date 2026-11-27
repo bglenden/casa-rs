@@ -28,20 +28,20 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Instant;
 
-use casa_ms::column_def::build_table_schema;
+use casa_core::{ArrayValue, Complex32, ScalarValue, Value};
+use casa_flagging::{FlaggingError, save_next_flag_backup};
+use casa_ms::MeasurementSet;
+use casa_ms::build_table_schema;
 use casa_ms::derived::engine::MsCalEngine;
-use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::selection::ResolvedMsSelection;
 use casa_ms::{
-    FlaggingError, MeasurementSetColumnStorage, MeasurementSetColumnWriteMode,
-    MeasurementSetMutationBatch, MeasurementSetMutationColumnBatch,
-    MeasurementSetMutationColumnValues, MeasurementSetWriteColumnPlan, MeasurementSetWritePlan,
-    MeasurementSetWriteResources, MeasurementSetWriteSession, MsError, MsResult,
-    save_next_flag_backup,
+    MeasurementSetColumnStorage, MeasurementSetColumnWriteMode, MeasurementSetMutationBatch,
+    MeasurementSetMutationColumnBatch, MeasurementSetMutationColumnValues,
+    MeasurementSetWriteColumnPlan, MeasurementSetWritePlan, MeasurementSetWriteResources,
+    MeasurementSetWriteSession, MsError, MsResult,
 };
 use casa_tables::{ColumnSchema, Table, TableError, TableOptions, TableWriteLock};
-use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -97,9 +97,8 @@ mod weights;
 use chain::{ApplyChain, ApplyStep};
 pub(crate) use chain::{has_polarization_matrix, viscal_order};
 use channels::{DataChannelGrid, apply_row};
-pub(crate) use solve_priors::{
-    PreappliedRows, PriorSolveBoundary, SolvePriorApply, evaluate_solve_priors,
-};
+pub use solve_priors::SolvePriorApply;
+pub(crate) use solve_priors::{PreappliedRows, PriorSolveBoundary, evaluate_solve_priors};
 
 const PERF_ENV: &str = "CASA_RS_CALIBRATION_PERF";
 const PERF_DIR_ENV: &str = "CASA_RS_CALIBRATION_PERF_DIR";
@@ -435,23 +434,29 @@ pub struct ApplyExecutionTimings {
     pub total_ns: u64,
 }
 
+/// One evaluated visibility row for dry-run/plot preview inspection.
 #[derive(Debug, Clone)]
-pub(crate) struct EvaluatedApplyRow {
-    pub(crate) corrected_data: ArrayValue,
-    pub(crate) flags: ArrayValue,
+pub struct EvaluatedApplyRow {
+    /// Calibrated visibilities.
+    pub corrected_data: ArrayValue,
+    /// Propagated flags.
+    pub flags: ArrayValue,
     /// Forward diagonal gains for the sky model in a delay solve.
-    pub(crate) model_gains: Option<ArrayD<Complex32>>,
+    pub model_gains: Option<ArrayD<Complex32>>,
     /// `[correlation, channel]` factors the `calwt` tables scale weights by,
     /// when any table applies with `calwt`.
-    pub(crate) weight_factors: Option<ArrayD<f32>>,
+    pub weight_factors: Option<ArrayD<f32>>,
     /// Actual corrected weights for a read-only PlotMS view.
-    pub(crate) plot_weights: Option<PlotWeights>,
+    pub plot_weights: Option<PlotWeights>,
 }
 
+/// Scalar and optional spectral weights prepared for a PlotMS preview row.
 #[derive(Debug, Clone)]
-pub(crate) struct PlotWeights {
-    pub(crate) scalar: ArrayValue,
-    pub(crate) spectrum: Option<ArrayValue>,
+pub struct PlotWeights {
+    /// Per-correlation scalar weight vector.
+    pub scalar: ArrayValue,
+    /// Optional per-correlation per-channel weight spectrum.
+    pub spectrum: Option<ArrayValue>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -592,7 +597,8 @@ pub(crate) fn evaluate_apply_rows(
     )
 }
 
-pub(crate) fn evaluate_plot_rows(
+/// Evaluate PlotMS-weighted calibrated visibility rows without writing to the MS.
+pub fn evaluate_plot_rows(
     ms: &MeasurementSet,
     plan: &ApplyPlan,
     channel_weighting: bool,
@@ -953,7 +959,8 @@ pub fn execute_apply_from_path_with_options(
     execute_apply_from_path_inner(path.as_ref(), request, options, None, false)
 }
 
-pub(crate) fn execute_apply_with_preparation_error(
+/// Execute `applycal` with optional deferred preparation error checked after MS setup.
+pub fn execute_apply_with_preparation_error(
     path: &Path,
     request: &ApplyPlanRequest,
     options: ApplyExecutionOptions,
@@ -962,7 +969,8 @@ pub(crate) fn execute_apply_with_preparation_error(
     execute_apply_from_path_inner(path, request, options, preparation_error, true)
 }
 
-pub(crate) fn execute_single_dish_apply(
+/// Execute single-dish calibration application against an on-disk MeasurementSet.
+pub fn execute_single_dish_apply(
     path: &Path,
     request: &ApplyPlanRequest,
 ) -> Result<ApplyExecutionReport, ApplyExecutionError> {
@@ -5778,7 +5786,7 @@ fn infer_bpoly_receptor_count(
     })
 }
 
-pub(crate) use casa_numerics::legacy_bpoly_chebyshev_value;
+pub use casa_numerics::legacy_bpoly_chebyshev_value;
 
 fn delay_reference_frequency(
     cal_spw: &crate::plan::SpectralWindowPlan,
@@ -5848,11 +5856,12 @@ fn ensure_corrected_data_column(
     }
 
     // CASA's `addScrCols` clears the cached sort keywords first.
-    casa_ms::scratch_columns::prepare_write(ms, VisibilityDataColumn::CorrectedData, true)
-        .map_err(|error| match error {
+    casa_ms::prepare_write(ms, VisibilityDataColumn::CorrectedData, true).map_err(|error| {
+        match error {
             MsError::Table(error) => error,
             other => TableError::Storage(other.to_string()),
-        })?;
+        }
+    })?;
     let column_def = *VisibilityDataColumn::CorrectedData
         .optional_column()
         .column_def();
@@ -6086,13 +6095,13 @@ mod tests {
     use std::fs;
     use std::sync::{Mutex, OnceLock};
 
-    use casa_ms::{MeasurementSet, MeasurementSetBuilder, OptionalMainColumn};
-    use casa_tables::{ArrayShapeContract, ColumnSchema, ColumnType, Table};
-    use casa_types::measures::direction::{DirectionRef, MDirection};
-    use casa_types::measures::position::MPosition;
-    use casa_types::{
+    use casa_core::measures::direction::{DirectionRef, MDirection};
+    use casa_core::measures::position::MPosition;
+    use casa_core::{
         ArrayValue, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
     };
+    use casa_ms::{MeasurementSet, MeasurementSetBuilder, OptionalMainColumn};
+    use casa_tables::{ArrayShapeContract, ColumnSchema, ColumnType, Table};
     use ndarray::{ArrayD, IxDyn, ShapeBuilder};
     use tempfile::TempDir;
 

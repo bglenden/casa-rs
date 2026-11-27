@@ -1,0 +1,425 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+//! The instrument a run images through: the analytic primary beam of its
+//! products, the scientific instrument response of a direction-dependent
+//! gridder, and where each row points.
+
+use std::collections::BTreeSet;
+use std::ops::Range;
+
+use casa_core::quanta::Unit;
+use casa_imaging_model::{
+    AntennaResponseClass, InstrumentModel, MissingPointingPolicy, ObservationPointingLaw,
+    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling,
+};
+use casa_imaging_products::AnalyticPrimaryBeamModel;
+use casa_observation::Catalogue;
+
+use super::PrepareError;
+use crate::Gridder;
+
+fn telescopes(catalogue: &Catalogue) -> BTreeSet<String> {
+    catalogue
+        .observations
+        .iter()
+        .map(|observation| observation.telescope.trim().to_string())
+        .collect()
+}
+
+/// Each antenna's dish diameter, metres, in antenna order.
+pub(super) fn dish_diameters(catalogue: &Catalogue) -> Vec<f64> {
+    let metres = Unit::new("m").expect("metres are a unit");
+    catalogue
+        .antennas
+        .iter()
+        .map(|antenna| {
+            antenna
+                .dish_diameter
+                .get_value_in(&metres)
+                .unwrap_or(f64::NAN)
+        })
+        .collect()
+}
+
+const ACA_DISH_METRES: Range<f64> = 6.0..8.0;
+const ALMA_DISH_METRES: Range<f64> = 10.0..13.0;
+
+/// Only a known mix of ALMA dish classes needs the survey to inspect
+/// selected baselines for the standard-gridder primary beam.
+pub(super) fn mixed_alma_dish_classes(catalogue: &Catalogue) -> bool {
+    if catalogue.observations.is_empty()
+        || !catalogue
+            .observations
+            .iter()
+            .all(|observation| observation.telescope.trim() == "ALMA")
+    {
+        return false;
+    }
+    let diameters = dish_diameters(catalogue);
+    diameters.iter().any(|m| ACA_DISH_METRES.contains(m))
+        && diameters.iter().any(|m| ALMA_DISH_METRES.contains(m))
+}
+
+/// The analytic primary beam a standard-gridder run writes `.pb` and
+/// `.image.pbcor` with. `selected` is empty unless the survey distinguished
+/// the dishes of a mixed ANTENNA table (#1274).
+pub(super) fn standard_primary_beam_model(
+    catalogue: &Catalogue,
+    selected: &[bool],
+) -> Result<AnalyticPrimaryBeamModel, PrepareError> {
+    let telescopes = telescopes(catalogue);
+    let is_aca = match telescopes
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        ["ALMA"] => false,
+        ["ACA"] => true,
+        _ => return analytic_primary_beam_model_for_telescopes(&telescopes),
+    };
+    let diameters = dish_diameters(catalogue);
+    let mut dishes = diameters
+        .into_iter()
+        .enumerate()
+        .filter(|(row, _)| selected.is_empty() || selected[*row]);
+    let first = dishes.next().ok_or(PrepareError::NoAntennaDishes)?;
+    // CASA picks ACA from the first ANTENNA row below 12 m. In a
+    // mixed catalogue, that row may be unused. Classify the selected
+    // dishes by their physical class and only admit one class.
+    let use_aca = is_aca
+        || if selected.is_empty() {
+            first.1 < 12.0
+        } else {
+            ACA_DISH_METRES.contains(&first.1)
+        };
+    let (range, model) = if use_aca {
+        (ACA_DISH_METRES, AnalyticPrimaryBeamModel::CasaAca7mAiry)
+    } else {
+        (ALMA_DISH_METRES, AnalyticPrimaryBeamModel::CasaAlma12mAiry)
+    };
+    for (row, diameter_m) in std::iter::once(first).chain(dishes) {
+        if !range.contains(&diameter_m) {
+            return Err(PrepareError::MixedAlmaDishes { row, diameter_m });
+        }
+    }
+    Ok(model)
+}
+
+fn analytic_primary_beam_model_for_telescopes(
+    telescopes: &BTreeSet<String>,
+) -> Result<AnalyticPrimaryBeamModel, PrepareError> {
+    match telescopes
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        ["EVLA"] => Ok(AnalyticPrimaryBeamModel::CasaEvlaCommon),
+        ["VLA"] => Ok(AnalyticPrimaryBeamModel::CasaVlaBand),
+        [] => Err(PrepareError::NoTelescope),
+        _ => Err(PrepareError::NoAnalyticPrimaryBeam {
+            telescopes: telescopes.iter().cloned().collect(),
+        }),
+    }
+}
+
+/// The instrument response of a direction-dependent gridder over the
+/// stores of `catalogues`; `None` for the others.
+///
+/// The mosaic's is the one `SynthesisImagerVi2::createMosFTMachine` gives
+/// `HetArrayConvFunc`: for ALMA and ACA, an Airy aperture per class of
+/// dish; for the EVLA, CASA's common EVLA beam for every antenna, whatever
+/// its dish (`PBMathInterface::COMMONPB`); for a telescope CASA has no
+/// default voltage pattern for (`NGVLA1`), the Airy disk of each dish
+/// diameter (`PBMathInterface::AIRY`). One response holds for every
+/// store's telescopes and dishes.
+pub(super) fn scientific_instrument_model(
+    gridder: &Gridder,
+    catalogues: &[&Catalogue],
+) -> Result<Option<InstrumentModel>, PrepareError> {
+    let telescopes = catalogues
+        .iter()
+        .flat_map(|catalogue| telescopes(catalogue))
+        .collect::<BTreeSet<_>>();
+    let all = |known: fn(&str) -> bool| {
+        !telescopes.is_empty() && telescopes.iter().all(|name| known(name))
+    };
+    let (model, dishes): (_, fn(f64) -> bool) = match gridder {
+        Gridder::Awproject(_) if all(|name| matches!(name, "VLA" | "EVLA")) => {
+            (InstrumentModel::CasaEvlaWidebandAwV1, |diameter| {
+                (diameter - 25.0).abs() < 1.0
+            })
+        }
+        Gridder::Awp2 { computepastep, .. } if all(|name| matches!(name, "VLA" | "EVLA")) => (
+            if *computepastep < 180.0 {
+                InstrumentModel::CasaVlaAwplpgSquint
+            } else {
+                InstrumentModel::CasaVlaAwplpg
+            },
+            |diameter| diameter == 25.0,
+        ),
+        Gridder::Mosaic { .. } if all(AntennaResponseClass::casa_alma_aca_telescope) => (
+            InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1,
+            |diameter| AntennaResponseClass::casa_alma_aca(diameter).is_some(),
+        ),
+        Gridder::Mosaic { .. } if all(AntennaResponseClass::casa_evla_telescope) => {
+            return Ok(Some(
+                InstrumentModel::CasaEvlaCommonInterferometricResponseV1,
+            ));
+        }
+        // CASA's mosaic over MeasurementSets of several telescopes takes
+        // each one's common beam instead (`multiTel`), which casa-rs does
+        // not form.
+        Gridder::Mosaic { .. }
+            if telescopes.len() == 1 && all(AntennaResponseClass::casa_airy_telescope) =>
+        {
+            (
+                InstrumentModel::CasaAiryHeterogeneousInterferometricResponseV1,
+                |diameter| AntennaResponseClass::casa_airy(diameter).is_some(),
+            )
+        }
+        Gridder::Awproject(_) | Gridder::Mosaic { .. } | Gridder::Awp2 { .. } => {
+            return Err(PrepareError::UnsupportedInstrument {
+                telescopes: telescopes.into_iter().collect(),
+            });
+        }
+        Gridder::Standard { .. } | Gridder::Wproject { .. } => return Ok(None),
+    };
+    for catalogue in catalogues {
+        let diameters = dish_diameters(catalogue);
+        if diameters.is_empty() {
+            return Err(PrepareError::NoAntennaDishes);
+        }
+        for (row, diameter_m) in diameters.into_iter().enumerate() {
+            if !(diameter_m.is_finite() && dishes(diameter_m)) {
+                return Err(PrepareError::DishOutsideResponse {
+                    model,
+                    row,
+                    diameter_m,
+                });
+            }
+        }
+    }
+    Ok(Some(model))
+}
+
+/// Where each row points: the POINTING table under tclean `usepointing`
+/// (AW samples it at the visibility time or uses the field's phase
+/// direction when no sample exists; mosaic interpolates it or takes the
+/// field's direction from a MeasurementSet without the table); each
+/// row's FIELD direction for a mosaic or A-projection run without it
+/// (`usepointing=False`, the tclean default); the phase-tracking centre
+/// for a direction-independent run.
+pub(super) fn pointing_centre_law(gridder: &Gridder) -> PointingCentreLaw {
+    match gridder {
+        Gridder::Awproject(aw) if aw.usepointing => {
+            PointingCentreLaw::Observation(ObservationPointingLaw::new(
+                PointingDirectionColumn::Direction,
+                PointingDirectionSemantic::AntennaBoresight,
+                PointingTimeSampling::VisibilityTime,
+                PointingInterpolation::Nearest,
+                PointingExtrapolation::HoldNearest,
+                MissingPointingPolicy::UseFieldPhaseCentre,
+            ))
+        }
+        Gridder::Mosaic {
+            usepointing: true, ..
+        } => PointingCentreLaw::Observation(ObservationPointingLaw::new(
+            PointingDirectionColumn::Direction,
+            PointingDirectionSemantic::AntennaBoresight,
+            PointingTimeSampling::VisibilityTimeCentroid,
+            PointingInterpolation::GreatCircleShortestArc,
+            PointingExtrapolation::Reject,
+            MissingPointingPolicy::FieldCentreWithoutPointingTable,
+        )),
+        Gridder::Awproject(_) | Gridder::Mosaic { .. } | Gridder::Awp2 { .. } => {
+            PointingCentreLaw::FieldCentre
+        }
+        Gridder::Standard { .. } | Gridder::Wproject { .. } => {
+            PointingCentreLaw::PhaseTrackingCentre
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroUsize;
+    use std::path::PathBuf;
+
+    use casa_imaging_model::ProductNormalization;
+
+    use super::*;
+    use crate::{AwCfSource, AwProjection};
+
+    fn aw(usepointing: bool) -> Gridder {
+        Gridder::Awproject(AwProjection {
+            wprojplanes: NonZeroUsize::new(32),
+            aterm: true,
+            psterm: false,
+            wbawp: true,
+            conjbeams: true,
+            computepastep: 360.0,
+            rotatepastep: 360.0,
+            usepointing,
+            normtype: ProductNormalization::FlatNoise,
+            cf_resident_mb: Some(256),
+            pointingoffsetsigdev: Vec::new(),
+            cf_source: AwCfSource::CasaImport {
+                cfcache: PathBuf::from("cf"),
+            },
+        })
+    }
+
+    #[test]
+    fn aw_pointing_compiles_casa_visibility_sampling_law() {
+        let PointingCentreLaw::Observation(law) = pointing_centre_law(&aw(true)) else {
+            panic!("AW usepointing must compile an observation pointing law");
+        };
+        assert_eq!(law.time_sampling(), PointingTimeSampling::VisibilityTime);
+        assert_eq!(law.interpolation(), PointingInterpolation::Nearest);
+        assert_eq!(law.extrapolation(), PointingExtrapolation::HoldNearest);
+        assert_eq!(law.missing(), MissingPointingPolicy::UseFieldPhaseCentre);
+        assert!(matches!(
+            pointing_centre_law(&aw(false)),
+            PointingCentreLaw::FieldCentre
+        ));
+    }
+
+    #[test]
+    fn mosaic_points_at_the_field_centre_unless_usepointing() {
+        let mosaic = |usepointing| Gridder::Mosaic {
+            usepointing,
+            normtype: ProductNormalization::FlatNoise,
+            conjbeams: false,
+            mosweight: false,
+        };
+        assert!(matches!(
+            pointing_centre_law(&Gridder::Standard {
+                facets: std::num::NonZeroUsize::MIN
+            }),
+            PointingCentreLaw::PhaseTrackingCentre
+        ));
+        assert!(matches!(
+            pointing_centre_law(&mosaic(false)),
+            PointingCentreLaw::FieldCentre
+        ));
+        let PointingCentreLaw::Observation(law) = pointing_centre_law(&mosaic(true)) else {
+            panic!("mosaic usepointing must compile an observation pointing law");
+        };
+        assert_eq!(
+            law.time_sampling(),
+            PointingTimeSampling::VisibilityTimeCentroid
+        );
+        assert_eq!(
+            law.interpolation(),
+            PointingInterpolation::GreatCircleShortestArc
+        );
+        assert_eq!(law.extrapolation(), PointingExtrapolation::Reject);
+        assert_eq!(
+            law.missing(),
+            MissingPointingPolicy::FieldCentreWithoutPointingTable
+        );
+    }
+
+    fn catalogue(telescope: &str, dishes_m: &[f64]) -> Catalogue {
+        use casa_core::measures::position::MPosition;
+        use casa_core::quanta::Quantity;
+        use casa_observation::{AntennaEntry, ObservationEntry};
+        Catalogue {
+            observations: vec![ObservationEntry {
+                telescope: telescope.to_string(),
+                ..ObservationEntry::default()
+            }],
+            antennas: dishes_m
+                .iter()
+                .enumerate()
+                .map(|(index, diameter)| AntennaEntry {
+                    name: format!("A{index}"),
+                    station: format!("S{index}"),
+                    position: MPosition::new_itrf(index as f64, 0.0, 0.0),
+                    mount: "ALT-AZ".to_string(),
+                    dish_diameter: Quantity::new(*diameter, "m").expect("metres"),
+                    flagged: None,
+                })
+                .collect(),
+            ..Catalogue::default()
+        }
+    }
+
+    /// CASA 6.7.6's tclean of refim_sim_hetarray_ngvla.ms (TELESCOPE_NAME
+    /// `NGVLA1`) logs "vpmanager does not have a beam for antenna : NGVLA1
+    /// ... form Airy disk beams" and "Overriding PB with Airy of
+    /// diam,blockage=18 m,1.125 m" and "=6 m,0.375 m": the mosaic of a
+    /// telescope without a default voltage pattern forms an Airy disk of
+    /// each dish; so it does for `BIMA` and `NRAO140FT`, whose names
+    /// `VPManager` has no default under (CASA's run of that MeasurementSet
+    /// renamed to each logs the same two Airy disks). A name with a default
+    /// pattern stays refused, as do a dish without a diameter and
+    /// MeasurementSets of two telescopes, whose mosaic CASA gives each
+    /// telescope's common beam (`multiTel`).
+    #[test]
+    fn a_mosaic_without_a_default_beam_forms_an_airy_disk_of_each_dish() {
+        let mosaic = Gridder::Mosaic {
+            usepointing: false,
+            normtype: ProductNormalization::FlatNoise,
+            conjbeams: false,
+            mosweight: false,
+        };
+        let model = |catalogues: &[&Catalogue]| scientific_instrument_model(&mosaic, catalogues);
+        let ngvla = catalogue("NGVLA1", &[18.0, 18.0, 6.0]);
+        for airy in [
+            &ngvla,
+            &catalogue("BIMA", &[6.1]),
+            &catalogue("NRAO140FT", &[43.0]),
+        ] {
+            assert_eq!(
+                model(&[airy]).expect("an Airy model"),
+                Some(InstrumentModel::CasaAiryHeterogeneousInterferometricResponseV1)
+            );
+        }
+        for known in ["NGVLA", "VLA", "OVRO", "SMA", "HATCREEK", "UNKNOWN", "OSF"] {
+            assert!(
+                matches!(
+                    model(&[&catalogue(known, &[18.0])]),
+                    Err(PrepareError::UnsupportedInstrument { .. })
+                ),
+                "{known}"
+            );
+        }
+        assert!(matches!(
+            model(&[&catalogue("NGVLA1", &[18.0, 0.0])]),
+            Err(PrepareError::DishOutsideResponse { row: 1, .. })
+        ));
+        assert!(matches!(
+            model(&[&ngvla, &catalogue("NGVLA2", &[18.0])]),
+            Err(PrepareError::UnsupportedInstrument { .. })
+        ));
+        assert_eq!(
+            scientific_instrument_model(
+                &Gridder::Standard {
+                    facets: NonZeroUsize::MIN
+                },
+                &[&ngvla]
+            )
+            .expect("no model"),
+            None
+        );
+    }
+
+    #[test]
+    fn standard_primary_beam_model_is_explicit_and_fails_closed() {
+        let named = |name: &str| BTreeSet::from([name.to_string()]);
+        assert_eq!(
+            analytic_primary_beam_model_for_telescopes(&named("EVLA")).expect("EVLA model"),
+            AnalyticPrimaryBeamModel::CasaEvlaCommon
+        );
+        assert_eq!(
+            analytic_primary_beam_model_for_telescopes(&named("VLA")).expect("VLA model"),
+            AnalyticPrimaryBeamModel::CasaVlaBand
+        );
+        assert!(analytic_primary_beam_model_for_telescopes(&named("UNKNOWN")).is_err());
+        assert!(analytic_primary_beam_model_for_telescopes(&BTreeSet::new()).is_err());
+    }
+}

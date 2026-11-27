@@ -9,15 +9,15 @@ use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateType, DirectionCoordinate, SpectralCoordinate,
     StokesCoordinate,
 };
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::record::direction_from_record;
+use casa_core::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use casa_images::PagedImage;
 use casa_imaging_operator::PolarizationRouting;
 use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_imaging_singledish::{GridFunction, KernelTable};
-use casa_ms::{MeasurementSet, voltage_pattern};
+use casa_ms::MeasurementSet;
 use casa_numerics::BeamPattern;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::record::direction_from_record;
-use casa_types::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, Ix2};
 
 use crate::ft::image::{coordinate_index, match_channel, polarization_coordinate};
@@ -208,7 +208,7 @@ impl PreparedModel {
             let custom = match record.get("casars_sd_primary_beam") {
                 None => None,
                 Some(Value::Record(beam)) => {
-                    Some(voltage_pattern::radial_pattern(beam).map_err(model_error)?)
+                    Some(casa_ms::radial_pattern(beam).map_err(model_error)?)
                 }
                 _ => return Err(model_error("invalid saved single-dish primary beam")),
             };

@@ -11,12 +11,11 @@ use crate::{
     simutil::{analysis, qa},
 };
 use casa_coordinates::{Coordinate, CoordinateModel};
-use casa_images::{ImageInterface, PagedImage, RegridMethod, RegridTemplate, regrid};
+use casa_core::quanta::Quantity;
+use casa_imageanalysis::{RegridTemplate, regrid};
+use casa_images::{ImageInterface, PagedImage, RegridMethod};
 use casa_imaging_runtime::{Demand, admit};
 use casa_ms::MeasurementSet;
-use casa_provider_contracts::builtin_surface_bundle;
-use casa_task_runtime::resolve_plain_values;
-use casa_types::quanta::Quantity;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
@@ -27,6 +26,7 @@ pub(super) fn image(
     p: &Parameters<'_>,
     plan: &Plan,
     resources: SessionResources,
+    cancel: &casa_imaging::Cancel,
 ) -> Result<Vec<PathBuf>, SimobserveError> {
     let model = PagedImage::<f32>::open(&plan.model).map_err(failure)?;
     let CoordinateModel::Direction(direction) = model.coordinates().coordinate(0) else {
@@ -104,20 +104,15 @@ pub(super) fn image(
             PagedImage::<f32>::open(&target).map_err(failure)?;
         }
     }
-    let values = resolve_plain_values(
-        builtin_surface_bundle("tsdimaging").map_err(failure)?,
-        std::env::current_dir().map_err(failure)?,
-        json!({"infiles": [input], "outfile": temporary, "overwrite": p.flag("overwrite"),
+    let sparse = json!({"infiles": [input], "outfile": temporary, "overwrite": p.flag("overwrite"),
             "phasecenter": phasecenter, "mode": "channel", "nchan": nchan, "start": 0, "width": 1,
             "gridfunction": "SF", "convsupport": 6, "imsize": temporary_size,
-            "cell": [format!("{sfcell}arcsec"),format!("{sfcell}arcsec")]})
-        .as_object()
-        .unwrap(),
+            "cell": [format!("{sfcell}arcsec"),format!("{sfcell}arcsec")]});
+    let gridded = casa_imaging::single_dish::image_from_sparse_parameters(
+        sparse.as_object().unwrap(),
+        &context(resources, cancel),
     )
     .map_err(failure)?;
-    let gridded =
-        casa_imaging_application::single_dish::image_from_parameters(&values, &context(resources))
-            .map_err(failure)?;
     let beam = gridded
         .beam
         .ok_or_else(|| failure("total-power raster has no measurable beam"))?;

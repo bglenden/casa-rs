@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-25",
+  "revision": "e8a424637f9013ce645def682a2199e1012aca38",
+  "source_revision": "e8a424637f9013ce645def682a2199e1012aca38",
+  "baseline_revision": "5f86dd1e2a2af8ffbd4cb98123c0989b522296ac",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_marker_styles_oracle.py --work <new-dir> --native-bin <msexplore>",
+  "scope": "Same-input public Python CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. An isolated square marker, two independent stored visibility ordinates, uncolored/scan/correlation clear and flagged groups, and reversed-time Phase on X with six connector modes.",
+  "result": "passed",
+  "baseline_result": "Native rejects the size list and selected grouped flags, fills mesh marks solid, and draws a MeasurementSet line segment when the pinned public request remains a scatter. The earlier marker implementation also painted grouped custom marks with one color and broadcast scalar style settings to both ordinates.",
+  "matched_text_coordinates": 295,
+  "png_pairs": 17,
+  "ordinate_style_samples": 36,
+  "samples_per_flag_mode": {
+    "clear": 30,
+    "flagged": 6
+  },
+  "samples_per_connector_mode": 25,
+  "connector_modes": 6,
+  "mixed_scalar_list_png_pairs": 2
+}

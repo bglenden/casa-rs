@@ -4,8 +4,8 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
+use casa_core::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
 
 use super::{FluxScaleError, FluxScaleEstimate, GainSampleRow, selection::SampleMasks};

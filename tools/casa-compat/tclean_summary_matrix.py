@@ -8,7 +8,7 @@ any `XSym` links resolved (`tclean_case_matrix.py` says why):
     /Applications/CASA.app/Contents/MacOS/python3 -I \
         tools/casa-compat/tclean_summary_matrix.py \
         --data-root <root> --casars-python <venv with the wheel> \
-        --imager-binary <binary> --output <new dir> [--case NAME ...]
+        --output <new dir> [--case NAME ...]
 
 It writes `<output>/summary.json`, with each case's return on both sides under
 `<output>/casa` and `<output>/native`. A count agrees exactly. A peak or flux
@@ -199,7 +199,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-root", type=Path, required=True)
     parser.add_argument("--casars-python", type=Path, required=True)
-    parser.add_argument("--imager-binary", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--case", action="append", choices=sorted(CASES))
     args = parser.parse_args()
@@ -221,7 +220,7 @@ def main():
             os.chdir(previous)
 
     def call_native(values):
-        reply = run_native(args.casars_python, args.imager_binary,
+        reply = run_native(args.casars_python,
                            dict(values, backend="cpu", gridprecision="f64"), native_folder)
         if "result" not in reply:
             raise RuntimeError(f"{values['imagename']}: {json.dumps(reply)[:1500]}")

@@ -4,9 +4,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use casa_core::ArrayValue;
 use casa_ms::{MeasurementSet, MsSelection};
 use casa_tables::{Table, TableOptions};
-use casa_types::ArrayValue;
 use ndarray::Ix2;
 
 use super::pulse::Pair;

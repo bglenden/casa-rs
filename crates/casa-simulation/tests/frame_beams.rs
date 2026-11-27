@@ -3,10 +3,10 @@
 #[path = "image_frame_combinations/eop.rs"]
 mod eop;
 mod existing_ms_calculations;
+use casa_core::measures::{EpochRef, MEpoch};
 use casa_simulation::{
     PredictSpec, PredictionOptions, Simulator, SimulatorOptions, VoltagePatternSpec,
 };
-use casa_types::measures::{EpochRef, MEpoch};
 use existing_ms_calculations::{copy, predict_support as support};
 use flate2::read::GzDecoder;
 use serde_json::Value;
@@ -35,7 +35,7 @@ fn beam_spec(case: &Value, data: &Path, temporary: &Path) -> VoltagePatternSpec 
             .record()
             .unwrap();
         for key in ["realimage", "imagimage", "compleximage"] {
-            if let Some(casa_types::Value::Scalar(casa_types::ScalarValue::String(value))) =
+            if let Some(casa_core::Value::Scalar(casa_core::ScalarValue::String(value))) =
                 record.get_mut(key)
                 && !value.is_empty()
             {

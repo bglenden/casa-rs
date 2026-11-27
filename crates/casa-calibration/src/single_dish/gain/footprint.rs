@@ -3,9 +3,9 @@
 
 use std::collections::BTreeMap;
 
+use casa_core::measures::direction::DirectionRef;
 use casa_ms::MeasurementSet;
 use casa_ms::derived::engine::{MsCalEngine, raw_field_reference_direction};
-use casa_types::measures::direction::DirectionRef;
 
 use super::{error_text, normalization};
 use crate::single_dish::edges::Integration;

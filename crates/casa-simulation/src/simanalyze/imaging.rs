@@ -2,24 +2,20 @@
 //! Sequential native applications used by simanalyze.
 use super::{Parameters, failure, plan::Plan, preflight, total_power};
 use crate::{SessionResources, simobserve::SimobserveError, simutil::analysis};
+use casa_core::ScalarValue;
 use casa_images::{ImageInterface, PagedImage};
-use casa_imaging_application::{Cancel, ImagingRequest, RunContext};
+use casa_imaging::{Cancel, ImagingRequest, RunContext};
 use casa_imaging_runtime::{Demand, admit};
-use casa_ms::{
-    MeasurementSet, SubtableId,
-    concat::{ConcatRequest, concat_with_memory},
-};
-use casa_provider_contracts::builtin_surface_bundle;
-use casa_task_runtime::resolve_plain_values;
-use casa_types::ScalarValue;
+use casa_ms::{MeasurementSet, SubtableId};
+use casa_mstransform::concat::{ConcatRequest, concat_with_memory};
 use serde_json::json;
 use std::path::PathBuf;
 
-pub(crate) fn context(resources: SessionResources) -> RunContext {
+pub(crate) fn context(resources: SessionResources, cancel: &Cancel) -> RunContext {
     RunContext {
         host: *resources.host(),
         policy: *resources.policy(),
-        cancel: Cancel::new(),
+        cancel: cancel.clone(),
         summary: None,
     }
 }
@@ -28,6 +24,7 @@ pub(super) fn execute(
     p: &Parameters<'_>,
     plan: &Plan,
     resources: SessionResources,
+    cancel: &Cancel,
 ) -> Result<Vec<PathBuf>, SimobserveError> {
     preflight::check(p, plan)?;
     let mut products = Vec::new();
@@ -35,17 +32,12 @@ pub(super) fn execute(
     let request = if plan.inputs.synthesis.is_empty() {
         None
     } else {
-        let values = resolve_plain_values(
-            builtin_surface_bundle("tclean").map_err(failure)?,
-            std::env::current_dir().map_err(failure)?,
-            &plan.imaging,
-        )
-        .map_err(failure)?;
-        let mut request = ImagingRequest::from_tclean(&values).map_err(failure)?;
+        let mut request =
+            ImagingRequest::from_tclean_with_defaults(&plan.imaging).map_err(failure)?;
         request.backend = match resources.backend() {
-            crate::BackendRequest::Cpu => casa_imaging_application::BackendRequest::Cpu,
-            crate::BackendRequest::Metal => casa_imaging_application::BackendRequest::Gpu,
-            crate::BackendRequest::Auto => casa_imaging_application::BackendRequest::Auto,
+            crate::BackendRequest::Cpu => casa_imaging::BackendRequest::Cpu,
+            crate::BackendRequest::Metal => casa_imaging::BackendRequest::Gpu,
+            crate::BackendRequest::Auto => casa_imaging::BackendRequest::Auto,
         };
         Some(request)
     };
@@ -106,19 +98,14 @@ pub(super) fn execute(
         );
     }
     if let Some(input) = &plan.inputs.total_power {
-        products.extend(total_power::image(input, p, plan, resources)?);
+        products.extend(total_power::image(input, p, plan, resources, cancel)?);
     }
     if let Some(initial) = request {
         let _seed = start_model(p, plan, &mut parameters, resources)?;
-        let values = resolve_plain_values(
-            builtin_surface_bundle("tclean").map_err(failure)?,
-            std::env::current_dir().map_err(failure)?,
-            &parameters,
-        )
-        .map_err(failure)?;
-        let mut request = ImagingRequest::from_tclean(&values).map_err(failure)?;
+        let mut request =
+            ImagingRequest::from_tclean_with_defaults(&parameters).map_err(failure)?;
         request.backend = initial.backend;
-        casa_imaging_application::execute(&request, context(resources)).map_err(failure)?;
+        casa_imaging::execute(&request, context(resources, cancel)).map_err(failure)?;
     }
     Ok(products)
 }
@@ -132,8 +119,8 @@ fn start_model(
     parameters: &mut serde_json::Map<String, serde_json::Value>,
     resources: SessionResources,
 ) -> Result<Option<tempfile::TempDir>, SimobserveError> {
-    let supplied = super::plan::expand_project(&plan.directory, p.text("modelimage"));
-    let path = super::plan::locate(&plan.directory, &supplied);
+    let supplied = p.text("modelimage");
+    let path = p.locate(&plan.directory, supplied);
     if supplied.is_empty() || !path.exists() {
         parameters.insert("startmodel".into(), json!(""));
         return Ok(None);

@@ -4,6 +4,7 @@
 mod channels;
 mod classic;
 mod grouping;
+mod legacy;
 mod output;
 mod robust;
 mod storage;
@@ -11,14 +12,15 @@ mod storage;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use casa_core::quanta::{Quantity, Unit};
+use casa_core::{ArrayValue, Complex32, ScalarValue, Value};
 use casa_ms::{MsError, MsResult, ResolvedMsSelectionRow};
 use casa_tables::{Table, TableWriteLock};
-use casa_types::quanta::{Quantity, Unit};
-use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, IxDyn, ShapeBuilder};
 
 use channels::Channels;
 use classic::{Moments, VisibilityMoments};
+pub use legacy::{LegacyStatWtOptions, reweight_legacy};
 use output::Output;
 pub use robust::StatWtAlgorithm;
 pub use storage::StatWtMs;
@@ -267,7 +269,7 @@ pub fn estimate_statwt(
                 .rows
                 .len()
                 .saturating_mul(128 + channels * correlations * cell_bytes);
-            if count > 0 && bytes + group_bytes > casa_ms::write_session::TARGET_BATCH_BYTES {
+            if count > 0 && bytes + group_bytes > casa_ms::TARGET_BATCH_BYTES {
                 break;
             }
             bytes = bytes.saturating_add(group_bytes);
@@ -347,9 +349,7 @@ pub fn estimate_statwt(
                             .map(|value| value.len() * size_of::<f32>())
                             .sum::<usize>();
                     pending.push(update);
-                    if pending_bytes >= casa_ms::write_session::TARGET_BATCH_BYTES
-                        || pending.len() == 65_536
-                    {
+                    if pending_bytes >= casa_ms::TARGET_BATCH_BYTES || pending.len() == 65_536 {
                         ms.persist(&columns, &mut pending, locks)?;
                         pending_bytes = 0;
                     }

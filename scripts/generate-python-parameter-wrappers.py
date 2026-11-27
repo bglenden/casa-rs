@@ -14,13 +14,13 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CONTRACT_ROOT = REPO_ROOT / "crates" / "casa-provider-contracts" / "resources"
+CONTRACT_ROOT = REPO_ROOT / "surfaces" / "casa-contracts" / "resources"
 SURFACES_PATH = CONTRACT_ROOT / "parameter-surfaces.json"
 CATALOG_PATH = CONTRACT_ROOT / "parameter-catalog.json"
 APPLICATIONS_PATH = CONTRACT_ROOT / "application-catalog.json"
-TASK_OUTPUT = REPO_ROOT / "crates/casars-python/python/casars/tasks/_catalog.py"
-TASK_STUB = REPO_ROOT / "crates/casars-python/python/casars/tasks/_catalog.pyi"
-TASK_INIT = REPO_ROOT / "crates/casars-python/python/casars/tasks/__init__.py"
+TASK_OUTPUT = REPO_ROOT / "frontends/casars-python/python/casars/tasks/_catalog.py"
+TASK_STUB = REPO_ROOT / "frontends/casars-python/python/casars/tasks/_catalog.pyi"
+TASK_INIT = REPO_ROOT / "frontends/casars-python/python/casars/tasks/__init__.py"
 
 
 class GenerationError(RuntimeError):
@@ -472,10 +472,8 @@ def render_task_init(surfaces: list[dict[str, Any]]) -> str:
     names = [str(surface["id"]) for surface in surfaces if surface["kind"] == "task"]
     imports = "\n".join(f"    {name}," for name in names)
     exports = [
-        "TaskBinaryNotFoundError",
         "TaskCompletion",
         "TaskExecutionError",
-        "TaskInvocationError",
         "TaskParameterError",
         "TaskResultError",
         "TASK_SURFACES",
@@ -491,10 +489,8 @@ def render_task_init(surfaces: list[dict[str, Any]]) -> str:
             imports,
             ")",
             "from ._runner import (",
-            "    TaskBinaryNotFoundError,",
             "    TaskCompletion,",
             "    TaskExecutionError,",
-            "    TaskInvocationError,",
             "    TaskParameterError,",
             "    TaskResultError,",
             "    run,",

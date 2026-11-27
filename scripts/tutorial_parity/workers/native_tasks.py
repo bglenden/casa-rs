@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -12,14 +11,6 @@ from typing import Any
 
 
 TASKS = {"imhead", "imstat", "immoments", "exportfits", "msexplore", "tclean", "split", "impbcor"}
-
-
-def use_binaries(binary_dir: Path) -> None:
-    """Start each task from ``binary_dir``, through its catalog override."""
-    from casars.parameters import _native
-
-    for application in _native().application_catalog():
-        os.environ[application["override_env"]] = str(binary_dir / application["executable"])
 
 
 def python_parameters(task: str, raw: dict[str, Any]) -> dict[str, Any]:
@@ -62,12 +53,10 @@ def main() -> int:
         return 2
     request = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     operations = request.get("operations")
-    binary_dir = Path(request.get("binary_dir", ""))
     if request.get("schema_version") != 1 or not isinstance(operations, list):
         raise ValueError("unsupported native worker request")
     from casars import tasks
 
-    use_binaries(binary_dir)
     results = []
     for operation in operations:
         task = operation["task"]

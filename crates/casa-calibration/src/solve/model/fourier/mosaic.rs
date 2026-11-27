@@ -5,15 +5,15 @@ mod image_beam;
 mod saved;
 
 use casa_coordinates::{Coordinate, DirectionCoordinate};
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::FrequencyRef;
+use casa_core::{ArrayValue, Complex32, RecordValue, Value};
 use casa_imaging_operator::{
     AiryDish, ConvolutionFunctionSet, GridGeometry, MosaicBufferBand, MosaicPb, MosaicRules,
     MosaicWindow, PolarizationRouting, SavedMosaicPlanes,
 };
-use casa_ms::{SubtableId, convert_frequency_to_frame, voltage_pattern};
+use casa_ms::{SubtableId, convert_frequency_to_frame};
 use casa_numerics::{BeamPattern, PrimaryBeam};
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::FrequencyRef;
-use casa_types::{ArrayValue, Complex32, RecordValue, Value};
 
 use super::{FourierRow, GainSolveError, model_error, record_text};
 
@@ -97,7 +97,7 @@ impl MosaicLayout {
                 autocorrelations: legacy
                     && matches!(
                         record.get("usezero"),
-                        Some(Value::Scalar(casa_types::ScalarValue::Bool(true)))
+                        Some(Value::Scalar(casa_core::ScalarValue::Bool(true)))
                     ),
             },
         ))
@@ -517,12 +517,12 @@ fn antenna_beams(
     let antennas = row.ms.antenna().map_err(model_error)?;
     if !matches!(class, 1 | 2) {
         let path = std::path::Path::new(record_text(beam, "vptable")?);
-        let table = voltage_pattern::VoltagePatternTable::open(path).map_err(model_error)?;
+        let table = casa_ms::VoltagePatternTable::open(path).map_err(model_error)?;
         let record = table
             .default_record(telescope)
             .map_err(model_error)?
             .ok_or_else(|| model_error("no custom mosaic voltage pattern for the telescope"))?;
-        let pattern = voltage_pattern::radial_pattern(&record).map_err(model_error)?;
+        let pattern = casa_ms::radial_pattern(&record).map_err(model_error)?;
         return Ok((vec![pattern], vec![0; antennas.row_count()]));
     }
     if class == 1 {

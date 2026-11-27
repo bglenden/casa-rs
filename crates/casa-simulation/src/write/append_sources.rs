@@ -2,9 +2,9 @@
 //! Bounded block reads for the append writer's generated column sources.
 use crate::session::SessionResources;
 use crate::session::error::{SimulatorError, SimulatorResult};
+use casa_core::{ArrayValue, PrimitiveType, ScalarValue};
 use casa_imaging_runtime::{Demand, Reservation, admit};
 use casa_tables::{Table, TableError};
-use casa_types::{ArrayValue, PrimitiveType, ScalarValue};
 use std::sync::Mutex;
 
 pub(super) const SCALAR_ROWS: usize = 512;

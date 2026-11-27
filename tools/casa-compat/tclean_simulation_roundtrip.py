@@ -10,7 +10,7 @@ Python:
     CASA_PYTHON -I tools/casa-compat/tclean_simulation_roundtrip.py \\
         --out OUT --simobserve TARGET/release/simobserve \\
         --casatestdata /Volumes/home/casatestdata \\
-        --casars-python VENV/bin/python --imager-binary TARGET/release/casars-imager
+        --casars-python VENV/bin/python
 
 Each scenario of `SCENARIOS` runs casa-rs's `simobserve` task binary
 (`crates/casars-simulation`, through `--json-run`) noise-free on a sky
@@ -277,7 +277,6 @@ def main() -> int:
     parser.add_argument("--simobserve", required=True)
     parser.add_argument("--casatestdata", required=True)
     parser.add_argument("--casars-python", required=True)
-    parser.add_argument("--imager-binary", required=True)
     parser.add_argument("--scenario", action="append", help="run only these scenarios")
     args = parser.parse_args()
     args.out = os.path.abspath(args.out)
@@ -314,8 +313,6 @@ def main() -> int:
         os.path.join(args.out, "sim"),
         "--casars-python",
         args.casars_python,
-        "--imager-binary",
-        args.imager_binary,
         "--revision",
         "simulation-roundtrip",
         "--backend",

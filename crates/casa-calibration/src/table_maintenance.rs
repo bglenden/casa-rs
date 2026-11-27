@@ -3,13 +3,13 @@
 
 use std::path::Path;
 
+use casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_ms::{
     MeasurementSet, MeasurementSetBuilder, derived::engine::MsCalEngine, schema::SubtableId,
 };
 use casa_tables::{
     ColumnAddition, ColumnSchema, ManagerAddition, Table, TableOptions, TableWriteLock,
 };
-use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
 use crate::CalibrationOutputMode;
@@ -120,10 +120,8 @@ pub(crate) fn write_standard_calibration_subtables(
     Ok(())
 }
 
-pub(crate) fn overlaps_measurement_set(
-    ms: &MeasurementSet,
-    destination: &Path,
-) -> Result<bool, String> {
+/// Return whether `destination` lives inside or contains the MeasurementSet tree.
+pub fn overlaps_measurement_set(ms: &MeasurementSet, destination: &Path) -> Result<bool, String> {
     let Some(source) = ms.path() else {
         return Ok(false);
     };

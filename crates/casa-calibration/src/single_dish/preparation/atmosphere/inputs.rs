@@ -4,28 +4,34 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use casa_ms::{MeasurementSet, SubtableId};
-use casa_tables::{Table, TableOptions};
-use casa_types::{
+use casa_core::{
     ArrayValue, ScalarValue, Value,
     measures::{MPosition, PositionRef},
 };
+use casa_ms::{MeasurementSet, SubtableId};
+use casa_tables::{Table, TableOptions};
 
 use super::{error_text, model::GroundConditions};
 
 const ON_SOURCE: &str = "OBSERVE_TARGET#ON_SOURCE";
 const OFF_SOURCE: &str = "OBSERVE_TARGET#OFF_SOURCE";
 
-pub(super) struct MainRows {
-    pub(super) antennas: BTreeSet<i32>,
-    pub(super) windows: BTreeSet<i32>,
-    pub(super) science: BTreeSet<i32>,
-    pub(super) on_source: Vec<bool>,
+/// Pre-scanned MAIN-table antenna, SPW, and intent metadata for `sdatmcor`.
+pub struct MainRows {
+    /// Observed antenna IDs in `MAIN`.
+    pub antennas: BTreeSet<i32>,
+    /// Observed spectral window IDs in `MAIN`.
+    pub windows: BTreeSet<i32>,
+    /// Science spectral window IDs matching `ON_SOURCE`.
+    pub science: BTreeSet<i32>,
+    /// Per-row `ON_SOURCE` flags.
+    pub on_source: Vec<bool>,
     off_source: Vec<f64>,
 }
 
 impl MainRows {
-    pub(super) fn read(ms: &MeasurementSet) -> Result<Self, String> {
+    /// Scan `MAIN`, `STATE`, `DATA_DESCRIPTION`, and `SPECTRAL_WINDOW` once.
+    pub fn read(ms: &MeasurementSet) -> Result<Self, String> {
         let source = ms.main_table();
         let states = ms.state().map_err(error_text)?;
         let intents = (0..states.row_count())
@@ -105,7 +111,8 @@ fn has_intent(mode: &str, wanted: &str) -> bool {
     mode.split(',').any(|intent| intent.trim() == wanted)
 }
 
-pub(super) fn site_altitude(ms: &MeasurementSet, antenna: i32) -> Result<f64, String> {
+/// WGS84 altitude in metres of antenna `antenna`.
+pub fn site_altitude(ms: &MeasurementSet, antenna: i32) -> Result<f64, String> {
     let [x, y, z] = ms
         .antenna()
         .and_then(|antennas| antennas.position(antenna as usize))
@@ -299,7 +306,8 @@ fn median(mut values: Vec<f64>) -> f64 {
     (values[(values.len() - 1) / 2] + values[values.len() / 2]) * 0.5
 }
 
-pub(super) fn default_antenna(ms: &MeasurementSet, rows: &MainRows) -> Result<i32, String> {
+/// Infer the default reference antenna from `FLAG_CMD` mount-off-source counts or the first active antenna.
+pub fn default_antenna(ms: &MeasurementSet, rows: &MainRows) -> Result<i32, String> {
     let antennas = ms.antenna().map_err(error_text)?;
     let mut scores = BTreeMap::new();
     if let Some(commands) = ms.subtable(SubtableId::FlagCmd) {
@@ -341,7 +349,7 @@ fn mount_flag(command: &str) -> Result<(&str, f64), String> {
         .split_once('~')
         .ok_or("Malformed mount flag time range.")?;
     let time = |text| {
-        casa_types::quanta::Quantity::read(text)
+        casa_core::quanta::Quantity::read(text)
             .map(|value| value.get_si_value())
             .map_err(error_text)
     };

@@ -3,9 +3,9 @@
 
 use std::collections::HashMap;
 
+use casa_core::{ArrayValue, ScalarValue};
 use casa_ms::{MeasurementSet, schema::SubtableId};
 use casa_tables::Table;
-use casa_types::{ArrayValue, ScalarValue};
 use ndarray::{ArrayD, IxDyn};
 
 use super::{GencalError, PriorCalRow, get_f64};

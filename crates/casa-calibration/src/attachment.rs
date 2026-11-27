@@ -10,14 +10,14 @@ use casa_tables::{TableError, TableWriteLock, table_cache_name};
 use crate::model_columns::{has_column, initialize_calibrater_columns, initialize_scratch_column};
 use crate::session::resolve_casa_calibration_selection;
 
-pub(crate) struct OpenedMs {
+pub struct OpenedMs {
     path: PathBuf,
-    pub(crate) measurement_set: MeasurementSet,
-    pub(crate) lock: TableWriteLock,
+    pub measurement_set: MeasurementSet,
+    pub lock: TableWriteLock,
 }
 
 impl OpenedMs {
-    pub(crate) fn open(path: &Path) -> MsResult<Self> {
+    pub fn open(path: &Path) -> MsResult<Self> {
         let path = table_cache_name(path)?;
         let lock = TableWriteLock::acquire_to_reread(&path, 0)?;
         Self::read_holding(path, lock)
@@ -32,12 +32,12 @@ impl OpenedMs {
         })
     }
 
-    pub(crate) fn initialize(mut self, column: VisibilityDataColumn) -> MsResult<Self> {
+    pub fn initialize(mut self, column: VisibilityDataColumn) -> MsResult<Self> {
         self.lock = initialize_scratch_column(&mut self.measurement_set, column, self.lock)?;
         Ok(self)
     }
 
-    pub(crate) fn initialize_calibrater(
+    pub fn initialize_calibrater(
         mut self,
         compress: bool,
         add_corrected: bool,
@@ -53,19 +53,19 @@ impl OpenedMs {
         Ok(self)
     }
 
-    pub(crate) fn resolve(
+    pub fn resolve(
         &self,
         selection: &MsSelection,
     ) -> Result<ResolvedMsSelection, MsSelectionError> {
         resolve_casa_calibration_selection(&self.measurement_set, selection)
     }
 
-    pub(crate) fn reload(self) -> MsResult<Self> {
+    pub fn reload(self) -> MsResult<Self> {
         drop(self.measurement_set);
         Self::read_holding(self.path, self.lock)
     }
 
-    pub(crate) fn release(self) -> MsResult<()> {
+    pub fn release(self) -> MsResult<()> {
         drop(self.measurement_set);
         self.lock.release()?;
         Ok(())
@@ -284,7 +284,7 @@ impl CalibrationAttachment {
         }
     }
 
-    pub(crate) fn select(&mut self, selection: MsSelection) -> Result<(), AttachmentError> {
+    pub fn select(&mut self, selection: MsSelection) -> Result<(), AttachmentError> {
         self.select_with_channels(selection, None)
     }
 
@@ -309,11 +309,11 @@ impl CalibrationAttachment {
         Ok(())
     }
 
-    pub(crate) fn selection(&self) -> &MsSelection {
+    pub fn selection(&self) -> &MsSelection {
         &self.selection
     }
 
-    pub(crate) fn reset_selection(&mut self) {
+    pub fn reset_selection(&mut self) {
         self.selection = MsSelection::default();
         self.imager_channels = None;
         self.state = SelectionState::Initial;
@@ -598,7 +598,7 @@ impl ImagerAttachments {
         Ok(active)
     }
 
-    pub(crate) fn retain_setjy_selection(
+    pub fn retain_setjy_selection(
         &mut self,
         selection: MsSelection,
     ) -> Result<(), AttachmentError> {

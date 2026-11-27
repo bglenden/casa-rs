@@ -5,21 +5,20 @@ mod auto_mask;
 mod diagnostics;
 mod linear_fit;
 mod polynomial;
-mod sinusoid;
+pub mod sinusoid;
 mod spline;
-mod table;
-pub(crate) mod task;
-mod variable;
+pub mod table;
+pub mod variable;
 
 use std::collections::{BTreeMap, btree_map::Entry};
 use std::path::Path;
 
+use casa_core::{ArrayValue, Complex32, RecordValue};
 use casa_ms::MeasurementSet;
-use casa_ms::transform::{
+use casa_mstransform::{
     MsTransformReport, MsTransformRequest, MsTransformTiling, SpectrumBaseline, SpectrumRow,
     SpectrumWeights, TransformTaskHistory, transform_baseline_spectra,
 };
-use casa_types::{ArrayValue, Complex32, RecordValue};
 use ndarray::{Array1, ArrayD, Axis};
 
 pub use auto_mask::SingleDishLineFinder;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA polynomial fits of a selected calibration series.
 
-use casa_provider_contracts::CasaValue;
+use casa_core::{ArrayValue, ScalarValue, Value};
 
 use super::series::initial;
 
@@ -52,26 +52,29 @@ impl FitOptions {
         values: &[f64],
         errors: &[f64],
         flags: &mut [bool],
-    ) -> [(&'static str, CasaValue); 12] {
+    ) -> [(&'static str, Value); 12] {
         let fit = self.run(x, values, errors, flags);
         let valid = fit.is_some();
         let fit = fit.unwrap_or_default();
         let order = ["AVERAGE", "LINEAR", "QUADRATIC"][self.degree];
         let method = if self.robust { "ROBUST" } else { "LSQ" };
         let weight = if self.weighted { "YES" } else { "NO" };
+        let string = |text: &str| Value::Scalar(ScalarValue::String(text.to_string()));
+        let float = |value: f64| Value::Scalar(ScalarValue::Float64(value));
+        let floats = |data: Vec<f64>| Value::Array(ArrayValue::from_f64_vec(data));
         [
-            ("order", CasaValue::string(order)),
-            ("type", CasaValue::string(method)),
-            ("weight", CasaValue::string(weight)),
-            ("validFit", CasaValue::Bool { value: valid }),
-            ("pars", CasaValue::float64_vector(fit.coefficients)),
-            ("vars", CasaValue::float64_vector(fit.variances)),
-            ("covars", CasaValue::float64_vector(fit.covariances)),
-            ("model", CasaValue::float64_vector(fit.model)),
-            ("res", CasaValue::float64_vector(fit.residuals)),
-            ("redChi2", CasaValue::float(fit.reduced_chi_square)),
-            ("resMean", CasaValue::float(fit.residual_mean)),
-            ("resVar", CasaValue::float(fit.residual_variance)),
+            ("order", string(order)),
+            ("type", string(method)),
+            ("weight", string(weight)),
+            ("validFit", Value::Scalar(ScalarValue::Bool(valid))),
+            ("pars", floats(fit.coefficients)),
+            ("vars", floats(fit.variances)),
+            ("covars", floats(fit.covariances)),
+            ("model", floats(fit.model)),
+            ("res", floats(fit.residuals)),
+            ("redChi2", float(fit.reduced_chi_square)),
+            ("resMean", float(fit.residual_mean)),
+            ("resVar", float(fit.residual_variance)),
         ]
     }
 

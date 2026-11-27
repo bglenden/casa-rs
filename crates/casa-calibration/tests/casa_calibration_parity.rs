@@ -3,11 +3,11 @@
 
 mod common;
 
-use casa_ms::ms::MeasurementSet;
+use casa_core::{ArrayValue, Complex32};
+use casa_ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::selection::{MsSelection, MsSelectionIoBudget, ResolvedMsSelectionRow};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, Complex32};
 use ndarray::Ix2;
 use tempfile::TempDir;
 
@@ -2412,7 +2412,7 @@ fn read_cparam_rows_for_field(table_path: &std::path::Path, field_id: i32) -> Ve
             .and_then(|cell| cell.scalar())
             .expect("FIELD_ID cell")
         {
-            casa_types::ScalarValue::Int32(value) => *value,
+            casa_core::ScalarValue::Int32(value) => *value,
             other => panic!("unexpected FIELD_ID value: {other:?}"),
         };
         if current_field_id != field_id {

@@ -2,7 +2,6 @@
 //! Selected single-dish Gaussian and Lorentzian line profiles.
 
 mod product;
-pub(crate) mod task;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -10,15 +9,15 @@ use std::io::{BufWriter, Write};
 use std::ops::RangeInclusive;
 use std::path::Path;
 
-use casa_images::analysis::{ChannelLineShape, fit_channel_lines};
-use casa_ms::MeasurementSet;
-use casa_ms::transform::{
-    MsTransformRequest, MsTransformTaskOptions, SpectrumBaseline, SpectrumRow, SpectrumWeights,
-    TimeAverageOptions, transform_baseline_spectra,
-};
-use casa_types::{
+use casa_core::{
     ArrayValue,
     quanta::{Quantity, Unit},
+};
+use casa_imageanalysis::analysis::{ChannelLineShape, fit_channel_lines};
+use casa_ms::MeasurementSet;
+use casa_mstransform::{
+    MsTransformRequest, MsTransformTaskOptions, SpectrumBaseline, SpectrumRow, SpectrumWeights,
+    TimeAverageOptions, transform_baseline_spectra,
 };
 use ndarray::{ArrayD, Axis};
 
@@ -188,7 +187,7 @@ impl SingleDishSession {
 
 impl LineAveraging {
     pub(super) fn operation_options(&self) -> Result<MsTransformTaskOptions, String> {
-        use casa_ms::transform::SingleDishPolarizationAverage;
+        use casa_mstransform::SingleDishPolarizationAverage;
 
         let time_averaging = self.time_options()?;
         let single_dish_polarization = if time_averaging.is_some() {

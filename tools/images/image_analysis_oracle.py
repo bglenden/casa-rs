@@ -5,8 +5,8 @@
 Run with CASA's Python (for example `/Applications/CASA.app/Contents/MacOS/python3 -I`):
 
     python3 -I tools/images/image_analysis_oracle.py \\
-        --cases crates/casa-images/tests/data/image_analysis_cases.json \\
-        --out crates/casa-images/tests/data/image_analysis_casa.json
+        --cases libs/casacore/casa-images/tests/data/image_analysis_cases.json \\
+        --out libs/casacore/casa-images/tests/data/image_analysis_casa.json
 
 For each image of the case file it builds a CASA image:
 - `flat` images as `simutil.flatimage` writes them: a default image dropped

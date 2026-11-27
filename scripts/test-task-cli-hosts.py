@@ -29,6 +29,7 @@ HOSTED_TASKS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("simobserve", ()),
     ("simanalyze", ()),
     ("simalma", ()),
+    ("predictcomp", ()),
     ("concat", ()),
     ("tsdimaging", ()),
     ("casars-imager", ()),
@@ -109,7 +110,7 @@ def check_front_end(executable: str, base: list[str]) -> None:
 def main() -> int:
     repo = Path(__file__).resolve().parents[1]
     catalog = json.loads(
-        (repo / "crates/casa-provider-contracts/resources/application-catalog.json").read_text(
+        (repo / "surfaces/casa-contracts/resources/application-catalog.json").read_text(
             encoding="utf-8"
         )
     )

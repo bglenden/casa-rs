@@ -7,9 +7,9 @@ use casa_coordinates::{
     CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate,
     StokesCoordinate, StokesType,
 };
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
 use casa_images::PagedImage;
-use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use ndarray::{ArrayD, IxDyn};
 use std::path::{Path, PathBuf};
 const CENTRE: [f64; 2] = [2.617_993_877_991_494_4, -0.523_598_775_598_298_8];

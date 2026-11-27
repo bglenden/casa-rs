@@ -31,7 +31,10 @@ cargo run -q -p casa-test-support --bin casatestdata-preflight -- \
   --require measurementset/vla/ngc5921.ms \
   --require measurementset/vla/ref_vlass_wtsp_creation.ms
 run_timed_step \
+  "Running recorded CASA parity comparisons" \
+  cargo test -p casa-parity --test api
+run_timed_step \
   "Running slow msexplore CASA parity suite" \
-  cargo test -p casa-ms --features slow-tests --test msexplore_casa_parity
+  cargo test -p casars-cli --features slow-tests --test msexplore_casa_parity
 script_finished_at="$(date +%s)"
 echo "Slow test suite completed in $(format_elapsed $(( script_finished_at - script_started_at )))"

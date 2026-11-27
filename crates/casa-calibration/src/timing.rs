@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Opt-in phase evidence without changing CASA's return values.
 
-pub(crate) struct Phase {
+pub struct Phase {
     name: &'static str,
     start: Option<std::time::Instant>,
 }
 
 impl Phase {
-    pub(crate) fn start(name: &'static str) -> Self {
+    pub fn start(name: &'static str) -> Self {
         Self {
             name,
             start: std::env::var_os("CASA_RS_CALIBRATION_TIMING")
@@ -30,7 +30,7 @@ impl Drop for Phase {
 
 /// Linux's current address-space peak, excluding a parent's pre-exec peak
 /// that can remain in `getrusage`. Report only for opt-in measurements.
-pub(crate) fn report_process_memory() {
+pub fn report_process_memory() {
     #[cfg(target_os = "linux")]
     if std::env::var_os("CASA_RS_CALIBRATION_TIMING").is_some()
         && let Ok(status) = std::fs::read_to_string("/proc/self/status")

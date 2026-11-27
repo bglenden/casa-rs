@@ -11,7 +11,7 @@ Usage: scripts/check-spdx.sh [--staged] [path ...]
 Checks Rust source files for the required SPDX header.
 
 Modes:
-  no arguments  Check all Rust files under crates/ in the working tree
+  no arguments  Check all Rust files under workspace crate roots in the working tree
   --staged      Check staged Rust files as they are currently indexed
   path ...      Check the given working-tree paths
 EOF
@@ -43,9 +43,13 @@ elif [[ "$mode" == "staged" ]]; then
     files+=("$path")
   done < <(git diff --cached --name-only --diff-filter=ACMR -z -- '*.rs')
 else
-  while IFS= read -r -d '' path; do
-    files+=("$path")
-  done < <(find crates -type f -name '*.rs' -print0)
+  for root in crates libs surfaces frontends dev suites; do
+    if [[ -d "$root" ]]; then
+      while IFS= read -r -d '' path; do
+        files+=("$path")
+      done < <(find "$root" -type f -name '*.rs' -print0)
+    fi
+  done
 fi
 
 if [[ ${#files[@]} -eq 0 ]]; then

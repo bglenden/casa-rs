@@ -4,8 +4,8 @@
 //! `NewMSSimulator::initSpWindows` adds one SPECTRAL_WINDOW, one
 //! POLARIZATION and one DATA_DESCRIPTION row per call, all at the same index.
 
+use casa_core::measures::frequency::FrequencyRef;
 use casa_imaging_runtime::Admitted;
-use casa_types::measures::frequency::FrequencyRef;
 use std::sync::Arc;
 
 pub(crate) type StoredFrequencies = Arc<Admitted<Vec<f64>>>;

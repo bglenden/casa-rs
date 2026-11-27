@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use crate::CalibrationTableWriteError;

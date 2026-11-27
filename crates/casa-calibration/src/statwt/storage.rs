@@ -4,11 +4,11 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use casa_core::ArrayValue;
 use casa_ms::{
     MeasurementSet, MsError, MsResult, MsSelection, MsSelectionError, ResolvedMsSelectionRow,
 };
-use casa_tables::{RequiredScalarColumnValues, Table, TableWriteLock};
-use casa_types::ArrayValue;
+use casa_tables::{RequiredScalarColumnValues, Table, TablePartNames, TableWriteLock};
 
 use crate::solve::grouping::VisibilityModels;
 use crate::visibility_model_source_paths;
@@ -17,15 +17,64 @@ use crate::weight_spectra::has_column;
 use super::output::Output;
 use super::{RowUpdate, StatWtChannelBin, StatWtOptions, persist_updates};
 
+const LEGACY_COLUMNS: [&str; 2] = ["WEIGHT", "SIGMA"];
+
 /// One on-disk MeasurementSet or the physical MAIN tables of a Multi-MS.
 pub struct StatWtMs {
     parts: Vec<Part>,
+    legacy_reference: Option<LegacyReference>,
+}
+
+#[derive(PartialEq, Eq)]
+struct LegacyReference {
+    path: PathBuf,
+    rows: Vec<usize>,
+    columns: BTreeMap<String, String>,
+    parts: Vec<(PathBuf, usize)>,
 }
 
 struct Part {
     offset: usize,
     path: PathBuf,
     ms: MeasurementSet,
+}
+
+impl LegacyReference {
+    fn capture(view: &MeasurementSet) -> MsResult<(Self, StatWtMs)> {
+        let table = view.main_table();
+        let names = table
+            .schema()
+            .ok_or_else(|| invalid("missing oldstatwt MAIN schema"))?
+            .columns()
+            .iter()
+            .map(|column| column.name())
+            .collect::<Vec<_>>();
+        let rows = (0..view.row_count()).collect::<Vec<_>>();
+        let projection = table
+            .reference_root_projection(&rows, &names)?
+            .ok_or_else(|| invalid("oldstatwt reference layout changed"))?;
+        let path = projection.path.canonicalize().map_err(invalid)?;
+        let root = StatWtMs::open(&path, false)?;
+        let parts = root
+            .parts
+            .iter()
+            .map(|part| (part.path.clone(), part.ms.row_count()))
+            .collect();
+        let columns = names
+            .into_iter()
+            .map(str::to_owned)
+            .zip(projection.columns)
+            .collect();
+        Ok((
+            Self {
+                path,
+                rows: projection.rows,
+                columns,
+                parts,
+            },
+            root,
+        ))
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -62,7 +111,48 @@ impl StatWtMs {
                 "statwt requires a physical MAIN table".into(),
             ));
         }
-        Ok(Self { parts })
+        Ok(Self {
+            parts,
+            legacy_reference: None,
+        })
+    }
+
+    /// Open the logical saved view for fitting while retaining its map to the
+    /// physical table. Ordinary MSs and Multi-MS constituents share the
+    /// existing calibration input path.
+    #[doc(hidden)]
+    pub fn open_legacy(path: &Path) -> MsResult<Self> {
+        if !matches!(
+            Table::immediate_part_names(path, path)?,
+            TablePartNames::Reference(_)
+        ) {
+            return Self::open(path, false);
+        }
+        let path = path.canonicalize().map_err(invalid)?;
+        let ms = MeasurementSet::open(&path)?;
+        let (reference, _) = LegacyReference::capture(&ms)?;
+        Ok(Self {
+            parts: vec![Part {
+                offset: 0,
+                path,
+                ms,
+            }],
+            legacy_reference: Some(reference),
+        })
+    }
+
+    /// Return the tables whose write locks protect a legacy weight update.
+    #[doc(hidden)]
+    pub fn legacy_sources(&self) -> MsResult<Vec<PathBuf>> {
+        if let Some(reference) = &self.legacy_reference {
+            Ok(reference
+                .parts
+                .iter()
+                .map(|(path, _)| path.clone())
+                .collect())
+        } else {
+            Ok(self.parts.iter().map(|part| part.path.clone()).collect())
+        }
     }
 
     /// Acquire the write capability for every physical MAIN table in path order.
@@ -178,6 +268,116 @@ impl StatWtMs {
             }
         }
         Ok(metadata)
+    }
+
+    pub(super) fn legacy_boundaries(
+        &self,
+        rows: &[ResolvedMsSelectionRow],
+    ) -> MsResult<Vec<[i32; 4]>> {
+        let ids = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
+        let mut boundaries = vec![[0; 4]; rows.len()];
+        for (part, fragment) in self.parts.iter().zip(self.fragments(&ids)) {
+            if fragment.is_empty() {
+                continue;
+            }
+            let columns = ["ARRAY_ID", "SCAN_NUMBER", "STATE_ID", "OBSERVATION_ID"];
+            let ids = fragment.iter().map(|&(_, row)| row).collect::<Vec<_>>();
+            let mut values = part
+                .ms
+                .main_table()
+                .required_scalar_columns_owned_for_rows(&columns, &ids)?;
+            for (axis, column) in columns.into_iter().enumerate() {
+                let Some(RequiredScalarColumnValues::Int32(values)) = values.remove(column) else {
+                    return Err(invalid(format!("{column} must be int32")));
+                };
+                for (&(slot, _), value) in fragment.iter().zip(values) {
+                    boundaries[slot][axis] = value;
+                }
+            }
+        }
+        Ok(boundaries)
+    }
+
+    pub(super) fn persist_legacy(
+        &mut self,
+        updates: Vec<super::legacy::LegacyOutputRow>,
+        locks: &mut BTreeMap<PathBuf, TableWriteLock>,
+    ) -> MsResult<()> {
+        if updates.is_empty() {
+            return Ok(());
+        }
+        if let Some(expected) = &self.legacy_reference {
+            let view = MeasurementSet::open(&self.parts[0].path)?;
+            let (current, mut root) = LegacyReference::capture(&view)?;
+            if &current != expected {
+                return Err(invalid(
+                    "oldstatwt reference layout changed before publication",
+                ));
+            }
+            let updates = updates
+                .into_iter()
+                .map(|(row, cells)| (current.rows[row], cells))
+                .collect::<BTreeMap<_, _>>();
+            let [weight, sigma] =
+                LEGACY_COLUMNS.map(|name| current.columns.get(name).map(String::as_str));
+            let (Some(weight), Some(sigma)) = (weight, sigma) else {
+                return Err(invalid("saved reference is missing WEIGHT or SIGMA"));
+            };
+            return root.write_legacy(updates.into_iter(), &[weight, sigma], locks);
+        }
+        self.write_legacy(updates.into_iter(), &LEGACY_COLUMNS, locks)
+    }
+
+    fn write_legacy(
+        &mut self,
+        updates: impl Iterator<Item = super::legacy::LegacyOutputRow>,
+        columns: &[&str; 2],
+        locks: &mut BTreeMap<PathBuf, TableWriteLock>,
+    ) -> MsResult<()> {
+        for part in &self.parts {
+            if !locks
+                .get(&part.path)
+                .is_some_and(|lock| lock.matches_table_path(&part.path))
+            {
+                return Err(invalid(format!(
+                    "oldstatwt physical table or write lock changed at {}",
+                    part.path.display()
+                )));
+            }
+        }
+        let mut remaining = updates.peekable();
+        for part in &mut self.parts {
+            let table = part.ms.main_table_mut();
+            let limit = part.offset + table.row_count();
+            if !remaining.peek().is_some_and(|(row, _)| *row < limit) {
+                continue;
+            }
+            let lock = locks
+                .get_mut(&part.path)
+                .ok_or_else(|| invalid("missing oldstatwt write lock"))?;
+            let mut writer = table.row_accessor_mut().prepare(columns)?;
+            let mut rows = Vec::new();
+            while remaining.peek().is_some_and(|(row, _)| *row < limit) {
+                let (row, values) = remaining.next().expect("update inside partition");
+                let row = row - part.offset;
+                rows.push(row);
+                writer.seek(row)?;
+                for (index, value) in values.into_iter().enumerate() {
+                    writer.set_value_at(index, casa_core::Value::Array(value))?;
+                }
+            }
+            writer.flush()?;
+            drop(writer);
+            lock.record_write();
+            table.prepare_write().save_selected_rows(columns, &rows)?;
+            table.discard_persisted_cell_updates(columns, &rows);
+        }
+        if remaining.next().is_some() {
+            return Err(invalid(
+                "oldstatwt physical row count changed before publication",
+            ));
+        }
+        Ok(())
     }
 
     pub(super) fn models(
@@ -318,4 +518,92 @@ fn row_metadata(table: &Table, rows: &[usize]) -> MsResult<Vec<RowMetadata>> {
 
 fn invalid(error: impl std::fmt::Display) -> MsError {
     MsError::InvalidInput(error.to_string())
+}
+
+#[cfg(test)]
+mod legacy_tests {
+    use super::*;
+
+    use casa_core::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+    use casa_ms::ColumnKind;
+    use casa_ms::MeasurementSetBuilder;
+    use casa_ms::schema::main_table::REQUIRED_COLUMNS;
+    use casa_tables::{TableInfo, TableOptions};
+    use ndarray::{ArrayD, IxDyn};
+
+    #[test]
+    fn rejects_a_changed_concat_order_before_saving_reference_weights() {
+        let scratch = tempfile::tempdir().unwrap();
+        let paths = ["first.ms", "second.ms"].map(|name| scratch.path().join(name));
+        let cell = |value| ArrayValue::Float32(ArrayD::from_elem(IxDyn(&[1]), value));
+        for (path, value) in paths.iter().zip([2.0, 3.0]) {
+            let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
+            let row = REQUIRED_COLUMNS
+                .iter()
+                .map(|column| {
+                    let value = match (column.data_type, column.column_kind) {
+                        (PrimitiveType::Int32, ColumnKind::Scalar) => {
+                            Value::Scalar(ScalarValue::Int32(0))
+                        }
+                        (PrimitiveType::Float64, ColumnKind::Scalar) => {
+                            Value::Scalar(ScalarValue::Float64(0.0))
+                        }
+                        (PrimitiveType::Bool, ColumnKind::Scalar) => {
+                            Value::Scalar(ScalarValue::Bool(false))
+                        }
+                        (PrimitiveType::Bool, ColumnKind::VariableArray { ndim }) => Value::Array(
+                            ArrayValue::Bool(ArrayD::from_elem(IxDyn(&vec![1; ndim]), false)),
+                        ),
+                        (PrimitiveType::Float64, ColumnKind::FixedArray { shape }) => {
+                            Value::Array(ArrayValue::Float64(ArrayD::zeros(IxDyn(shape))))
+                        }
+                        (PrimitiveType::Float32, ColumnKind::VariableArray { ndim: 1 }) => {
+                            Value::Array(cell(value))
+                        }
+                        _ => unreachable!("unexpected MAIN column {}", column.name),
+                    };
+                    RecordField::new(column.name, value)
+                })
+                .collect();
+            ms.main_table_mut().add_row(RecordValue::new(row)).unwrap();
+            ms.save_as(path).unwrap();
+        }
+        let concat = |path: &Path, order: [usize; 2]| {
+            let members =
+                order.map(|member| Table::open(TableOptions::new(&paths[member])).unwrap());
+            let info = TableInfo {
+                table_type: "MeasurementSet".into(),
+                sub_type: "CONCATENATED".into(),
+                readme: Vec::new(),
+            };
+            Table::concat(Vec::from(members))
+                .unwrap()
+                .save_with_info(TableOptions::new(path), &info)
+                .unwrap();
+        };
+        let root = scratch.path().join("members.mms");
+        let reversed = scratch.path().join("reversed.mms");
+        let reference = scratch.path().join("selection.ms");
+        concat(&root, [0, 1]);
+        concat(&reversed, [1, 0]);
+        let source = Table::open(TableOptions::new(&root)).unwrap();
+        source
+            .select_rows(&[0])
+            .unwrap()
+            .save(TableOptions::new(&reference))
+            .unwrap();
+        let mut view = StatWtMs::open_legacy(&reference).unwrap();
+        let mut locks = StatWtMs::write_locks(&paths).unwrap();
+        std::fs::copy(reversed.join("table.dat"), root.join("table.dat")).unwrap();
+        let failure = view
+            .persist_legacy(vec![(0, [cell(20.0), cell(30.0)])], &mut locks)
+            .unwrap_err();
+        assert!(failure.to_string().contains("reference layout changed"));
+        for (path, value) in paths.iter().zip([2.0, 3.0]) {
+            let base = StatWtMs::open_legacy(path).unwrap();
+            for column in LEGACY_COLUMNS {
+                assert_eq!(base.array_cells(column, &[0]).unwrap(), [Some(cell(value))]);
+            }
+        }
+    }
 }

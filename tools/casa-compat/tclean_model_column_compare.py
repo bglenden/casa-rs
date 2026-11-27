@@ -8,7 +8,7 @@ any `XSym` links resolved (`tclean_case_matrix.py` says why):
     /Applications/CASA.app/Contents/MacOS/python3 -I \
         tools/casa-compat/tclean_model_column_compare.py \
         --data-root <root> --casars-python <venv with the wheel> \
-        --imager-binary <binary> --output <new dir> [--case NAME ...]
+        --output <new dir> [--case NAME ...]
 
 Each side images its own copy of the MeasurementSet. Both create `MODEL_DATA`
 with CASA's initial model, one in every cell, so a cell still holding exactly
@@ -92,7 +92,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-root", type=Path, required=True)
     parser.add_argument("--casars-python", type=Path, required=True)
-    parser.add_argument("--imager-binary", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--case", action="append", choices=sorted(CASES))
     args = parser.parse_args()
@@ -117,7 +116,7 @@ def main():
                 if side == "casa":
                     casatasks.tclean(**call, parallel=False)
                 else:
-                    reply = run_native(args.casars_python, args.imager_binary,
+                    reply = run_native(args.casars_python,
                                        dict(call, backend="cpu", gridprecision="f64"), folder)
                     if "result" not in reply:
                         raise RuntimeError(f"{case}: {json.dumps(reply)[:1500]}")

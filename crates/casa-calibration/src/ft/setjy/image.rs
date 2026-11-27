@@ -6,25 +6,25 @@ use std::path::Path;
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateType, SpectralCoordinate, StokesType,
 };
+use casa_core::measures::frame::MeasFrame;
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
+use casa_core::measures::{direction::MDirection, position::MPosition};
+use casa_core::quanta::{Quantity, Unit};
+use casa_core::{ArrayValue, ScalarValue, Value};
 use casa_images::PagedImage;
 use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection};
-use casa_types::measures::frame::MeasFrame;
-use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::measures::{direction::MDirection, position::MPosition};
-use casa_types::quanta::{Quantity, Unit};
-use casa_types::{ArrayValue, ScalarValue, Value};
 
 use crate::ft::image::{ImageModel, prepare_image};
 use crate::ft::{invalid, spectral_with_runtime};
 
-pub(crate) struct ImageFrequencies {
-    pub(crate) samples: Vec<f64>,
+pub struct ImageFrequencies {
+    pub samples: Vec<f64>,
     span: f64,
-    pub(crate) first_window_reference: FrequencyRef,
+    pub first_window_reference: FrequencyRef,
 }
 
 impl ImageFrequencies {
-    pub(crate) fn new(
+    pub fn new(
         min: f64,
         max: f64,
         step: f64,
@@ -56,7 +56,7 @@ impl ImageFrequencies {
         })
     }
 
-    pub(crate) fn center(&self) -> f64 {
+    pub fn center(&self) -> f64 {
         let count = self.samples.len();
         let lower = self.samples[(count - 1) / 2];
         if count.is_multiple_of(2) && count <= 100 {
@@ -82,12 +82,12 @@ impl ImageFrequencies {
     }
 }
 
-pub(crate) enum ImageFlux {
+pub enum ImageFlux {
     Constant(Option<f64>),
     PerChannel(Option<Vec<f64>>),
 }
 
-pub(crate) fn calibrator_images(
+pub fn calibrator_images(
     ms: &MeasurementSet,
     selections: &[ResolvedMsSelection],
     path: &Path,

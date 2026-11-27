@@ -20,7 +20,7 @@ pub(crate) mod baseline;
 mod batch_trial;
 mod delay;
 pub(crate) mod fringe;
-pub(crate) mod grouping;
+pub mod grouping;
 pub(crate) mod gspline;
 pub(crate) mod kernel;
 mod model;
@@ -31,11 +31,11 @@ pub(crate) mod writer;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use casa_ms::ms::MeasurementSet;
+use casa_core::{Complex32, ScalarValue, Value};
+use casa_ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_ms::{ChannelSelection, MsError};
 use casa_tables::{Table, TableError, TableOptions};
-use casa_types::{Complex32, ScalarValue, Value};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -214,7 +214,7 @@ impl GainSolveInterval {
     /// Read CASA's time component of `solint`, accepting quanta and seconds.
     #[must_use]
     pub fn from_casa(text: &str) -> Option<Self> {
-        use casa_types::quanta::{Quantity, Unit};
+        use casa_core::quanta::{Quantity, Unit};
         let upper = text.to_ascii_uppercase();
         if upper.is_empty() || upper.contains("INF") {
             return Some(Self::Infinite);

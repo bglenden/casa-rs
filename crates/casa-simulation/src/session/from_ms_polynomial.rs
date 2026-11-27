@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! FIELD polynomial payload admission and MSIter's chunk-epoch phase centre.
+use casa_core::{ArrayValue, measures::direction::MDirection};
 use casa_imaging_runtime::{Demand, Reservation, admit};
 use casa_ms::{MeasurementSet, SubtableId};
-use casa_types::{ArrayValue, measures::direction::MDirection};
 
 use super::super::SessionResources;
 use super::super::observe::{Scan, ScanRows};

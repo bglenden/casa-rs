@@ -15,13 +15,8 @@ use crate::output::CalibrationOutput;
 /// Returns an error when either path is unsuitable, the input cannot be
 /// decoded, or the complete result cannot be published.
 pub fn import_asap(input: &Path, output: &Path, parallel: bool) -> Result<(), String> {
-    publish_import(
-        input,
-        output,
-        parallel,
-        casa_ms::single_dish_import::read_asap,
-    )
-    .inspect_err(|error| tracing::error!(%error, "ASAP scan-table import failed"))
+    publish_import(input, output, parallel, casa_ms::read_asap)
+        .inspect_err(|error| tracing::error!(%error, "ASAP scan-table import failed"))
 }
 
 /// Import a packed Nobeyama NOSTAR scan file into a CASA MeasurementSet.
@@ -32,20 +27,15 @@ pub fn import_asap(input: &Path, output: &Path, parallel: bool) -> Result<(), St
 /// Returns an error for an unreadable NOSTAR scan or if the destination
 /// cannot be prepared, written or published safely.
 pub fn import_nro(input: &Path, output: &Path, parallel: bool) -> Result<(), String> {
-    publish_import(
-        input,
-        output,
-        parallel,
-        casa_ms::single_dish_import::read_nro,
-    )
-    .inspect_err(|error| tracing::error!(%error, "NRO scan import failed"))
+    publish_import(input, output, parallel, casa_ms::read_nro)
+        .inspect_err(|error| tracing::error!(%error, "NRO scan import failed"))
 }
 
 fn publish_import(
     input: &Path,
     output: &Path,
     parallel: bool,
-    decode: fn(&Path, bool) -> casa_ms::MsResult<casa_ms::single_dish_import::ImportedScanTable>,
+    decode: fn(&Path, bool) -> casa_ms::MsResult<casa_ms::ImportedScanTable>,
 ) -> Result<(), String> {
     if input.as_os_str().is_empty() || output.as_os_str().is_empty() {
         return Err("Both infile and outfile are required.".into());

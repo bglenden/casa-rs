@@ -6,8 +6,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
+use casa_core::{ArrayValue, Complex32, ScalarValue, Value};
 use casa_tables::{Table, TableError, TableOptions};
-use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -19,7 +19,7 @@ mod cell;
 use cell::GainCell;
 mod fit;
 mod full_output;
-pub(crate) mod history;
+pub mod history;
 mod incremental;
 mod input;
 mod listing;
@@ -365,7 +365,7 @@ fn tool_field_error(error: FluxScaleError, selectors: &[String]) -> String {
     format!("Field Expression: {reason}")
 }
 
-pub(crate) fn fluxscale_with_output_mode(
+pub fn fluxscale_with_output_mode(
     request: &FluxScaleRequest,
     mode: crate::CalibrationOutputMode,
 ) -> Result<FluxScaleReport, FluxScaleError> {
@@ -400,11 +400,9 @@ fn fluxscale_with_fields(
     if history_path.is_none()
         && let Some(vis) = &request.options.measurement_set
     {
-        casa_ms::ms::MeasurementSet::open(vis).map_err(|error| {
-            FluxScaleError::UnsupportedInput {
-                path: vis.display().to_string(),
-                reason: error.to_string(),
-            }
+        casa_ms::MeasurementSet::open(vis).map_err(|error| FluxScaleError::UnsupportedInput {
+            path: vis.display().to_string(),
+            reason: error.to_string(),
         })?;
     }
     let FluxScaleFields {

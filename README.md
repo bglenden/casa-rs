@@ -103,8 +103,7 @@ ia.done()
 
 Use `nomodify=False` to open a writable table. The image tool can create a
 native image, edit coordinates and write a slice with `putchunk`. See the
-[data API](docs/python/data.md) for examples and migration from the former
-`casars.data.Image` class.
+[data API](docs/python/data.md) for examples.
 
 ### Tasks and reusable parameters
 
@@ -157,15 +156,15 @@ implementation, not a wrapper around casacore C++.
 
 | Area | Crates or source |
 |---|---|
-| Values and foundations | `casa-types`, internal `casa-values` and `casa-aipsio`, `casa-logging` |
+| Values and foundations | `casa-core`, `casa-aipsio` |
 | Persistent data | `casa-tables`, `casa-ms`, `casa-observation`, `casa-lattices`, `casa-images` |
-| Coordinates and runtime catalogs | `casa-coordinates`, `casa-measures-data`, `casa-measures-tools` |
+| Coordinates and runtime catalogs | `casa-coordinates`, `casa-measures` |
 | Numerics and Fourier transforms | `casa-numerics`, `casa-fft` |
 | Calibration, simulation, import | `casa-calibration`, `casa-simulation`, `casa-components`, `casa-atmosphere`, `casa-vla` |
 | Imaging | `casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`, `casa-imaging-singledish`, `casa-imaging-application` |
 | Task contracts and execution | `casa-provider-contracts`, `casa-task-runtime`, `casars-imager`, `casars-imexplore`, `casars-msconvert`, `casars-simulation` |
-| Python | `crates/casars-python/`, with its PyO3 extension `casars._core` |
-| Comparison and test support | `casa-test-support`, `tools/perf/`, `tools/science/` |
+| Python | `frontends/casars-python/`, with its PyO3 extension `casars._core` |
+| Comparison and test support | `dev/casa-test-support`, `dev/casa-dev-tools`, `suites/`, `tools/science/` |
 
 The [application catalog](crates/casa-provider-contracts/resources/application-catalog.json)
 and [parameter surfaces](crates/casa-provider-contracts/resources/parameter-surfaces.json)
@@ -173,11 +172,11 @@ are shared by the task executables and Python. The
 [architecture document](ARCHITECTURE.md) describes ownership and dependency
 rules in detail.
 
-For example, the public `casa-types` value model can hold scalar, array, and
+For example, the public `casa-core` value model can hold scalar, array, and
 record values:
 
 ```rust
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_core::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 let temperature = Value::Scalar(ScalarValue::Float64(273.15));
 let spectrum = Value::Array(ArrayValue::from_f32_vec(vec![1.0, 2.0, 3.0]));
@@ -307,26 +306,17 @@ To build and install the Python/command-line suite from the checkout:
 CARGO_INCREMENTAL=0 just install-local-suite
 ```
 
-For an editable Python development environment, build the task executables
-you need and install the package editable:
+For an editable Python development environment, install the package from the checkout.
 
 ```bash
-CARGO_INCREMENTAL=0 cargo build -p casa-calibration --bin calibrate
 python3 -m venv .venv
 source .venv/bin/activate
-CARGO_INCREMENTAL=0 python -m pip install -e 'crates/casars-python[test,plot]'
+CARGO_INCREMENTAL=0 python -m pip install -e 'frontends/casars-python[test,plot]'
 ```
 
-`cargo build -p <package> --bin <executable>` builds one task executable
-(`CARGO_INCREMENTAL=0 cargo build --workspace --bins` builds them all); the
-[application catalog](crates/casa-provider-contracts/resources/application-catalog.json)
-names each task's package and executable. Unless `CASARS_SUITE_ROOT` is
-set, a package built from a checkout runs the newest `debug` or `release`
-build of each executable in that checkout's `target/` (or
-`$CARGO_TARGET_DIR`), and a missing build is reported with the `cargo build`
-command that makes it. To run another file, set the task's override, such as
-`CASARS_CALIBRATE_BIN` or `CASARS_IMAGER_BIN`. Nothing searches `PATH` or
-runs `cargo`.
+To build a standalone CLI command, use `cargo build -p casars-cli --bin <executable>`.
+The [application catalog](surfaces/casa-contracts/resources/application-catalog.json)
+maps task surfaces to their CLI commands.
 
 Before building for performance measurements or release, use the pinned
 SIMD-enabled FFTW recipe rather than assuming the system package has the
@@ -355,17 +345,17 @@ To download and refresh a runtime explicitly from a source checkout:
 
 ```bash
 CARGO_INCREMENTAL=0 cargo run --example update_measures \
-  -p casa-measures-data --features update -- --data-dir /path/to/measures-data
+  -p casa-measures --features update -- --data-dir /path/to/measures-data
 export CASA_RS_MEASURESPATH=/path/to/measures-data
 ```
 
 Omitting `--data-dir` selects `~/.casa/data`. A packaged snapshot can also be
-installed explicitly with `casa_measures_data::install_packaged_snapshot`;
+installed explicitly with `casa_measures::install_packaged_snapshot`;
 scientific calls do not silently install it. Maintainers regenerate the
 packaged archive and provenance with:
 
 ```bash
-CARGO_INCREMENTAL=0 cargo run -p casa-measures-tools --bin package_snapshot \
+CARGO_INCREMENTAL=0 cargo run -p casa-dev-tools --bin package_snapshot \
   -- --input /path/to/measures-data
 ```
 

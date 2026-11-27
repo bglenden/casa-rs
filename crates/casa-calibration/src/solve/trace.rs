@@ -300,8 +300,8 @@ fn solve_mode_name(solve_mode: GainSolveMode) -> &'static str {
 mod tests {
     use std::collections::{BTreeSet, HashMap};
 
+    use casa_core::Complex32;
     use casa_ms::selection::MsSelection;
-    use casa_types::Complex32;
     use num_complex::Complex64;
     use tempfile::tempdir;
 

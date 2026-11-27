@@ -7,6 +7,8 @@ mod predict_support;
 use std::io::Read;
 use std::path::Path;
 
+use casa_core::measures::{EpochRef, MEpoch};
+use casa_core::{ArrayValue, Complex32, PrimitiveType, ScalarValue};
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_ms::{
     MeasurementSet, MeasurementSetColumnStorage, MeasurementSetColumnWriteMode,
@@ -19,8 +21,6 @@ use casa_simulation::{
     SimulatorOptions,
 };
 use casa_tables::ColumnSchema;
-use casa_types::measures::{EpochRef, MEpoch};
-use casa_types::{ArrayValue, Complex32, PrimitiveType, ScalarValue};
 use flate2::read::GzDecoder;
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use predict_support::{CENTRE_RAD, N, REFERENCE_MJD, Row, read_main, scan, session, write_model};

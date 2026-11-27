@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Project MS discovery and simanalyze's diameter-squared concat weights.
-use super::{
-    Parameters, failure,
-    plan::{expand_project, locate},
-};
+use super::{Parameters, failure};
 use crate::simobserve::SimobserveError;
 use crate::simutil::analysis;
+use casa_core::ScalarValue;
 use casa_ms::MeasurementSet;
-use casa_types::ScalarValue;
 use std::path::{Path, PathBuf};
 
 pub(super) struct Inputs {
@@ -41,7 +38,7 @@ pub(super) fn discover(
         requested
             .iter()
             .flat_map(|value| value.split(','))
-            .map(|value| locate(directory, &expand_project(directory, value.trim())))
+            .map(|value| p.locate(directory, value.trim()))
             .filter(|path| path.exists())
             .collect()
     };

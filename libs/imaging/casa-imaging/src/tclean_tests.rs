@@ -1,0 +1,1480 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+use std::{num::NonZeroUsize, path::PathBuf};
+
+use serde_json::{Value, json};
+
+use super::read;
+use crate::request::tests::{request, resolved};
+use crate::{DataColumn, Deconvolver, Gridder, ImagingRequest, SaveModel, SpecMode, TcleanRefusal};
+use casa_imaging_model::Projection;
+
+/// tclean's refusal of `overrides`.
+fn refusal(overrides: Value) -> TcleanRefusal {
+    crate::request::tests::read(overrides).expect_err("a refused tclean value")
+}
+
+/// Overrides that reach every gridder, AW source and spectral mode.
+fn modes() -> Vec<Value> {
+    vec![
+        json!({}),
+        json!({ "specmode": "cube", "nchan": 4 }),
+        json!({ "gridder": "wproject" }),
+        json!({ "gridder": "mosaic", "mosweight": false }),
+        json!({ "gridder": "awp2" }),
+        json!({ "gridder": "awp2", "specmode": "cube" }),
+        json!({ "gridder": "awp2", "stokes": "IV", "computepastep": 15.0, "wprojplanes": 2 }),
+        json!({ "gridder": "awproject", "conjbeams": true, "cfcache": "cf", "wprojplanes": 32 }),
+        json!({
+            "gridder": "awproject",
+            "conjbeams": true,
+            "wprojplanes": 32,
+            "aw_cf_source": "native-evla",
+            "native_cf_cache": "cache",
+            "evla_surface": "surface",
+            "native_cf_working_size": 64,
+            "native_cf_oversampling": 4,
+            "native_cf_cache_bytes": 1_048_576,
+            "native_cf_maximum_cells": 64,
+        }),
+        json!({ "deconvolver": "mtmfs", "nterms": 2, "scales": [0, 3] }),
+        json!({ "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2, "nchan": 3 }),
+        json!({ "usemask": "auto-multithresh" }),
+        json!({ "usemask": "auto-multithresh", "pbmask": 0.2 }),
+        json!({ "usemask": "pb", "pbmask": 0.3 }),
+        json!({ "weighting": "superuniform" }),
+        json!({ "weighting": "radial", "specmode": "cube", "nchan": 4 }),
+        json!({ "weighting": "briggsabs", "specmode": "cube", "nchan": 4 }),
+    ]
+}
+
+/// CASA's per-polarization Clark variant is a supported solver (#1126).
+#[test]
+fn clarkstokes_is_accepted_as_a_deconvolver() {
+    let values =
+        resolved(json!({ "deconvolver": "clarkstokes", "niter": 1 })).expect("catalog values");
+    read(&values).expect("clarkstokes is supported");
+    assert_eq!(
+        request(json!({ "deconvolver": "clarkstokes", "niter": 1 })).deconvolver,
+        Deconvolver::ClarkStokes
+    );
+}
+
+/// Every tclean parameter is read, whatever the modes: one the request
+/// ignored without reading would be dropped silently.
+#[test]
+fn every_tclean_parameter_is_read() {
+    for overrides in modes() {
+        let values = resolved(overrides.clone()).expect("catalog values");
+        let (_, consumed) = read(&values).unwrap_or_else(|error| panic!("{overrides}: {error}"));
+        let unread = values
+            .keys()
+            .filter(|name| !consumed.contains(name.as_str()))
+            .collect::<Vec<_>>();
+        assert!(unread.is_empty(), "{overrides}: unread {unread:?}");
+    }
+}
+
+/// Every reader field is required or explicitly consumed internal provenance:
+/// the flattened gridder rules out `deny_unknown_fields`, so silently dropped
+/// fields need this law, including the optional empty-mask provenance flag.
+#[test]
+fn every_request_field_is_required_or_consumed_internal_provenance() {
+    for overrides in modes() {
+        let values = resolved(overrides.clone()).expect("catalog values");
+        let (fields, _) = read(&values).expect("tclean values");
+        serde_json::from_value::<ImagingRequest>(Value::Object(fields.clone()))
+            .unwrap_or_else(|error| panic!("{overrides}: {error}"));
+        for name in fields.keys() {
+            let mut without = fields.clone();
+            without.remove(name);
+            if name == "explicit_empty_mask" {
+                let default = serde_json::from_value::<ImagingRequest>(Value::Object(without))
+                    .expect("internal mask provenance defaults to false");
+                assert!(!default.explicit_empty_mask);
+                let mut explicit = fields.clone();
+                explicit.insert(name.clone(), Value::Bool(true));
+                let explicit = serde_json::from_value::<ImagingRequest>(Value::Object(explicit))
+                    .expect("internal mask provenance is read");
+                assert!(explicit.explicit_empty_mask);
+                assert_ne!(explicit, default);
+                continue;
+            }
+            if name == "psfphasecenter" {
+                let default = serde_json::from_value::<ImagingRequest>(Value::Object(without))
+                    .expect("typed requests default to the image centre for the PSF");
+                assert!(default.psfphasecenter.is_none());
+                continue;
+            }
+            if name == "mosweight" && overrides["gridder"] == "awp2" {
+                let default = serde_json::from_value::<ImagingRequest>(Value::Object(without))
+                    .expect("typed AWP2 requests default mosweight to false");
+                assert!(matches!(
+                    default.gridder,
+                    Gridder::Awp2 {
+                        mosweight: false,
+                        ..
+                    }
+                ));
+                let mut explicit = fields.clone();
+                explicit.insert(name.clone(), Value::Bool(true));
+                let explicit = serde_json::from_value::<ImagingRequest>(Value::Object(explicit))
+                    .expect("AWP2 mosweight is consumed");
+                assert!(matches!(
+                    explicit.gridder,
+                    Gridder::Awp2 {
+                        mosweight: true,
+                        ..
+                    }
+                ));
+                assert_ne!(explicit, default);
+                continue;
+            }
+            assert!(
+                serde_json::from_value::<ImagingRequest>(Value::Object(without)).is_err(),
+                "{overrides}: the request does not read {name}"
+            );
+        }
+    }
+}
+
+/// A parameter the request's modes do not read is ignored, as CASA's
+/// tclean ignores it.
+#[test]
+fn parameters_a_mode_does_not_read_are_ignored() {
+    let plain = request(json!({}));
+    for overrides in [
+        json!({ "nterms": 5 }),
+        json!({ "scales": [0, 5, 15] }),
+        json!({ "start": "1.4GHz", "width": 2, "veltype": "ratio" }),
+        json!({ "interpolation": "cubic", "nchan": 8 }),
+        json!({ "wprojplanes": 64, "normtype": "pbsquare", "pointingoffsetsigdev": [300, 30] }),
+        json!({ "aterm": false, "psterm": true, "wbawp": false, "conjbeams": true }),
+        json!({ "mosweight": false, "cfcache": "cf" }),
+    ] {
+        assert_eq!(request(overrides.clone()), plain, "{overrides}");
+    }
+    // A mosaic reads conjbeams.
+    assert_ne!(
+        request(json!({ "gridder": "mosaic", "conjbeams": true })),
+        request(json!({ "gridder": "mosaic" }))
+    );
+    // An A-projection reads every one of its terms, and the mosaic none
+    // but conjbeams.
+    let aw = json!({ "gridder": "awproject", "cfcache": "cf", "wprojplanes": 32 });
+    for term in ["aterm", "psterm", "wbawp", "conjbeams"] {
+        let mut flipped = aw.clone();
+        let default = request(aw.clone());
+        let Gridder::Awproject(terms) = &default.gridder else {
+            panic!("an AW request");
+        };
+        let value = match term {
+            "aterm" => terms.aterm,
+            "psterm" => terms.psterm,
+            "wbawp" => terms.wbawp,
+            _ => terms.conjbeams,
+        };
+        flipped[term] = json!(!value);
+        assert_ne!(request(flipped), default, "awproject reads {term}");
+        if term != "conjbeams" {
+            assert_eq!(
+                request(json!({ "gridder": "mosaic", term: !value })),
+                request(json!({ "gridder": "mosaic" })),
+                "the mosaic ignores {term}"
+            );
+        }
+    }
+    // A mosaic reads no W planes.
+    assert_eq!(
+        request(json!({ "gridder": "mosaic", "wprojplanes": 8 })),
+        request(json!({ "gridder": "mosaic" }))
+    );
+    // auto-multithresh reads no user mask.
+    assert_eq!(
+        request(json!({ "usemask": "auto-multithresh", "mask": "box[[1pix,1pix],[4pix,4pix]]" })),
+        request(json!({ "usemask": "auto-multithresh" }))
+    );
+    // CASA's tclean selects whatever selectdata says: its parameter classes
+    // never read it (probed: selectdata=False, field='99' is refused).
+    let selected = json!({ "field": "3", "spw": "0:1~4", "intent": "*" });
+    let mut unselected = selected.clone();
+    unselected["selectdata"] = json!(false);
+    assert_eq!(request(unselected), request(selected.clone()));
+    assert_ne!(request(selected), plain);
+    // `spw='*'` selects every window, as the empty selector does.
+    assert_eq!(request(json!({ "spw": "*" })), plain);
+}
+
+/// Only mosaic gridders use a separate PSF centre when they form the PSF.
+#[test]
+fn the_psf_phase_centre_is_used_by_supported_mosaics() {
+    let centre = "J2000 0rad 0rad";
+    for gridder in ["mosaic", "mosaicft", "ftmosaic"] {
+        let mfs = request(json!({"gridder": gridder, "psfphasecenter": centre}));
+        assert_eq!(mfs.psfphasecenter.as_deref(), Some(centre));
+        let cube =
+            request(json!({"gridder": gridder, "specmode": "cube", "psfphasecenter": centre}));
+        assert_eq!(cube.psfphasecenter.as_deref(), Some(centre));
+        let taylor =
+            request(json!({"gridder": gridder, "deconvolver": "mtmfs", "psfphasecenter": centre}));
+        assert_eq!(taylor.psfphasecenter.as_deref(), Some(centre));
+        let one_term = refusal(json!({
+            "gridder": gridder, "deconvolver": "mtmfs", "nterms": 1, "psfphasecenter": centre
+        }));
+        assert!(one_term.to_string().contains("#1062"), "{one_term}");
+    }
+    assert_eq!(
+        request(json!({"gridder": "standard", "psfphasecenter": centre})).psfphasecenter,
+        None
+    );
+}
+
+#[test]
+fn casa_values_become_the_request_casa_rs_runs() {
+    let field = request(json!({ "phasecenter": 3 }));
+    assert_eq!(
+        (field.phasecenter.as_deref(), field.phasecenter_field),
+        (None, Some(3))
+    );
+    let direction = request(json!({ "phasecenter": "J2000 0rad 0rad" }));
+    assert_eq!(direction.phasecenter.as_deref(), Some("J2000 0rad 0rad"));
+    assert_eq!(direction.phasecenter_field, None);
+
+    let boxes = request(json!({
+        "mask": ["box[[100pix,100pix],[150pix,150pix]]", "box [[9pix, 8pix], [2pix, 1pix]]"]
+    }));
+    assert_eq!(boxes.mask_box, [[100, 100, 150, 150], [2, 1, 9, 8]]);
+    let legacy = request(json!({ "mask": "0,0,4,4;5,5,9,9" }));
+    assert_eq!(legacy.mask_box, [[0, 0, 4, 4], [5, 5, 9, 9]]);
+    let image = request(json!({ "mask": "clean.mask" }));
+    assert_eq!(image.mask_images, [PathBuf::from("clean.mask")]);
+    assert!(request(json!({"mask": "none"})).mask_images.is_empty());
+
+    // CASA's cycleniter=-1 is niter, and so is any cycleniter of zero or
+    // less, or more than niter (`checkAndFixIterationPars`).
+    assert_eq!(request(json!({ "niter": 2500 })).minor_cycle_length, 2500);
+    assert_eq!(
+        request(json!({ "niter": 2500, "cycleniter": 100 })).minor_cycle_length,
+        100
+    );
+    for cycleniter in [0, -5, 50] {
+        assert_eq!(
+            request(json!({ "niter": 10, "cycleniter": cycleniter })).minor_cycle_length,
+            10,
+            "{cycleniter}"
+        );
+    }
+    assert_eq!(request(json!({})).minor_cycle_length, 1);
+    // CASA sets mosweight=False for the mosaicft and ftmosaic gridders; the
+    // gridder named mosaic weighs density by field.
+    assert_eq!(
+        request(json!({ "gridder": "mosaicft", "weighting": "briggs" })).gridder,
+        request(json!({ "gridder": "mosaic", "weighting": "briggs", "mosweight": false })).gridder
+    );
+    assert_ne!(
+        request(json!({ "gridder": "mosaicft", "weighting": "briggs" })).gridder,
+        request(json!({ "gridder": "mosaic", "weighting": "briggs" })).gridder
+    );
+    // A region file is read as its regions, as CASA reads it.
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let region = dir.path().join("m.crtf");
+    std::fs::write(&region, "#CRTF\nbox[[10pix,10pix],[20pix,20pix]]\n").expect("region file");
+    assert_eq!(
+        request(json!({ "mask": region.to_str().expect("utf-8") })).mask_box,
+        [[10, 10, 20, 20]]
+    );
+
+    assert_eq!(request(json!({})).datacolumn, None);
+    assert_eq!(
+        request(json!({ "datacolumn": "DATA" })).datacolumn,
+        Some(DataColumn::Data)
+    );
+    assert_eq!(
+        request(json!({ "specmode": "cont" })).specmode,
+        SpecMode::Mfs
+    );
+    let cube = request(
+        json!({ "specmode": "cube", "nchan": 12, "veltype": "optical", "outframe": "bary" }),
+    );
+    assert_eq!(cube.channel_count, Some(12));
+    assert_eq!(cube.veltype, casa_core::measures::doppler::DopplerRef::Z);
+    assert_eq!(
+        request(json!({ "gridder": "gridft" })).gridder,
+        Gridder::Standard {
+            facets: NonZeroUsize::MIN
+        }
+    );
+    assert_eq!(
+        request(json!({ "gridder": "widefield", "wprojplanes": -1 })).gridder,
+        Gridder::Wproject {
+            facets: NonZeroUsize::MIN,
+            wprojplanes: None
+        }
+    );
+    // CASA's wproject and widefield with tclean's one w-plane are gridft.
+    assert_eq!(
+        request(json!({ "gridder": "widefield", "facets": 2 })).gridder,
+        Gridder::Standard {
+            facets: NonZeroUsize::new(2).expect("two facets")
+        }
+    );
+    assert_eq!(
+        request(json!({ "gridder": "wproject" })).gridder,
+        Gridder::Standard {
+            facets: NonZeroUsize::MIN
+        }
+    );
+    assert_eq!(
+        request(json!({ "gridder": "wproject", "wprojplanes": 8 })).gridder,
+        Gridder::Wproject {
+            facets: NonZeroUsize::MIN,
+            wprojplanes: NonZeroUsize::new(8)
+        }
+    );
+    // Bare numbers are CASA's units: Jy and arcseconds.
+    let bare = request(json!({ "threshold": 0.002, "cell": 0.5, "imsize": [64, 32] }));
+    assert_eq!(
+        (bare.threshold, bare.cell, bare.imsize),
+        (0.002, [0.5, 0.5], [64, 32])
+    );
+    // nterms is read with mtmfs, one term included (CASA's
+    // `test_onefield_mtmfs_nterms1`).
+    for nterms in [1, 3] {
+        let terms = request(json!({ "deconvolver": "mtmfs", "nterms": nterms }));
+        assert_eq!(
+            (terms.deconvolver, terms.nterms),
+            (Deconvolver::Mtmfs, nterms)
+        );
+    }
+    // projection names casacore's projection as casacore spells it.
+    for (text, projection) in [
+        ("SIN", Projection::Sin),
+        ("NCP", Projection::Ncp),
+        ("AZP", Projection::Azp),
+        ("SZP", Projection::Szp),
+        ("AIR", Projection::Air),
+        ("TAN", Projection::Tan),
+        ("ARC", Projection::Arc),
+        ("STG", Projection::Stg),
+        ("ZEA", Projection::Zea),
+        ("CAR", Projection::Car),
+        ("SFL", Projection::Sfl),
+        ("PAR", Projection::Par),
+        ("MOL", Projection::Mol),
+        ("PCO", Projection::Pco),
+        ("TSC", Projection::Tsc),
+        ("CSC", Projection::Csc),
+        ("QSC", Projection::Qsc),
+        ("MER", Projection::Mer),
+        ("AIT", Projection::Ait),
+    ] {
+        assert_eq!(
+            request(json!({ "projection": text })).projection,
+            projection
+        );
+    }
+    // The catalog trims it, as it does every string; CASA refuses " TAN".
+    assert_eq!(
+        request(json!({ "projection": " TAN" })).projection,
+        Projection::Tan
+    );
+    // savemodel names where the model goes, CASA's virtual model among them.
+    for (text, saved) in [
+        ("none", SaveModel::None),
+        ("modelcolumn", SaveModel::ModelColumn),
+        ("virtual", SaveModel::Virtual),
+    ] {
+        assert_eq!(request(json!({ "savemodel": text })).savemodel, saved);
+    }
+}
+
+/// tclean masks every channel and Stokes plane of its own
+/// (`SDMaskHandler::autoMaskByMultiThreshold`), and so does casa-rs: an
+/// automatic mask of a cube or of several Stokes planes is read when
+/// cleaning, no longer refused (#980).
+#[test]
+fn an_automatic_mask_of_a_cube_or_stokes_planes_is_read() {
+    for overrides in [
+        json!({ "usemask": "auto-multithresh", "stokes": "IQUV", "niter": 10 }),
+        json!({ "usemask": "auto-multithresh", "specmode": "cube", "nchan": 4, "niter": 10 }),
+        json!({ "usemask": "auto-multithresh", "specmode": "cube", "nchan": 4,
+                "stokes": "IQUV", "niter": 10 }),
+    ] {
+        let read = request(overrides.clone());
+        assert_eq!(read.usemask, crate::UseMask::AutoMultithresh, "{overrides}");
+        assert_eq!(read.niter, 10, "{overrides}");
+    }
+}
+
+#[test]
+fn awp2_unsquinted_stokes_reads_the_named_polarizations_at_zero_w() {
+    for stokes in ["I", "Q", "U", "V", "IV", "QU", "IQUV"] {
+        for specmode in ["mfs", "cube"] {
+            let read = request(json!({
+                "gridder": "awp2",
+                "specmode": specmode,
+                "stokes": stokes,
+                "wprojplanes": 1,
+            }));
+            assert_eq!(read.stokes.len(), stokes.len());
+        }
+    }
+    for stokes in ["RR", "IQ"] {
+        let refused = refusal(json!({ "gridder": "awp2", "stokes": stokes }));
+        assert_eq!(refused.parameter, "gridder");
+        assert!(refused.message.contains("#1071"));
+    }
+    let refused = refusal(json!({
+        "gridder": "awp2",
+        "stokes": "IV",
+        "savemodel": "modelcolumn",
+    }));
+    assert_eq!(refused.parameter, "gridder");
+    assert!(refused.message.contains("#1071"));
+}
+
+#[test]
+fn awp2_taylor_reads_the_two_term_unsquinted_continuum() {
+    let values = json!({"gridder": "awp2", "deconvolver": "mtmfs", "niter": 30});
+    let read = request(values.clone());
+    assert_eq!(read.deconvolver, Deconvolver::Mtmfs);
+    assert_eq!(read.nterms, 2);
+    assert_eq!(read.specmode, SpecMode::Mfs);
+
+    for (parameter, value) in [
+        ("nterms", json!(3)),
+        ("stokes", json!("Q")),
+        ("wprojplanes", json!(2)),
+        ("weighting", json!("uniform")),
+        ("savemodel", json!("modelcolumn")),
+    ] {
+        let mut unsupported = values.clone();
+        unsupported[parameter] = value;
+        let refused = refusal(unsupported);
+        assert_eq!(refused.parameter, "gridder", "{parameter}");
+        assert!(refused.message.contains("#1071"));
+    }
+}
+
+#[test]
+fn awp2_mvc_admits_natural_flatnoise_stokes_i_with_zero_w() {
+    let values = json!({
+        "gridder": "awp2", "specmode": "mvc", "deconvolver": "mtmfs", "nchan": 3,
+        "niter": 100, "pbcor": true,
+    });
+    let read = request(values.clone());
+    assert_eq!(read.mvc_output_channels, NonZeroUsize::new(3));
+    assert_eq!(read.nterms, 2);
+    for (parameter, value) in [
+        ("wprojplanes", json!(2)),
+        ("normtype", json!("flatsky")),
+        ("weighting", json!("uniform")),
+        ("stokes", json!("Q")),
+    ] {
+        let mut unsupported = values.clone();
+        unsupported[parameter] = value;
+        let refused = refusal(unsupported);
+        assert_eq!(refused.parameter, "gridder", "{parameter}");
+        assert!(refused.message.contains("#1071"));
+    }
+}
+
+#[test]
+fn awp2_mvc_reads_squint_w_planes_and_continuum_weighting() {
+    let values = json!({
+        "gridder": "awp2", "specmode": "mvc", "deconvolver": "mtmfs",
+        "nchan": -1, "stokes": "I", "weighting": "uniform",
+        "computepastep": 15.0, "wprojplanes": 4, "perchanweightdensity": true,
+    });
+    let read = request(values.clone());
+    assert!(read.mvc_auto_channels);
+    assert_eq!(read.weighting, crate::Weighting::Uniform);
+    let crate::Gridder::Awp2 {
+        wprojplanes,
+        computepastep,
+        mosweight,
+        ..
+    } = read.gridder
+    else {
+        panic!("expected AWP2");
+    };
+    assert_eq!(wprojplanes, NonZeroUsize::new(4));
+    assert_eq!(computepastep, 15.0);
+    assert!(mosweight);
+
+    let mut global_density = values.clone();
+    global_density["mosweight"] = json!(false);
+    assert!(matches!(
+        request(global_density).gridder,
+        crate::Gridder::Awp2 {
+            mosweight: false,
+            ..
+        }
+    ));
+    for (parameter, value) in [
+        ("weighting", json!("natural")),
+        ("normtype", json!("flatsky")),
+        ("savemodel", json!("modelcolumn")),
+        ("stokes", json!("IV")),
+    ] {
+        let mut unsupported = values.clone();
+        unsupported[parameter] = value;
+        let refused = refusal(unsupported);
+        assert_eq!(refused.parameter, "gridder", "{parameter}");
+        assert!(refused.message.contains("#1071"));
+    }
+}
+
+/// A value casa-rs cannot honour is refused at its parameter, naming the
+/// issue that tracks it.
+#[test]
+fn the_reader_preserves_optical_velocity_and_dimensionless_doppler_values() {
+    let velocity =
+        request(json!({ "specmode": "cube", "veltype": "optical", "width": "20000km/s" }));
+    assert_eq!(
+        velocity.veltype,
+        casa_core::measures::doppler::DopplerRef::Z
+    );
+    assert_eq!(velocity.width.as_deref(), Some("20000km/s"));
+    let doppler = request(json!({ "specmode": "cube", "veltype": "z", "start": "0.01" }));
+    assert_eq!(doppler.veltype, velocity.veltype);
+    assert_eq!(doppler.start.as_deref(), Some("0.01"));
+}
+
+#[test]
+fn values_casa_rs_cannot_honour_are_refused() {
+    for (overrides, parameter, issue) in [
+        (json!({ "specmode": "mvc" }), "specmode", "#1069"),
+        (json!({ "deconvolver": "asp" }), "deconvolver", "#223"),
+        (
+            json!({ "specmode": "cube", "outframe": "GALACTO" }),
+            "outframe",
+            "#980",
+        ),
+        (
+            json!({ "specmode": "cube", "veltype": "ratio" }),
+            "veltype",
+            "#980",
+        ),
+        (
+            json!({ "gridder": "wproject", "wprojplanes": -1, "facets": 2 }),
+            "facets",
+            "#1063",
+        ),
+        (
+            json!({ "gridder": "awp2", "specmode": "cube", "wprojplanes": 2 }),
+            "gridder",
+            "#1071",
+        ),
+        (
+            json!({ "gridder": "awp2", "specmode": "cube", "savemodel": "modelcolumn" }),
+            "gridder",
+            "#1071",
+        ),
+        (
+            json!({ "gridder": "awp2", "stokes": "Q", "wprojplanes": 2 }),
+            "gridder",
+            "#1071",
+        ),
+        (
+            json!({ "gridder": "awp2", "wprojplanes": -1 }),
+            "wprojplanes",
+            "#1071",
+        ),
+        (
+            json!({ "gridder": "awp2", "computepastep": 90.0 }),
+            "computepastep",
+            "#1071",
+        ),
+        (json!({ "mask": ["one.mask", "two.mask"] }), "mask", "#823"),
+        (json!({ "gridder": "awprojectft" }), "gridder", "#980"),
+        (json!({ "gridder": "awphpg" }), "gridder", "#1305"),
+        (json!({ "gridder": "imagemosaic" }), "gridder", "#1306"),
+        // An mfs image's REST axis grids the data's frequencies as they are.
+        (json!({ "outframe": "REST" }), "outframe", "#980"),
+        // CASA reads a blank rest frequency as zero.
+        (
+            json!({ "specmode": "cube", "restfreq": ["", "2GHz"] }),
+            "restfreq",
+            "#980",
+        ),
+    ] {
+        let refused = refusal(overrides.clone());
+        assert_eq!(refused.parameter, parameter, "{overrides}");
+        assert!(
+            refused.message.contains(issue),
+            "{overrides}: {}",
+            refused.message
+        );
+    }
+    for (overrides, parameter) in [
+        (json!({ "cell": [] }), "cell"),
+        // CASA's tclean refuses these itself.
+        (json!({ "weighting": "briggsbwtaper" }), "weighting"),
+        (json!({ "projection": "XYZ" }), "projection"),
+        (json!({ "projection": "ncp" }), "projection"),
+        (json!({ "projection": "tan" }), "projection"),
+        // `test_cube_mtmfs_nterms1`, `test_cubedata_mtmfs_nterms1`.
+        (
+            json!({ "specmode": "cube", "deconvolver": "mtmfs", "nterms": 1 }),
+            "deconvolver",
+        ),
+        (
+            json!({ "specmode": "cubedata", "deconvolver": "mtmfs", "nterms": 1 }),
+            "deconvolver",
+        ),
+        (
+            json!({ "gridder": "wproject", "wprojplanes": 0 }),
+            "wprojplanes",
+        ),
+        (
+            json!({ "gridder": "widefield", "wprojplanes": -3 }),
+            "wprojplanes",
+        ),
+        (json!({ "gridder": "mosaic", "facets": 2 }), "facets"),
+        (
+            json!({ "gridder": "awproject", "conjbeams": true, "cfcache": "cf",
+                    "wprojplanes": 32, "facets": 2 }),
+            "facets",
+        ),
+        (json!({ "datacolumn": "model" }), "datacolumn"),
+        (json!({ "specmode": "cube", "nchan": 0 }), "nchan"),
+        (
+            json!({ "specmode": "cube", "nchan": 4, "channel_count": 4 }),
+            "channel_count",
+        ),
+        (
+            json!({ "gridder": "awproject", "conjbeams": true, "wprojplanes": 32 }),
+            "cfcache",
+        ),
+    ] {
+        assert_eq!(
+            refusal(overrides.clone()).parameter,
+            parameter,
+            "{overrides}"
+        );
+    }
+}
+
+#[test]
+fn casa_refuses_projections_requiring_parameters_at_name_setup() {
+    for name in ["COP", "COE", "COD", "COO", "BON"] {
+        let error = refusal(json!({ "projection": name }));
+        assert_eq!(error.parameter, "projection");
+        assert!(
+            error
+                .message
+                .contains(&format!("Invalid projection code : {name}"))
+        );
+    }
+}
+
+#[test]
+fn fixed_projection_parameters_that_casa_refuses_are_invalid() {
+    for (name, reason) in [
+        ("ZPN", "ZPN requires a nonzero coefficient"),
+        ("CYP", "CYP requires a nonzero cylinder radius"),
+        ("CEA", "CEA requires a positive scale parameter"),
+        ("HPX", "HPX requires positive facet parameters"),
+    ] {
+        let error = refusal(json!({ "projection": name }));
+        assert_eq!(error.parameter, "projection");
+        assert!(error.message.contains("Invalid parameter value"), "{error}");
+        assert!(error.message.contains(reason), "{error}");
+    }
+}
+
+#[test]
+fn signed_integer_pixel_boxes_preserve_bounds_and_normalize_reversed_endpoints() {
+    let crtf = request(json!({"mask": "box[[3pix,4pix],[-2pix,-1pix]]"}));
+    assert_eq!(crtf.mask_box, [[-2, -1, 3, 4]]);
+    let legacy = request(json!({"mask": "-2,-1,3,4"}));
+    assert_eq!(legacy.mask_box, [[-2, -1, 3, 4]]);
+    // Integer-valued decimal CRTF syntax already worked and stays supported.
+    let decimal = request(json!({"mask": "box[[-2.0pix,-1.0pix],[3.0pix,4.0pix]]"}));
+    assert_eq!(decimal.mask_box, [[-2, -1, 3, 4]]);
+    let fraction = request(json!({"mask": "box[[-2.5pix,0pix],[3pix,4pix]]"}));
+    assert_eq!(fraction.mask_box, [[0, 0, 3, 4]]);
+    assert_eq!(
+        refusal(json!({"mask": "box[[NaNpix,0pix],[3pix,4pix]]"})).parameter,
+        "mask"
+    );
+
+    let sky = request(json!({"mask": "box[[1deg,2deg],[3deg,4deg]]"}));
+    assert!(sky.mask_box.is_empty());
+    assert_eq!(
+        sky.mask_polygon.expect("sky box geometry").vertices.len(),
+        4
+    );
+    let error = refusal(json!({"mask": ["one.mask", "two.mask"]}));
+    assert_eq!(error.parameter, "mask");
+    assert!(error.message.contains("#823"));
+}
+
+#[test]
+fn fractional_crtf_box_support_preserves_casa_edges_and_the_spectral_range() {
+    let mask = request(json!({"mask": "box[[10.00005pix,12.21pix],[21.99998pix,19.78pix]]"}));
+    assert_eq!(
+        mask.mask_box,
+        [[11, 13, 22, 19]],
+        "relative crossing origin"
+    );
+    let mask = request(json!({"mask": "box[[10.21pix,12.00005pix],[21.78pix,20.99998pix]]"}));
+    assert_eq!(
+        mask.mask_box,
+        [[11, 12, 21, 21]],
+        "closed scanline at the boundary"
+    );
+    let mask =
+        request(json!({"mask": "box[[23.23pix,17.27pix],[8.31pix,9.66pix]], range=[1pix,2pix]"}));
+    assert_eq!(mask.mask_box[0].corners, [9, 10, 23, 17]);
+    assert_eq!(
+        mask.mask_box[0].range,
+        Some(crate::SpectralMaskRange::Pixel([1.0, 2.0]))
+    );
+    let thin = request(json!({"mask": "box[[10.21pix,12.00005pix],[21.78pix,12.00009pix]]"}));
+    assert_eq!(
+        thin.mask_box,
+        [[11, 12, 21, 12]],
+        "horizontal edge on a row"
+    );
+    let thin = request(json!({"mask": "box[[9.99995pix,5.2pix],[9.99998pix,10.7pix]]"}));
+    assert_eq!(
+        thin.mask_box,
+        [[10, 6, 10, 10]],
+        "thin interior box at a rounded column"
+    );
+    for region in [
+        "box[[-0.6pix,5.2pix],[-0.2pix,10.7pix]]",
+        "box[[-1.6pix,5.2pix],[-0.999999pix,10.7pix]]",
+        "box[[8.21pix,12.21pix],[8.65pix,12.65pix]]",
+        "box[[10.21pix,11.99995pix],[21.78pix,11.99999pix]]",
+    ] {
+        let empty = request(json!({"mask": region}));
+        assert!(
+            empty.mask_box.is_empty() && empty.explicit_empty_mask,
+            "{region}"
+        );
+    }
+}
+
+#[test]
+fn tclean_accepts_zero_major_limit_without_changing_iteration_intent() {
+    for niter in [0, 10] {
+        let value = request(json!({"niter": niter, "nmajor": 0}));
+        assert_eq!(value.niter, niter);
+        assert_eq!(value.nmajor, Some(0));
+    }
+}
+
+#[test]
+fn zero_major_limit_is_valid_but_zero_minor_cycle_length_is_not() {
+    let mut value = request(json!({"niter": 10, "nmajor": 1}));
+    value.nmajor = Some(0);
+    value
+        .validate()
+        .expect("the initial major pass alone may be requested");
+    value.minor_cycle_length = 0;
+    assert!(
+        value.validate().is_err(),
+        "a zero minor-cycle limit remains invalid"
+    );
+}
+
+#[test]
+fn scan_and_observation_selectors_keep_their_exact_text_with_either_selectdata() {
+    for selectdata in [false, true] {
+        let request = request(json!({
+            "selectdata": selectdata, "scan": "1,3~5", "observation": "0",
+        }));
+        assert_eq!(request.vis[0].scan.as_deref(), Some("1,3~5"));
+        assert_eq!(request.vis[0].observation.as_deref(), Some("0"));
+    }
+    // Only exact empty is unset: CASA's tclean refuses blanks and `none`
+    // and accepts padded IDs, so their text reaches the selector's parser.
+    for text in ["  ", "none", "None", " none ", " 1 ", ">1"] {
+        let request = request(json!({"scan": text, "observation": text}));
+        assert_eq!(request.vis[0].scan.as_deref(), Some(text));
+        assert_eq!(request.vis[0].observation.as_deref(), Some(text));
+    }
+    let request = request(json!({"scan": "", "observation": ""}));
+    assert_eq!(
+        (&request.vis[0].scan, &request.vis[0].observation),
+        (&None, &None)
+    );
+}
+
+/// A list of MeasurementSets pairs each with its own selectors, or with
+/// the one a selector gives all, as CASA's `checkAndFixSelectionPars`
+/// pairs them; a list of another length is refused with CASA's message.
+#[test]
+fn each_measurement_set_takes_its_own_selectors_or_one_for_all() {
+    let request = request(json!({
+        "vis": ["a.ms", "b.ms"],
+        "spw": ["0", "1:2~5"],
+        "field": "0",
+        "scan": ["", " 3"],
+        "timerange": [""],
+    }));
+    let selections = request
+        .vis
+        .iter()
+        .map(|selection| {
+            (
+                selection.vis.to_str().expect("a path"),
+                selection.spw.as_deref(),
+                selection.field.as_deref(),
+                selection.scan.as_deref(),
+                selection.timerange.as_deref(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        selections,
+        [
+            ("a.ms", Some("0"), Some("0"), None, None),
+            ("b.ms", Some("1:2~5"), Some("0"), Some(" 3"), None),
+        ]
+    );
+    let refused = crate::request::tests::read(json!({
+        "vis": ["a.ms", "b.ms", "c.ms"],
+        "field": ["0", "1"],
+    }))
+    .expect_err("two fields for three MeasurementSets");
+    assert_eq!(refused.parameter, "field");
+    assert_eq!(
+        refused.message,
+        "field must have a single entry, or 3 entries to match vis list"
+    );
+}
+
+/// The request tclean's `overrides` make with `resolved` set over the
+/// catalog's resolution, so the reader's own refusals are tested for values
+/// whatever the catalog's domain admits.
+fn after_resolution(
+    overrides: Value,
+    resolved_values: Value,
+) -> Result<ImagingRequest, TcleanRefusal> {
+    let mut values = resolved(overrides).expect("catalog values");
+    values.extend(resolved_values.as_object().expect("an object").clone());
+    ImagingRequest::from_tclean(&values)
+}
+
+/// `npixels` as `SynthesisImagerVi2::weight` reads it: superuniform's box,
+/// 3 when zero or less; the size of a uniform or Briggs density; nothing
+/// for natural and radial weighting. `task_tclean.py` images nothing for
+/// briggsbwtaper with npixels ≠ 0, and a negative density grid fails.
+#[test]
+fn npixels_is_read_as_casas_weightings_read_it() {
+    let npixels = |weighting: &str, npixels: i64| {
+        after_resolution(
+            json!({ "weighting": weighting, "specmode": "cube", "nchan": 4 }),
+            json!({ "npixels": npixels }),
+        )
+        .map(|request| request.npixels)
+    };
+    for (weighting, given, read) in [
+        ("superuniform", 0, 3),
+        ("superuniform", -2, 3),
+        ("superuniform", 5, 5),
+        ("uniform", 0, 0),
+        ("uniform", 16, 16),
+        ("briggs", 2, 2),
+        ("briggsabs", 7, 7),
+        ("briggsbwtaper", 0, 0),
+        ("natural", 9, 0),
+        ("radial", -4, 0),
+    ] {
+        assert_eq!(npixels(weighting, given), Ok(read), "{weighting} {given}");
+    }
+    for (weighting, given) in [("briggsbwtaper", 4), ("uniform", -1), ("briggs", -3)] {
+        let refused = npixels(weighting, given).expect_err("refused");
+        assert_eq!(refused.parameter, "npixels", "{weighting} {given}");
+    }
+}
+
+/// `noise` is read for briggsabs alone (`rmode = "abs"`), as a flux
+/// density in Jy (`noise.get("Jy")`); robust 0 with noise 0 divides by
+/// zero, which `SynthesisImagerVi2::weight` refuses for a cube.
+#[test]
+fn briggsabs_reads_noise_as_a_flux_density() {
+    let read = |weighting: &str, robust: f64, noise: Value| {
+        after_resolution(
+            json!({ "weighting": weighting, "robust": robust }),
+            json!({ "noise": noise }),
+        )
+    };
+    let noise = |robust, text: &str| read("briggsabs", robust, json!(text)).map(|r| r.noise);
+    assert_eq!(
+        request(json!({ "weighting": "briggsabs" })).noise,
+        Some(1.0)
+    );
+    assert_eq!(noise(0.5, "5mJy"), Ok(Some(0.005)));
+    assert_eq!(noise(0.0, "0.1Jy"), Ok(Some(0.1)));
+    assert_eq!(noise(0.5, "0Jy"), Ok(Some(0.0)));
+    for (robust, text) in [(0.5, "0.5"), (0.5, "1K"), (0.5, "garbage"), (0.0, "0Jy")] {
+        let refused = noise(robust, text).expect_err("refused");
+        assert_eq!(refused.parameter, "noise", "{robust} {text}");
+    }
+    // Every other weighting reads no noise.
+    for weighting in ["natural", "uniform", "briggs", "superuniform", "radial"] {
+        let request = read(weighting, 0.0, json!("garbage")).expect(weighting);
+        assert_eq!(request.noise, None, "{weighting}");
+    }
+    let request = request(json!({ "weighting": "briggsabs", "robust": -1.5 }));
+    assert_eq!(
+        (request.weighting, request.robust),
+        (crate::Weighting::Briggsabs, -1.5)
+    );
+}
+
+/// `mosweight=True` weighs each field's density apart under every
+/// weighting with a density, as `SynthesisImagerVi2::weight` does: a
+/// continuum density per field, or a cube's per-channel density per field
+/// (`BriggsCubeWeightor`'s `multiField`, #818); a cube's superuniform
+/// density and a cube without `perchanweightdensity` grid one continuum
+/// density per field; radial weighting grids no density.
+#[test]
+fn mosweight_holds_for_every_density() {
+    let mosaic = |weighting: &str| json!({ "gridder": "mosaic", "weighting": weighting });
+    let cube = |weighting: &str, perchanweightdensity: bool| {
+        json!({
+            "gridder": "mosaic",
+            "weighting": weighting,
+            "specmode": "cube",
+            "nchan": 4,
+            "perchanweightdensity": perchanweightdensity,
+        })
+    };
+    let mosweight = |overrides: Value| match request(overrides).gridder {
+        crate::Gridder::Mosaic { mosweight, .. } => mosweight,
+        gridder => panic!("{gridder:?} is not the mosaic"),
+    };
+    assert!(mosweight(mosaic("briggs")));
+    assert!(mosweight(mosaic("superuniform")));
+    assert!(mosweight(cube("superuniform", true)));
+    assert!(mosweight(cube("uniform", false)));
+    for weighting in ["uniform", "briggs", "briggsabs", "briggsbwtaper"] {
+        assert!(mosweight(cube(weighting, true)), "{weighting}");
+    }
+    assert_eq!(
+        request(mosaic("radial")).weighting,
+        crate::Weighting::Radial
+    );
+    assert!(mosweight(cube("natural", true)));
+}
+
+/// The single-MS bandwidth-tapered moving mosaic shares the existing
+/// per-field cube density route. Other source-frame mosaic density
+/// combinations still need their own parity evidence.
+#[test]
+fn a_moving_mosaic_with_bandwidth_taper_uses_per_field_density() {
+    let values = json!({
+        "gridder": "mosaic", "specmode": "cubesource", "nchan": 10,
+        "weighting": "briggsbwtaper",
+    });
+    let read = request(values.clone());
+    assert_eq!(read.specmode, SpecMode::Cubesource);
+    assert_eq!(read.weighting, crate::Weighting::Briggsbwtaper);
+    assert!(read.perchanweightdensity);
+    assert!(matches!(
+        read.gridder,
+        crate::Gridder::Mosaic {
+            mosweight: true,
+            ..
+        }
+    ));
+
+    for (parameter, value) in [
+        ("mosweight", json!(false)),
+        ("gridder", json!("standard")),
+        ("weighting", json!("uniform")),
+    ] {
+        let mut unsupported = values.clone();
+        unsupported[parameter] = value;
+        let error = refusal(unsupported);
+        assert_eq!(error.parameter, "perchanweightdensity", "{parameter}");
+        assert!(error.message.contains("#980"));
+    }
+}
+
+/// `restoringbeam` as `SynthesisParamsDeconv::fromRecord` reads it: one
+/// text or a list of one, two or three quantities (a circle, an ellipse at
+/// angle zero, or an ellipse at an angle); `''`, `[]` and any other count
+/// restore with the fitted beams, and a zero axis is casacore's null beam,
+/// which does too.
+#[test]
+fn restoringbeam_takes_casas_forms() {
+    use casa_imaging_model::{FixedRestoringBeam, RestoringBeamPolicy};
+    let arcsec = std::f64::consts::PI / (180.0 * 3600.0);
+    let fixed = |major: f64, minor: f64, angle_rad: f64| {
+        RestoringBeamPolicy::Fixed(
+            FixedRestoringBeam::new(major * arcsec, minor * arcsec, angle_rad).expect("a beam"),
+        )
+    };
+    let beam = |value: Value| request(json!({ "restoringbeam": value })).restoringbeam;
+    for value in [json!(""), json!([]), json!([""])] {
+        assert_eq!(
+            beam(value.clone()),
+            RestoringBeamPolicy::PerPlane,
+            "{value}"
+        );
+    }
+    for value in [json!("common"), json!(["common"])] {
+        assert_eq!(beam(value.clone()), RestoringBeamPolicy::Common, "{value}");
+    }
+    for value in [json!("10arcsec"), json!(["10arcsec"]), json!(["10 arcsec"])] {
+        assert_eq!(beam(value.clone()), fixed(10.0, 10.0, 0.0), "{value}");
+    }
+    assert_eq!(beam(json!(["10arcsec", "8arcsec"])), fixed(10.0, 8.0, 0.0));
+    assert_eq!(
+        beam(json!(["0.25arcmin", "8arcsec", "45deg"])),
+        fixed(15.0, 8.0, std::f64::consts::FRAC_PI_4)
+    );
+    // CASA ignores a list of any other length, and a zero axis.
+    for value in [
+        json!(["10arcsec", "8arcsec", "45deg", "1arcsec"]),
+        json!(["0arcsec"]),
+        json!(["10arcsec", "0arcsec"]),
+        json!(["0arcsec", "0arcsec", "30deg"]),
+    ] {
+        assert_eq!(
+            beam(value.clone()),
+            RestoringBeamPolicy::PerPlane,
+            "{value}"
+        );
+    }
+    // `GaussianBeam::setMajorMinor` and `setPA` throw for these, and CASA's
+    // tclean stops ("Cannot construct a restoringbeam from supplied
+    // parameters").
+    for value in [
+        json!(["8arcsec", "10arcsec"]),
+        json!(["0arcsec", "1arcsec"]),
+        json!("10"),
+        json!(["10", "8"]),
+        json!(["10arcsec", "8arcsec", "45"]),
+        json!(["10Jy"]),
+        json!(["-1arcsec"]),
+        json!(["common", "10arcsec"]),
+        json!(["10arcsec", ""]),
+        json!("COMMON"),
+    ] {
+        let refused = refusal(json!({ "restoringbeam": value }));
+        assert_eq!(refused.parameter, "restoringbeam", "{value}");
+        assert!(
+            refused.message.contains("Cannot construct a restoringbeam"),
+            "{value}: {}",
+            refused.message
+        );
+    }
+}
+
+/// tclean's `restoration`, which the catalog still holds at its default:
+/// the reader reads it, and `restoration=False` restores nothing.
+#[test]
+fn restoration_is_read() {
+    assert!(request(json!({})).restoration);
+    let mut values = crate::request::tests::resolved(json!({})).expect("catalog values");
+    values.insert("restoration".to_string(), json!(false));
+    let request = ImagingRequest::from_tclean(&values).expect("a request");
+    assert!(!request.restoration);
+}
+
+/// An mfs image's header takes its frame and rest frequencies from
+/// `outframe` and `restfreq`, as a cube's does; every entry of `restfreq`
+/// is read, the first the image's.
+#[test]
+fn mfs_reads_its_frame_and_rest_frequencies() {
+    use casa_core::measures::frequency::FrequencyRef;
+    let bary = request(json!({ "outframe": "bary", "restfreq": ["1.4GHz"] }));
+    assert_eq!(bary.outframe, FrequencyRef::BARY);
+    assert_eq!(bary.restfreq, [1.4e9]);
+    assert_eq!(
+        request(json!({ "outframe": "TOPO" })).outframe,
+        FrequencyRef::TOPO
+    );
+    assert_eq!(request(json!({})).outframe, FrequencyRef::LSRK);
+    assert!(request(json!({})).restfreq.is_empty());
+    for overrides in [
+        json!({ "restfreq": ["1.4GHz", "1.6GHz"] }),
+        json!({ "specmode": "cube", "nchan": 2, "restfreq": ["1.4GHz", "1.6GHz"] }),
+    ] {
+        assert_eq!(
+            request(overrides.clone()).restfreq,
+            [1.4e9, 1.6e9],
+            "{overrides}"
+        );
+    }
+}
+
+/// `reffreq` as `SynthesisParamsImage::fromRecord` reads it: a frequency
+/// quantity in every mode, empty or zero for the band's midpoint; a value
+/// without a frequency unit is refused as CASA's conversion to Hz fails.
+#[test]
+fn reffreq_is_read_as_a_frequency_in_every_mode() {
+    assert_eq!(request(json!({})).reffreq, None);
+    assert_eq!(request(json!({ "reffreq": "" })).reffreq, None);
+    assert_eq!(request(json!({ "reffreq": "0Hz" })).reffreq, None);
+    assert_eq!(request(json!({ "reffreq": "1.4GHz" })).reffreq, Some(1.4e9));
+    assert_eq!(
+        request(json!({ "reffreq": "1400 MHz", "deconvolver": "mtmfs" })).reffreq,
+        Some(1.4e9)
+    );
+    // A cube reads it too, and its axis ignores it.
+    assert_eq!(
+        request(json!({ "specmode": "cube", "nchan": 4, "reffreq": "1.4GHz" })).reffreq,
+        Some(1.4e9)
+    );
+    for text in ["1.4", "1Jy", "garbage", "-1GHz"] {
+        assert_eq!(
+            refusal(json!({ "reffreq": text })).parameter,
+            "reffreq",
+            "{text}"
+        );
+    }
+}
+
+/// tclean's auto-multithresh controls and noise estimate, read in every
+/// mask mode: `SynthesisParamsDeconv::fromRecord` reads them whatever
+/// `usemask` is, and `fastnoise` also sets the `nsigma` noise.
+#[test]
+fn automask_controls_and_the_noise_estimate_are_read() {
+    let defaults = request(json!({}));
+    assert_eq!(
+        (
+            defaults.smoothfactor,
+            defaults.cutthreshold,
+            defaults.dogrowprune,
+            defaults.minpercentchange,
+            defaults.verbose,
+            defaults.fastnoise,
+        ),
+        (1.0, 0.01, true, -1.0, false, true)
+    );
+    let set = json!({
+        "usemask": "auto-multithresh",
+        "smoothfactor": 0.5,
+        "cutthreshold": 0.2,
+        "dogrowprune": false,
+        "minpercentchange": 0.2,
+        "verbose": true,
+        "fastnoise": false,
+    });
+    let read = request(set.clone());
+    assert_eq!(
+        (
+            read.smoothfactor,
+            read.cutthreshold,
+            read.dogrowprune,
+            read.minpercentchange,
+            read.verbose,
+            read.fastnoise,
+        ),
+        (0.5, 0.2, false, 0.2, true, false)
+    );
+    // The noise estimate applies to nsigma without an automatic mask.
+    assert!(!request(json!({ "nsigma": 3.0, "fastnoise": false })).fastnoise);
+    // CASA's automatic mask fails on a beam of no positive width; without
+    // one, or without cleaning, CASA never smooths.
+    for factor in [0.0, -1.0] {
+        let mut automatic = set.clone();
+        automatic["smoothfactor"] = json!(factor);
+        automatic["niter"] = json!(10);
+        assert_eq!(refusal(automatic.clone()).parameter, "smoothfactor");
+        automatic["niter"] = json!(0);
+        assert_eq!(request(automatic).smoothfactor, factor);
+        assert_eq!(
+            request(json!({ "niter": 10, "smoothfactor": factor })).smoothfactor,
+            factor
+        );
+    }
+}
+
+/// tclean reads `usemask='pb'` and `pbmask` into the request in every mask
+/// mode, and refuses a `pbmask` outside `[0, 1)` with CASA's messages
+/// (`SynthesisParamsDeconv::verify`).
+#[test]
+fn pbmask_is_read_in_every_mask_mode_and_bounded_as_casa_bounds_it() {
+    let pb = request(json!({ "usemask": "pb" }));
+    assert_eq!((pb.usemask, pb.pbmask), (crate::UseMask::Pb, 0.0));
+    // Only CASA's automatic mask smooths, so only it needs a positive
+    // smoothfactor.
+    let unsmoothed = request(json!({ "usemask": "pb", "niter": 10, "smoothfactor": 0.0 }));
+    assert_eq!(unsmoothed.smoothfactor, 0.0);
+    for usemask in ["user", "pb", "auto-multithresh"] {
+        let read = request(json!({ "usemask": usemask, "pbmask": 0.25 }));
+        assert_eq!(read.pbmask, 0.25, "{usemask}");
+        read.validate().expect("a valid pbmask");
+    }
+    for (pbmask, message) in [
+        (1.0, "pbmask must be < 1.0"),
+        (-0.1, "pbmask must be a positive value"),
+    ] {
+        let refused = refusal(json!({ "usemask": "pb", "pbmask": pbmask }));
+        assert_eq!(
+            (refused.parameter.as_str(), refused.message.as_str()),
+            ("pbmask", message)
+        );
+    }
+}
+
+/// A CRTF circle holds the pixels casacore's `LCEllipsoid` holds: those
+/// whose offset from the centre is at most one radius. CASA's
+/// test_mask_1 mask, `circle[[50pix,80pix],10pix]`, holds 317 pixels from
+/// x 40 to 60 and y 70 to 90 (read from its tst2.mask).
+#[test]
+fn a_crtf_circle_masks_the_pixels_casa_masks() {
+    let boxes =
+        super::user_mask::crtf_pixel_boxes("circle[[50pix,80pix],10pix]").expect("a circle");
+    let rows = boxes
+        .iter()
+        .map(|text| {
+            let corners = text
+                .split(',')
+                .map(|corner| corner.parse::<i64>().expect("a corner"))
+                .collect::<Vec<_>>();
+            assert_eq!(corners[1], corners[3], "one row per box");
+            corners
+        })
+        .collect::<Vec<_>>();
+    let pixels: i64 = rows.iter().map(|corners| corners[2] - corners[0] + 1).sum();
+    assert_eq!(pixels, 317);
+    assert_eq!(rows.iter().map(|corners| corners[0]).min(), Some(40));
+    assert_eq!(rows.iter().map(|corners| corners[2]).max(), Some(60));
+    assert_eq!(rows.first().map(|corners| corners[1]), Some(70));
+    assert_eq!(rows.last().map(|corners| corners[1]), Some(90));
+}
+
+/// A CRTF region's spectral `range` (casacore's frequency limits) limits
+/// that region's boxes: in hertz from any SI prefix, or in channel pixels.
+/// It binds to the region it follows, a later `range` replaces an earlier
+/// one, as casacore keeps the last, and the forms casa-rs has no law for
+/// (velocities, mixed or missing units, other keywords) are refused.
+#[test]
+fn a_crtf_range_limits_its_own_region() {
+    use crate::{SpectralMaskRange, UserMaskBox};
+    let ranged = |corners, low: f64, high: f64| UserMaskBox {
+        corners,
+        range: Some(SpectralMaskRange::Frequency([low, high])),
+    };
+    let listed = request(json!({"mask": [
+        "box[[1pix,2pix],[3pix,4pix]], range=[1.1GHz, 1500MHz]",
+        "box[[5pix,5pix],[6pix,6pix]]",
+    ]}));
+    assert_eq!(
+        listed.mask_box,
+        [
+            ranged([1, 2, 3, 4], 1.1e9, 1.5e9),
+            UserMaskBox::new([5, 5, 6, 6])
+        ]
+    );
+    let last = request(json!({
+        "mask": "box[[1pix,2pix],[3pix,4pix]],range=[1.2GHz,1.3GHz], range=[1.7GHz,1600000kHz]"
+    }));
+    assert_eq!(last.mask_box, [ranged([1, 2, 3, 4], 1.7e9, 1.6e9)]);
+    let pixels = request(json!({"mask": "box[[1pix,2pix],[3pix,4pix]],range=[1.4pix,3.6pix]"}));
+    assert_eq!(
+        pixels.mask_box,
+        [UserMaskBox {
+            corners: [1, 2, 3, 4],
+            range: Some(SpectralMaskRange::Pixel([1.4, 3.6])),
+        }]
+    );
+    // test_mask_2's region: the 317 pixels of the circle, every row ranged.
+    let circle = request(json!({"mask": "circle[[50pix,50pix],10pix],range=[1.1GHz,1.5GHz]"}));
+    let pixels: i64 = circle
+        .mask_box
+        .iter()
+        .map(|user| {
+            assert_eq!(
+                user.range,
+                Some(SpectralMaskRange::Frequency([1.1e9, 1.5e9]))
+            );
+            user.corners[2] - user.corners[0] + 1
+        })
+        .sum();
+    assert_eq!(pixels, 317);
+    for mask in [
+        "box[[1pix,2pix],[3pix,4pix]],range=[-20000km/s,20000km/s]",
+        "box[[1pix,2pix],[3pix,4pix]],range=[1,3pix]",
+        "box[[1pix,2pix],[3pix,4pix]],range=[1GHz,3pix]",
+        "box[[1pix,2pix],[3pix,4pix]],range=[1.1GHz]",
+        "box[[1pix,2pix],[3pix,4pix]],corr=[I]",
+    ] {
+        let error = refusal(json!({ "mask": mask }));
+        assert_eq!(error.parameter, "mask", "{mask}");
+        assert!(error.message.contains("#980"), "{mask}: {}", error.message);
+    }
+}
+
+/// W facets admit only the measured scalar continuum modes; the remaining
+/// combinations keep their explicit #1063 refusal.
+#[test]
+fn w_facets_keep_their_count_and_refuse_unverified_modes() {
+    for weighting in ["natural", "uniform"] {
+        let image = request(json!({"gridder":"wproject", "wprojplanes":4,
+                                   "facets":2, "weighting":weighting}));
+        assert_eq!(
+            image.gridder,
+            Gridder::Wproject {
+                facets: NonZeroUsize::new(2).unwrap(),
+                wprojplanes: NonZeroUsize::new(4),
+            }
+        );
+        image.validate().expect("measured W-facet mode");
+    }
+    for extra in [
+        json!({"specmode":"cube"}),
+        json!({"deconvolver":"mtmfs", "nterms":2}),
+        json!({"weighting":"briggs"}),
+        json!({"stokes":"IV"}),
+        json!({"wprojplanes":-1}),
+    ] {
+        let mut args = json!({"gridder":"wproject", "wprojplanes":4, "facets":2});
+        args.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        assert!(refusal(args).to_string().contains("#1063"));
+    }
+}
+
+/// Typed requests cannot bypass the W-facet scope by avoiding tclean's
+/// text-to-request conversion (#1063).
+#[test]
+fn w_facets_typed_requests_refuse_unverified_modes() {
+    let supported = request(json!({"gridder":"wproject", "wprojplanes":4, "facets":2}));
+    supported.validate().expect("measured mode");
+    let mut cube = supported.clone();
+    cube.specmode = SpecMode::Cube;
+    let mut taylor = supported.clone();
+    taylor.deconvolver = Deconvolver::Mtmfs;
+    taylor.nterms = 2;
+    let mut briggs = supported.clone();
+    briggs.weighting = crate::Weighting::Briggs;
+    let mut polarized = supported.clone();
+    polarized
+        .stokes
+        .push(casa_imaging_model::PolarizationCoordinate::StokesV);
+    let mut automatic = supported.clone();
+    automatic.gridder = Gridder::Wproject {
+        facets: NonZeroUsize::new(2).unwrap(),
+        wprojplanes: None,
+    };
+    let mut outlier = supported;
+    outlier.outlierfile = Some("outlier.txt".into());
+    for (label, image) in [
+        ("cube", cube),
+        ("taylor", taylor),
+        ("briggs", briggs),
+        ("polarized", polarized),
+        ("automatic", automatic),
+        ("outlier", outlier),
+    ] {
+        let error = image.validate().expect_err(label).to_string();
+        assert!(error.contains("#1063"), "{label}: {error}");
+    }
+}
+
+/// MVC's output depth is independent of input channel selection, and all
+/// nonpositive nchan values use CASA's automatic bandwidth rule.
+#[test]
+fn mvc_reads_output_depth_separately_from_input_selection() {
+    let explicit = request(json!({
+        "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+        "nchan": 3, "channel_start": 1, "channel_count": 4,
+    }));
+    assert_eq!(explicit.specmode, SpecMode::Mfs);
+    assert_eq!(explicit.mvc_output_channels.unwrap().get(), 3);
+    assert!(!explicit.mvc_auto_channels);
+    assert_eq!(explicit.channel_start, Some(1));
+    assert_eq!(explicit.channel_count, Some(4));
+    for nchan in [-2, -1, 0] {
+        let auto = request(json!({
+            "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+            "nchan": nchan, "channel_count": 4,
+        }));
+        assert!(auto.mvc_output_channels.is_none());
+        assert!(auto.mvc_auto_channels);
+        assert_eq!(auto.channel_count, Some(4));
+    }
+}
+
+#[test]
+fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
+    let accepted = request(json!({ "deconvolver": "mem", "niter": 1 }));
+    accepted.validate().expect("standard Stokes I MFS MEM");
+    let briggs = request(json!({"deconvolver":"mem", "weighting":"briggs", "robust":0.5}));
+    assert_eq!(briggs.weighting, crate::Weighting::Briggs);
+    briggs.validate().expect("Briggs-weighted MEM");
+    for weighting in ["uniform", "superuniform", "radial", "briggsabs"] {
+        request(json!({"deconvolver":"mem", "weighting":weighting, "noise":"1Jy"}))
+            .validate()
+            .unwrap_or_else(|error| panic!("MEM with {weighting}: {error}"));
+    }
+    assert_eq!(
+        refusal(json!({"deconvolver":"mem", "weighting":"briggsbwtaper"})).parameter,
+        "weighting"
+    );
+    let seeded = request(json!({"deconvolver":"mem", "startmodel":"start.im"}));
+    assert!(seeded.has_start_model());
+    seeded.validate().expect("MEM with an explicit start model");
+    let masked = request(json!({"deconvolver":"mem", "mask":"region.mask"}));
+    assert_eq!(masked.mask_images, [PathBuf::from("region.mask")]);
+    masked.validate().expect("MEM with a user mask image");
+    let pb = request(json!({"deconvolver":"mem", "usemask":"pb", "pbmask":0.0}));
+    pb.validate().expect("MEM with a primary-beam mask");
+    let intersection = request(json!({"deconvolver":"mem", "mask":"region.mask", "pbmask":0.2}));
+    intersection
+        .validate()
+        .expect("MEM with a user mask constrained by the beam");
+    request(json!({"deconvolver":"hogbom", "stokes":"IQUV", "niter":1}))
+        .validate()
+        .expect("other solvers retain their scope");
+    for overrides in [
+        json!({"stokes":"IQUV"}),
+        json!({"specmode":"cube", "nchan":2}),
+        json!({"gridder":"wproject", "wprojplanes":4}),
+        json!({"facets":2}),
+        json!({"vis":["a.ms","b.ms"]}),
+        json!({"outlierfile":"outliers.txt"}),
+    ] {
+        let mut values = json!({"deconvolver":"mem", "niter":1});
+        values
+            .as_object_mut()
+            .unwrap()
+            .extend(overrides.as_object().unwrap().clone());
+        let refusal = refusal(values.clone());
+        assert_eq!(refusal.parameter, "deconvolver", "{values}: {refusal}");
+        assert!(refusal.message.contains("#1060"));
+    }
+    let automatic = request(json!({"deconvolver":"mem", "usemask":"auto-multithresh"}));
+    assert_eq!(automatic.usemask, crate::UseMask::AutoMultithresh);
+    automatic.validate().expect("MEM with an automatic mask");
+    let noise_limited = request(json!({"deconvolver":"mem", "nsigma":3.0}));
+    assert_eq!(noise_limited.nsigma, 3.0);
+    noise_limited.validate().expect("MEM with a noise cutoff");
+    let writing = request(json!({"deconvolver":"mem", "niter":1, "savemodel":"modelcolumn"}));
+    assert_eq!(writing.savemodel, crate::SaveModel::ModelColumn);
+    writing
+        .validate()
+        .expect("MEM can write predicted visibilities");
+    request(json!({"deconvolver":"mem", "niter":1, "savemodel":"virtual"}))
+        .validate()
+        .expect("MEM can save a virtual model");
+    let mut typed = accepted;
+    typed
+        .stokes
+        .push(casa_imaging_model::PolarizationCoordinate::StokesQ);
+    assert_eq!(typed.validate().unwrap_err().parameters, "deconvolver");
+    typed.stokes.pop();
+    typed.weighting = crate::Weighting::Briggsbwtaper;
+    assert_eq!(typed.validate().unwrap_err().parameters, "deconvolver");
+    for calcpsf in [true, false] {
+        for calcres in [true, false] {
+            let mut continuing =
+                request(json!({"deconvolver":"mem", "calcpsf":calcpsf, "calcres":calcres}));
+            continuing.tclean_restart = true;
+            continuing.validate().expect("standard MEM continuation");
+        }
+    }
+}

@@ -99,22 +99,10 @@ source "$HOME/.local/opt/casa-rs/current/python/bin/activate"
 python -c "import casars; print(casars.__version__)"
 ```
 
-The suite's Python starts each task's executable from its own suite: in an
-install at `~/.local/opt/casa-rs/<version>`, `casars.tasks.gaincal(...)`
-runs `~/.local/opt/casa-rs/<version>/bin/calibrate`. To target a different
-installed suite explicitly, set:
-
-```bash
-export CASARS_SUITE_ROOT="$HOME/.local/opt/casa-rs/<version>"
-```
-
-To run one task from another file, set its override variable, such as
-`CASARS_CALIBRATE_BIN` or `CASARS_IMAGER_BIN`. A wheel installed outside a
-suite, such as one from PyPI, needs `CASARS_SUITE_ROOT` (or the task's
-override) to run tasks; its in-process `casars.tools` classes need no executables.
-
-The Python executable lookup and protocol-compatibility rules are documented
-in [Python Compatibility](python/versioning.md).
+The Python environment runs tasks through its installed `casars._core`
+extension. A wheel installed with pip provides the same `casars.tasks` and
+`casars.tools` APIs. The standalone CLI executables are available in the
+suite bundle.
 
 ## Stable and RC installs
 
@@ -140,8 +128,8 @@ time. The installed layout is:
 
 Switch the default suite by repointing `~/.local/opt/casa-rs/current`,
 re-running the installer with `--activate`, or keep multiple installs in place
-and choose one explicitly with `CASARS_SUITE_ROOT` or that suite's Python
-virtual environment.
+and select one by activating that suite's Python virtual environment or
+running its versioned command links.
 
 ## Build from source
 
@@ -154,12 +142,8 @@ source "$HOME/.cargo/env"
 cargo build --release --workspace --bins
 ```
 
-A Python package installed from the checkout (`pip install -e
-crates/casars-python`) runs the newest `debug` or `release` build of each
-task executable in that checkout's `target/` (or `$CARGO_TARGET_DIR`), unless
-`CASARS_SUITE_ROOT` or the task's override is set. A task whose executable
-is not built names the `cargo build -p <package> --bin <executable>` that
-builds it.
+Use `pip install -e frontends/casars-python` to build and install the native
+Python extension from a working checkout.
 
 To package a local release-style bundle, run:
 

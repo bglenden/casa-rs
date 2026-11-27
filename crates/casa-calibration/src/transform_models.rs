@@ -4,14 +4,12 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use casa_ms::msexplore::cli::PlotMsModelReferences;
+use casa_core::{ArrayValue, Complex32};
 use casa_ms::selection::ChannelRange;
-use casa_ms::{
-    MeasurementSet, PreparedTransformInputView, ResolvedMsSelectionRow, SubtableId,
-    TransformInputColumns, TransformInputView, initial_model_visibility, scratch_columns,
-};
+use casa_ms::{MeasurementSet, ResolvedMsSelectionRow, SubtableId, initial_model_visibility};
+use casa_mstransform::PlotMsModelReferences;
+use casa_mstransform::{PreparedTransformInputView, TransformInputColumns, TransformInputView};
 use casa_tables::{Table, TableError};
-use casa_types::{ArrayValue, Complex32};
 use ndarray::{Array2, ArrayD, ShapeBuilder};
 
 use crate::solve::grouping::VisibilityModels;
@@ -39,7 +37,7 @@ pub fn visibility_model_input() -> impl TransformInputView {
     plotms_model_input(None)
 }
 
-pub(crate) fn plotms_model_input(
+pub fn plotms_model_input(
     references: Option<PlotMsModelReferences<'_>>,
 ) -> impl TransformInputView + '_ {
     ModelView {
@@ -90,7 +88,7 @@ impl TransformInputView for ModelView<'_> {
             .transpose()?;
         let stored = has_column(input.main_table(), "MODEL_DATA");
         let available = stored || self.materializes(input);
-        let fields = scratch_columns::virtual_model_fields(input);
+        let fields = casa_ms::virtual_model_fields(input);
         let models = if available && rows.iter().any(|row| fields.contains(&row.field_id)) {
             let mut models = VisibilityModels::for_transform(
                 input,

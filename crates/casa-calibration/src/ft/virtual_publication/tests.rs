@@ -6,12 +6,12 @@ use std::path::Path;
 use casa_coordinates::{
     CoordinateSystem, DirectionCoordinate, SpectralCoordinate, StokesCoordinate, StokesType,
 };
+use casa_core::measures::{direction::DirectionRef, frequency::FrequencyRef};
+use casa_core::{ArrayValue, PrimitiveType, ScalarValue, Value};
 use casa_images::PagedImage;
 use casa_ms::schema::SubtableId;
 use casa_ms::{MsSelection, VirtualModelEntry, virtual_model};
 use casa_tables::{ColumnSchema, TableOptions};
-use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
-use casa_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
 
 use super::*;
 use crate::ft::image::{TaylorTerm, prepare_image};
@@ -35,7 +35,7 @@ fn fixture(root: &Path) -> PathBuf {
     fs::create_dir_all(root).unwrap();
     assert!(!root.join("mssel_test_small.ms").exists());
     let archive = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../casa-ms/tests/fixtures/mssel_test_small.ms.tgz");
+        .join("../../libs/casacore/casa-ms/tests/fixtures/mssel_test_small.ms.tgz");
     tar::Archive::new(flate2::read::GzDecoder::new(
         fs::File::open(archive).unwrap(),
     ))

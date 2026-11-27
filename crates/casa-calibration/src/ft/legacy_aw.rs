@@ -5,6 +5,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use casa_coordinates::{CoordinateModel, SpectralCoordinate, StokesType};
+use casa_core::measures::direction::DirectionRef;
+use casa_core::measures::epoch::EpochRef;
+use casa_core::{ArrayValue, Correlation, RecordValue, ScalarValue, Value};
 use casa_images::PagedImage;
 use casa_imaging_model::{
     NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequestInput, NativeAwTerms,
@@ -17,9 +20,6 @@ use casa_imaging_operator::{
 use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{ChannelSelectionSegment, MeasurementSet, MsResult, ResolvedMsSelection};
-use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::epoch::EpochRef;
-use casa_types::{ArrayValue, Correlation, RecordValue, ScalarValue, Value};
 
 use crate::calibrater_lifecycle::legacy_ep::{legacy_vla_surface, model_geometry, reserve_model};
 use crate::paths::copy_editable_table_tree;

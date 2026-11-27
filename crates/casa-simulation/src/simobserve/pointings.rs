@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_types::quanta::Quantity;
+use casa_core::quanta::Quantity;
 
 use super::antennas::Array;
 use super::sky::Sky;
@@ -232,14 +232,16 @@ fn read_file(
 ) -> Result<(PathBuf, Pointings), SimobserveError> {
     let name = run.parameters.ptgfile.replace("$project", &run.stem);
     let project_file = run.file(".ptg.txt");
-    let path = if !name.is_empty() && Path::new(&name).exists() {
-        if !same_file(Path::new(&name), &project_file) {
+    let in_workspace = run.request.input_path(&name);
+    let path = if !name.is_empty() && in_workspace.exists() {
+        if !same_file(&in_workspace, &project_file) {
             make_way(&project_file)?;
-            std::fs::copy(&name, &project_file).map_err(SimobserveError::io(Path::new(&name)))?;
+            std::fs::copy(&in_workspace, &project_file)
+                .map_err(SimobserveError::io(&in_workspace))?;
         }
         project_file
     } else {
-        let in_project = PathBuf::from(format!("{}/{name}", run.parameters.project));
+        let in_project = run.directory.join(&name);
         if !in_project.exists() {
             return Err(SimobserveError::raised(format!(
                 "Can't find pointing file {name}"

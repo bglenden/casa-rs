@@ -28,7 +28,7 @@ def main():
     args = parser.parse_args()
     root = args.out.resolve()
     root.mkdir(parents=True, exist_ok=True)
-    data = Path(__file__).resolve().parents[2] / "crates/casars-python/python/tests/data"
+    data = Path(__file__).resolve().parents[2] / "frontends/casars-python/python/tests/data"
     with gzip.open(data / "casa_simutil_graphics.json.gz", "rt") as source:
         antenna = json.load(source)["antennas"][1]
     with tarfile.open(data / "simutil_graphics_observation.tar.gz") as archive:

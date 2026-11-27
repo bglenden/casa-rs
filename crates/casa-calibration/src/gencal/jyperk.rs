@@ -7,10 +7,13 @@ mod service;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use casa_ms::ms::MeasurementSet;
-use casa_provider_contracts::{ParameterValue, python_repr};
+use casa_ms::MeasurementSet;
 use csv_core::ReadRecordResult;
 use thiserror::Error;
+
+fn python_string_repr(value: &str) -> String {
+    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
+}
 
 use super::{
     GencalError, GencalReport, GencalRequest, apply_specified_rows, open_measurement_set,
@@ -19,10 +22,10 @@ use super::{
 use crate::CalibrationOutputMode;
 use crate::output::CalibrationOutput;
 
-pub(crate) use service::{Endpoint, ServiceOptions};
+pub use service::{Endpoint, ServiceOptions};
 
 #[derive(Debug, Error)]
-pub(crate) enum JyperkError {
+pub enum JyperkError {
     #[error("There is no Jy/K db-derived factor file: {0}")]
     MissingFile(PathBuf),
     #[error("read Jy/K factor file {path}: {source}")]
@@ -72,9 +75,10 @@ impl Factor {
         polarization: &str,
         value: &str,
     ) -> Result<Self, JyperkError> {
-        let factor = value.trim().parse::<f64>().map_err(|_| {
-            JyperkError::InvalidNumber(python_repr(&ParameterValue::String(value.to_string())))
-        })?;
+        let factor = value
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| JyperkError::InvalidNumber(python_string_repr(value)))?;
         let gain = 1.0 / factor.sqrt();
         if !(gain as f32).is_finite() || gain as f32 <= 0.0 {
             return Err(JyperkError::InvalidFactor {
@@ -99,7 +103,7 @@ impl Factor {
     }
 }
 
-pub(crate) fn calibrate(
+pub fn calibrate(
     request: &GencalRequest,
     path: Option<&Path>,
     options: &ServiceOptions,

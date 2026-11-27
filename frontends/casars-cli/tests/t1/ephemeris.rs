@@ -1,0 +1,481 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+//! A field that follows an ephemeris (#942): the T1 track's field attached
+//! to a distant body's table, imaged tracking the body (`TRACKFIELD`),
+//! following the same body from a table given as the phase centre, as a
+//! cube in the body's rest frame, on a fixed centre, and without a phase
+//! centre, each on the production route, whose batch geometry follows the
+//! body. The track's MSv4 conversion keeps that geometry to the store
+//! law's 1e-12.
+
+use std::f64::consts::{PI, TAU};
+use std::path::{Path, PathBuf};
+
+use casa_coordinates::CoordinateModel;
+use casa_core::measures::direction::{DirectionRef, MDirection};
+use casa_core::measures::ephemeris::offset_true_angle;
+use casa_core::{ArrayValue, PrimitiveType, ScalarValue, Value};
+use casa_ms::{MeasurementSet, SubtableId};
+use casa_test_support::ephemeris_table::{
+    EphemerisRow, write_ephemeris_table, write_field_ephemeris,
+};
+use serde_json::json;
+
+use super::fixture::{Component, Observation, PHASE_CENTER_RAD};
+
+const POINT: Component = Component {
+    offset_px: [10, -6],
+    flux_jy: 1.0,
+    fwhm_px: None,
+    spectral_index: 0.0,
+};
+
+/// The field's phase centre, its offset from the body: radians.
+const OFFSET_RAD: [f64; 2] = [1.0e-7, -5.0e-8];
+
+/// A body 30 AU away at the T1 phase centre, drifting about 0.2 arcsec a
+/// day and receding at about 17 km/s, sampled over the track's day and the
+/// days either side.
+fn body() -> Vec<EphemerisRow> {
+    let [ra, dec] = PHASE_CENTER_RAD.map(f64::to_degrees);
+    let drift_deg = 1.0e-6_f64.to_degrees();
+    (0..3)
+        .map(|day| {
+            let step = f64::from(day);
+            [
+                56_656.5 + step,
+                ra + step * drift_deg,
+                dec - step * drift_deg,
+                30.0 + 1.0e-4 * step,
+                0.01,
+            ]
+        })
+        .collect()
+}
+
+/// The track with its field following [`body`] (`FIELD.EPHEMERIS_ID` 0),
+/// its `PHASE_DIR` the offset from it.
+pub(super) fn moving_track() -> Observation {
+    following_body(Observation::synthesise(&[("point", POINT)]))
+}
+
+/// `observation` with its field following [`body`], as [`moving_track`].
+pub(super) fn following_body(observation: Observation) -> Observation {
+    let path = observation.measurement_set();
+    let mut ms = MeasurementSet::open(path).expect("the T1 MeasurementSet");
+    let reference_time = ms
+        .main_table()
+        .cell_accessor(0, "TIME")
+        .unwrap()
+        .scalar()
+        .unwrap()
+        .clone();
+    let field = ms.subtable_mut(SubtableId::Field).expect("FIELD");
+    // Attach the ephemeris with a reference epoch inside the observed track.
+    field
+        .fill_column_range(
+            "TIME",
+            casa_tables::RowRange::new(0, 1),
+            Value::Scalar(reference_time),
+        )
+        .unwrap();
+    field
+        .add_column(
+            casa_tables::ColumnSchema::scalar("EPHEMERIS_ID", PrimitiveType::Int32),
+            Some(Value::Scalar(ScalarValue::Int32(0))),
+        )
+        .expect("EPHEMERIS_ID");
+    let offset = Value::Array(ArrayValue::Float64(
+        ndarray::ArrayD::from_shape_vec(vec![2, 1], OFFSET_RAD.to_vec()).expect("a direction"),
+    ));
+    for column in ["PHASE_DIR", "DELAY_DIR", "REFERENCE_DIR"] {
+        field
+            .fill_column_range(column, casa_tables::RowRange::new(0, 1), offset.clone())
+            .expect("the offset");
+    }
+    ms.save().expect("save");
+    drop(ms);
+    write_field_ephemeris(path, 0, "T1BODY", &body());
+    observation
+}
+
+/// The body's table copied outside the MeasurementSet, as a `phasecenter`.
+fn table_outside(observation: &Observation) -> PathBuf {
+    let table = observation.scratch("t1body.tab");
+    write_ephemeris_table(&table, "T1BODY", &body());
+    table
+}
+
+fn path_text(path: &Path) -> String {
+    path.to_str().expect("a UTF-8 path").to_string()
+}
+
+/// Tracking the field's own body, an MFS image and a rest-frame cube.
+#[test]
+fn trackfield_images_mfs_and_a_rest_frame_cube() {
+    let observation = moving_track();
+    observation.image(
+        "trackfield-mfs",
+        json!({ "phasecenter": "TRACKFIELD", "niter": 0 }),
+    );
+    observation.image(
+        "trackfield-rest-cube",
+        json!({
+            "phasecenter": "TRACKFIELD",
+            "specmode": "cubesource",
+            "outframe": "REST",
+            "restfreq": "45GHz",
+            "channel_count": 4,
+            "niter": 0,
+        }),
+    );
+}
+
+/// An AW request on a moving field with a native TOPO window.
+fn moving_aw_cube(channels: usize) -> (Observation, serde_json::Value) {
+    let mut setup = super::aw_projection::setup();
+    setup.spectral_windows[0].channel_count = channels;
+    let observation = following_body(Observation::synthesise_setup(setup, &[("point", POINT)]));
+    let mut ms = MeasurementSet::open(observation.measurement_set()).expect("open test MS");
+    ms.spectral_window_mut()
+        .expect("spectral window")
+        .set_i32(
+            0,
+            "MEAS_FREQ_REF",
+            casa_core::measures::frequency::FrequencyRef::TOPO.casacore_code(),
+        )
+        .expect("declare TOPO input");
+    ms.save().expect("save TOPO input");
+    drop(ms);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, super::aw_projection::surface_text()).expect("write EVLA surface");
+    let mut request =
+        super::aw_projection::cached_clean("0", &observation.scratch("rest-cf"), &surface);
+    request["phasecenter"] = json!("TRACKFIELD");
+    request["specmode"] = json!("cubesource");
+    request["outframe"] = json!("REST");
+    request["restfreq"] = json!("1.5GHz");
+    request["nchan"] = json!(channels);
+    request["niter"] = json!(0);
+    request["interpolation"] = json!("nearest");
+    request["wprojplanes"] = json!(1);
+    (observation, request)
+}
+
+/// A moving source's AW cube uses its REST axis for channel selection.
+#[test]
+fn aw_nearest_images_a_multichannel_rest_cube() {
+    let (observation, mut request) = moving_aw_cube(4);
+    let (_, products) = observation.image("aw-rest-cube", request.clone());
+    // Nearest selects the same stored channels on both axes. The ephemeris,
+    // geometry, cache, and native wavelengths are identical for the two PSFs.
+    let mut selected_request = request.clone();
+    selected_request["spw"] = json!("0:1~2");
+    selected_request["nchan"] = json!(2);
+    let (_, selected) = observation.image("aw-rest-selected-default-start", selected_request);
+
+    request["specmode"] = json!("cubedata");
+    request["outframe"] = json!("TOPO");
+    let (_, native_axis) = observation.image("aw-native-axis-cube", request.clone());
+    let psf_difference = products
+        .get(".psf")
+        .values()
+        .into_iter()
+        .zip(native_axis.get(".psf").values())
+        .map(|(rest, native)| (rest - native).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        psf_difference < 1e-5,
+        "REST AW native wavelength PSF: {psf_difference}"
+    );
+    let weights = products.get(".sumwt").channel_values();
+    assert_eq!(weights.len(), 4);
+    assert!(weights.iter().all(|weight| *weight > 0.0), "{weights:?}");
+    let coordinate = products
+        .get(".image")
+        .image
+        .first_spectral_coordinate()
+        .expect("spectral metadata")
+        .expect("spectral coordinate");
+    assert_eq!(
+        coordinate.frequency_ref(),
+        casa_core::measures::frequency::FrequencyRef::REST
+    );
+
+    let selected_coordinate = selected
+        .get(".image")
+        .image
+        .first_spectral_coordinate()
+        .expect("spectral metadata")
+        .expect("spectral coordinate");
+    // CASA trims to the selected band on the stored axis, then shifts it.
+    for (output, source) in [(0.0, 1.0), (1.0, 2.0)] {
+        let expected = coordinate.world_frequency_hz(source).unwrap();
+        let actual = selected_coordinate.world_frequency_hz(output).unwrap();
+        assert!((actual - expected).abs() < 1e-6, "{actual} != {expected}");
+    }
+
+    // CASA Doppler-shifts the input frequencies before regridding.
+    // The user-supplied start and width already describe the REST axis.
+    request["specmode"] = json!("cubesource");
+    request["outframe"] = json!("REST");
+    request["interpolation"] = json!("linear");
+    request["start"] = json!("1502MHz");
+    request["width"] = json!("8.001MHz");
+    request["nchan"] = json!(2);
+    let (_, linear) = observation.image("aw-rest-linear", request);
+    let coordinate = linear
+        .get(".psf")
+        .image
+        .first_spectral_coordinate()
+        .expect("spectral metadata")
+        .expect("spectral coordinate");
+    assert_eq!(coordinate.world_frequency_hz(0.0).unwrap(), 1_502_000_000.0);
+    assert_eq!(coordinate.world_increment_hz().unwrap(), 8_001_000.0);
+    assert!(
+        linear
+            .get(".sumwt")
+            .channel_values()
+            .iter()
+            .all(|&w| w > 0.0)
+    );
+}
+
+/// Cubic interpolation on an offset REST grid uses the four-point stencil.
+#[test]
+fn aw_cubic_images_a_multichannel_rest_cube() {
+    let (observation, mut request) = moving_aw_cube(6);
+    request["nchan"] = json!(4);
+    request["start"] = json!("1504MHz");
+    request["width"] = json!("8.001MHz");
+    request["interpolation"] = json!("cubic");
+    let (_, cubic) = observation.image("aw-rest-cubic", request.clone());
+    let weights = cubic.get(".sumwt").channel_values();
+    assert_eq!(weights.len(), 4);
+    assert!(weights.iter().all(|&weight| weight > 0.0), "{weights:?}");
+
+    for weighting in ["briggs", "uniform"] {
+        let mut weighted = request.clone();
+        weighted["weighting"] = json!(weighting);
+        weighted["robust"] = json!(0.5);
+        weighted["perchanweightdensity"] = json!(true);
+        let (_, products) = observation.image(&format!("aw-rest-cubic-{weighting}"), weighted);
+        let sums = products.get(".sumwt").channel_values();
+        assert_eq!(sums.len(), 4);
+        assert!(
+            sums.iter().all(|&weight| weight > 0.0),
+            "{weighting}: {sums:?}"
+        );
+        assert!(
+            sums.iter()
+                .zip(&weights)
+                .all(|(weighted, natural)| weighted < natural),
+            "{weighting}: {sums:?}, natural: {weights:?}"
+        );
+    }
+
+    request["interpolation"] = json!("linear");
+    let (_, linear) = observation.image("aw-rest-linear-control", request);
+    let difference = cubic
+        .get(".residual")
+        .values()
+        .into_iter()
+        .zip(linear.get(".residual").values())
+        .map(|(cubic, linear)| (cubic - linear).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        difference > 1e-4,
+        "REST cubic and linear difference: {difference}"
+    );
+}
+
+/// CASA centres a moving field's primary beam on its phase centre shifted by
+/// the body's motion to the image epoch (`SynthesisImagerVi2::makePrimaryBeam`):
+/// tracking the body, the beam stays on the field's offset from the image
+/// centre, here a fiftieth of a pixel, as in CASA's `test_onefield_mfs_eph`
+/// (#980). One-arcsecond cells resolve the Q-band beam, which T1's default
+/// cells see as flat to `f32` precision.
+#[test]
+fn a_tracked_bodys_primary_beam_is_centred_on_its_field() {
+    const SIZE: usize = 128;
+    let observation = moving_track();
+    let (_, products) = observation.image(
+        "trackfield-pb",
+        json!({
+            "phasecenter": "TRACKFIELD",
+            "imsize": SIZE,
+            "cell": "1arcsec",
+            "niter": 0,
+            "write_pb": true,
+        }),
+    );
+    let pb = &products.get(".pb").pixels;
+    let (peak, pixel, _) = super::fixture::peak(pb);
+    let centre = SIZE / 2;
+    assert!((f64::from(peak) - 1.0).abs() < 1.0e-4, "PB peak {peak}");
+    assert_eq!(pixel, [centre, centre], "PB peak pixel");
+    // Symmetric about the centre to the field's 0.02-arcsecond offset (at
+    // most about 1.2e-3 here); a beam off by a pixel differs by 3e-2 or more.
+    for step in [10, 20, 30] {
+        for (a, b) in [
+            ([centre - step, centre], [centre + step, centre]),
+            ([centre, centre - step], [centre, centre + step]),
+        ] {
+            let (left, right) = (pb[a], pb[b]);
+            assert!(left < 0.999, "PB {left} at {a:?} is resolved");
+            assert!(
+                (left - right).abs() < 5.0e-3,
+                "PB {left} at {a:?}, {right} at {b:?}"
+            );
+        }
+    }
+}
+
+/// A fixed phase centre over the moving field: rows reproject, and
+/// frequencies convert, from the field's direction at each time; and
+/// Stokes IV under `TRACKFIELD`, whose parallactic angles follow the moving
+/// field.
+#[test]
+fn a_fixed_centre_and_parallactic_angles_follow_the_moving_field() {
+    let observation = moving_track();
+    let [ra, dec] = PHASE_CENTER_RAD;
+    observation.image(
+        "fixed-mfs",
+        json!({
+            "phasecenter": format!("J2000 {}rad {}rad", ra + 2.0e-6, dec - 1.0e-6),
+            "niter": 0,
+        }),
+    );
+    observation.image(
+        "trackfield-iv",
+        json!({ "phasecenter": "TRACKFIELD", "stokes": "IV", "niter": 0 }),
+    );
+}
+
+/// Following the body from a table given as the phase centre.
+#[test]
+fn a_table_phase_centre_follows_the_body() {
+    let observation = moving_track();
+    let table = table_outside(&observation);
+    observation.image(
+        "table-mfs",
+        json!({ "phasecenter": path_text(&table), "niter": 0 }),
+    );
+}
+
+/// Without a phase centre the image is centred, as CASA's `tclean`
+/// centres it, on casacore's `phaseDirMeas` of the field at no time: the
+/// body's geocentric direction at the FIELD row's `TIME`, offset by
+/// `PHASE_DIR`, in the ephemeris's frame (ICRS). The centre stays fixed
+/// while the field moves (#987).
+#[test]
+fn a_moving_field_without_a_phase_centre_is_centred_where_casa_centres_it() {
+    let observation = moving_track();
+    let (_, products) = observation.image("no-centre", json!({ "niter": 0 }));
+    let ms = MeasurementSet::open(observation.measurement_set()).expect("the T1 MeasurementSet");
+    let field_time_mjd = ms.field().expect("FIELD").time(0).expect("FIELD TIME") / 86_400.0;
+    let expected = offset_true_angle(&geocentric_body_direction(field_time_mjd), OFFSET_RAD)
+        .expect("the offset direction");
+    let image = &products.get(".image").image;
+    let CoordinateModel::Direction(direction) = image.coordinates().coordinate(0) else {
+        panic!(".image coordinate 0 is not a direction coordinate");
+    };
+    assert_eq!(direction.direction_ref(), DirectionRef::ICRS);
+    let reference = image.coordinates().coordinate(0).reference_value();
+    let (longitude, latitude) = expected.as_angles();
+    for (axis, (actual, expected)) in reference.iter().zip([longitude, latitude]).enumerate() {
+        let difference = (actual - expected + PI).rem_euclid(TAU) - PI;
+        assert!(
+            difference.abs() < 1.0e-12,
+            "image centre axis {axis}: {actual} rad, expected {expected} rad"
+        );
+    }
+}
+
+/// The FIELD row's `TIME` enters only the centre of an image without a
+/// phase centre: with it outside the body's table, `TRACKFIELD` images as
+/// before and only the empty phase centre is refused, as casacore refuses
+/// `phaseDirMeas` there.
+#[test]
+fn only_an_empty_phase_centre_reads_the_moving_field_time() {
+    let observation = moving_track();
+    let mut ms =
+        MeasurementSet::open(observation.measurement_set()).expect("the T1 MeasurementSet");
+    ms.subtable_mut(SubtableId::Field)
+        .expect("FIELD")
+        .fill_column_range(
+            "TIME",
+            casa_tables::RowRange::new(0, 1),
+            Value::Scalar(ScalarValue::Float64(0.0)),
+        )
+        .expect("a FIELD TIME outside the table");
+    ms.save().expect("save");
+    drop(ms);
+    observation.image(
+        "trackfield-unanchored",
+        json!({ "phasecenter": "TRACKFIELD", "niter": 0 }),
+    );
+    let refused = observation
+        .try_image("no-centre-unanchored", json!({ "niter": 0 }))
+        .err()
+        .expect("no body at the FIELD row's TIME");
+    assert!(refused.contains("T1BODY"), "{refused}");
+}
+
+/// [`body`]'s geocentric ICRS direction at `mjd` (UTC), its positions
+/// interpolated linearly in time, as casacore's `MeasComet` reads them.
+fn geocentric_body_direction(mjd: f64) -> MDirection {
+    let rows = body();
+    let pair = rows
+        .windows(2)
+        .find(|pair| pair[0][0] <= mjd && mjd <= pair[1][0])
+        .expect("the body's table covers the field's time");
+    let position = |row: &EphemerisRow| {
+        let [ra, dec] = [row[1].to_radians(), row[2].to_radians()];
+        [
+            row[3] * dec.cos() * ra.cos(),
+            row[3] * dec.cos() * ra.sin(),
+            row[3] * dec.sin(),
+        ]
+    };
+    let fraction = (mjd - pair[0][0]) / (pair[1][0] - pair[0][0]);
+    let [start, end] = [position(&pair[0]), position(&pair[1])];
+    MDirection::from_cosines(
+        std::array::from_fn(|axis| start[axis] + fraction * (end[axis] - start[axis])),
+        DirectionRef::ICRS,
+    )
+}
+
+/// A source-frame cube over several spectral windows is refused, naming
+/// the issue that ports it (#1059), rather than imaged on the first
+/// window's axis alone.
+#[test]
+fn a_rest_frame_cube_over_two_windows_is_refused() {
+    let mut setup = super::fixture::Setup::vla_q_band(4);
+    let low = setup.spectral_windows[0].clone();
+    setup
+        .spectral_windows
+        .push(casa_simulation::synthetic::SpectralSetup {
+            name: "t1-qband-next".to_string(),
+            start_frequency_hz: low.start_frequency_hz + 4.0 * low.channel_width_hz,
+            ..low
+        });
+    let observation = following_body(Observation::synthesise_setup(setup, &[("point", POINT)]));
+    let Err(refusal) = observation.try_image(
+        "trackfield-two-windows",
+        json!({
+            "phasecenter": "TRACKFIELD",
+            "specmode": "cubesource",
+            "outframe": "REST",
+            "restfreq": "45GHz",
+            "channel_count": 4,
+            "niter": 0,
+        }),
+    ) else {
+        panic!("a source-frame cube over two windows was imaged");
+    };
+    assert!(
+        refusal.contains("several spectral windows") && refusal.contains("#1059"),
+        "{refusal}"
+    );
+}

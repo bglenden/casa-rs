@@ -58,7 +58,7 @@ def fixture(root):
 def snapshot(vis):
     with opened(vis) as table:
         columns = tuple(table.colnames())
-        present = (name for name in ("DATA", "CORRECTED_DATA", "FLAG", "FLAG_ROW", "WEIGHT",
+        present = (name for name in ("DATA", "CORRECTED_DATA", "FLOAT_DATA", "FLAG", "FLAG_ROW", "WEIGHT",
                                      "WEIGHT_SPECTRUM", "SIGMA", "SIGMA_SPECTRUM") if name in columns)
         return columns, {name: table.getcol(name) for name in present}
 
@@ -255,7 +255,7 @@ def figures(root, vis, amplitude):
     assert result.value is None
     assert {Path(product.path) for product in result.result.products if product.exists} == {png}
     [(label, coordinates)] = captured
-    assert label == "Frequency (GHz)"
+    assert label == "Frequency (GHz) TOPO"
     np.testing.assert_allclose(coordinates, values, rtol=1.2e-5, atol=1e-7)
     with Image.open(png) as image:
         assert image.size == (500, 360)

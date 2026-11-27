@@ -15,7 +15,7 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-DATA_DIR = ROOT / "crates" / "casa-images" / "tests" / "data" / "exportfits"
+DATA_DIR = ROOT / "libs" / "casacore" / "casa-images" / "tests" / "data" / "exportfits"
 
 
 def encode_float(val):

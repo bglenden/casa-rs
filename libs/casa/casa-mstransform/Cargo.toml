@@ -1,0 +1,63 @@
+[package]
+name = "casa-mstransform"
+description = "MeasurementSet selection, materialization and format conversion"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = true
+autotests = false
+
+[lints]
+workspace = true
+
+[features]
+msv4 = ["casa-ms/msv4"]
+
+[dependencies]
+casa-measures.workspace = true
+casa-coordinates.workspace = true
+casa-core.workspace = true
+casa-fft.workspace = true
+casa-ms.workspace = true
+casa-numerics.workspace = true
+casa-observation.workspace = true
+casa-tables.workspace = true
+ndarray.workspace = true
+num-complex.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+rayon = "1"
+schemars = { version = "0.8", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+regex = "1"
+fitsio = { version = "0.21", features = ["fitsio-src", "src-cmake"] }
+
+[[test]]
+name = "api"
+path = "tests/api.rs"
+
+[[test]]
+name = "msv4_opening_memory"
+path = "tests/msv4_opening_memory.rs"
+required-features = ["msv4"]
+
+[[test]]
+name = "creation_plan_msv4_memory"
+path = "tests/creation_plan_msv4_memory.rs"
+required-features = ["msv4"]
+
+[dev-dependencies]
+casa-flagging.workspace = true
+casa-simulation = { path = "../../../crates/casa-simulation" }
+casa-test-support = { path = "../../../dev/casa-test-support" }
+flate2 = "1"
+tar = "0.4"
+zarrs = { version = "=0.23.14", default-features = false, features = ["filesystem", "blosc", "zstd"] }
+
+[[example]]
+name = "ms_trial_convert"
+required-features = ["msv4"]

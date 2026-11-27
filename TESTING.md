@@ -59,6 +59,17 @@ Verification: just docs-check (policy); applicable domain gates below (code)
   libtest process could attach unrelated imaging work to a progress test;
   without nextest the script falls back to serial `cargo test`
   (`RUST_TEST_THREADS=1`).
+- Opt-in suites live under `suites/` (`suites/casacore-interop`,
+  `suites/casa-parity`, and `suites/perf` / `casa-perf-suite`). Because
+  `[workspace] default-members` has no effect when `--workspace` is passed,
+  `scripts/test-workspace.sh` passes explicit `--exclude` flags for the
+  `suites/*` packages whenever `--workspace` or `--all` is used; invoke
+  them explicitly (e.g., `cargo test -p casacore-interop --features cpp-interop-tests --tests`
+  or `cargo test -p casa-perf-suite --release --features performance-tests --tests`).
+- Developer-only binaries (`ms-read-probe`, `package_snapshot`, `synthetic-ms`)
+  live in `dev/casa-dev-tools`, and shared C++/oracle infrastructure lives in
+  `dev/casa-test-support`. Disposable test/oracle logs (including CASA Python
+  probe logs) route under `target/test-logs/`.
 
 ## Mocking policy
 
@@ -76,7 +87,7 @@ Verification: just docs-check (policy); applicable domain gates below (code)
   local gate. Use `just verify` for an explicitly required milestone or
   release.
 - Imaging T1 end-to-end tier: `CARGO_INCREMENTAL=0 cargo test -p casars-imager --test t1`
-- Performance and evidence tool tests (`tools/perf/imager`, pytest):
+- Performance and evidence tool tests (`suites/perf/imager`, pytest):
   `just perf-tools-test`. CI's `perf_tools` job enforces them; `just quick`
   runs them when the host's `python3` has pytest, numpy, scipy and
   matplotlib, and prints a skip notice otherwise. A tool whose casa-rs inputs
@@ -84,6 +95,11 @@ Verification: just docs-check (policy); applicable domain gates below (code)
 - Smoke/release gate: `just smoke`
 - Blocking C++ interop release gate: `just release-cpp-interop`
 - Informational release performance suite: `just release-perf`
+- Pinned reorganization baseline gates: `just arch-check`, `bash scripts/docs-check.sh`,
+  `python3 scripts/check-file-length.py`, `./scripts/check-spdx.sh`,
+  `python3 -B scripts/test-task-cli-hosts.py` (all 24 host executables), and
+  `CARGO_INCREMENTAL=0 cargo test -p casacore-interop --features cpp-interop-tests --test tables_locking_interop`
+  when `pkg-config casacore` is present.
 - Suite install gate: `scripts/test-install-suite.sh [--hide-checkout]`
   builds the release executables and wheel, installs the suite into a
   temporary root, and checks its commands on `PATH`, a task run from its
@@ -174,10 +190,12 @@ changes intervened, rerun only the affected gate.
 repository provider-conformance tests, `tests/provider_contract_conformance.rs`)
 and `scripts/test-python-package.sh`, which runs the Python tests against an
 editable checkout, then installs the built wheel and sdist into fresh
-environments and checks them away from the source tree. The script builds
-`flagmanager` and sets `CASARS_REQUIRE_TASK_BINARIES=1`, so the end-to-end
-task test fails rather than skips without a real executable, and runs the
-`casars.tools` tests against the bundled measures snapshot unless
+environments and checks them away from the source tree. The wheel smoke test
+runs `flagmanager` in-process with an empty command search path and an empty
+Cargo target directory. The install-suite smoke test first exercises the
+standalone commands, then hides the suite's binaries before invoking Python
+from the installed suite. The package script runs the `casars.tools` tests
+against the bundled measures snapshot unless
 `CASA_RS_MEASURESPATH` names a runtime. `test_binding_snapshots.py` pins what
 the binding returns to Python; regenerate its fixture only for an intended
 change.
@@ -264,12 +282,9 @@ session writes, and the digests must equal casa-rs's. Its counting law
 The C++ `tNewMSSimulator.cc` scenarios run natively in
 `cargo test -p casa-simulation --test upstream_cpp`: independent constructor
 lifetimes and antenna initialization for array sizes two through ten.
-`casa-numerics`'s `simulated_bandpass` tests reproduce
-`tSimButterworthBandpass.cc`'s parameter/mode/response assertions and check
-asymmetric closed-form amplitudes. Its mode record becomes a typed order
-pair in Rust. These tests need no C++ SDK at runtime.
+These tests need no C++ SDK at runtime.
 
-`python/tests/test_simulator_upstream.py` in `crates/casars-python` runs native
+`python/tests/test_simulator_upstream.py` in `frontends/casars-python` runs native
 equivalents of CASA 6.7.6.14's simulator-tool cases. PLP prediction retains
 the upstream analytic flux assertion. The upstream-disabled tropospheric
 case checks 0.1 s frozen-screen sampling and existing `CORRECTED_DATA`
@@ -327,15 +342,15 @@ CASA's measures.
 (`tests/data/casa-6.7.6`, made by `tools/simulation/componentlist_oracle.py
 fixture`), writes them back in CASA's layout, and round-trips casa-rs's own
 lists. casacore C++ reads what casa-rs writes in `cargo test -p
-casa-components --features cpp-interop-tests --test casacore_cpp_interop`, a
+casacore-interop --features cpp-interop-tests --test component_list`, a
 step of `just release-cpp-interop`. The CASA oracle is opt-in, because it
-starts CASA's Python several times: `cargo test -p casa-components --test
-casa_oracle -- --ignored --nocapture` (CASA from `CASA_RS_CASA_PYTHON` or
+starts CASA's Python several times: `cargo test -p casa-parity --test
+api component_oracle -- --ignored --nocapture` (CASA from `CASA_RS_CASA_PYTHON` or
 `/Applications/CASA.app`).
 
-**Image analysis.** `casa-images`' `regrid`, `convolve2d`, robust statistics,
+**Image analysis.** `casa-imageanalysis`'s `regrid`, `convolve2d`, robust statistics,
 `impbcor`, `immath` and `feather` are compared with CASA 6.7.6 in `cargo test
--p casa-images --test image_analysis_casa`, against the CASA results recorded
+-p casa-parity --test api image_analysis_casa`, against the CASA results recorded
 in `tests/data/image_analysis_casa.json` for the cases in
 `tests/data/image_analysis_cases.json`. Regenerate the results with
 `tools/images/image_analysis_oracle.py`, run with CASA's Python, whenever the
@@ -343,14 +358,14 @@ cases change.
 
 **importvla.** The CASA comparisons need `--features cpp-interop-tests` and a
 CASA Python (`casa_test_support::discover_casa_python`), and write temporary
-MeasurementSets under `target/`. With that feature, `cargo test -p casa-vla
---test cpp_import_ms_parity` imports the archive `CASA_RS_IMPORTVLA_ARCHIVE`
+MeasurementSets under `target/`. `cargo test -p casacore-interop
+--features cpp-interop-tests --test cpp_import_ms_parity` imports the archive `CASA_RS_IMPORTVLA_ARCHIVE`
 names with both; `--test cpp_import_ms_parity_matrix -- --ignored
 --nocapture` runs the known real archives (the AG189 revision 11 and 12
 exports that the test's `CASA_RS_IMPORTVLA_PARITY_*` variables name, and
 casatestdata's revision-26 `AS758` cases); and `--test real_importvla_parity
 -- --ignored --nocapture` also compares selected persisted metadata. `cargo
-test -p casa-vla --test real_archive_inventory -- --ignored --nocapture`
+test -p casa-vla --test api real_archive_inventory:: -- --ignored --nocapture`
 summarizes the modes and revisions of the archives in
 `CASA_RS_IMPORTVLA_ARCHIVES` before new matrix cases are chosen.
 
@@ -358,7 +373,7 @@ summarizes the modes and revisions of the archives in
 logical-capacity test and the explicit release throughput guard:
 
 - `cargo test -p casa-images fifty_gib_spectral_cube_streams_selected_planes_with_bounded_storage -- --nocapture`
-- `CASA_RS_CUBE_PERF_DIR=/path/to/volume cargo test -p casa-test-support --features performance-tests --test images_perf_vs_cpp full_spectral_cube_plane_io_tracks_raw_disk_speed --release -- --ignored --nocapture`
+- `CASA_RS_CUBE_PERF_DIR=/path/to/volume cargo test -p casa-perf-suite --features performance-tests --test images_perf_vs_cpp full_spectral_cube_plane_io_tracks_raw_disk_speed --release -- --ignored --nocapture`
 
 The throughput guard writes and reads every plane of a 50 GiB raw baseline
 and a 50 GiB tiled image on the selected volume, which needs at least 110 GiB
@@ -384,7 +399,7 @@ does not stand in for a scientific comparison.
   projection, MT-MFS, model column, Metal, routes, interrupt). The store
   law holds a run's batch geometry in its MeasurementSet equal to its batch
   geometry in the MSv4 conversion, every sample on every channel, to 1e-12,
-  in either channel order (`casa_imaging_application::store_law`).
+  in either channel order (`casa_imaging::store_law` tests).
 - **T1.5, CASA-paired small fixtures** (local, before an imaging review):
   the casatestdata `refim_*` and kernel fixtures against CASA 6.7.6
   references, NRMS ≤ 1e-3 on every product and `.sumwt` within 5e-5. The
@@ -395,7 +410,7 @@ does not stand in for a scientific comparison.
   rows agree with CASA.
 - **T2, representative** (hours; when a row's code changes): the matrix in
   `resources/imaging-architecture/representative-science-matrix.json` run by
-  `tools/perf/imager/run_workload.py`, the timed checkpoints and the rows
+  `suites/perf/imager/run_workload.py`, the timed checkpoints and the rows
   judged against CASA's own time. The #648 results table records the
   accepted figures and their exceptions.
 
@@ -454,7 +469,7 @@ sandboxes on Apple silicon; a skip is not evidence that a Metal workload ran.
 (`casa_imaging_runtime::admit`), and an owner that changes what it keeps
 adds a counting law: a test that runs the owner and asserts its measured
 allocation stays within the bytes it charges (for example
-`the_batch_source_holds_at_most_its_charge` in `casa-imaging-application`).
+`the_batch_source_holds_at_most_its_charge` in `casa-imaging`).
 The allocator counts the whole process, so a law in a binary with other
 tests first calls the binary's `alone`, which reruns the law in a process of
 its own, as nextest runs every test. At T2, a run's peak footprint must stay

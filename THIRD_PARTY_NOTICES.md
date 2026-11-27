@@ -30,7 +30,7 @@ the official-release archive does not cover a different installation.
 
 ## ATM
 
-`crates/casa-atmosphere` is a Rust port of ATM, the atmospheric transmission
+`libs/casa/casa-atmosphere` is a Rust port of ATM, the atmospheric transmission
 model distributed with CASA (`casatools/src/code/atmosphere/ATM`, ATM 1.0.0),
 Copyright (c) Instituto de Estructura de la Materia (IEM-CSIC), J. R. Pardo
 et al., in the framework of the ALMA collaboration. ATM is available under
@@ -43,7 +43,7 @@ kept in each ported file. The ATM sources are part of CASA, available from
 
 ## CFITSIO
 
-`crates/casa-images` reads and writes FITS through the `fitsio` crate with
+`libs/casacore/casa-images` and `libs/casa/casa-imageanalysis` read and write FITS through the `fitsio` crate with
 its `fitsio-src` feature, which compiles the CFITSIO 3.49 sources bundled
 in `fitsio-sys` (with that crate's three build patches) into casa-rs
 binaries and Python extensions. CFITSIO is from NASA's HEASARC

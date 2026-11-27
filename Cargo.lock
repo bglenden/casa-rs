@@ -221,7 +221,7 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 name = "casa-aipsio"
 version = "0.27.0"
 dependencies = [
- "casa-values",
+ "casa-core",
  "ndarray",
  "thiserror",
 ]
@@ -243,24 +243,24 @@ dependencies = [
  "casa-atmosphere",
  "casa-components",
  "casa-coordinates",
+ "casa-core",
  "casa-fft",
+ "casa-flagging",
+ "casa-imageanalysis",
  "casa-images",
  "casa-imaging-model",
  "casa-imaging-operator",
  "casa-imaging-runtime",
  "casa-imaging-singledish",
  "casa-lattices",
- "casa-logging",
- "casa-measures-data",
+ "casa-measures",
  "casa-ms",
+ "casa-mstransform",
  "casa-numerics",
  "casa-observation",
- "casa-provider-contracts",
  "casa-simulation",
  "casa-tables",
- "casa-task-runtime",
  "casa-test-support",
- "casa-types",
  "csv-core",
  "flate2",
  "libc",
@@ -283,9 +283,9 @@ dependencies = [
 name = "casa-components"
 version = "0.27.0"
 dependencies = [
+ "casa-core",
+ "casa-measures",
  "casa-tables",
- "casa-test-support",
- "casa-types",
  "complex-bessel",
  "libm",
  "ndarray",
@@ -296,12 +296,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "casa-contracts"
+version = "0.27.0"
+dependencies = [
+ "casa-core",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "casa-coordinates"
 version = "0.27.0"
 dependencies = [
- "casa-types",
+ "casa-core",
  "ndarray",
  "thiserror",
+]
+
+[[package]]
+name = "casa-core"
+version = "0.27.0"
+dependencies = [
+ "criterion",
+ "ndarray",
+ "num-complex",
+ "serde_json",
+ "sofars",
+ "time",
+ "tracing",
+]
+
+[[package]]
+name = "casa-dev-tools"
+version = "0.27.0"
+dependencies = [
+ "casa-core",
+ "casa-measures",
+ "casa-ms",
+ "casa-simulation",
+ "casa-tables",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -313,23 +354,57 @@ dependencies = [
 ]
 
 [[package]]
-name = "casa-images"
+name = "casa-flagging"
+version = "0.27.0"
+dependencies = [
+ "casa-components",
+ "casa-core",
+ "casa-ms",
+ "casa-numerics",
+ "casa-tables",
+ "casa-test-support",
+ "libc",
+ "ndarray",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "casa-imageanalysis"
 version = "0.27.0"
 dependencies = [
  "casa-components",
  "casa-coordinates",
+ "casa-core",
  "casa-fft",
+ "casa-images",
  "casa-lattices",
  "casa-numerics",
- "casa-provider-contracts",
  "casa-tables",
- "casa-task-runtime",
- "casa-test-support",
- "casa-types",
  "fitsio",
  "ndarray",
  "num-complex",
  "schemars",
+ "serde",
+ "tempfile",
+]
+
+[[package]]
+name = "casa-images"
+version = "0.27.0"
+dependencies = [
+ "casa-coordinates",
+ "casa-core",
+ "casa-lattices",
+ "casa-numerics",
+ "casa-tables",
+ "fitsio",
+ "ndarray",
+ "num-complex",
  "serde",
  "serde_json",
  "tempfile",
@@ -337,11 +412,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "casa-imaging-application"
+name = "casa-imaging"
 version = "0.27.0"
 dependencies = [
  "base64",
  "casa-coordinates",
+ "casa-core",
+ "casa-imageanalysis",
  "casa-images",
  "casa-imaging-deconvolution",
  "casa-imaging-metal",
@@ -351,14 +428,12 @@ dependencies = [
  "casa-imaging-runtime",
  "casa-imaging-singledish",
  "casa-ms",
+ "casa-mstransform",
  "casa-numerics",
  "casa-observation",
- "casa-provider-contracts",
  "casa-simulation",
  "casa-tables",
- "casa-task-runtime",
  "casa-test-support",
- "casa-types",
  "flate2",
  "ndarray",
  "num-complex",
@@ -379,10 +454,10 @@ version = "0.27.0"
 dependencies = [
  "bytemuck",
  "casa-coordinates",
+ "casa-core",
  "casa-fft",
  "casa-imaging-model",
  "casa-numerics",
- "casa-types",
  "libm",
  "ndarray",
  "num-complex",
@@ -395,10 +470,10 @@ dependencies = [
 name = "casa-imaging-metal"
 version = "0.27.0"
 dependencies = [
+ "casa-core",
  "casa-imaging-model",
  "casa-imaging-operator",
  "casa-numerics",
- "casa-types",
  "ndarray",
  "num-complex",
  "objc2",
@@ -412,8 +487,8 @@ name = "casa-imaging-model"
 version = "0.27.0"
 dependencies = [
  "casa-coordinates",
+ "casa-core",
  "casa-observation",
- "casa-types",
  "ndarray",
  "num-complex",
  "thiserror",
@@ -424,11 +499,11 @@ name = "casa-imaging-operator"
 version = "0.27.0"
 dependencies = [
  "casa-coordinates",
+ "casa-core",
  "casa-fft",
  "casa-images",
  "casa-imaging-model",
  "casa-numerics",
- "casa-types",
  "ndarray",
  "num-complex",
  "num-traits",
@@ -442,13 +517,12 @@ name = "casa-imaging-products"
 version = "0.27.0"
 dependencies = [
  "casa-coordinates",
+ "casa-core",
  "casa-fft",
  "casa-images",
  "casa-imaging-deconvolution",
  "casa-imaging-model",
  "casa-numerics",
- "casa-test-support",
- "casa-types",
  "libc",
  "ndarray",
  "num-complex",
@@ -461,6 +535,7 @@ dependencies = [
 name = "casa-imaging-runtime"
 version = "0.27.0"
 dependencies = [
+ "casa-core",
  "casa-imaging-deconvolution",
  "casa-imaging-metal",
  "casa-imaging-model",
@@ -469,7 +544,6 @@ dependencies = [
  "casa-lattices",
  "casa-ms",
  "casa-tables",
- "casa-types",
  "fs2",
  "libc",
  "ndarray",
@@ -502,8 +576,8 @@ dependencies = [
 name = "casa-lattices"
 version = "0.27.0"
 dependencies = [
+ "casa-core",
  "casa-tables",
- "casa-types",
  "crossbeam-channel",
  "ndarray",
  "ndarray-stats",
@@ -515,23 +589,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "casa-logging"
+name = "casa-measures"
 version = "0.27.0"
 dependencies = [
+ "casa-core",
  "casa-tables",
- "casa-types",
- "tempfile",
- "thiserror",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "casa-measures-data"
-version = "0.27.0"
-dependencies = [
- "casa-tables",
- "casa-types",
  "flate2",
  "serde",
  "serde_json",
@@ -539,18 +601,8 @@ dependencies = [
  "tar",
  "tempfile",
  "thiserror",
- "ureq",
-]
-
-[[package]]
-name = "casa-measures-tools"
-version = "0.27.0"
-dependencies = [
- "casa-measures-data",
- "flate2",
- "serde_json",
- "tar",
  "time",
+ "ureq",
 ]
 
 [[package]]
@@ -558,27 +610,22 @@ name = "casa-ms"
 version = "0.27.0"
 dependencies = [
  "bytemuck",
- "casa-atmosphere",
- "casa-components",
  "casa-coordinates",
- "casa-fft",
- "casa-logging",
- "casa-measures-data",
+ "casa-core",
+ "casa-measures",
  "casa-numerics",
  "casa-observation",
- "casa-provider-contracts",
  "casa-simulation",
  "casa-tables",
- "casa-task-runtime",
  "casa-test-support",
- "casa-types",
  "fancy-regex",
+ "fitsio",
  "flate2",
  "libc",
- "libm",
  "ndarray",
  "num-complex",
  "quick-xml",
+ "rayon",
  "regex",
  "schemars",
  "serde",
@@ -594,6 +641,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "casa-mstransform"
+version = "0.27.0"
+dependencies = [
+ "casa-coordinates",
+ "casa-core",
+ "casa-fft",
+ "casa-flagging",
+ "casa-measures",
+ "casa-ms",
+ "casa-numerics",
+ "casa-observation",
+ "casa-simulation",
+ "casa-tables",
+ "casa-test-support",
+ "fitsio",
+ "flate2",
+ "ndarray",
+ "num-complex",
+ "rayon",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tar",
+ "tempfile",
+ "thiserror",
+ "tracing",
+ "zarrs",
+]
+
+[[package]]
 name = "casa-numerics"
 version = "0.27.0"
 dependencies = [
@@ -606,21 +684,80 @@ dependencies = [
 name = "casa-observation"
 version = "0.27.0"
 dependencies = [
- "casa-types",
+ "casa-core",
  "ndarray",
  "num-complex",
  "thiserror",
 ]
 
 [[package]]
-name = "casa-provider-contracts"
+name = "casa-parity"
 version = "0.27.0"
 dependencies = [
- "casa-types",
+ "casa-components",
+ "casa-coordinates",
+ "casa-core",
+ "casa-imageanalysis",
+ "casa-images",
+ "casa-imaging",
+ "casa-imaging-model",
+ "casa-lattices",
+ "casa-ms",
+ "casa-tables",
+ "casa-test-support",
+ "ndarray",
+ "num-complex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
+name = "casa-perf-suite"
+version = "0.27.0"
+dependencies = [
+ "casa-coordinates",
+ "casa-core",
+ "casa-images",
+ "casa-lattices",
+ "casa-measures",
+ "casa-ms",
+ "casa-tables",
+ "casa-test-support",
+ "ndarray",
+ "pkg-config",
+ "tempfile",
+]
+
+[[package]]
+name = "casa-plot-data"
+version = "0.27.0"
+dependencies = [
+ "casa-atmosphere",
+ "casa-calibration",
+ "casa-components",
+ "casa-coordinates",
+ "casa-core",
+ "casa-images",
+ "casa-imaging-products",
+ "casa-imaging-runtime",
+ "casa-measures",
+ "casa-ms",
+ "casa-mstransform",
+ "casa-simulation",
+ "casa-tables",
+ "casa-test-support",
+ "flate2",
+ "ndarray",
+ "num-complex",
  "schemars",
  "serde",
  "serde_json",
+ "tar",
  "tempfile",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]
@@ -631,23 +768,24 @@ dependencies = [
  "casa-calibration",
  "casa-components",
  "casa-coordinates",
+ "casa-core",
  "casa-fft",
+ "casa-flagging",
+ "casa-imageanalysis",
  "casa-images",
- "casa-imaging-application",
+ "casa-imaging",
  "casa-imaging-model",
  "casa-imaging-operator",
  "casa-imaging-products",
  "casa-imaging-runtime",
  "casa-imaging-singledish",
  "casa-lattices",
- "casa-logging",
+ "casa-measures",
  "casa-ms",
+ "casa-mstransform",
  "casa-numerics",
- "casa-provider-contracts",
  "casa-tables",
- "casa-task-runtime",
  "casa-test-support",
- "casa-types",
  "flate2",
  "ndarray",
  "num-complex",
@@ -667,7 +805,7 @@ name = "casa-tables"
 version = "0.27.0"
 dependencies = [
  "casa-aipsio",
- "casa-types",
+ "casa-core",
  "criterion",
  "flate2",
  "libc",
@@ -680,23 +818,46 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
-name = "casa-task-runtime"
+name = "casa-tasks"
 version = "0.27.0"
 dependencies = [
- "casa-logging",
- "casa-provider-contracts",
- "casa-types",
+ "casa-atmosphere",
+ "casa-calibration",
+ "casa-components",
+ "casa-contracts",
+ "casa-core",
+ "casa-flagging",
+ "casa-imageanalysis",
+ "casa-images",
+ "casa-imaging",
+ "casa-imaging-deconvolution",
+ "casa-lattices",
+ "casa-measures",
+ "casa-ms",
+ "casa-mstransform",
+ "casa-numerics",
+ "casa-observation",
+ "casa-plot-data",
+ "casa-simulation",
+ "casa-tables",
+ "casa-test-support",
+ "casa-vla",
  "fs2",
+ "ndarray",
+ "num-complex",
  "schemars",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror",
+ "time",
  "toml",
  "tracing",
+ "ureq",
 ]
 
 [[package]]
@@ -705,13 +866,11 @@ version = "0.27.0"
 dependencies = [
  "casa-aipsio",
  "casa-coordinates",
+ "casa-core",
  "casa-images",
  "casa-lattices",
- "casa-logging",
- "casa-measures-data",
- "casa-ms",
+ "casa-measures",
  "casa-tables",
- "casa-types",
  "cc",
  "libc",
  "ndarray",
@@ -722,40 +881,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "casa-types"
-version = "0.27.0"
-dependencies = [
- "casa-values",
- "criterion",
- "ndarray",
- "serde_json",
- "sofars",
- "time",
- "tracing",
-]
-
-[[package]]
-name = "casa-values"
-version = "0.27.0"
-dependencies = [
- "ndarray",
- "num-complex",
-]
-
-[[package]]
 name = "casa-vla"
 version = "0.27.0"
 dependencies = [
- "casa-logging",
- "casa-measures-data",
+ "casa-core",
+ "casa-flagging",
+ "casa-measures",
  "casa-ms",
- "casa-provider-contracts",
+ "casa-mstransform",
  "casa-tables",
- "casa-task-runtime",
- "casa-test-support",
- "casa-types",
  "ndarray",
- "pkg-config",
  "schemars",
  "serde",
  "serde_json",
@@ -765,90 +900,92 @@ dependencies = [
 ]
 
 [[package]]
-name = "casars-imager"
+name = "casacore-interop"
+version = "0.27.0"
+dependencies = [
+ "casa-aipsio",
+ "casa-components",
+ "casa-coordinates",
+ "casa-core",
+ "casa-images",
+ "casa-imaging-deconvolution",
+ "casa-imaging-model",
+ "casa-imaging-products",
+ "casa-lattices",
+ "casa-measures",
+ "casa-ms",
+ "casa-observation",
+ "casa-tables",
+ "casa-test-support",
+ "casa-vla",
+ "ndarray",
+ "num-complex",
+ "pkg-config",
+ "serde_json",
+ "sofars",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
+name = "casars-cli"
 version = "0.27.0"
 dependencies = [
  "base64",
+ "casa-calibration",
+ "casa-contracts",
  "casa-coordinates",
+ "casa-core",
+ "casa-flagging",
+ "casa-imageanalysis",
  "casa-images",
- "casa-imaging-application",
+ "casa-imaging",
  "casa-imaging-deconvolution",
- "casa-logging",
+ "casa-lattices",
+ "casa-measures",
  "casa-ms",
+ "casa-mstransform",
  "casa-numerics",
- "casa-provider-contracts",
+ "casa-plot-data",
  "casa-simulation",
  "casa-tables",
- "casa-task-runtime",
+ "casa-tasks",
  "casa-test-support",
- "casa-types",
+ "fitsio",
  "flate2",
  "libc",
  "ndarray",
  "schemars",
  "serde",
  "serde_json",
- "serde_path_to_error",
- "tempfile",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "casars-imexplore"
-version = "0.27.0"
-dependencies = [
- "casa-coordinates",
- "casa-images",
- "casa-provider-contracts",
- "casa-task-runtime",
- "casa-types",
- "ndarray",
- "serde_json",
- "tempfile",
- "tracing",
-]
-
-[[package]]
-name = "casars-msconvert"
-version = "0.27.0"
-dependencies = [
- "casa-ms",
- "casa-observation",
- "casa-provider-contracts",
- "casa-task-runtime",
- "casa-types",
- "flate2",
- "schemars",
- "serde",
- "serde_json",
  "tar",
  "tempfile",
+ "thiserror",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
 name = "casars-python"
 version = "0.27.0"
 dependencies = [
- "casa-aipsio",
  "casa-atmosphere",
  "casa-calibration",
  "casa-components",
+ "casa-contracts",
  "casa-coordinates",
+ "casa-core",
+ "casa-flagging",
+ "casa-imageanalysis",
  "casa-images",
  "casa-lattices",
- "casa-measures-data",
+ "casa-measures",
  "casa-ms",
- "casa-provider-contracts",
+ "casa-mstransform",
+ "casa-plot-data",
  "casa-simulation",
  "casa-tables",
- "casa-task-runtime",
- "casa-types",
- "casa-vla",
- "casars-imager",
- "casars-msconvert",
- "casars-simulation",
+ "casa-tasks",
  "libc",
  "ndarray",
  "num-complex",
@@ -860,25 +997,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
-]
-
-[[package]]
-name = "casars-simulation"
-version = "0.27.0"
-dependencies = [
- "casa-calibration",
- "casa-components",
- "casa-measures-data",
- "casa-ms",
- "casa-provider-contracts",
- "casa-simulation",
- "casa-tables",
- "casa-task-runtime",
- "casa-types",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2622,6 +2742,16 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
+ "sha2-asm",
+]
+
+[[package]]
+name = "sha2-asm"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b845214d6175804686b2bd482bcffe96651bb2d1200742b712003504a2dac1ab"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
