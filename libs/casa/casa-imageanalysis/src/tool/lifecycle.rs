@@ -6,25 +6,9 @@ use std::path::{Path, PathBuf};
 
 use casa_images::ImagePixelType;
 
-use super::attachment::{
-    AttachedImage, ExternalPathCheck, remove_file as remove_registered_file, remove_image_path,
-};
+use super::attachment::{AttachedImage, ExternalPathCheck};
 use super::error::{ImageToolError, ImageToolResult, ToolLogLine};
-use super::handle::{ImageHandle, Storage, with_pixels};
-
-fn save_if_writable(attached: &AttachedImage, image: &mut ImageHandle) -> ImageToolResult<()> {
-    if attached.is_read_only() || image.read_only_file_type().is_some() {
-        return Ok(());
-    }
-    let writable = with_pixels!(&*image, storage => match storage {
-        Storage::Paged(paged) => paged.is_writable(),
-        Storage::Temp { .. } => true,
-    });
-    if writable {
-        image.save()?;
-    }
-    Ok(())
-}
+use super::locking::unlock_image;
 
 /// Pure-Rust stateful image tool matching CASA `casac.image` session semantics.
 #[derive(Default)]
@@ -217,9 +201,7 @@ impl ImageToolState {
     /// Detaches and flushes the attached image (`close`).
     pub fn close(&mut self) -> ImageToolResult<bool> {
         if let Some(attached) = self.image.take() {
-            let mut image = attached.lock();
-            save_if_writable(&attached, &mut image)?;
-            let _ = image.unlock_storage();
+            unlock_image(&attached)?;
         }
         Ok(true)
     }
@@ -237,9 +219,7 @@ impl ImageToolState {
                 let removed = attached.remove_registered(is_external_open)?;
                 logs.push(ToolLogLine::info(format!("deleted table {removed}")));
             } else {
-                let mut image = attached.lock();
-                save_if_writable(&attached, &mut image)?;
-                let _ = image.unlock_storage();
+                unlock_image(&attached)?;
             }
             if verbose {
                 logs.push(ToolLogLine::info("Image tool closed."));
@@ -262,37 +242,6 @@ impl ImageToolState {
         };
         let removed = attached.remove_registered(is_external_open)?;
         Ok(vec![ToolLogLine::info(format!("deleted table {removed}"))])
-    }
-
-    /// Removes an arbitrary image path from disk via `OpenImages`-checked table deletion.
-    pub fn remove_path(
-        file: &Path,
-        force: bool,
-        is_external_open: ExternalPathCheck<'_>,
-    ) -> ImageToolResult<Vec<ToolLogLine>> {
-        if file.is_dir() {
-            if remove_registered_file(file, is_external_open)? {
-                return Ok(vec![ToolLogLine::info(format!(
-                    "Removed {}",
-                    file.display()
-                ))]);
-            }
-            return Err(ImageToolError::new(format!(
-                "{} does not exist or is not a table.",
-                file.display()
-            )));
-        }
-        if !force && is_external_open(file) {
-            return Err(ImageToolError::new(format!(
-                "Cannot remove {}: file is currently open in a table tool.",
-                file.display()
-            )));
-        }
-        remove_image_path(file)?;
-        Ok(vec![ToolLogLine::info(format!(
-            "Removed {}",
-            file.display()
-        ))])
     }
 
     /// Returns the image name/path (`name`), optionally stripped of directory prefix (`strippath`).

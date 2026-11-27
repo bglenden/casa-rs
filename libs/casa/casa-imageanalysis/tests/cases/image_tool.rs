@@ -34,11 +34,11 @@ use casa_imageanalysis::tool::ops_edit::{add_noise, set_pixels_and_mask};
 use casa_imageanalysis::tool::ops_fit::{bounding_box, histograms};
 use casa_imageanalysis::tool::ops_spatial::{crop_image, pad_image};
 use casa_imageanalysis::tool::ops_transform::{collapse_image, regrid_attached, smooth_axis};
-use casa_imageanalysis::tool::pixels::{GetChunkRequest, PixelChunk, get_chunk, put_chunk};
+use casa_imageanalysis::tool::pixels::{ChunkData, PixelChunk, read_chunk_casa, write_chunk_casa};
 use casa_imageanalysis::tool::point::{PixelScalar, pixel_value_casa};
-use casa_imageanalysis::tool::region_read::{GetRegionRequest, get_region};
+use casa_imageanalysis::tool::region_read::read_region_casa;
 use casa_imageanalysis::tool::serialization::{image_from_record, image_to_record};
-use casa_imageanalysis::tool::slice::{GetSliceRequest, extract_slice};
+use casa_imageanalysis::tool::slice::{SliceRecordResult, get_slice_attached};
 use casa_imageanalysis::tool::statistics::{StatisticsRequest, image_statistics};
 use casa_imageanalysis::tool::subimage::{SubimageRequest, extract_subimage};
 use casa_imageanalysis::tool::summary::{SummaryOptions, summarize_image};
@@ -221,47 +221,36 @@ fn pure_rust_image_tool_chunks_stats_and_masks() {
     let dir = tempfile::tempdir().unwrap();
     let (img_path, data, _state, attached) = create_test_cube(dir.path(), "base.im");
 
-    // Chunks, region read, slice, masks, boundingbox, histograms, stats
-    let chunk = get_chunk(
-        &attached,
-        &GetChunkRequest {
-            blc: vec![0, 0, 0, 0],
-            trc: vec![3, 3, 0, 0],
-            dropdeg: true,
-            getmask: true,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    assert_eq!(chunk.pixels.shape(), &[4, 4]);
-    let slice = extract_slice(
-        &attached,
-        &GetSliceRequest {
-            x: &[0.0, 7.0],
-            y: &[0.0, 7.0],
-            coord: &[0, 0, 0, 0],
-            method: "linear",
-            npts: 8,
-            mask: None,
-        },
-    )
-    .unwrap();
-    assert_eq!(slice.pixel.len(), 8);
+    let chunk = read_chunk_casa(&attached, &[0; 4], &[3, 3, 0, 0], &[], &[], true, true).unwrap();
+    let ChunkData::Bools { shape, values } = chunk else {
+        panic!("expected mask chunk");
+    };
+    assert_eq!(shape, [4, 4]);
+    assert_eq!(values, [true; 16]);
 
-    let reg = get_region(
+    let slice = get_slice_attached(
         &attached,
-        &GetRegionRequest {
-            region: None,
-            axes: None,
-            mask: None,
-            list: false,
-            dropdeg: false,
-            getmask: true,
-            stretch: false,
-        },
+        &[0.0, 7.0],
+        &[0.0, 7.0],
+        [0, 1],
+        &[0; 4],
+        8,
+        casa_images::RegridMethod::Linear,
     )
     .unwrap();
-    assert_eq!(reg.pixels.shape(), &[8, 8, 1, 4]);
+    let SliceRecordResult::Float { slice, .. } = slice else {
+        panic!("expected float slice");
+    };
+    assert_eq!(slice.pixels, [1.0, 4.0, 7.0, 10.0, 13.0, 16.0, 19.0, 22.0]);
+    assert_eq!(slice.positions[3], [3.0, 3.0]);
+
+    let (reg, _) = read_region_casa(&attached, None, &[3], "", false, false, false, false).unwrap();
+    let ChunkData::Floats { shape, values } = reg else {
+        panic!("expected region pixels");
+    };
+    assert_eq!(shape, [8, 8, 1, 1]);
+    assert_eq!(values[0], 5.5);
+    assert_eq!(values[63], 26.5);
 
     let bounds = bounding_box(&attached, None).unwrap();
     assert_eq!(bounds.image_shape, vec![8, 8, 1, 4]);
@@ -310,41 +299,37 @@ fn pure_rust_image_tool_chunks_stats_and_masks() {
     .unwrap();
     assert!((stats.npts.iter().sum::<f64>() - 256.0).abs() < 1e-6);
 
-    // Mask expression, put_chunk read-back, and mask handler
+    // Mask expression, chunk read-back, and mask handler
     let mask_expr = format!("'{}' > 2.0", img_path.display());
     assert!(calc_mask(&attached, &mask_expr, "m1", true, true).unwrap());
     let masks = mask_handler_casa(&attached, "get", &[], false).unwrap();
     assert_eq!(masks, vec!["m1".to_owned()]);
 
     let scaled = data.mapv(|v| v * 2.0);
-    put_chunk(
+    write_chunk_casa(
         &attached,
-        &PixelChunk::Float(scaled.clone()),
-        &[0, 0, 0, 0],
-        &[1, 1, 1, 1],
+        PixelChunk::Float(scaled.clone()),
+        &[0; 4],
+        &[1; 4],
         false,
         false,
-        true,
+        None,
     )
     .unwrap();
-    let read_back = get_chunk(
-        &attached,
-        &GetChunkRequest {
-            getmask: true,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    match read_back.pixels {
-        PixelChunk::Float(arr) => {
-            assert!((arr[[0, 0, 0, 0]] - scaled[[0, 0, 0, 0]]).abs() < 1e-5);
-            assert!((arr[[3, 2, 0, 1]] - scaled[[3, 2, 0, 1]]).abs() < 1e-5);
-        }
-        other => panic!("expected Float chunk, got {other:?}"),
-    }
-    let read_mask = read_back.mask.expect("mask returned");
-    assert!(!read_mask[[0, 0, 0, 0]]);
-    assert!(read_mask[[7, 7, 0, 3]]);
+    let read_back = read_chunk_casa(&attached, &[], &[], &[], &[], false, false).unwrap();
+    let ChunkData::Floats { shape, values } = read_back else {
+        panic!("expected float chunk");
+    };
+    assert_eq!(shape, [8, 8, 1, 4]);
+    assert_eq!(values[0], f64::from(scaled[[0, 0, 0, 0]]));
+    assert_eq!(values[3 + 2 * 8 + 64], f64::from(scaled[[3, 2, 0, 1]]));
+
+    let mask = read_chunk_casa(&attached, &[], &[], &[], &[], false, true).unwrap();
+    let ChunkData::Bools { values, .. } = mask else {
+        panic!("expected mask chunk");
+    };
+    assert!(!values[0]);
+    assert!(values[255]);
 }
 
 #[test]
@@ -1159,8 +1144,8 @@ fn fitting_and_profile_ops_run_without_python() {
         ReadProfileOptions,
     };
     use casa_imageanalysis::tool::ops_fit::{
-        FitComponentsRequest, FitProfileRequest, ProfileData, ProfileSigmaInput, fit_components,
-        fit_profile, get_profile,
+        FitComponentsHistory, FitComponentsRequest, FitProfileRequest, ProfileData,
+        ProfileSigmaInput, fit_components, fit_profile, get_profile,
     };
 
     let dir = tempfile::tempdir().unwrap();
@@ -1204,10 +1189,16 @@ fn fitting_and_profile_ops_run_without_python() {
             complist: "",
             summary: "",
             overwrite: true,
-            zero_level: None,
+            fit_zero_level: false,
+            zero_level: (0.0, false),
             rms: None,
             noise_fwhm: None,
-            history_call: "ia.fitcomponents()".into(),
+            history: FitComponentsHistory {
+                region: "[]",
+                channels: "4",
+                rms: r#""""#,
+                noise_fwhm: r#""""#,
+            },
             record_history: false,
         },
         &no_external_open,
@@ -1261,7 +1252,7 @@ fn fitting_and_profile_ops_run_without_python() {
             logfile: "",
             append: true,
             log_details: false,
-            history_call: "ia.fitprofile()".into(),
+            region_history: "{}",
             record_history: false,
         },
         &no_external_open,
@@ -1316,14 +1307,14 @@ fn published_on_disk_images_stay_registered_and_support_rename_and_remove_refusa
     assert!(renamed_path.join("table.dat").is_file());
     assert_eq!(state.casa_name(true).unwrap(), "shape_renamed.im");
     let att_after = state.detach().unwrap();
-    put_chunk(
+    write_chunk_casa(
         &att_after,
-        &PixelChunk::Float(ArrayD::from_elem(IxDyn(&[4, 4, 1, 1]), 3.5)),
+        PixelChunk::Float(ArrayD::from_elem(IxDyn(&[4, 4, 1, 1]), 3.5)),
         &[0, 0, 0, 0],
         &[1, 1, 1, 1],
         false,
         false,
-        false,
+        None,
     )
     .unwrap();
     drop(att_after);
