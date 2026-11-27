@@ -2,12 +2,13 @@
 //! The MSv4 profile's metadata conventions: measure attributes, string
 //! coordinates and the data-group record.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use casa_core::measures::direction::DirectionRef;
-use casa_core::measures::frequency::FrequencyRef;
+use casa_core::measures::frequency::{FrequencyRef, MFrequency};
 use casa_core::measures::{EpochRef, MjdHighPrec};
-use casa_observation::{ObservationError, VisibilityUnits};
+use casa_observation::{ObservationError, PartitionEntry, VisibilityUnits};
 use serde_json::{Map, Value};
 use zarrs::array::{Array, ArrayMetadata, ArraySubset};
 use zarrs::filesystem::FilesystemStore;
@@ -18,6 +19,58 @@ pub(crate) const SCHEMA_VERSION: &str = "4.0.1";
 
 /// MJD of the Unix epoch, the origin of `format: unix` times.
 pub(crate) const UNIX_EPOCH_MJD: f64 = 40_587.0;
+
+/// The metadata that all datasets of one spectral window must share.
+#[derive(Debug)]
+pub(super) struct WindowMetadata<'a> {
+    frequencies_hz: Cow<'a, [f64]>,
+    frame: FrequencyRef,
+    channel_width_hz: f64,
+    reference: Option<(f64, FrequencyRef)>,
+}
+
+impl<'a> WindowMetadata<'a> {
+    pub(super) fn new(
+        partition: &'a PartitionEntry,
+        channel_width_hz: f64,
+        reference: Option<&MFrequency>,
+    ) -> Self {
+        Self {
+            frequencies_hz: Cow::Borrowed(&partition.frequencies_hz),
+            frame: partition.frequency_frame,
+            channel_width_hz,
+            reference: reference.map(|frequency| (frequency.hz(), frequency.refer())),
+        }
+    }
+
+    /// Keep one channel axis per name across writer declarations.
+    pub(super) fn into_owned(self) -> WindowMetadata<'static> {
+        WindowMetadata {
+            frequencies_hz: Cow::Owned(self.frequencies_hz.into_owned()),
+            frame: self.frame,
+            channel_width_hz: self.channel_width_hz,
+            reference: self.reference,
+        }
+    }
+
+    /// Compare the values in stored order, with signed zeros equal.
+    pub(super) fn conflict(&self, other: &WindowMetadata<'_>, name: &str) -> Option<String> {
+        let attribute = if self.reference != other.reference {
+            "reference_frequency"
+        } else if self.frame != other.frame {
+            "frequency observer"
+        } else if self.channel_width_hz != other.channel_width_hz {
+            "channel_width"
+        } else if self.frequencies_hz.as_ref() != other.frequencies_hz.as_ref() {
+            "channel frequencies"
+        } else {
+            return None;
+        };
+        Some(format!(
+            "spectral window {name:?} has conflicting {attribute}"
+        ))
+    }
+}
 
 pub(crate) fn invalid(reason: impl Into<String>) -> ObservationError {
     ObservationError::InvalidStore {

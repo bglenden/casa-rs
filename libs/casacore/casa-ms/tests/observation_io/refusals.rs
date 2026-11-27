@@ -401,6 +401,11 @@ fn shared_msv4_window_conflicts_are_refused_by_name() {
             64_000_000.0.into(),
             "channel_width",
         ),
+        (
+            "/attributes/channel_width/data",
+            (-128_000_000.0).into(),
+            "channel_width",
+        ),
         ("/attributes/observer", "TOPO".into(), "observer"),
     ] {
         let root = tempfile::tempdir().expect("root");
@@ -416,15 +421,67 @@ fn shared_msv4_window_conflicts_are_refused_by_name() {
 fn shared_msv4_window_channel_centres_must_agree() {
     let root = tempfile::tempdir().expect("root");
     let (store, _) = shared_msv4_window(root.path());
-    let zarr = Arc::new(FilesystemStore::new(&store).expect("store"));
-    let frequency = Array::open(zarr, "/ms_trial_1/frequency").expect("frequency");
+    edit_first_channel(&store, "ms_trial_1", |hz| hz + 1.0);
+    assert_msv4_window_conflict(&store, "channel frequencies");
+}
+
+fn edit_first_channel(store: &Path, dataset: &str, edit: impl FnOnce(f64) -> f64) {
+    let zarr = Arc::new(FilesystemStore::new(store).expect("store"));
+    let frequency = Array::open(zarr, &format!("/{dataset}/frequency")).expect("frequency");
     let subset = ArraySubset::new_with_shape(frequency.shape().to_vec());
     let mut channels: Vec<f64> = frequency.retrieve_array_subset(&subset).expect("channels");
-    channels[0] += 1.0;
+    channels[0] = edit(channels[0]);
     frequency
         .store_array_subset(&subset, &channels)
-        .expect("shifted channel");
-    assert_msv4_window_conflict(&store, "channel frequencies");
+        .expect("edited channel");
+}
+
+#[test]
+fn shared_msv4_window_accepts_signed_zero_channel_centres() {
+    let root = tempfile::tempdir().expect("root");
+    let (store, _) = shared_msv4_window(root.path());
+    for (dataset, hz) in [("ms_trial_0", 0.0), ("ms_trial_1", -0.0)] {
+        edit_first_channel(&store, dataset, |_| hz);
+    }
+    let opened = Msv4Observation::open(store).expect("signed zeros agree");
+    let catalogue = opened.catalogue();
+    assert_eq!(catalogue.windows.len(), 1);
+    assert_eq!(
+        catalogue.partitions[0].frequencies_hz[0].to_bits(),
+        0.0_f64.to_bits()
+    );
+    assert_eq!(
+        catalogue.partitions[1].frequencies_hz[0].to_bits(),
+        (-0.0_f64).to_bits()
+    );
+}
+
+#[test]
+fn shared_msv4_window_accepts_signed_zero_reference_frequencies() {
+    let root = tempfile::tempdir().expect("root");
+    let (store, _) = shared_msv4_window(root.path());
+    for (dataset, hz) in [("ms_trial_0", 0.0_f64), ("ms_trial_1", -0.0_f64)] {
+        let frequency = store.join(dataset).join("frequency/zarr.json");
+        edit_json(&frequency, |metadata| {
+            metadata["attributes"]["reference_frequency"]["data"] = hz.into();
+        });
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(frequency).unwrap()).unwrap();
+        let stated = metadata["attributes"]["reference_frequency"]["data"]
+            .as_f64()
+            .unwrap();
+        assert_eq!(stated.to_bits(), hz.to_bits());
+    }
+    let opened = Msv4Observation::open(store).expect("signed zeros agree");
+    let catalogue = opened.catalogue();
+    assert_eq!(catalogue.partitions.len(), 2);
+    assert_eq!(catalogue.windows.len(), 1);
+    let reference = catalogue.windows[0]
+        .reference_frequency
+        .as_ref()
+        .expect("reference");
+    assert_eq!(reference.hz(), 0.0);
+    assert_eq!(reference.refer(), FrequencyRef::LSRK);
 }
 
 #[test]

@@ -27,8 +27,8 @@ use super::cursor::Msv4Cursor;
 use super::ephemeris;
 use super::held;
 use super::metadata::{
-    DataGroupRecord, SCHEMA_VERSION, data_groups, direction_frame, frequency_frame, has_node,
-    invalid, numbers, open_array, require_layout, require_units, storage, strings, text,
+    DataGroupRecord, SCHEMA_VERSION, WindowMetadata, data_groups, direction_frame, frequency_frame,
+    has_node, invalid, numbers, open_array, require_layout, require_units, storage, strings, text,
     time_reference, visibility_units,
 };
 use super::opening;
@@ -544,36 +544,18 @@ impl Msv4Observation {
             .zip(&self.catalogue.partitions)
             .find(|(_, partition)| partition.window == window)
             .expect("an earlier dataset opened the window");
-        let reference = |window: &WindowEntry| {
-            window
-                .reference_frequency
-                .as_ref()
-                .map(|frequency| (frequency.hz().to_bits(), frequency.refer()))
-        };
-        let conflict = if reference(&windows[index]) != reference(&entry) {
-            Some("reference_frequency")
-        } else if previous.frequency_frame != partition.frequency_frame {
-            Some("frequency observer")
-        } else if dataset.channel_width_hz.to_bits() != channel_width_hz.to_bits() {
-            Some("channel_width")
-        } else if !previous
-            .frequencies_hz
-            .iter()
-            .map(|frequency| frequency.to_bits())
-            .eq(partition
-                .frequencies_hz
-                .iter()
-                .map(|frequency| frequency.to_bits()))
-        {
-            Some("channel frequencies")
-        } else {
-            None
-        };
-        if let Some(attribute) = conflict {
-            return Err(invalid(format!(
-                "spectral window {:?} has conflicting {attribute}",
-                entry.name
-            )));
+        let known = WindowMetadata::new(
+            previous,
+            dataset.channel_width_hz,
+            windows[index].reference_frequency.as_ref(),
+        );
+        let proposed = WindowMetadata::new(
+            partition,
+            channel_width_hz,
+            entry.reference_frequency.as_ref(),
+        );
+        if let Some(reason) = known.conflict(&proposed, &entry.name) {
+            return Err(invalid(reason));
         }
         Ok(window)
     }
