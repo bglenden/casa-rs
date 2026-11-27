@@ -114,7 +114,7 @@ static EXECUTION_LOCK: Mutex<()> = Mutex::new(());
 #[allow(unused_imports)]
 use crate::{imaging, synthetic_observation};
 
-#[path = "common/continuum_fixture.rs"]
+#[path = "../common/continuum_fixture.rs"]
 mod continuum_fixture;
 use continuum_fixture::*;
 

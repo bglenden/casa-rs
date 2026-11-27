@@ -11,7 +11,7 @@ resolved case, the tclean refusals casa-rs would raise, from two sources:
   `applies_when` holds (`casa-task-runtime/src/unimplemented.rs`), one marked
   `unimplemented_forms` refuses the forms it names, and the value domains of
   `parameter-catalog.json` refuse values of the wrong shape;
-* `libs/imaging/casa-imaging/src/tclean.rs`: every
+* `libs/imaging/casa-imaging/src/tclean/mod.rs`: every
   `TcleanRefusal::not_yet` and `TcleanRefusal::new` site, mirrored here
   condition by condition (this file names the function of each). A site whose
   message says CASA's tclean refuses the same value is a parity refusal, not
@@ -59,7 +59,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SURFACES = ROOT / "crates/casa-provider-contracts/resources/parameter-surfaces.json"
 CATALOG = ROOT / "crates/casa-provider-contracts/resources/parameter-catalog.json"
-TCLEAN_RS = ROOT / "libs/imaging/casa-imaging/src/tclean.rs"
+TCLEAN_RS = ROOT / "libs/imaging/casa-imaging/src/tclean/mod.rs"
 
 NOT_YET = "tclean.rs not_yet"
 CASA_RS = "tclean.rs refusal (casa-rs only)"

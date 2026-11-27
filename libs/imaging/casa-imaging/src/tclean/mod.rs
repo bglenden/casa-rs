@@ -1227,5 +1227,5 @@ fn velocity_convention(text: &str) -> Result<&'static str, TcleanRefusal> {
 }
 
 #[cfg(test)]
-#[path = "tclean_tests.rs"]
+#[path = "../tclean_tests.rs"]
 mod tests;

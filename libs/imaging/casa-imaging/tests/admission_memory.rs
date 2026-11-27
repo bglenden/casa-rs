@@ -42,15 +42,15 @@ mod imaging;
 #[path = "common/synthetic_observation.rs"]
 mod synthetic_observation;
 
-#[path = "admission_memory/aw.rs"]
+#[path = "admission_memory_cases/aw.rs"]
 mod aw;
-#[path = "admission_memory/mosaic_cube_restart.rs"]
+#[path = "admission_memory_cases/mosaic_cube_restart.rs"]
 mod mosaic_cube_restart;
-#[path = "admission_memory/outliers.rs"]
+#[path = "admission_memory_cases/outliers.rs"]
 mod outliers;
-#[path = "admission_memory/single_dish.rs"]
+#[path = "admission_memory_cases/single_dish.rs"]
 mod single_dish;
-#[path = "admission_memory/staging.rs"]
+#[path = "admission_memory_cases/staging.rs"]
 mod staging;
 use synthetic_observation::{CELL_ARCSEC, observation, observation_as};
 
