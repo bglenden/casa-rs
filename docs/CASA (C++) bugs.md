@@ -12530,3 +12530,12 @@ earlier UV_DATA extension. On two integrations four seconds apart,
 the first persisted CASA exposure is four seconds, but the centroid is only
 half a second after its start. casa-rs determines each extension's inferred
 interval before decoding its visibilities and uses that interval throughout.
+
+## FITS-IDI import can persist inconsistent visibility and FIELD references
+
+Changing only `FREQUENCY.NO_CHAN` from 512 to 511 in the upstream
+`emerlin_multiuv.IDI1` file leaves CASA 6.7.6.14 with 512-channel DATA cells
+and a SPECTRAL_WINDOW row that declares 511 channels. Changing the first
+`UV_DATA.SOURCE_ID` to 311 separately yields MAIN.FIELD_ID 310 with only two
+FIELD rows. casa-rs checks each visibility layout against the frequency and
+source tables and rejects either file before publishing the result.
