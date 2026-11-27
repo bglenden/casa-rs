@@ -39,6 +39,14 @@ pub(crate) fn path_is_in_use(path: &Path) -> bool {
     used
 }
 
+/// Protect a destination and its subtables across both table and MS tools.
+pub(crate) fn replacement_target_is_in_use(path: &Path) -> bool {
+    registry::attached_table_paths()
+        .iter()
+        .any(|open| open.starts_with(path))
+        || path_is_in_use(path)
+}
+
 fn add_open(open: &Open, names: &mut BTreeMap<PathBuf, bool>) -> Result<(), Fail> {
     let root = open.root();
     let locked = root.table.has_lock(LockType::Read) || root.table.has_lock(LockType::Write);

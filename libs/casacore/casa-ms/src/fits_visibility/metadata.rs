@@ -187,59 +187,7 @@ struct BinaryTable<'a> {
 
 impl BinaryTable<'_> {
     fn strings(&mut self, name: &str) -> MsResult<Vec<String>> {
-        let HduInfo::TableInfo {
-            column_descriptions,
-            ..
-        } = &self.hdu.info
-        else {
-            return Err(invalid("Expected a UVFITS binary table"));
-        };
-        let (index, _) = column_descriptions
-            .iter()
-            .enumerate()
-            .find(|(_, column)| column.name == name)
-            .ok_or_else(|| invalid(format!("Cannot find UVFITS column {name}")))?;
-        let column = i32::try_from(index + 1).map_err(invalid)?;
-        self.fits.hdu(self.hdu.number).map_err(invalid)?;
-        let width = fixed_text_width(self.fits, column, name)?;
-        let len = width
-            .checked_mul(self.rows)
-            .ok_or_else(|| invalid("FITS text column size overflow"))?;
-        let mut storage = Vec::new();
-        storage.try_reserve_exact(len).map_err(invalid)?;
-        storage.resize(len, 0);
-        let mut data = storage
-            .chunks_exact_mut(width)
-            .map(<[_]>::as_mut_ptr)
-            .collect::<Vec<_>>();
-        let mut status = 0;
-        // SAFETY: the current HDU is a table and every output string has room
-        // for its entire fixed field plus the terminating NUL byte.
-        unsafe {
-            sys::ffgcvs(
-                self.fits.as_raw(),
-                column,
-                1,
-                1,
-                self.rows as i64,
-                ptr::null_mut(),
-                data.as_mut_ptr(),
-                ptr::null_mut(),
-                &mut status,
-            );
-        }
-        errors::check_status(status).map_err(invalid)?;
-        Ok(storage
-            .chunks_exact(width)
-            .map(|row| {
-                let value = row
-                    .iter()
-                    .take_while(|&&byte| byte != 0)
-                    .map(|&byte| byte as u8)
-                    .collect::<Vec<_>>();
-                String::from_utf8_lossy(&value).trim_end().to_owned()
-            })
-            .collect())
+        fixed_text_column(self.fits, self.hdu, name)
     }
 
     fn column<T: ReadsCol>(&mut self, name: &str, width: usize) -> MsResult<Vec<T>> {
@@ -295,6 +243,63 @@ impl BinaryTable<'_> {
     }
 }
 
+#[doc(hidden)]
+pub fn fixed_text_column(fits: &mut FitsFile, hdu: &FitsHdu, name: &str) -> MsResult<Vec<String>> {
+    let HduInfo::TableInfo {
+        column_descriptions,
+        num_rows,
+    } = &hdu.info
+    else {
+        return Err(invalid("Expected a FITS binary table"));
+    };
+    let (index, _) = column_descriptions
+        .iter()
+        .enumerate()
+        .find(|(_, column)| column.name == name)
+        .ok_or_else(|| invalid(format!("Cannot find FITS column {name}")))?;
+    let column = i32::try_from(index + 1).map_err(invalid)?;
+    fits.hdu(hdu.number).map_err(invalid)?;
+    let width = fixed_text_width(fits, column, name)?;
+    let len = width
+        .checked_mul(*num_rows)
+        .ok_or_else(|| invalid("FITS text column size overflow"))?;
+    let mut storage = Vec::new();
+    storage.try_reserve_exact(len).map_err(invalid)?;
+    storage.resize(len, 0);
+    let mut data = storage
+        .chunks_exact_mut(width)
+        .map(<[_]>::as_mut_ptr)
+        .collect::<Vec<_>>();
+    let mut status = 0;
+    // SAFETY: the current HDU is a table and every output string has room
+    // for its entire fixed field plus the terminating NUL byte.
+    unsafe {
+        sys::ffgcvs(
+            fits.as_raw(),
+            column,
+            1,
+            1,
+            *num_rows as i64,
+            ptr::null_mut(),
+            data.as_mut_ptr(),
+            ptr::null_mut(),
+            &mut status,
+        );
+    }
+    errors::check_status(status).map_err(invalid)?;
+    Ok(storage
+        .chunks_exact(width)
+        .map(|row| {
+            let value = row
+                .iter()
+                .take_while(|&&byte| byte != 0)
+                .map(|&byte| byte as u8)
+                .collect::<Vec<_>>();
+            String::from_utf8_lossy(&value).trim_end().to_owned()
+        })
+        .collect())
+}
+
 fn fixed_text_width(fits: &mut FitsFile, column: i32, name: &str) -> MsResult<usize> {
     let mut typ = 0;
     let mut repeat = 0;
@@ -315,7 +320,7 @@ fn fixed_text_width(fits: &mut FitsFile, column: i32, name: &str) -> MsResult<us
     errors::check_status(status).map_err(invalid)?;
     if typ != sys::TSTRING as i32 || repeat <= 0 || width <= 0 {
         return Err(invalid(format!(
-            "UVFITS column {name} must contain fixed-width text"
+            "FITS column {name} must contain fixed-width text"
         )));
     }
     usize::try_from(repeat.max(width))
@@ -558,7 +563,8 @@ fn string_key(hdu: &FitsHdu, fits: &mut FitsFile, key: &str, fallback: &str) -> 
         .map_or_else(|| fallback.to_owned(), |value| value.trim_end().to_owned()))
 }
 
-fn history(fits: &mut FitsFile) -> MsResult<Vec<String>> {
+#[doc(hidden)]
+pub fn history(fits: &mut FitsFile) -> MsResult<Vec<String>> {
     use fitsio::{errors, sys};
     let mut result = Vec::new();
     let (mut status, mut count, mut space) = (0, 0, 0);

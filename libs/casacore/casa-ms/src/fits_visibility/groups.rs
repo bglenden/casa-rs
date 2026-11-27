@@ -611,33 +611,13 @@ impl BinaryGroups {
 }
 
 fn correlation_order(stokes: &Axis, binary: bool) -> MsResult<(Vec<Correlation>, Vec<usize>)> {
-    use Correlation::{I, LL, LR, Q, RL, RR, U, V, XX, XY, YX, YY};
     if stokes.length > 12 {
         return Err(invalid("Too many UVFITS Stokes values"));
     }
     let inputs = (0..stokes.length)
         .map(|index| {
             let code = (stokes.coordinate(index) + 0.5).floor() as i32;
-            let correlation = match code {
-                -1 => RR,
-                -2 => LL,
-                -3 => RL,
-                -4 => LR,
-                -5 => XX,
-                -6 => YY,
-                -7 => XY,
-                -8 => YX,
-                1 if binary => I,
-                2 if binary => Q,
-                3 if binary => U,
-                4 if binary => V,
-                1..=4 => {
-                    return Err(invalid(
-                        "UVFITS Stokes parameters cannot be decomposed into correlations",
-                    ));
-                }
-                _ => return Err(invalid(format!("Unknown UVFITS correlation type {code}"))),
-            };
+            let correlation = fits_correlation(code, binary)?;
             Ok((correlation, index))
         })
         .collect::<MsResult<Vec<_>>>()?;
@@ -649,7 +629,33 @@ fn correlation_order(stokes: &Axis, binary: bool) -> MsResult<(Vec<Correlation>,
     Ok(inputs.into_iter().unzip())
 }
 
-pub(super) fn binary_extension_name(fits: &mut FitsFile, index: usize) -> MsResult<Option<String>> {
+#[doc(hidden)]
+pub fn fits_correlation(code: i32, allow_stokes: bool) -> MsResult<Correlation> {
+    use Correlation::{I, LL, LR, Q, RL, RR, U, V, XX, XY, YX, YY};
+    Ok(match code {
+        -1 => RR,
+        -2 => LL,
+        -3 => RL,
+        -4 => LR,
+        -5 => XX,
+        -6 => YY,
+        -7 => XY,
+        -8 => YX,
+        1 if allow_stokes => I,
+        2 if allow_stokes => Q,
+        3 if allow_stokes => U,
+        4 if allow_stokes => V,
+        1..=4 => {
+            return Err(invalid(
+                "UVFITS Stokes parameters cannot be decomposed into correlations",
+            ));
+        }
+        _ => return Err(invalid(format!("Unknown UVFITS correlation type {code}"))),
+    })
+}
+
+#[doc(hidden)]
+pub fn binary_extension_name(fits: &mut FitsFile, index: usize) -> MsResult<Option<String>> {
     let number = i32::try_from(index + 1).map_err(invalid)?;
     let mut typ = 0;
     let mut status = 0;
@@ -663,7 +669,8 @@ pub(super) fn binary_extension_name(fits: &mut FitsFile, index: usize) -> MsResu
 }
 
 /// Read a recognized binary table after checking the descriptor types supported by fitsio.
-pub(super) fn binary_extension(fits: &mut FitsFile, index: usize) -> MsResult<FitsHdu> {
+#[doc(hidden)]
+pub fn binary_extension(fits: &mut FitsFile, index: usize) -> MsResult<FitsHdu> {
     let mut fields = 0;
     let mut status = 0;
     // SAFETY: the live FITS handle is positioned on the binary extension by the caller.
@@ -751,7 +758,8 @@ fn positive_count(hdu: &FitsHdu, fits: &mut FitsFile, key: &str) -> MsResult<usi
         .ok_or_else(|| invalid(format!("Invalid UVFITS {key}: {value}")))
 }
 
-pub(super) fn optional_key<T: ReadsKey>(
+#[doc(hidden)]
+pub fn optional_key<T: ReadsKey>(
     hdu: &FitsHdu,
     fits: &mut FitsFile,
     key: &str,
@@ -763,7 +771,8 @@ pub(super) fn optional_key<T: ReadsKey>(
     }
 }
 
-pub(super) fn open_file(path: &Path) -> MsResult<FitsFile> {
+#[doc(hidden)]
+pub fn open_file(path: &Path) -> MsResult<FitsFile> {
     let name = path
         .to_str()
         .ok_or_else(|| invalid("UVFITS path must be UTF-8"))?;

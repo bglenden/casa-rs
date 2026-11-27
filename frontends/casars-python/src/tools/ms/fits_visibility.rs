@@ -7,10 +7,12 @@ use casa_ms::MsSelection;
 use casa_ms::fits_visibility::{
     UvFitsExportOptions, UvFitsImportOptions, export_uvfits, import_uvfits,
 };
+use casa_mstransform::fits_idi::{FitsIdiOptions, stage_fits_idi};
 use pyo3::prelude::*;
 
 use super::partition::{all_if_minus_one, optional_expression};
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool, table_cache_name};
+use crate::tools::{LogLine, emit};
 
 #[pymethods]
 impl PyMsTool {
@@ -42,6 +44,49 @@ impl PyMsTool {
             *attached = Some(AttachedMs::open(output, !nomodify, lock, false)?);
             Ok(true)
         })
+    }
+
+    /// Import a FITS-IDI data set and attach the created MeasurementSet.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (msfile = "", fitsfile = "", nomodify = true, lock = false, obstype = 0), text_signature = "($self, msfile='', fitsfile='', nomodify=True, lock=False, obstype=0)")]
+    fn fromfitsidi(
+        &self,
+        py: Python<'_>,
+        msfile: &str,
+        fitsfile: &str,
+        #[pyo3(from_py_with = strict_bool)] nomodify: bool,
+        #[pyo3(from_py_with = strict_bool)] lock: bool,
+        obstype: i64,
+    ) -> PyResult<bool> {
+        let options = FitsIdiOptions {
+            observation_type: obstype as i32,
+            overwrite: !nomodify,
+        };
+        let diagnostics = py.detach(|| -> PyResult<_> {
+            let mut attached = self.attached.lock().map_err(runtime_error)?;
+            let output = Path::new(msfile);
+            check_fits_idi_replacement(output, options.overwrite)?;
+            let staged =
+                stage_fits_idi(Path::new(fitsfile), output, options).map_err(runtime_error)?;
+            let diagnostics = {
+                let _publication = crate::tools::table::lock_attachment_publication();
+                check_fits_idi_replacement(output, options.overwrite)?;
+                staged.publish().map_err(runtime_error)?
+            };
+            *attached = Some(AttachedMs::open(
+                table_cache_name(output).map_err(runtime_error)?,
+                !nomodify,
+                lock,
+                false,
+            )?);
+            Ok(diagnostics)
+        })?;
+        let logs = diagnostics
+            .into_iter()
+            .map(LogLine::error)
+            .collect::<Vec<_>>();
+        emit(py, "casars.tools.ms", &logs)?;
+        Ok(true)
     }
 
     /// Export the current MeasurementSet view as a UVFITS file.
@@ -100,6 +145,19 @@ impl PyMsTool {
             Ok(true)
         })
     }
+}
+
+fn check_fits_idi_replacement(output: &Path, overwrite: bool) -> PyResult<()> {
+    if overwrite && output.try_exists().map_err(runtime_error)? {
+        let path = output.canonicalize().map_err(runtime_error)?;
+        if crate::tools::table::replacement_target_is_in_use(&path) {
+            return Err(runtime_error(format!(
+                "Table {} cannot be deleted: table is still open in this process",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn default_fits_path(source: &Path) -> PathBuf {

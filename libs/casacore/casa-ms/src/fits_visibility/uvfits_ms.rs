@@ -34,7 +34,7 @@ pub(super) fn write_metadata(
         "TAI" | "IAT" => "TAI",
         _ => "UTC",
     };
-    configure_references(ms, frame, epoch)?;
+    configure_references(ms, frame, epoch, true)?;
     write_observation(ms, header, time)?;
     write_antennas(
         ms,
@@ -50,12 +50,14 @@ pub(super) fn write_metadata(
     Ok(())
 }
 
-fn insert(ms: &mut MeasurementSet, id: SubtableId, fields: &[(&str, Value)]) -> MsResult<()> {
+#[doc(hidden)]
+pub fn insert(ms: &mut MeasurementSet, id: SubtableId, fields: &[(&str, Value)]) -> MsResult<()> {
     subtable_mut(ms, id)?.add_row(row_from_defs(schema::required_columns(id), fields))?;
     Ok(())
 }
 
-fn fits_date(value: &str) -> MsResult<f64> {
+#[doc(hidden)]
+pub fn fits_date(value: &str) -> MsResult<f64> {
     let value = value.trim();
     if value.is_empty() {
         return Ok(0.0);
@@ -93,12 +95,19 @@ fn direction_frame(epoch: f64, telescope: &str) -> DirectionRef {
     }
 }
 
-fn configure_references(ms: &mut MeasurementSet, frame: DirectionRef, epoch: &str) -> MsResult<()> {
+#[doc(hidden)]
+pub fn configure_references(
+    ms: &mut MeasurementSet,
+    frame: DirectionRef,
+    epoch: &str,
+    uvw_uses_phase_frame: bool,
+) -> MsResult<()> {
     for column in ["TIME", "TIME_CENTROID"] {
         TableMeasDesc::new_fixed(column, MeasureType::Epoch, epoch).write(ms.main_table_mut())?;
     }
     // The native schema installs MEASINFO for UVW. Keep its type and units.
-    if let Some(mut keywords) = ms.main_table().column_keywords("UVW").cloned()
+    if uvw_uses_phase_frame
+        && let Some(mut keywords) = ms.main_table().column_keywords("UVW").cloned()
         && let Some(Value::Record(mut record)) = keywords.get("MEASINFO").cloned()
     {
         record.upsert("Ref", s(&frame.to_string()));
@@ -113,7 +122,12 @@ fn configure_references(ms: &mut MeasurementSet, frame: DirectionRef, epoch: &st
         SubtableId::History,
         SubtableId::Feed,
         SubtableId::FlagCmd,
+        SubtableId::SysCal,
+        SubtableId::Weather,
     ] {
+        let Some(table) = ms.subtable_mut(id) else {
+            continue;
+        };
         for definition in schema::required_columns(id) {
             let refer = match definition.measure_type {
                 Some(MeasureType::Epoch) => epoch.to_owned(),
@@ -121,7 +135,7 @@ fn configure_references(ms: &mut MeasurementSet, frame: DirectionRef, epoch: &st
                 _ => continue,
             };
             TableMeasDesc::new_fixed(definition.name, definition.measure_type.unwrap(), &refer)
-                .write(subtable_mut(ms, id)?)?;
+                .write(table)?;
         }
     }
     Ok(())
@@ -268,13 +282,15 @@ fn observatory_origin(array: &Array) -> MsResult<([f64; 3], bool)> {
     })
 }
 
-fn column_keyword(table: &mut Table, column: &str, keyword: &str, value: Value) {
+#[doc(hidden)]
+pub fn column_keyword(table: &mut Table, column: &str, keyword: &str, value: Value) {
     let mut keywords = table.column_keywords(column).cloned().unwrap_or_default();
     keywords.upsert(keyword, value);
     table.set_column_keywords(column, keywords);
 }
 
-fn write_polarization(ms: &mut MeasurementSet, corr: &[Correlation]) -> MsResult<()> {
+#[doc(hidden)]
+pub fn write_polarization(ms: &mut MeasurementSet, corr: &[Correlation]) -> MsResult<()> {
     let codes = corr
         .iter()
         .map(|&correlation| correlation.casacore_code())

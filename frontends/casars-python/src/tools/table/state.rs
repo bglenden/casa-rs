@@ -398,6 +398,7 @@ impl State {
         request: &LockRequest,
         writable: bool,
     ) -> Result<(), Fail> {
+        let _publication = super::registry::lock_attachment_publication();
         self.open = None;
         self.open = Some(Open::attach(name, request, writable)?);
         Ok(())

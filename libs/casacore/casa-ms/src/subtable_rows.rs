@@ -13,17 +13,16 @@ use crate::error::{MsError, MsResult};
 use crate::schema::SubtableId;
 
 /// Subtable `id` of `ms`, writable.
-pub(crate) fn subtable_mut(
-    ms: &mut MeasurementSet,
-    id: SubtableId,
-) -> MsResult<&mut casa_tables::Table> {
+#[doc(hidden)]
+pub fn subtable_mut(ms: &mut MeasurementSet, id: SubtableId) -> MsResult<&mut casa_tables::Table> {
     ms.subtable_mut(id)
         .ok_or_else(|| MsError::MissingSubtable(id.name().to_string()))
 }
 
 /// A row of a subtable whose required columns are `defs`: each column's
 /// value from `overrides`, or its default (zero, false, empty).
-pub(crate) fn row_from_defs(defs: &[ColumnDef], overrides: &[(&str, Value)]) -> RecordValue {
+#[doc(hidden)]
+pub fn row_from_defs(defs: &[ColumnDef], overrides: &[(&str, Value)]) -> RecordValue {
     let fields = defs
         .iter()
         .map(|definition| {
@@ -77,19 +76,23 @@ fn default_value(definition: &ColumnDef) -> Value {
     }
 }
 
-pub(crate) fn s(value: &str) -> Value {
+#[doc(hidden)]
+pub fn s(value: &str) -> Value {
     Value::Scalar(ScalarValue::String(value.to_string()))
 }
 
-pub(crate) fn i(value: i32) -> Value {
+#[doc(hidden)]
+pub fn i(value: i32) -> Value {
     Value::Scalar(ScalarValue::Int32(value))
 }
 
-pub(crate) fn f(value: f64) -> Value {
+#[doc(hidden)]
+pub fn f(value: f64) -> Value {
     Value::Scalar(ScalarValue::Float64(value))
 }
 
-pub(crate) fn b(value: bool) -> Value {
+#[doc(hidden)]
+pub fn b(value: bool) -> Value {
     Value::Scalar(ScalarValue::Bool(value))
 }
 
@@ -105,25 +108,29 @@ pub(crate) fn i32_array(values: &[i32], shape: Vec<usize>) -> Value {
     ))
 }
 
-pub(crate) fn f32_array(values: &[f32], shape: Vec<usize>) -> Value {
+#[doc(hidden)]
+pub fn f32_array(values: &[f32], shape: Vec<usize>) -> Value {
     Value::Array(ArrayValue::Float32(
         ArrayD::from_shape_vec(shape, values.to_vec()).unwrap(),
     ))
 }
 
-pub(crate) fn f64_array(values: &[f64], shape: Vec<usize>) -> Value {
+#[doc(hidden)]
+pub fn f64_array(values: &[f64], shape: Vec<usize>) -> Value {
     Value::Array(ArrayValue::Float64(
         ArrayD::from_shape_vec(shape, values.to_vec()).unwrap(),
     ))
 }
 
-pub(crate) fn complex_array(values: &[Complex32], shape: Vec<usize>) -> Value {
+#[doc(hidden)]
+pub fn complex_array(values: &[Complex32], shape: Vec<usize>) -> Value {
     Value::Array(ArrayValue::Complex32(
         ArrayD::from_shape_vec(shape, values.to_vec()).unwrap(),
     ))
 }
 
-pub(crate) fn string_array(values: &[&str], shape: Vec<usize>) -> Value {
+#[doc(hidden)]
+pub fn string_array(values: &[&str], shape: Vec<usize>) -> Value {
     Value::Array(ArrayValue::String(
         ArrayD::from_shape_vec(
             shape,
