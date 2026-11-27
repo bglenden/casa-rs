@@ -41,10 +41,10 @@ fn main() {
 fn parse_data_dir() -> std::path::PathBuf {
     let args: Vec<String> = std::env::args().collect();
     for i in 1..args.len() {
-        if args[i] == "--data-dir" {
-            if let Some(dir) = args.get(i + 1) {
-                return std::path::PathBuf::from(dir);
-            }
+        if args[i] == "--data-dir"
+            && let Some(dir) = args.get(i + 1)
+        {
+            return std::path::PathBuf::from(dir);
         }
     }
     dirs_or_home().join(".casa").join("data")

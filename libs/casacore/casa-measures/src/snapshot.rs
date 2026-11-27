@@ -255,7 +255,6 @@ mod tests {
     use crate::tests::ENV_LOCK;
     use flate2::read::GzDecoder;
     use std::fs;
-    use std::io::Read;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tar::Archive;
