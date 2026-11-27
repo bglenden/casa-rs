@@ -34,7 +34,7 @@ impl Table {
             return self.memory_copy_from_rows(indices);
         };
         if self.path().is_none()
-            || self.inner.has_loaded_rows()
+            || self.inner.rows_are_loaded()
             || schema
                 .columns()
                 .iter()
