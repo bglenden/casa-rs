@@ -134,16 +134,10 @@ impl AttachedMs {
         if !options.overwrite && !matches!(destination, SortedDestination::Absent) {
             return Err(runtime_error("TaQL output already exists"));
         }
-        let locks = if destination.is_table() {
-            if crate::tools::table::path_is_in_use(&output) {
-                return Err(runtime_error("TaQL output is still open in this process"));
-            }
-            check_write_access(&output).map_err(runtime_error)?;
-            lock_table_tree_for_replacement(&output).map_err(runtime_error)?
-        } else {
-            Vec::new()
-        };
-        let stage = tempfile::tempdir_in(&parent).map_err(runtime_error)?;
+        let stage = tempfile::Builder::new()
+            .prefix(".taql-ms-")
+            .tempdir_in(&parent)
+            .map_err(runtime_error)?;
         let staged = stage.path().join("selected.ms");
         let source_locks = self
             .read_locks
@@ -163,8 +157,19 @@ impl AttachedMs {
         self.working_metadata_link()
             .verify_directory()
             .map_err(runtime_error)?;
-        destination.publish(&staged, &output, "TaQL selection")?;
-        drop(locks);
+        {
+            let _publication = crate::tools::table::lock_attachment_publication();
+            let _locks = if destination.is_table() {
+                if crate::tools::table::replacement_target_is_in_use(&output) {
+                    return Err(runtime_error("TaQL output is still open in this process"));
+                }
+                check_write_access(&output).map_err(runtime_error)?;
+                lock_table_tree_for_replacement(&output).map_err(runtime_error)?
+            } else {
+                Vec::new()
+            };
+            destination.publish(&staged, &output, "TaQL selection")?;
+        }
         Self::open(output, false, false, false)
     }
 }

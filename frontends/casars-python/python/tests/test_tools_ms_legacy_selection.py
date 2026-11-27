@@ -1,5 +1,12 @@
 """Validate legacy row selection against the pinned CASA MSSelector."""
 
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
+import os
+from pathlib import Path
+from shutil import copytree
+import time
+
 import numpy as np
 import pytest
 
@@ -323,3 +330,28 @@ def test_legacy_taql_disk_copy_uses_view_relative_ids_for_duplicate_rows(native_
     assert reader.selecttaqlold(f'True ORDERBY ROWID() DESC LIMIT 3 GIVING "{target}" AS PLAIN')
     np.testing.assert_array_equal(reader.getdataold(["uvw"])["uvw"], expected, strict=True)
     assert reader.done()
+
+
+def test_legacy_taql_disk_copy_protects_a_concurrently_opened_output(native_dataset, tmp_path):
+    root = os.environ.get("CASA_RS_TESTDATA_ROOT")
+    stock = Path(root) / "measurementset" / "vla" / "ngc5921_ut.ms" if root else None
+    if stock is None or not stock.is_dir():
+        pytest.skip("Missing ngc5921_ut.ms")
+    output = tmp_path / "existing.ms"
+    copytree(native_dataset, output)
+    with ThreadPoolExecutor(max_workers=1) as executor, closing(tools.ms()) as holder:
+        def replace():
+            with closing(tools.ms()) as reader:
+                assert reader.open(str(stock))
+                return reader.selecttaqlold(f'True GIVING "{output}" AS PLAIN')
+
+        conversion = executor.submit(replace)
+        deadline = time.monotonic() + 10
+        while not any(tmp_path.glob(".taql-ms-*/selected.ms")):
+            assert not conversion.done() and time.monotonic() < deadline
+            time.sleep(0.001)
+        assert holder.open(str(output))
+        before = holder.nrow()
+        with pytest.raises(RuntimeError, match="still open"):
+            conversion.result(timeout=30)
+        assert holder.nrow() == before
