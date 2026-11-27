@@ -784,6 +784,7 @@ def rust_crate_references(source: str) -> set[str]:
     tokens = list(rust_tokens(source))
     names = set()
     importing = False
+    groups = []
     for index, token in enumerate(tokens):
         previous = tokens[index - 1] if index > 0 else ""
         before_previous = tokens[index - 2] if index > 1 else ""
@@ -792,9 +793,15 @@ def rust_crate_references(source: str) -> set[str]:
             importing = True
         elif token == ";":
             importing = False
+            groups.clear()
+        elif importing and token == "{":
+            groups.append(previous not in {"::"} and all(groups))
+        elif importing and token == "}":
+            if groups:
+                groups.pop()
         elif IDENTIFIER.fullmatch(token) and (
-            (following == "::" and previous != "::")
-            or (importing and (
+            (not importing and following == "::" and previous != "::")
+            or (importing and all(groups) and (
                 previous in {"use", "{", ","}
                 or previous == "::" and before_previous in {"use", "{", ","}
             ))
@@ -884,9 +891,22 @@ def python_dispatch_errors(source: str) -> list[str]:
         None,
     )
     errors = []
-    if dispatcher is None or not any(
+    nodes = list(ast.walk(dispatcher)) if dispatcher is not None else []
+
+    def native_handle(node):
+        return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_native"
+
+    native_names = {
+        target.id for node in nodes if isinstance(node, ast.Assign) and native_handle(node.value)
+        for target in node.targets if isinstance(target, ast.Name)
+    }
+    if not any(
         isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "run_native_task" for node in ast.walk(dispatcher)
+        and node.func.attr == "run_native_task"
+        and (native_handle(node.func.value) or (
+            isinstance(node.func.value, ast.Name) and node.func.value.id in native_names
+        ))
+        for node in nodes
     ):
         errors.append("must call the PyO3 run_native_task entry point")
     process_api = re.compile(r"(?:system|popen|(?:posix_)?spawn\w*|exec[lv]\w*|create_subprocess_\w*)")
@@ -1038,8 +1058,8 @@ def check_workspace_self_test() -> None:
     assert any("private path crate" in e for e in errors), errors
     assert rust_crate_references(
         '/* other::Call */ "absent::Call"; let bytes = 5; use used::Call; '
-        'use {bare as alias, ::direct}; extern crate named as renamed;'
-    ) == {"used", "bare", "direct", "named"}
+        'use {bare as alias, ::direct}; extern crate named as renamed; use std::{nested::Path, internal};'
+    ) == {"used", "bare", "direct", "named", "std"}
 
     metal = package("casa-imaging-runtime", "libs/imaging/casa-imaging-runtime/Cargo.toml")
     metal["dependencies"] = [{
