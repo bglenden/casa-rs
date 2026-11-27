@@ -115,7 +115,8 @@ impl Table {
     pub fn refresh_persisted_keywords(&mut self) -> Result<(), TableError> {
         if let Some(path) = self.path().filter(|path| path.join("table.dat").is_file()) {
             let snapshot = crate::storage::CompositeStorage.load_metadata_only(path)?;
-            self.inner.replace_keyword_records(snapshot.keywords, snapshot.column_keywords);
+            self.inner
+                .replace_keyword_records(snapshot.keywords, snapshot.column_keywords);
             self.table_info = snapshot.table_info;
         }
         Ok(())

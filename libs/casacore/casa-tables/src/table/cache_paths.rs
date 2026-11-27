@@ -291,16 +291,20 @@ impl Table {
     #[doc(hidden)]
     pub fn keyword_descriptor_path(path: &Path) -> Result<PathBuf, TableError> {
         let canonical = |path: &Path| {
-            path.canonicalize().map_err(|error| TableError::Storage(error.to_string()))
+            path.canonicalize()
+                .map_err(|error| TableError::Storage(error.to_string()))
         };
         let mut path = canonical(path)?;
         for _ in 0..64 {
-            let TablePartNames::Reference(parent) = Self::immediate_part_names(&path, &path)? else {
+            let TablePartNames::Reference(parent) = Self::immediate_part_names(&path, &path)?
+            else {
                 return Ok(path);
             };
             path = canonical(&parent)?;
         }
-        Err(TableError::Storage("table reference chain is too deep".into()))
+        Err(TableError::Storage(
+            "table reference chain is too deep".into(),
+        ))
     }
 
     /// Open a table and refresh the tile cache across its persisted layout.

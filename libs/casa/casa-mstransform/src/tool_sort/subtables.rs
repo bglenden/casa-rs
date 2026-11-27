@@ -65,7 +65,9 @@ pub(super) fn check_named_output(
                 let linked = add_directory(link, &path);
                 // The designated result keyword is republished with the new table.
                 // Protect standard MS subtables and all other names for that table.
-                if standard || linked != output || !matches!(replace_keyword,
+                if standard
+                    || linked != output
+                    || !matches!(replace_keyword,
                     Some((owner, name)) if name == field.name && Table::keyword_descriptor_path(&path)? == owner)
                 {
                     pending.push((linked, true));

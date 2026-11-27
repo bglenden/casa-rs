@@ -1447,7 +1447,9 @@ impl<'src> Parser<'src> {
 
     fn peek_is_table_name(&mut self) -> bool {
         match self.lexer.peek() {
-            Some(Token::Ident | Token::StringLiteral | Token::Slash | Token::Dot | Token::Colon) => true,
+            Some(
+                Token::Ident | Token::StringLiteral | Token::Slash | Token::Dot | Token::Colon,
+            ) => true,
             Some(tok) => tok.is_keyword(),
             None => false,
         }
