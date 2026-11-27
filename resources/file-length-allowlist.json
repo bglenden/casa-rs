@@ -4,8 +4,6 @@
     "suites/casa-parity/tests/cases/calibration/casa_calibration_parity.rs",
     "dev/casa-test-support/src/measures_interop.rs",
     "suites/casacore-interop/tests/measures_interop.rs",
-    "suites/perf/tests/images_perf_vs_cpp.rs",
-    "surfaces/casa-plot-data/src/msexplore.rs",
-    "surfaces/casa-plot-data/src/plot.rs"
+    "suites/perf/tests/images_perf_vs_cpp.rs"
   ]
 }
