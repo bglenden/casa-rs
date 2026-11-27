@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-#[path = "../../../casacore/casa-ms/tests/common/mod.rs"]
 mod common;
 mod continuum;
+#[cfg(feature = "msv4")]
+mod observation_io;
 
 use casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_ms::schema::main_table::VisibilityDataColumn;

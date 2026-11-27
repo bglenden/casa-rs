@@ -10,31 +10,13 @@ mod arrays;
 #[path = "observation_io/channel_order.rs"]
 mod channel_order;
 #[cfg(unix)]
-#[path = "observation_io/convert.rs"]
-mod convert;
-#[cfg(unix)]
 #[path = "observation_io/creation.rs"]
 mod creation;
-#[cfg(unix)]
-#[path = "observation_io/ephemeris.rs"]
-mod ephemeris;
-#[cfg(unix)]
-#[path = "observation_io/fields.rs"]
-mod fields;
-#[cfg(unix)]
-#[path = "observation_io/geometry_inputs.rs"]
-mod geometry_inputs;
 #[path = "common/layouts.rs"]
 mod layouts;
 #[cfg(unix)]
 #[path = "observation_io/metadata.rs"]
 mod metadata;
-#[cfg(unix)]
-#[path = "observation_io/namespace.rs"]
-mod namespace;
-#[cfg(unix)]
-#[path = "observation_io/receptors.rs"]
-mod receptors;
 #[path = "observation_io/refusals.rs"]
 mod refusals;
 #[cfg(unix)]
@@ -101,63 +83,131 @@ pub(crate) fn three_scans(path: &Path) {
     ms.save().expect("save");
 }
 
-/// Two days of a body near RA 10°, Dec −20°, 1 AU away and receding:
-/// MJD, RA and DEC (degrees), Rho (AU) and RadVel (AU a day).
-pub(crate) const COMET: [casa_test_support::ephemeris_table::EphemerisRow; 3] = [
-    [58_999.0, 10.0, -20.0, 1.0, 0.001],
-    [59_000.0, 10.1, -20.05, 1.001, 0.002],
-    [59_001.0, 10.2, -20.1, 1.002, 0.003],
-];
-
-/// Make field `row` of the MSv2 at `path` follow ephemeris `ids[row]`
-/// (−1 for none), each id's table holding [`COMET`].
-pub(crate) fn follow_ephemerides(path: &Path, ids: &[i32]) {
+/// Put half the times of the MSv2 at `path` in a second observation.
+pub(crate) fn split_sessions(path: &Path, early: bool) {
     let mut ms = casa_ms::MeasurementSet::open(path).expect("ms");
-    let reference_time = ms
-        .main_table()
-        .cell_accessor(0, "TIME")
-        .unwrap()
-        .scalar()
-        .unwrap()
-        .clone();
-    let field = ms.subtable_mut(casa_ms::SubtableId::Field).expect("FIELD");
-    field
-        .add_column(
-            casa_tables::ColumnSchema::scalar("EPHEMERIS_ID", casa_core::PrimitiveType::Int32),
-            Some(casa_core::Value::Scalar(casa_core::ScalarValue::Int32(-1))),
-        )
-        .expect("EPHEMERIS_ID");
-    for (row, id) in ids.iter().enumerate() {
-        if *id >= 0 {
-            field
-                .fill_column_range(
-                    "TIME",
-                    casa_tables::RowRange::new(row, row + 1),
-                    casa_core::Value::Scalar(reference_time.clone()),
-                )
-                .unwrap();
+    let rows = ms.main_table().row_count();
+    let times: Vec<f64> = (0..rows)
+        .map(|row| {
+            match ms
+                .main_table()
+                .cell_accessor(row, "TIME")
+                .and_then(|cell| cell.scalar())
+            {
+                Ok(casa_core::ScalarValue::Float64(time)) => *time,
+                other => panic!("TIME of row {row}: {other:?}"),
+            }
+        })
+        .collect();
+    let middle = 0.5
+        * (times.iter().copied().fold(f64::INFINITY, f64::min)
+            + times.iter().copied().fold(f64::NEG_INFINITY, f64::max));
+    for (row, time) in times.iter().enumerate() {
+        if (*time > middle) != early {
+            ms.main_table_mut()
+                .cell_accessor_mut(row, "OBSERVATION_ID")
+                .and_then(|mut cell| {
+                    cell.set(casa_core::Value::Scalar(casa_core::ScalarValue::Int32(1)))
+                })
+                .expect("second session");
         }
-        field
-            .fill_column_range(
-                "EPHEMERIS_ID",
-                casa_tables::RowRange::new(row, row + 1),
-                casa_core::Value::Scalar(casa_core::ScalarValue::Int32(*id)),
+    }
+    let string_array = |values: &[&str]| {
+        casa_core::Value::Array(casa_core::ArrayValue::String(
+            ndarray::ArrayD::from_shape_vec(
+                vec![values.len()],
+                values.iter().map(ToString::to_string).collect(),
             )
-            .expect("an ephemeris id");
-    }
+            .expect("shape"),
+        ))
+    };
+    let scalar = |value: casa_core::ScalarValue| casa_core::Value::Scalar(value);
+    let session = casa_core::RecordValue::new(vec![
+        casa_core::RecordField::new("FLAG_ROW", scalar(casa_core::ScalarValue::Bool(false))),
+        casa_core::RecordField::new("LOG", string_array(&[])),
+        casa_core::RecordField::new(
+            "OBSERVER",
+            scalar(casa_core::ScalarValue::String("second".to_string())),
+        ),
+        casa_core::RecordField::new(
+            "PROJECT",
+            scalar(casa_core::ScalarValue::String("trial".to_string())),
+        ),
+        casa_core::RecordField::new("RELEASE_DATE", scalar(casa_core::ScalarValue::Float64(0.0))),
+        casa_core::RecordField::new("SCHEDULE", string_array(&[])),
+        casa_core::RecordField::new(
+            "SCHEDULE_TYPE",
+            scalar(casa_core::ScalarValue::String(String::new())),
+        ),
+        casa_core::RecordField::new(
+            "TELESCOPE_NAME",
+            scalar(casa_core::ScalarValue::String("VLA".to_string())),
+        ),
+        casa_core::RecordField::new(
+            "TIME_RANGE",
+            casa_core::Value::Array(casa_core::ArrayValue::Float64(
+                ndarray::ArrayD::from_shape_vec(vec![2], vec![middle, middle]).expect("shape"),
+            )),
+        ),
+    ]);
+    ms.subtable_mut(casa_ms::SubtableId::Observation)
+        .expect("OBSERVATION")
+        .add_row(session)
+        .expect("a second session");
     ms.save().expect("save");
-    drop(ms);
-    let mut written = std::collections::BTreeSet::new();
-    for id in ids.iter().copied().filter(|id| *id >= 0) {
-        if written.insert(id) {
-            casa_test_support::ephemeris_table::write_field_ephemeris(
-                path,
-                id,
-                &format!("COMET{id}"),
-                &COMET,
-            );
-        }
-    }
+}
+
+/// Every acquisition of `group` in partition `id`: the samples that are not
+/// padding (a NaN weight).
+pub(crate) fn acquisitions(path: &Path, id: PartitionId, group: &str) -> BTreeMap<Key, Sample> {
+    let observation = casa_ms::observation_io::open(path, &OpenOptions::default()).expect("open");
+    let channels = observation.catalogue().partition(id).frequencies_hz.len();
+    let request = AccessRequest {
+        partitions: vec![id],
+        data_group: group.to_string(),
+        roles: Roles::ALL,
+        channels: 0..channels,
+        times: TimeSelection::All,
+        fields: casa_observation::FieldSelection::All,
+        weights: WeightRequest::Stored,
+        correlations: CorrelationRequest::ALL,
+        grouping: Grouping::None,
+        batch_bytes: usize::MAX,
+    };
+    samples(
+        &mut observation.bind_read(&request).expect("bind"),
+        observation.catalogue(),
+    )
+    .expect("read")
+    .into_iter()
+    .filter(|(_, sample)| !sample.weights.iter().all(|weight| weight.is_nan()))
+    .collect()
+}
+
+/// MAIN's row count and `SIGMA`, `WEIGHT` of the MSv2 at `path`.
+pub(crate) fn rows_and_sigmas(path: &Path) -> (usize, Vec<(f32, f32)>) {
+    let ms = casa_ms::MeasurementSet::open(path).expect("ms");
+    let main = ms.main_table();
+    let column = |name: &str| {
+        main.column_accessor(name)
+            .and_then(|column| column.array_cells_owned(&(0..main.row_count()).collect::<Vec<_>>()))
+            .expect(name)
+    };
+    let pairs = column("WEIGHT")
+        .into_iter()
+        .zip(column("SIGMA"))
+        .flat_map(|(weight, sigma)| {
+            let (
+                Some(casa_core::ArrayValue::Float32(weight)),
+                Some(casa_core::ArrayValue::Float32(sigma)),
+            ) = (weight, sigma)
+            else {
+                panic!("float WEIGHT and SIGMA cells");
+            };
+            weight.into_iter().zip(sigma).collect::<Vec<_>>()
+        })
+        .collect();
+    (main.row_count(), pairs)
 }
 
 /// Options that partition an MSv2 by scan as well.

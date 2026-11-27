@@ -454,30 +454,4 @@ fn a_creation_plan_holds_what_it_admits() {
     ))];
     warm(&long);
     holds_its_charges(&long, &destination, &options(1 << 24, generous));
-
-    #[cfg(feature = "msv4")]
-    {
-        use casa_ms::observation_io::Msv4Codec;
-        use casa_mstransform::convert::{ConversionOptions, to_msv4};
-        let msv4 = root.path().join("input0.ps.zarr");
-        to_msv4(
-            &inputs[0].path,
-            &msv4,
-            &ConversionOptions {
-                data_groups: None,
-                accept: ACCEPT.to_vec(),
-                batch_bytes: 1 << 24,
-                workers: 1,
-                chunks: [5, 0, 0, 0],
-                codec: Msv4Codec::BloscLz4,
-                padding: PaddingRows::Flagged,
-                creator: "casa-rs".to_string(),
-                creation_date: "2026-10-29T00:00:00+00:00".to_string(),
-            },
-        )
-        .expect("an MSv4 input");
-        let msv4 = [CreationInput::new(msv4)];
-        warm(&msv4);
-        holds_its_charges(&msv4, &destination, &options(1 << 24, generous));
-    }
 }
