@@ -9,8 +9,9 @@ Verification: just docs-check
 **`casa-rs` aims for functional parity with CASA and faster execution.** It
 implements supported CASA workflows in Rust, with Python task and tool APIs,
 interoperable MeasurementSets and images, and scientific results checked
-against CASA. Selected imaging and simulation workloads ran **1.7–5.5×
-faster** on Apple Silicon in the [macOS benchmarks](#representative-macos-performance).
+against CASA. On Apple Silicon, casa-rs ran **17× faster for an ALMA
+visibility simulation** and **13.7× faster for a VLASS imaging workload**
+in recorded comparisons with CASA. See the [macOS benchmarks](#representative-macos-performance).
 CASA and casacore serve as test and benchmark references. The Rust
 implementation runs independently.
 
@@ -56,15 +57,21 @@ and `ms` passed behavioral acceptance against CASA 6.7.6.14. See the
 
 ### Representative macOS performance
 
-These are recorded wall times on Apple Silicon. Speedup is CASA wall time
-divided by casa-rs wall time for the listed workload. The evidence records
-give the inputs, build revisions and comparison conditions.
+These are recorded wall times on Apple Silicon. The simulator benchmark
+replays CASA's `sm` session through the native simulator and includes visibility
+prediction, noise and writing the MeasurementSet. The imaging runs include
+product writes. The evidence records give the inputs, build revisions,
+comparison conditions and checks against CASA's outputs.
 
 | Workload | Mac and casa-rs backend | CASA | casa-rs | Speedup | Evidence |
 |---|---|---:|---:|---:|---|
+| `simulator`, ALMA 1024² model cube, 256 channels | M2 Mac mini, Metal | 191.7 s | 11.30 s | **17.0×** | [Simulation campaign, case 1](https://github.com/bglenden/casa-rs/pull/856) |
+| Same ALMA cube on CPU | M2 Mac mini, CPU, three workers | 191.7 s | 12.20 s | **15.7×** | [Simulation campaign, case 1](https://github.com/bglenden/casa-rs/pull/856) |
+| `tclean`, 63-field VLASS, 4096² AW-projection dirty image | M4 MacBook Air, CPU, four workers | 541 s | 39.5 s | **13.7×** | [VLASS B2, CASA 6.7.5.9](https://github.com/bglenden/casa-rs/issues/785#issuecomment-6281109988) |
+| `tclean`, 63-field VLASS, 4096² AW-projection MT-MFS multiscale clean | M4 MacBook Air, CPU, four workers | 3,470.2 s | 260.0 s | **13.35×** | [VLASS B3, CASA 6.7.5.9](https://github.com/bglenden/casa-rs/issues/785#issuecomment-6281109988) |
+| `tclean`, seven-pointing ALMA mosaic continuum clean, 1024² | M4 MacBook Air, Metal f32, one worker | 59.5 s | 7.11 s | **8.37×** | [Mosaic B10](https://github.com/bglenden/casa-rs/issues/787#issuecomment-6279476046) |
 | `tclean`, 4096² continuum image, four spectral windows, Clark to 0.5 mJy | M4 MacBook Air, CPU f64, one worker | 246 s | 44.8–45.0 s | 5.5× | [Imaging row P17](https://github.com/bglenden/casa-rs/issues/648#issuecomment-6222278538) |
 | `tclean`, 1024² VLA spectral cube, 512 channels | M4 MacBook Air, Metal f32, four workers | 21,623 s | 4,144 s | 5.22× | [Full-cube comparison](https://github.com/bglenden/casa-rs/issues/659#issuecomment-6203335788) |
-| `tclean`, VLASS fragment, AW-projection and MT-MFS, warm convolution-function cache | M4 MacBook Air, CPU f64, one worker | 9,074 s | 4,765 s | 1.90× | [Imaging row P11, CASA 6.7.5.9](https://github.com/bglenden/casa-rs/issues/648#issuecomment-6222278538) |
 | `simobserve`, ALMA disk simulation with atmospheric noise | Apple Silicon Mac mini, CPU | 2.42 s | 1.41 s | 1.71× | [Simulation case `psim2`](resources/casa-compat/evidence/simobserve-parity-20261103.json) |
 
 ## Current Status
