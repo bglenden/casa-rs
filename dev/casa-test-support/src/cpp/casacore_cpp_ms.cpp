@@ -1166,9 +1166,12 @@ void verify_heterogeneous_model_clone_impl(const std::string& path)
         }
         return false;
     };
-    if (!uses_manager("DATA", "TiledData") ||
-        !uses_manager("MODEL_DATA", "TiledModelData")) {
-        throw std::runtime_error("DATA/MODEL_DATA do not use the expected TiledShapeStMan instances");
+    if (!uses_manager("DATA", "TiledData")) {
+        throw std::runtime_error("DATA does not use the fixture's TiledData TiledShapeStMan");
+    }
+    // The selected-row mutation names a cloned manager Tiled + column name.
+    if (!uses_manager("MODEL_DATA", "TiledMODEL_DATA")) {
+        throw std::runtime_error("MODEL_DATA does not use its cloned TiledMODEL_DATA TiledShapeStMan");
     }
     casacore::ArrayColumn<casacore::Complex> data(ms, "DATA");
     casacore::ArrayColumn<casacore::Complex> model(ms, "MODEL_DATA");
