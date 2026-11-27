@@ -27,21 +27,21 @@ use casa_ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_mstransform::{TransformTaskHistory, append_task_history};
 
-#[path = "flagdata/automatic.rs"]
+#[path = "automatic.rs"]
 mod automatic;
-#[path = "flagdata/command.rs"]
+#[path = "command.rs"]
 mod command;
-#[path = "flagdata/command_values.rs"]
+#[path = "command_values.rs"]
 mod command_values;
-#[path = "flagdata/list.rs"]
+#[path = "list.rs"]
 mod list;
-#[path = "flagdata/python_literal.rs"]
+#[path = "python_literal.rs"]
 mod python_literal;
-#[path = "flagdata/rflag.rs"]
+#[path = "rflag.rs"]
 mod rflag;
-#[path = "flagdata/shadow.rs"]
+#[path = "shadow.rs"]
 mod shadow;
-#[path = "flagdata/tfcrop.rs"]
+#[path = "tfcrop.rs"]
 mod tfcrop;
 
 const STRING_SELECTORS: [&str; 9] = [

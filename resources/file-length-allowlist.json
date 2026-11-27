@@ -5,11 +5,8 @@
     "libs/casa/casa-vla/src/importer.rs",
     "libs/casa/casa-vla/src/record.rs",
     "dev/casa-test-support/src/measures_interop.rs",
-    "frontends/casars-cli/tests/msexplore_casa_parity.rs",
-    "frontends/casars-cli/tests/msexplore_cli.rs",
     "suites/casacore-interop/tests/measures_interop.rs",
     "suites/perf/tests/images_perf_vs_cpp.rs",
-    "surfaces/casa-contracts/src/parameters.rs",
     "surfaces/casa-plot-data/src/msexplore.rs",
     "surfaces/casa-plot-data/src/plot.rs"
   ]

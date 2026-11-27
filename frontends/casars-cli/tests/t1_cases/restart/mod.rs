@@ -8,7 +8,7 @@ use casa_contracts::TaskReply;
 use casa_images::PagedImage;
 use serde_json::json;
 
-#[path = "restart/outlier_residual.rs"]
+#[path = "outlier_residual.rs"]
 mod outlier_residual;
 
 use super::{

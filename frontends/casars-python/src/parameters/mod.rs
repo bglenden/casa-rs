@@ -588,5 +588,5 @@ pub(crate) fn parameter_write_managed<'py>(
 }
 
 #[cfg(test)]
-#[path = "parameters_tests.rs"]
+#[path = "../parameters_tests.rs"]
 mod tests;
