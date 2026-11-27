@@ -19,7 +19,9 @@ PROVENANCE_NAME = installer["PROVENANCE_NAME"]
 
 class SnapshotInstallerTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
         self.bundle = self.root / "snapshot.tar.gz"
         self.manifest = self.root / "snapshot.json"
         self.destination = self.root / "installed"
