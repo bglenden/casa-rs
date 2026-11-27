@@ -355,3 +355,37 @@ def test_legacy_taql_disk_copy_protects_a_concurrently_opened_output(native_data
         with pytest.raises(RuntimeError, match="still open"):
             conversion.result(timeout=30)
         assert holder.nrow() == before
+
+
+@pytest.mark.parametrize("copy_before_iterator", [False, True])
+def test_legacy_taql_disk_copy_preserves_iterator_source(native_dataset, tmp_path,
+                                                        copy_before_iterator):
+    results = []
+    for api in (pinned_casa(), tools):
+        target = tmp_path / f"{api.__name__}.ms"
+        query = f'True LIMIT 4 GIVING "{target}" AS PLAIN'
+        with closing(api.ms()) as reader:
+            assert reader.open(str(native_dataset))
+            if copy_before_iterator:
+                assert reader.selecttaqlold(query)
+            assert reader.iterinitold(["SCAN_NUMBER"], maxrows=1, adddefaultsortcolumns=False)
+            assert reader.iteroriginold()
+            if copy_before_iterator:
+                assert reader.selectinitold(reset=True)
+            else:
+                assert reader.selecttaqlold(query)
+            assert reader.iternextold()
+            results.append((reader.nrowold(True), reader.rangeold("rows")["rows"]))
+    assert results[0][0] == results[1][0]
+    np.testing.assert_array_equal(results[0][1], results[1][1], strict=True)
+
+
+def test_legacy_taql_disk_copy_retains_the_original_polarization_source(native_dataset, tmp_path):
+    for api in (pinned_casa(), tools):
+        target = tmp_path / f"{api.__name__}.ms"
+        with closing(api.ms()) as reader:
+            assert reader.open(str(native_dataset))
+            assert reader.selecttaqlold(f'True LIMIT 4 GIVING "{target}" AS PLAIN')
+            assert reader.nrowold(True) == 4
+            reader.selectpolarizationold([])
+            assert reader.nrowold(True) == reader.nrow()

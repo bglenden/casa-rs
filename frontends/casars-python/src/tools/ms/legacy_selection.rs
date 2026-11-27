@@ -31,7 +31,8 @@ pub(super) struct LegacySelection {
     // currently selected view after an exact-time record selection.
     rows: Option<Arc<[usize]>>,
     initial: Option<InitialSelection>,
-    output: Option<Box<AttachedMs>>,
+    pub(super) output: Option<Box<AttachedMs>>,
+    pub(super) inactive_iterator: Option<Box<AttachedMs>>,
     pub(super) axes: LegacyAxes,
     pub(super) baselines: Option<Vec<(i32, i32)>>,
     pub(super) iteration: Option<LegacyIteration>,
@@ -118,8 +119,10 @@ impl PyMsTool {
                 return Ok(false);
             };
             if reset {
+                ms.replace_legacy_output(None);
                 ms.legacy_selection = LegacySelection {
                     iteration: ms.legacy_selection.iteration.take(),
+                    inactive_iterator: ms.legacy_selection.inactive_iterator.take(),
                     ..LegacySelection::default()
                 };
                 return Ok(true);
@@ -130,7 +133,7 @@ impl PyMsTool {
                     "The data description id must be a list of positive integers",
                 ));
             }
-            ms.legacy_selection.output = None;
+            ms.replace_legacy_output(None);
             ms.initialize_legacy_selection(Some(id))
         })
     }
@@ -179,6 +182,16 @@ impl AttachedMs {
             return self.legacy_selection.output.as_deref_mut().unwrap();
         }
         self
+    }
+
+    pub(super) fn replace_legacy_output(&mut self, output: Option<Box<Self>>) {
+        let previous = std::mem::replace(&mut self.legacy_selection.output, output);
+        if previous
+            .as_ref()
+            .is_some_and(|view| view.legacy_selection.iteration.is_some())
+        {
+            self.legacy_selection.inactive_iterator = previous;
+        }
     }
 
     pub(super) fn initialize_legacy_selection(&mut self, requested: Option<i32>) -> PyResult<bool> {
@@ -320,7 +333,7 @@ impl AttachedMs {
         }
         let (nonempty, output) = view.apply_legacy_taql(text, &original_path)?;
         if let Some(output) = output {
-            self.legacy_selection.output = Some(Box::new(output));
+            self.replace_legacy_output(Some(Box::new(output)));
         }
         Ok(nonempty)
     }

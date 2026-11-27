@@ -167,7 +167,7 @@ impl PyMsTool {
             let Some(ms) = attached.as_mut() else {
                 return Ok(false);
             };
-            let ms = ms.legacy_view_mut();
+            ms.replace_legacy_output(None);
             ms.initialize_legacy_selection(None)?;
             if !ms.prepare_legacy_filter()? {
                 return Ok(false);
