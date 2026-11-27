@@ -23,6 +23,10 @@ use crate::table_path::stored_table_dat_keywords;
 
 /// Result of reading table.dat — dispatches on the table type marker.
 #[derive(Debug, Clone)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "keep the common plain-table descriptor inline to avoid an allocation on every open"
+)]
 pub(crate) enum TableDatResult {
     Plain(TableDatContents),
     Ref(RefTableDatContents),
