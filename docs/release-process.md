@@ -68,16 +68,36 @@ and release preparation.
    checks and GitHub prerelease assets. Use the
    [release gates](https://github.com/bglenden/casa-rs/blob/main/TESTING.md#releases-and-waivers)
    for required evidence, including C++ interoperability and CASA parity.
-3. Install the downloadable RC suite and wheel in clean environments on
-   Linux x86_64 and macOS arm64. Check the stated Python versions and verify
-   that the [side-by-side RC install](install.md#install-a-release-candidate-side-by-side)
-   preserves the active stable install. Exercise named representative workflows
-   for MS conversion and round-trip, flagging and calibration, and CPU and
-   Metal imaging. Record the candidate tag, workflow run, and results in the
-   milestone issues or the release PR.
+3. Run the RC acceptance checks below using the published artifacts.
 4. Resolve any remaining release blockers before promoting the candidate.
    If executable behavior or packaging changes, cut the next RC and rerun
    its release gates and the affected acceptance workloads.
+
+### RC acceptance checks
+
+- **Install and run.** Use clean Linux x86_64 and macOS arm64 environments
+  with the oldest OS versions the release claims to support. Install and
+  import each shipped Python wheel. Run a CLI task and a Python task from
+  the downloaded suite, and smoke-test the standalone executable bundle.
+  Run these checks outside the source checkout.
+- **Upgrade and roll back.** Verify that a
+  [side-by-side RC install](install.md#install-a-release-candidate-side-by-side)
+  preserves the active stable install. Activate the RC, switch back to
+  stable, and verify which CLI and Python package the user gets.
+- **Check scientific results.** Name a small set of existing cases for
+  MSv2/MSv4 conversion and round-trip, flagging and calibration, and imaging
+  on CPU and Metal. Run them through the published suite. Check required
+  outputs against the existing CASA or casacore reference and its
+  established tolerances, including persisted data where applicable.
+- **Check macOS first launch.** On a fresh Mac with default Gatekeeper
+  settings, try the documented terminal installer and the browser download
+  and extraction path. Run a CLI command and import the native Python
+  extension. For the first RC, record any warnings or blocks and decide how
+  Developer ID signing and notarization will be handled for the final release.
+
+Record the candidate tag, workflow run, platforms and Python versions tested,
+and results in the milestone issues or the release PR. Resolve failures in
+required checks before promotion.
 
 ## Publish and verify the final release
 
