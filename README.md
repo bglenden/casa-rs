@@ -9,9 +9,15 @@ Verification: just docs-check
 **`casa-rs` aims for functional parity with CASA and faster execution.** It
 implements supported CASA workflows in Rust, with Python task and tool APIs,
 interoperable MeasurementSets and images, and scientific results checked
-against CASA. On Apple Silicon, casa-rs ran **17× faster for an ALMA
-visibility simulation** and **13.7× faster for a VLASS imaging workload**
-in recorded comparisons with CASA. See the [macOS benchmarks](#representative-macos-performance).
+against CASA. The Python package and command-line suite run on **Linux
+x86_64** and **macOS on Apple Silicon**. See [Installation](#installation).
+
+Matched benchmarks show speedups over CASA across a wide range of tasks and
+tools, including calibration, MeasurementSet transforms, plotting and image
+analysis. See the [task and tool benchmarks](#other-task-and-tool-benchmarks).
+On Apple Silicon, casa-rs ran **17× faster for an ALMA visibility simulation**
+and **13.7× faster for a VLASS imaging workload**. See the
+[macOS benchmarks](#representative-macos-performance).
 CASA and casacore serve as test and benchmark references. The Rust
 implementation runs independently.
 
@@ -73,6 +79,18 @@ comparison conditions and checks against CASA's outputs.
 | `tclean`, 4096² continuum image, four spectral windows, Clark to 0.5 mJy | M4 MacBook Air, CPU f64, one worker | 246 s | 44.8–45.0 s | 5.5× | [Imaging row P17](https://github.com/bglenden/casa-rs/issues/648#issuecomment-6222278538) |
 | `tclean`, 1024² VLA spectral cube, 512 channels | M4 MacBook Air, Metal f32, four workers | 21,623 s | 4,144 s | 5.22× | [Full-cube comparison](https://github.com/bglenden/casa-rs/issues/659#issuecomment-6203335788) |
 | `simobserve`, ALMA disk simulation with atmospheric noise | Apple Silicon Mac mini, CPU | 2.42 s | 1.41 s | 1.71× | [Simulation case `psim2`](resources/casa-compat/evidence/simobserve-parity-20261103.json) |
+
+### Other task and tool benchmarks
+
+These median wall times compare the public Python APIs with CASA 6.7.6.14 on
+matched inputs. Speedups vary by workload and configuration.
+
+| Workload | Platform | CASA | casa-rs | Speedup | Evidence |
+|---|---|---:|---:|---:|---|
+| `fluxscale`, full flux transfer on a 300,000-row calibration table, cold cache | Linux x86_64 | 27.436 s | 0.603 s | **45.5×** | [Timing samples](resources/casa-compat/evidence/fluxscale-performance-large-cold-20261117.json) |
+| `ms.regridspw()`, BARY conversion and width-two regridding of `ngc5921_ut.ms` | Linux | 2.395 s | 0.221 s | **10.8×** | [Spectral rewrite benchmarks](https://github.com/bglenden/casa-rs/pull/2332) |
+| `plotms`, scan-by-scan export of two PNG plots | Linux x86_64 | 1.1229 s | 0.2511 s | **4.47×** | [PlotMS release timings](https://github.com/bglenden/casa-rs/issues/1032#issuecomment-7165881787) |
+| `image.statistics()`, per-plane statistics on a masked Float cube | macOS arm64 | 81.385 ms | 19.160 ms | **4.25×** | [Image tool benchmarks](https://github.com/bglenden/casa-rs/pull/2066) |
 
 ## Current Status
 
