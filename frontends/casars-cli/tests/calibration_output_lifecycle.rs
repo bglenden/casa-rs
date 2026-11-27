@@ -1,12 +1,22 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Laws observed with CASA 6.7.6.14 and its storeNCT/specify implementation.
-#[path = "../../../crates/casa-calibration/tests/common/mod.rs"]
+#[path = "../../../libs/casa/casa-calibration/tests/common/mod.rs"]
 mod common;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use casa_calibration::*;
+use casa_calibration::bandpass::{BandpassSolveCombine, BandpassSolveRequest, BandpassType};
+use casa_calibration::corrected_export::{
+    ExportCorrectedDataError, ExportCorrectedDataRequest, export_corrected_data,
+};
+use casa_calibration::gencal::{GencalRequest, GencalType, gencal};
+use casa_calibration::output::CalibrationOutputMode;
+use casa_calibration::solve::{
+    CalibrationDataset, CalibrationError, CalibrationSolveRequest, CalibrationSolveResult,
+    GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest,
+    GainType, RefAntSelector, solve_calibration_with_output_mode,
+};
 use casa_core::{ArrayValue, RecordValue, ScalarValue, Value};
 use casa_ms::MsSelection;
 use casa_tables::{Table, TableOptions};

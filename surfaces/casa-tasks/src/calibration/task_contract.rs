@@ -14,13 +14,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::calibration::managed_output::CalibrationTaskResult;
 use casa_calibration::{
-    ApplyArgumentError, ApplyCalibrationTableSpec, ApplyExecutionOptions, ApplyMode,
-    ApplyPlanRequest, BandpassFrequencyInterval, BandpassSolveCombine, BandpassSolveCuts,
-    BandpassSolveRequest, BandpassType, CalibrationDataset, CalibrationSolveRequest,
-    CalibrationSolveResult, CalibrationStatsAxis, CalibrationStatsRequest, FluxScaleRequest,
-    GainNormalization, GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource,
-    GainSolveRequest, GainSplineControls, GainType, GencalRequest, RefAntSelector,
-    calibration_stats, plan_apply_from_path, summarize_tables,
+    apply::{
+        ApplyArgumentError, ApplyCalibrationTableSpec, ApplyExecutionOptions, ApplyMode,
+        ApplyPlanRequest, plan_apply_from_path,
+    },
+    bandpass::{
+        BandpassFrequencyInterval, BandpassSolveCombine, BandpassSolveCuts, BandpassSolveRequest,
+        BandpassType,
+    },
+    fluxscale::FluxScaleRequest,
+    gencal::GencalRequest,
+    solve::{
+        CalibrationDataset, CalibrationSolveRequest, CalibrationSolveResult, GainNormalization,
+        GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest,
+        GainSplineControls, GainType, RefAntSelector,
+    },
+    table::{CalibrationStatsAxis, CalibrationStatsRequest, calibration_stats, summarize_tables},
 };
 
 /// Stable protocol name advertised by `calibrate --protocol-info`.
@@ -221,7 +230,7 @@ pub struct GencalTaskRequest {
 impl GencalTaskRequest {
     pub(crate) fn generate(
         &self,
-        mode: casa_calibration::CalibrationOutputMode,
+        mode: casa_calibration::output::CalibrationOutputMode,
     ) -> Result<casa_calibration::gencal::GencalReport, casa_calibration::gencal::GencalError> {
         casa_calibration::gencal::gencal_with_output_mode(
             &self.prior,
@@ -235,9 +244,9 @@ impl GencalTaskRequest {
 
     pub(crate) fn infile(&self) -> Option<&std::path::Path> {
         match self.prior.caltype {
-            casa_calibration::GencalType::Antpos => self.antpos_infile.as_deref(),
-            casa_calibration::GencalType::Tecim => self.tec_image.as_deref(),
-            casa_calibration::GencalType::Eop => self.eop_infile.as_deref(),
+            casa_calibration::gencal::GencalType::Antpos => self.antpos_infile.as_deref(),
+            casa_calibration::gencal::GencalType::Tecim => self.tec_image.as_deref(),
+            casa_calibration::gencal::GencalType::Eop => self.eop_infile.as_deref(),
             _ => self.gaincurve_infile.as_deref(),
         }
     }
@@ -288,17 +297,19 @@ pub struct ExecuteApplyTaskRequest {
 impl ExecuteApplyTaskRequest {
     pub(crate) fn execute_apply(
         &self,
-    ) -> Result<casa_calibration::ApplyExecutionReport, Box<casa_calibration::ApplyExecutionError>>
-    {
+    ) -> Result<
+        casa_calibration::apply::ApplyExecutionReport,
+        Box<casa_calibration::apply::ApplyExecutionError>,
+    > {
         let error = self
             .callibrary_error
             .as_deref()
-            .map(casa_calibration::plan::ApplyPreparationError::Callibrary)
+            .map(casa_calibration::apply::ApplyPreparationError::Callibrary)
             .or(self
                 .argument_error
                 .as_ref()
-                .map(casa_calibration::plan::ApplyPreparationError::Argument));
-        casa_calibration::execute::execute_apply_with_preparation_error(
+                .map(casa_calibration::apply::ApplyPreparationError::Argument));
+        casa_calibration::apply::execute_apply_with_preparation_error(
             &self.measurement_set,
             &ApplyPlanRequest {
                 selection: self.selection.clone(),
@@ -351,7 +362,7 @@ pub struct SolveGainTaskRequest {
     pub spline_controls: Option<GainSplineControls>,
     /// Delay and rate search controls for the fringefit task.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fringe_controls: Option<casa_calibration::FringeControls>,
+    pub fringe_controls: Option<casa_calibration::solve::FringeControls>,
     /// Solve mode.
     pub solve_mode: GainSolveMode,
     /// Solution interval.
@@ -384,7 +395,7 @@ pub struct SolveGainTaskRequest {
     pub normalization_type: GainNormalization,
     /// Optional CASA robust weights and outlier rejection.
     #[serde(default)]
-    pub robustness: casa_calibration::GainSolveRobustness,
+    pub robustness: casa_calibration::solve::GainSolveRobustness,
     /// Minimum solution SNR required to keep a solved parameter unflagged.
     #[serde(default = "default_min_snr")]
     pub min_snr: f32,
@@ -494,9 +505,9 @@ impl CalibrationTaskRequest {
 
     pub(crate) fn execute_with_output_mode(
         &self,
-        mode: Option<casa_calibration::CalibrationOutputMode>,
+        mode: Option<casa_calibration::output::CalibrationOutputMode>,
     ) -> Result<CalibrationTaskResult, String> {
-        use casa_calibration::CalibrationOutputMode::{Append, Create, Replace, Update};
+        use casa_calibration::output::CalibrationOutputMode::{Append, Create, Replace, Update};
         match self {
             Self::Summary(request) => {
                 if request.paths.is_empty() {
@@ -538,7 +549,7 @@ impl CalibrationTaskRequest {
                 .map_err(|error| error.to_string()),
             Self::ExportCorrectedData(request) => {
                 casa_calibration::corrected_export::export_corrected_data_with_overwrite(
-                    &casa_calibration::ExportCorrectedDataRequest {
+                    &casa_calibration::corrected_export::ExportCorrectedDataRequest {
                         input_ms: request.input_ms.clone(),
                         output_ms: request.output_ms.clone(),
                         selection: request.selection.clone(),
@@ -592,7 +603,7 @@ impl CalibrationTaskRequest {
                     }
                     _ => CalibrationSolveRequest::Gain(gain),
                 };
-                casa_calibration::solve_calibration_with_output_mode(
+                casa_calibration::solve::solve_calibration_with_output_mode(
                     CalibrationDataset::path(&request.measurement_set),
                     solve,
                     mode.unwrap_or(if request.append { Append } else { Replace }),
@@ -604,34 +615,36 @@ impl CalibrationTaskRequest {
                 .map(CalibrationTaskResult::SolveGain)
                 .map_err(|error| error.to_string())
             }
-            Self::SolveBandpass(request) => casa_calibration::solve_calibration_with_output_mode(
-                CalibrationDataset::path(&request.measurement_set),
-                CalibrationSolveRequest::Bandpass(BandpassSolveRequest {
-                    selection: request.selection.clone(),
-                    output_table: request.output_table.clone(),
-                    refant: request.refant.clone(),
-                    prior_calibration_tables: request.prior_calibration_tables.clone(),
-                    parang: request.parang,
-                    combine: request.combine,
-                    band_type: request.band_type,
-                    normalize_average_amplitude: request.normalize_average_amplitude,
-                    amplitude_degree: request.amplitude_degree,
-                    phase_degree: request.phase_degree,
-                    model_source: request.model_source,
-                    solve_interval: request.solve_interval,
-                    frequency_interval: request.frequency_interval,
-                    correlation_dependent_flags: request.correlation_dependent_flags,
-                    smodel: request.smodel,
-                    cuts: request.cuts,
-                }),
-                mode.unwrap_or(if request.append { Append } else { Replace }),
-            )
-            .map(|result| match result {
-                CalibrationSolveResult::Bandpass(report) => report,
-                _ => unreachable!("bandpass request result"),
-            })
-            .map(CalibrationTaskResult::SolveBandpass)
-            .map_err(|error| error.to_string()),
+            Self::SolveBandpass(request) => {
+                casa_calibration::solve::solve_calibration_with_output_mode(
+                    CalibrationDataset::path(&request.measurement_set),
+                    CalibrationSolveRequest::Bandpass(BandpassSolveRequest {
+                        selection: request.selection.clone(),
+                        output_table: request.output_table.clone(),
+                        refant: request.refant.clone(),
+                        prior_calibration_tables: request.prior_calibration_tables.clone(),
+                        parang: request.parang,
+                        combine: request.combine,
+                        band_type: request.band_type,
+                        normalize_average_amplitude: request.normalize_average_amplitude,
+                        amplitude_degree: request.amplitude_degree,
+                        phase_degree: request.phase_degree,
+                        model_source: request.model_source,
+                        solve_interval: request.solve_interval,
+                        frequency_interval: request.frequency_interval,
+                        correlation_dependent_flags: request.correlation_dependent_flags,
+                        smodel: request.smodel,
+                        cuts: request.cuts,
+                    }),
+                    mode.unwrap_or(if request.append { Append } else { Replace }),
+                )
+                .map(|result| match result {
+                    CalibrationSolveResult::Bandpass(report) => report,
+                    _ => unreachable!("bandpass request result"),
+                })
+                .map(CalibrationTaskResult::SolveBandpass)
+                .map_err(|error| error.to_string())
+            }
             Self::FluxScale(request) => casa_calibration::fluxscale::fluxscale_with_output_mode(
                 request,
                 mode.unwrap_or(if request.append { Append } else { Create }),
@@ -673,7 +686,7 @@ mod tests {
         CalibrationTaskResult, SummaryTaskRequest, calibration_protocol_descriptor,
         calibration_task_schema_bundle,
     };
-    use casa_calibration::{
+    use casa_calibration::table::{
         CalibrationColumnSummary, CalibrationIssueSeverity, CalibrationKeywordSummary,
         CalibrationParameterFamily, CalibrationSubtableSummary, CalibrationTableSummary,
         CalibrationValidationIssue,

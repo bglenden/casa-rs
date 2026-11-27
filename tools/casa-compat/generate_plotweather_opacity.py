@@ -43,7 +43,7 @@ def main():
     )
     destination = (
         Path(__file__).resolve().parents[2]
-        / "crates/casa-calibration/src/weather/vla_opacity_6_7_6_14.bin"
+        / "libs/casa/casa-calibration/src/weather/vla_opacity_6_7_6_14.bin"
     )
     destination.write_bytes(coefficients.tobytes())
 

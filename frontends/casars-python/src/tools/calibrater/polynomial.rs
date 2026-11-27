@@ -4,10 +4,16 @@
 use std::path::PathBuf;
 
 use casa_calibration::{
-    BandpassFrequencyInterval, BandpassSolveCombine, BandpassSolveCuts, BandpassSolveRequest,
-    BandpassType, CalibraterLifecycle, CalibrationOutputMode, CalibrationSolveRequest,
-    GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest,
-    GainSplineControls, GainType, RefAntSelector,
+    bandpass::{
+        BandpassFrequencyInterval, BandpassSolveCombine, BandpassSolveCuts, BandpassSolveRequest,
+        BandpassType,
+    },
+    output::CalibrationOutputMode,
+    solve::{
+        CalibraterLifecycle, CalibrationSolveRequest, GainSolveCombine, GainSolveInterval,
+        GainSolveMode, GainSolveModelSource, GainSolveRequest, GainSplineControls, GainType,
+        RefAntSelector,
+    },
 };
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;

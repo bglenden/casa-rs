@@ -6,7 +6,7 @@ use casa_simulation::{
 };
 use serde_json::json;
 
-#[path = "../../../crates/casa-simulation/tests/common/simalma_fixture.rs"]
+#[path = "../../../libs/casa/casa-simulation/tests/common/simalma_fixture.rs"]
 mod fixture;
 
 #[test]

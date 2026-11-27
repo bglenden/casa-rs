@@ -38,7 +38,7 @@ casa-flagging.workspace = true
 casa-mstransform = { workspace = true, features = ["msv4"] }
 casa-measures.workspace = true
 base64 = "0.22"
-casa-calibration = { path = "../../crates/casa-calibration" }
+casa-calibration = { workspace = true }
 casa-coordinates.workspace = true
 casa-images.workspace = true
 casa-imaging-deconvolution.workspace = true
@@ -46,7 +46,7 @@ casa-lattices.workspace = true
 casa-ms = { workspace = true, features = ["msv4"] }
 casa-numerics.workspace = true
 casa-plot-data = { path = "../../surfaces/casa-plot-data", features = ["ms"] }
-casa-simulation = { path = "../../crates/casa-simulation" }
+casa-simulation = { workspace = true }
 casa-test-support = { path = "../../dev/casa-test-support" }
 casa-core.workspace = true
 fitsio = { version = "0.21", features = ["fitsio-src", "src-cmake"] }

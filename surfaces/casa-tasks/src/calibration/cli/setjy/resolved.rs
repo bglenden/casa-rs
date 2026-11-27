@@ -13,7 +13,7 @@ use casa_ms::{MeasurementSet, MsSelection, ResolvedMsSelection};
 use super::{CalibratorSpectrum, ManualFlux, MsCalEngine, execution};
 use casa_calibration::ft::image::ImageModel;
 use casa_calibration::ft::setjy::image::{ImageFlux, ImageFrequencies, calibrator_images};
-use casa_calibration::session::resolve_casa_calibration_selection;
+use casa_calibration::solve::resolve_casa_calibration_selection;
 
 pub(super) struct ImageParameters<'a> {
     pub(super) path: &'a Path,

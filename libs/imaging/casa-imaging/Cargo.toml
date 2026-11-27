@@ -38,7 +38,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 casa-mstransform = { workspace = true, features = ["msv4"] }
-casa-simulation = { path = "../../../crates/casa-simulation" }
+casa-simulation.workspace = true
 base64 = "0.22"
 flate2 = "1"
 tar = "0.4"

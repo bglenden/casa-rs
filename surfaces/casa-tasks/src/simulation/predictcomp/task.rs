@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use super::super::SimobserveArtifact;
 use crate::{TaskFailure, TaskInvocation, TaskSuccess};
-use casa_calibration::{predict_calibrator_component, predict_solar_component_2012};
+use casa_calibration::ft::{predict_calibrator_component, predict_solar_component_2012};
 use casa_components::SkyComponent;
 use casa_contracts::{CasaFloat, CasaValue, FloatDtype, RunProductKind, casacore_value_to_casa};
 use casa_core::Value;

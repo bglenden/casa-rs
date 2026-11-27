@@ -5,7 +5,7 @@
 Run with CASA's Python (for example `/Applications/CASA.app/Contents/MacOS/python3 -I`):
 
     python3 -I tools/simulation/simutil_oracle.py --configs <dir> \\
-        --out crates/casa-simulation/tests/data/simutil_casa.json
+        --out libs/casa/casa-simulation/tests/data/simutil_casa.json
 
 `--configs` holds the antenna configuration files `approxBeam` reads (CASA's
 `alma/simmos`, for example `~/.casa/data/alma/simmos`).
@@ -27,7 +27,7 @@ It records, from CASA's `casatasks.private.simutil.simutil` and `casatools.quant
 - `baselineLengths` and `approxBeam` for configuration files;
 - `qa.formxxx` and `qa.tos`.
 
-The casa-rs tests in `crates/casa-simulation/tests/simutil_casa.rs` compare
+The casa-rs tests in `libs/casa/casa-simulation/tests/simutil_casa.rs` compare
 the strings exactly.
 """
 

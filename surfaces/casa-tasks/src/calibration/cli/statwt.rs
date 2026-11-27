@@ -7,8 +7,11 @@ use casa_flagging::{save_next_flag_backup, save_next_partition_flag_backup};
 use casa_ms::{MeasurementSet, MsSelection};
 
 use casa_calibration::{
-    StatWtAlgorithm, StatWtChannelBin, StatWtCombine, StatWtDataColumn, StatWtMs, StatWtOptions,
-    StatWtTimeBin, estimate_statwt, statwt_weight_range, visibility_model_source_paths,
+    statwt::{
+        StatWtAlgorithm, StatWtChannelBin, StatWtCombine, StatWtDataColumn, StatWtMs,
+        StatWtOptions, StatWtTimeBin, estimate_statwt, statwt_weight_range,
+    },
+    uvsub::visibility_model_source_paths,
 };
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {

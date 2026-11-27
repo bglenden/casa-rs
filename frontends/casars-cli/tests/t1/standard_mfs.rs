@@ -464,7 +464,7 @@ fn mem_stops_at_the_noise_threshold_before_solving() {
 #[test]
 fn a_saved_telescope_beam_changes_standard_and_w_primary_beam_correction() {
     let table = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../crates/casa-simulation/tests/data/sm_squint/custom_gaussian.vp");
+        .join("../../libs/casa/casa-simulation/tests/data/sm_squint/custom_gaussian.vp");
     let observation = Observation::synthesise(&[("point", POINT)]);
     let pixel = [16, 16];
     for (gridder, planes) in [("standard", 1), ("wproject", 8)] {

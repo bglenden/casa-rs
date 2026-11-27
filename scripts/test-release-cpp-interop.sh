@@ -53,10 +53,6 @@ run_timed_step \
   "Running casacore-interop C++ interop suite" \
   cargo test -p casacore-interop --features cpp-interop-tests --tests
 run_timed_step \
-  "Running simulator MeasurementSet C++ interop" \
-  cargo test -p casa-simulation --features cpp-interop-tests \
-    --test simulator_cpp_interop
-run_timed_step \
   "Running imaging product replacement C++ interop" \
   cargo test -p casacore-interop --features cpp-interop-tests \
     --test imaging_replacement_interop

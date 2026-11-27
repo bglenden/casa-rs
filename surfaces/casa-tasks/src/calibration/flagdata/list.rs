@@ -144,7 +144,7 @@ pub(super) fn run(task: &TaskInvocation<'_>, action: &str) -> Result<TaskSuccess
             &requests,
             write_flags,
             commands.len() > 1,
-            Some(casa_calibration::flagdata_model),
+            Some(casa_calibration::models::flagdata_model),
         )
     };
     let mut reports = program.map_err(|error| map_program_error(error, calibration))?;

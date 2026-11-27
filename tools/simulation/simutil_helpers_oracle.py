@@ -5,7 +5,7 @@
 Run with CASA 6.7.6.14's Python:
 
     CASAPY -I tools/simulation/simutil_helpers_oracle.py \\
-        --inputs crates/casa-simulation/tests/data/skymodel_inputs.tar.gz \\
+        --inputs libs/casa/casa-simulation/tests/data/skymodel_inputs.tar.gz \\
         --out frontends/casars-python/python/tests/data/casa_simutil_helpers.json
 
 It records what CASA's `simutil` returns, logs or raises for:

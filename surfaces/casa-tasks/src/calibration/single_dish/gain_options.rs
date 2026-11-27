@@ -7,7 +7,7 @@ use crate::{TaskFailure, TaskInvocation};
 use casa_contracts::ParameterValue;
 use casa_core::quanta::{Quantity, Unit};
 
-use casa_calibration::{ApplyCalibrationTableSpec, ApplyInterpolationMode};
+use casa_calibration::apply::{ApplyCalibrationTableSpec, ApplyInterpolationMode};
 
 pub(super) fn radius(task: &TaskInvocation<'_>) -> Result<Option<f64>, TaskFailure> {
     let invalid = || TaskFailure::execution("Error in Calibrater::setsolve.").at("radius");

@@ -23,3 +23,10 @@ mod t31_multidomain_casa_oracle;
 mod t34_full_stokes_casa_oracle;
 #[path = "cases/t41_moving_source_casa_oracle.rs"]
 mod t41_moving_source_casa_oracle;
+
+#[path = "cases/simalma_casa.rs"]
+mod simalma_casa;
+#[path = "cases/simanalyze_multi_casa.rs"]
+mod simanalyze_multi_casa;
+#[path = "cases/simanalyze_task_casa.rs"]
+mod simanalyze_task_casa;

@@ -1,0 +1,30 @@
+[package]
+name = "casa-singledish"
+description = "CASA single-dish MeasurementSet import and data preparation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = true
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-atmosphere.workspace = true
+casa-calibration.workspace = true
+casa-core.workspace = true
+casa-fft.workspace = true
+casa-imageanalysis.workspace = true
+casa-measures.workspace = true
+casa-ms.workspace = true
+casa-mstransform.workspace = true
+casa-numerics.workspace = true
+casa-tables.workspace = true
+ndarray.workspace = true
+tempfile = "3"
+tracing.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"

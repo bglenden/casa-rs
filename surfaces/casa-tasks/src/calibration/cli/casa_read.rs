@@ -30,10 +30,15 @@ use crate::calibration::{
     SolveGainTaskRequest,
 };
 use casa_calibration::{
-    ApplyArgumentError, ApplyCalibrationTableSpec, ApplyMode, BandpassFrequencyInterval,
-    BandpassSolveCombine, BandpassSolveCuts, BandpassType, FluxScaleRequest, GainNormalization,
-    GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSplineControls,
-    GainType, GencalRequest, GencalType, RefAntSelector, load_apply_specs_from_callib_at,
+    apply::{ApplyArgumentError, ApplyCalibrationTableSpec, ApplyMode},
+    bandpass::{BandpassFrequencyInterval, BandpassSolveCombine, BandpassSolveCuts, BandpassType},
+    callib::load_apply_specs_from_callib_at,
+    fluxscale::FluxScaleRequest,
+    gencal::{GencalRequest, GencalType},
+    solve::{
+        GainNormalization, GainSolveCombine, GainSolveInterval, GainSolveMode,
+        GainSolveModelSource, GainSplineControls, GainType, RefAntSelector,
+    },
 };
 
 /// The request a CASA-named surface makes.
@@ -172,9 +177,9 @@ fn fringefit(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFail
     };
     let iterations = usize::try_from(task.integer("niter")?).unwrap_or(usize::MAX);
     let correlation_combination = match task.required_text("corrcomb")?.as_str() {
-        "none" => casa_calibration::FringeCorrelation::Separate,
-        "stokes" => casa_calibration::FringeCorrelation::Stokes,
-        "parallel" => casa_calibration::FringeCorrelation::Parallel,
+        "none" => casa_calibration::solve::FringeCorrelation::Separate,
+        "stokes" => casa_calibration::solve::FringeCorrelation::Stokes,
+        "parallel" => casa_calibration::solve::FringeCorrelation::Parallel,
         other => return Err(unknown("corrcomb", other, "'none', 'stokes' or 'parallel'")),
     };
     Ok(SolveGainTaskRequest {
@@ -184,7 +189,7 @@ fn fringefit(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFail
         append: task.flag("append")?,
         gain_type: GainType::K,
         spline_controls: None,
-        fringe_controls: Some(casa_calibration::FringeControls {
+        fringe_controls: Some(casa_calibration::solve::FringeControls {
             delay_window: search_window("delaywindow")?,
             rate_window: search_window("ratewindow")?,
             global_solve: task.flag("globalsolve")?,
@@ -472,7 +477,7 @@ fn fluxscale(task: &TaskInvocation<'_>) -> Result<FluxScaleRequest, TaskFailure>
         .collect::<Result<Vec<_>, _>>()?;
     let gainthreshold = task.number("gainthreshold")?;
     Ok(FluxScaleRequest {
-        options: casa_calibration::FluxScaleOptions {
+        options: casa_calibration::fluxscale::FluxScaleOptions {
             measurement_set: Some(vis),
             antenna: task.text("antenna")?.unwrap_or_default(),
             timerange: task.text("timerange")?.unwrap_or_default(),
@@ -718,8 +723,8 @@ fn traditional_chain(
             .and_then(|field| parse_gainfield_value(field));
         spec.interp = match interp.get(index) {
             Some(text) => parse_interp_value(text)
-                .unwrap_or(casa_calibration::ApplyInterpolationMode::Invalid),
-            None => casa_calibration::ApplyInterpolationMode::Linear,
+                .unwrap_or(casa_calibration::apply::ApplyInterpolationMode::Invalid),
+            None => casa_calibration::apply::ApplyInterpolationMode::Linear,
         };
         if let Some(map) = spwmap.get(index) {
             match apply_spw_map(map) {
@@ -852,7 +857,7 @@ fn model(
             if !use_stored_models && polarized.iter().any(|stokes| *stokes != 0.0) {
                 return Err(not_yet("smodel", &format!("{smodel:?}")));
             }
-            let stokes = casa_calibration::point_model_stokes(&smodel).ok_or_else(|| {
+            let stokes = casa_calibration::solve::point_model_stokes(&smodel).ok_or_else(|| {
                 TaskFailure::validation("smodel needs finite Stokes values representable as floats")
                     .at("smodel")
             })?;
@@ -908,14 +913,14 @@ fn calmode(task: &TaskInvocation<'_>) -> Result<GainSolveMode, TaskFailure> {
 
 fn robust_gain_solve(
     task: &TaskInvocation<'_>,
-) -> Result<casa_calibration::GainSolveRobustness, TaskFailure> {
+) -> Result<casa_calibration::solve::GainSolveRobustness, TaskFailure> {
     let mode = task.required_text("solmode")?;
     let thresholds = if matches!(mode.as_str(), "R" | "L1R") {
         task.numbers("rmsthresh")?
     } else {
         Vec::new()
     };
-    casa_calibration::GainSolveRobustness::from_casa(&mode, thresholds)
+    casa_calibration::solve::GainSolveRobustness::from_casa(&mode, thresholds)
         .ok_or_else(|| unknown("solmode", &mode, "'', 'L1', 'R' or 'L1R'"))
 }
 

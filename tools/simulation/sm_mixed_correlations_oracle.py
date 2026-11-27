@@ -96,7 +96,7 @@ def main():
     shutil.copytree(path,inputs/"base.ms",ignore=shutil.ignore_patterns("table.lock"))
     sm=simulator();assert sm.openfromms(str(path))
     model=root/"model.image"
-    source=Path(__file__).resolve().parents[2]/"crates/casa-simulation/tests/data/sm_image_layouts/iquv.image"
+    source=Path(__file__).resolve().parents[2]/"libs/casa/casa-simulation/tests/data/sm_image_layouts/iquv.image"
     shutil.copytree(source,model,ignore=shutil.ignore_patterns("table.lock"))
     if spec.get("selected"):
         if spec.get("aliases"):

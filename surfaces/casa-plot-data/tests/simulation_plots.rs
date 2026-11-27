@@ -16,14 +16,14 @@ use casa_simulation::{BackendRequest, ExecutionControls, SessionResources, Simul
 use flate2::read::GzDecoder;
 use serde_json::{Value, json};
 
-#[path = "../../../crates/casa-simulation/tests/support/simulation_plot_inputs.rs"]
+#[path = "../../../libs/casa/casa-simulation/tests/support/simulation_plot_inputs.rs"]
 mod simulation_plot_inputs;
 
 fn simobserve_fixture() -> Value {
     let mut text = String::new();
     GzDecoder::new(
         &include_bytes!(
-            "../../../crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz"
+            "../../../libs/casa/casa-simulation/tests/data/simobserve_graphics_casa.json.gz"
         )[..],
     )
     .read_to_string(&mut text)

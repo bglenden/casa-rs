@@ -16,7 +16,7 @@ use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 
 use casa_calibration::constants::{COL_CPARAM, COL_FLAG, COL_TIME};
-use casa_calibration::{CalibrationTableError, CalibrationTableSummary, summarize_table};
+use casa_calibration::table::{CalibrationTableError, CalibrationTableSummary, summarize_table};
 use casa_core::{ArrayValue, Complex32, ScalarValue};
 use casa_ms::{MeasurementSet, MsSelection, VisibilityDataColumn};
 use casa_tables::{Table, TableError, TableOptions};

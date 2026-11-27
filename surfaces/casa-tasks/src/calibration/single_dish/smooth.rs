@@ -4,10 +4,10 @@
 use std::path::Path;
 
 use crate::{TaskFailure, TaskInvocation, TaskSuccess};
-use casa_calibration::{SingleDishSession, SingleDishSmoothing};
 use casa_contracts::CasaValue;
 use casa_ms::MsSelection;
 use casa_mstransform::TransformTaskHistory;
+use casa_singledish::{SingleDishSession, SingleDishSmoothing};
 
 use super::selector;
 

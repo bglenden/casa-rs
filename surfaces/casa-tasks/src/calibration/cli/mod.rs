@@ -58,8 +58,9 @@ use crate::calibration::{
     fluxscale_record, solve_record,
 };
 use casa_calibration::{
-    ApplyArgumentError, ApplyCalibrationTableSpec, ApplyExecutionError, ApplyPlanError,
-    CalibrationOutputMode, GencalError,
+    apply::{ApplyArgumentError, ApplyCalibrationTableSpec, ApplyExecutionError, ApplyPlanError},
+    gencal::GencalError,
+    output::CalibrationOutputMode,
 };
 
 pub use crate::calibration::task_contract::CALIBRATION_SURFACES;
@@ -327,8 +328,8 @@ fn report_success(
     Ok(TaskSuccess::new(value, result)?.with_text(text))
 }
 
-fn position_input_failure(error: casa_calibration::AntposInputError) -> TaskFailure {
-    use casa_calibration::AntposInputError;
+fn position_input_failure(error: casa_calibration::gencal::AntposInputError) -> TaskFailure {
+    use casa_calibration::gencal::AntposInputError;
 
     let parameter = match &error {
         AntposInputError::Invalid(_) => {
@@ -442,7 +443,7 @@ fn casa_value(
 ) -> CasaValue {
     match (surface, result) {
         ("gaincal", CalibrationTaskResult::SolveGain(report))
-            if report.gain_type == casa_calibration::GainType::GSpline =>
+            if report.gain_type == casa_calibration::solve::GainType::GSpline =>
         {
             crate::calibration::casa_return::polynomial_solve_record(
                 applied,

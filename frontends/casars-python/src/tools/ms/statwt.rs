@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Statistical weight estimation on the attached MeasurementSet.
 
-use casa_calibration::{
+use casa_calibration::statwt::{
     StatWtAlgorithm, StatWtChannelBin, StatWtCombine, StatWtDataColumn, StatWtMs, StatWtOptions,
     StatWtTimeBin, estimate_statwt, statwt_weight_range,
 };

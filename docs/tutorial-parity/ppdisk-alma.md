@@ -110,7 +110,7 @@ CASA run, including the documented full-precision fidelity control:
 
 ```sh
 cargo test -p casa-parity --test api legacy_simulation_fits
-cargo test -p casa-simulation --test simanalyze_task_casa
+cargo test -p casa-parity --test api simanalyze_task_casa::
 python frontends/casars-python/python/tests/test_ppdisk_tutorial.py
 ```
 

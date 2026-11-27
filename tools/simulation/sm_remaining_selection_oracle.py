@@ -82,7 +82,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--fixture", type=Path, required=True)
-    parser.add_argument("--inputs", type=Path, default=Path(__file__).resolve().parents[2] / "crates/casa-simulation/tests/data/sm_remaining_selection", help="captured synthetic CASA inputs")
+    parser.add_argument("--inputs", type=Path, default=Path(__file__).resolve().parents[2] / "libs/casa/casa-simulation/tests/data/sm_remaining_selection", help="captured synthetic CASA inputs")
     parser.add_argument("--case", action="append", choices=QUERIES)
     args = parser.parse_args()
     assert version_string() == "6.7.6.14"

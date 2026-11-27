@@ -235,10 +235,10 @@ def test_the_constructor_takes_casas_arguments() -> None:
 
 # The CASA fixture casa-simulation's Rust tests compare in full.
 FIXTURE = json.loads(
-    (Path(__file__).resolve().parents[4] / "crates" / "casa-simulation" / "tests" / "data" / "simutil_casa.json")
+    (Path(__file__).resolve().parents[4] / "libs/casa" / "casa-simulation" / "tests" / "data" / "simutil_casa.json")
     .read_text(encoding="utf-8")
 )
-CONFIGS = Path(__file__).resolve().parents[4] / "crates" / "casa-simulation" / "tests" / "data" / "readantenna"
+CONFIGS = Path(__file__).resolve().parents[4] / "libs/casa" / "casa-simulation" / "tests" / "data" / "readantenna"
 
 
 def test_the_constructor_keeps_casas_state() -> None:
@@ -439,7 +439,7 @@ def test_beams_are_casas() -> None:
 
 # The sky-model fixture casa-simulation's Rust tests compare in full: CASA's
 # inputs, and what its modifymodel and flatimage made of them.
-SKYMODEL = Path(__file__).resolve().parents[4] / "crates" / "casa-simulation" / "tests" / "data"
+SKYMODEL = Path(__file__).resolve().parents[4] / "libs/casa" / "casa-simulation" / "tests" / "data"
 
 
 @pytest.fixture(scope="module")

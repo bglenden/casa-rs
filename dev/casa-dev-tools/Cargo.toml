@@ -15,7 +15,7 @@ workspace = true
 casa-tables.workspace = true
 casa-measures.workspace = true
 casa-ms.workspace = true
-casa-simulation = { path = "../../crates/casa-simulation" }
+casa-simulation.workspace = true
 casa-core.workspace = true
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }

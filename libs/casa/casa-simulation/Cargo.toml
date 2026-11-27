@@ -1,0 +1,61 @@
+[package]
+name = "casa-simulation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "CASA-compatible MeasurementSet simulation: the simulator tool and the simobserve tasks"
+repository.workspace = true
+publish = true
+# CASA reference fixtures are exercised in the workspace.
+exclude = ["/tests"]
+autotests = false
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-imageanalysis.workspace = true
+casa-flagging.workspace = true
+casa-mstransform.workspace = true
+casa-measures.workspace = true
+casa-atmosphere.workspace = true
+casa-calibration.workspace = true
+casa-components.workspace = true
+casa-coordinates.workspace = true
+casa-fft.workspace = true
+casa-images.workspace = true
+casa-imaging.workspace = true
+casa-imaging-model.workspace = true
+casa-imaging-operator.workspace = true
+casa-imaging-products.workspace = true
+casa-imaging-runtime.workspace = true
+casa-imaging-singledish.workspace = true
+casa-lattices.workspace = true
+casa-ms.workspace = true
+casa-numerics.workspace = true
+casa-tables.workspace = true
+casa-core.workspace = true
+ndarray.workspace = true
+num-complex.workspace = true
+serde_json = { version = "1", features = ["float_roundtrip"] }
+serde = { version = "1", features = ["derive"] }
+schemars = "0.8"
+tempfile = "3"
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+sha2 = "0.10"
+casa-test-support = { path = "../../../dev/casa-test-support" }
+flate2 = "1"
+tar = "0.4"
+tracing-subscriber.workspace = true
+
+[[test]]
+name = "api"
+path = "tests/api.rs"
+
+[[test]]
+name = "session_memory"
+path = "tests/session_memory.rs"
