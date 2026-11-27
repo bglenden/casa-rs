@@ -1212,5 +1212,5 @@ pub(crate) fn casacore_unit(name: &str) -> Result<Unit, String> {
 }
 
 #[cfg(test)]
-#[path = "convert_tests.rs"]
+#[path = "../convert_tests.rs"]
 mod tests;

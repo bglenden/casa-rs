@@ -415,28 +415,8 @@
   "libs/imaging/casa-imaging/tests/admission_memory.rs"
  ],
  "dual_module_files": [
-  "frontends/casars-cli/tests/t1.rs",
-  "frontends/casars-cli/tests/t1/restart.rs",
-  "frontends/casars-python/src/convert.rs",
-  "frontends/casars-python/src/parameters.rs",
-  "frontends/casars-python/src/tools/componentlist/keywords.rs",
-  "frontends/casars-python/src/tools/componentlist/ops.rs",
-  "frontends/casars-python/src/tools/componentlist/records.rs",
-  "frontends/casars-python/src/tools/coordsys/world_reference.rs",
-  "frontends/casars-python/src/tools/image/noise.rs",
-  "frontends/casars-python/src/tools/ms/legacy_iteration.rs",
-  "surfaces/casa-contracts/src/value_conversion.rs",
   "surfaces/casa-plot-data/src/calibration/plotbandpass.rs",
   "surfaces/casa-plot-data/src/msexplore.rs",
-  "surfaces/casa-plot-data/src/plot_document.rs",
-  "surfaces/casa-tasks/src/calibration/cli/setjy.rs",
-  "surfaces/casa-tasks/src/calibration/flagdata.rs",
-  "surfaces/casa-tasks/src/images/casa_return.rs",
-  "surfaces/casa-tasks/src/imaging/casa_return.rs",
-  "surfaces/casa-tasks/src/ms/msexplore/calibration.rs",
-  "surfaces/casa-tasks/src/ms/msexplore/cli.rs",
-  "surfaces/casa-tasks/src/runtime/normalize.rs",
-  "surfaces/casa-tasks/src/runtime/profile.rs",
-  "surfaces/casa-tasks/src/simulation/predictcomp.rs"
+  "surfaces/casa-plot-data/src/plot_document.rs"
  ]
 }

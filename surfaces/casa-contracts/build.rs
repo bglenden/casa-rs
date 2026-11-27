@@ -9,7 +9,7 @@
 
 #[path = "src/casa_value.rs"]
 mod casa_value;
-#[path = "src/parameters.rs"]
+#[path = "src/parameters/mod.rs"]
 mod parameters;
 pub use casa_value::*;
 pub use parameters::*;

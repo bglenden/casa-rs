@@ -7777,7 +7777,7 @@ lists, CASA silently discards trailing elements in longer rows (`[[1.0, 2.0],
 [3.0]]` becomes `array([[1.], [3.]])`) or zero-pads shorter rows (`[[1.0], [2.0,
 3.0]]` becomes `array([[1., 0.], [2., 3.]])`).
 
-casa-rs checks nesting depth and row shapes in `frontends/casars-python/src/convert.rs`
+casa-rs checks nesting depth and row shapes in `frontends/casars-python/src/convert/mod.rs`
 and rejects empty or ragged nested Python sequences with CASA's catchable
 `Illegal Quantum record in QuantumHolder::fromRecord` `RuntimeError` instead of
 crashing or corrupting values (#1252, #1170).
