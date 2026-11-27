@@ -178,6 +178,25 @@ def test_smoothcal_refuses_polynomial_calibration_field_on_msv4(tmp_path, monkey
     assert not Path("smoothed.cal").exists()
 
 
+def test_smoothcal_refuses_indirect_calibration_field_on_msv4(tmp_path, monkeypatch):
+    prepare_smoothing(tmp_path, monkeypatch, 0)
+    stored = Path("source.cal/FIELD")
+    backing = stored.rename("source.cal/field-storage")
+    table = tools.table()
+    assert table.open(str(backing))
+    view = table.query("NAME != ''", name=str(stored))
+    assert view.close()
+    assert table.close()
+
+    with pytest.raises(tasks.TaskParameterError, match="calibration FIELD reference") as failure:
+        tasks.smoothcal(
+            vis="mssel_test_small.ps.zarr", tablein="source.cal", caltable="smoothed.cal",
+            field="0", smoothtype="mean", smoothtime=60.0,
+        )
+    assert failure.value.completion.parameter == "vis"
+    assert not Path("smoothed.cal").exists()
+
+
 def test_smoothcal_refuses_unsupported_msv4_schema(tmp_path, monkeypatch):
     prepare_smoothing(tmp_path, monkeypatch, 0)
     path = Path("mssel_test_small.ps.zarr/mssel_test_small_0/zarr.json")

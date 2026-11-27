@@ -5,7 +5,7 @@ use std::path::Path;
 
 use casa_core::measures::direction::MDirection;
 use casa_observation::ObservationError;
-use casa_tables::{Table, TableOptions};
+use casa_tables::{Table, TableOptions, TablePartNames};
 
 use super::msv2::catalogue::require_units;
 use super::msv2::held;
@@ -152,6 +152,13 @@ impl Msv4FieldSelection {
         let opening_bytes = self.kept.saturating_add(held::opening_bytes(&path));
         let what = "MSv4 calibration FIELD binding";
         admit(self.budget, opening_bytes, what)?;
+        let layout = Table::immediate_part_names(&path, &path)
+            .map_err(|error| storage(MsError::from(error)))?;
+        if !matches!(layout, TablePartNames::Plain(_)) {
+            return Err(ObservationError::Unsupported {
+                what: "binding a calibration FIELD reference or concatenation to MSv4",
+            });
+        }
         let table = Table::open(TableOptions::new(path)).map_err(|e| storage(MsError::from(e)))?;
         if table.row_count() > i32::MAX as usize {
             return Err(ObservationError::InvalidStore {
