@@ -12,6 +12,11 @@ interoperable MeasurementSets and images, and scientific results checked
 against CASA. The Python package and command-line suite run on **Linux
 x86_64** and **macOS on Apple Silicon**. See [Installation](#installation).
 
+**casa-rs reads and writes both MSv2 and XRADIO MSv4.** `tclean` can image
+either format directly. With `msconvert`, pass either format as `vis` and
+choose the output format independently with `outformat="msv2"` or
+`outformat="msv4"`. See the [`msconvert` parameters](docs/reference/task-parameters.md#surface-msconvert).
+
 Matched benchmarks show speedups over CASA across a wide range of tasks and
 tools, including calibration, MeasurementSet transforms, plotting and image
 analysis. See the [task and tool benchmarks](#other-task-and-tool-benchmarks).
@@ -203,11 +208,16 @@ supported options.
 
 ## Rust Libraries and Source Layout
 
-`casa-*` crates contain reusable domain libraries and shared contracts;
-`casars-*` crates contain the imager application, the `imexplore`,
-`msconvert` and `simobserve` task executables, and the Python package; the other task
-executables are binaries of their domain crates. This is a native
-implementation, not a wrapper around casacore C++.
+casa-rs is a fresh implementation in Rust of CASA and casacore functionality.
+The `casa-*` crates contain reusable domain libraries and shared contracts.
+The `casars-cli` and `casars-python` frontends expose them as command-line
+tasks and Python APIs.
+
+The Rust libraries use CFITSIO through `fitsio` for FITS image and visibility
+I/O, and `sofars`, a Rust port of IAU SOFA, for astrometry and time conversions.
+FFTW provides general-purpose Fourier transforms. The project also includes a
+Rust port of the ATM atmospheric transmission model. The optional Python
+`plot` extra uses Astropy for celestial axes. See the [third-party notices](THIRD_PARTY_NOTICES.md).
 
 | Area | Crates or source |
 |---|---|
@@ -216,8 +226,8 @@ implementation, not a wrapper around casacore C++.
 | Coordinates and runtime catalogs | `casa-coordinates`, `casa-measures` |
 | Numerics and Fourier transforms | `casa-numerics`, `casa-fft` |
 | Calibration, simulation, import | `casa-calibration`, `casa-singledish`, `casa-simulation`, `casa-components`, `casa-atmosphere`, `casa-vla` |
-| Imaging | `casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`, `casa-imaging-singledish`, `casa-imaging-application` |
-| Task contracts and execution | `casa-provider-contracts`, `casa-task-runtime`, `casars-imager`, `casars-imexplore`, `casars-msconvert`, `casars-simulation` |
+| Imaging | `casa-imaging`, `casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`, `casa-imaging-singledish` |
+| Task contracts and execution | `casa-contracts`, `casa-tasks`, `casars-cli` |
 | Python | `frontends/casars-python/`, with its PyO3 extension `casars._core` |
 | Comparison and test support | `dev/casa-test-support`, `dev/casa-dev-tools`, `suites/`, `tools/science/` |
 
@@ -243,8 +253,7 @@ let metadata = Value::Record(RecordValue::new(vec![
 ```
 
 The crate APIs are idiomatic Rust, not a one-to-one copy of casacore's C++ API.
-FITS image I/O currently uses `fitsio`/CFITSIO, and Fourier transforms use
-FFTW. Broad casacore module parity, including its general fitting/scimath
+Broad casacore module parity, including its general fitting/scimath
 and Python-converter APIs, is not the goal.
 
 ## License
@@ -463,3 +472,9 @@ a source distribution, suite and standalone-binary bundles, and the installer.
 The workflow publishes release assets and can publish Python distributions
 when the PyPI credential is configured. Release procedures are documented in
 [`docs/agent-reference.md`](docs/agent-reference.md).
+
+## CASA bugs found during parity testing
+
+Testing against CASA's C++ implementation uncovered crashes, incorrect results
+and other suspected bugs. The notes document the observed behavior and how
+casa-rs handles it. See [CASA (C++) bugs](docs/CASA%20%28C%2B%2B%29%20bugs.md).
