@@ -29,7 +29,7 @@ spec.loader.exec_module(helper)
 @pytest.fixture(scope='module')
 def rendered_cases(tmp_path_factory):
     root=tmp_path_factory.mktemp('simulation-task-figures')
-    data=REPO/'crates/casa-simulation/tests/data'
+    data=REPO/'libs/casa/casa-simulation/tests/data'
     for filename in ['simalma_inputs.tar.gz','simanalyze_multi_inputs.tar.gz']:
         with tarfile.open(data/filename) as archive:archive.extractall(root,filter="data")
     # The task searches cwd before its configuration repository. Do not
@@ -66,7 +66,7 @@ def test_complete_simulation_figures_match_casa(rendered_cases,case):
 
 @pytest.mark.parametrize('kind',['circles','anchored_circles','texts'])
 def test_figure_comparison_detects_missing_pointings_beams_and_statistics(kind):
-    with gzip.open(REPO/'crates/casa-simulation/tests/data/simulation_task_graphics_casa.json.gz','rt') as source:
+    with gzip.open(REPO/'libs/casa/casa-simulation/tests/data/simulation_task_graphics_casa.json.gz','rt') as source:
         figures=json.load(source)['simalma']['figures']
     name=next(name for name,panels in figures.items() if any(panel[kind] for panel in panels))
     expected={name:figures[name]};actual=deepcopy(expected)

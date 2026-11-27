@@ -8,14 +8,8 @@ use super::common;
 #[test]
 fn calibration_stats_matches_casa_calstat_on_phase_gain_amplitudes() {
     let dir = TempDir::new().expect("tempdir");
-    let phase_table = match common::generate_casa_phase_gain(dir.path(), "0", "0", "VA15") {
-        Ok(path) => path,
-        Err(reason) if reason.starts_with("CASA calibration parity skipped:") => {
-            eprintln!("{reason}");
-            return;
-        }
-        Err(reason) => panic!("{reason}"),
-    };
+    let phase_table = common::generate_casa_phase_gain(dir.path(), "0", "0", "VA15")
+        .unwrap_or_else(|reason| panic!("{reason}"));
 
     let rust = calibration_stats(
         &phase_table,
@@ -26,14 +20,8 @@ fn calibration_stats_matches_casa_calstat_on_phase_gain_amplitudes() {
         },
     )
     .expect("compute Rust stats");
-    let casa = match common::run_casa_calstat(&phase_table, "amp", "CPARAM") {
-        Ok(value) => value,
-        Err(reason) if reason.starts_with("CASA calibration parity skipped:") => {
-            eprintln!("{reason}");
-            return;
-        }
-        Err(reason) => panic!("{reason}"),
-    };
+    let casa = common::run_casa_calstat(&phase_table, "amp", "CPARAM")
+        .unwrap_or_else(|reason| panic!("{reason}"));
 
     let casa_stats = casa
         .get("CPARAM")

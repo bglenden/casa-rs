@@ -117,13 +117,8 @@ fn casa_rs_gaincal(ms: &Path, output: PathBuf, field: &str, spw: &str) {
 }
 
 /// Solve `ms` with `spw` both ways and compare every window row exactly;
-/// `solved` rows are unflagged. `None` when CASA is unavailable; a CASA
-/// that runs and fails fails the law.
-fn compare(ms: &Path, field: &str, spw: &str, solved: usize) -> Option<()> {
-    if common::discover_casa_python().is_none() {
-        eprintln!("{}", common::casa_skip_reason());
-        return None;
-    }
+/// `solved` rows are unflagged.
+fn compare(ms: &Path, field: &str, spw: &str, solved: usize) {
     let root = ms.parent().expect("a working directory");
     let ours = root.join(format!(
         "casa-rs-{}.G",
@@ -156,7 +151,6 @@ fn compare(ms: &Path, field: &str, spw: &str, solved: usize) -> Option<()> {
         "{spw}: windows with solutions"
     );
     std::fs::remove_dir_all(casa).expect("remove CASA's table");
-    Some(())
 }
 
 /// A working copy of `source` under `root`.
@@ -166,27 +160,19 @@ fn working_copy(root: &TempDir, source: &Path) -> PathBuf {
     ms
 }
 
-fn multiobs() -> Option<PathBuf> {
-    let source = casa_test_support::casatestdata_path_for_tier(
+fn multiobs() -> PathBuf {
+    casa_test_support::casatestdata_path_for_tier(
         casa_test_support::CasaTestDataTier::SlowParity,
         "measurementset/alma/multiobs.ms",
     )
-    .filter(|path| path.exists());
-    if source.is_none() {
-        eprintln!("gain table windows skipped: missing measurementset/alma/multiobs.ms");
-    }
-    source
+    .filter(|path| path.exists())
+    .expect("CASA_RS_TESTDATA_ROOT must provide measurementset/alma/multiobs.ms")
 }
 
-/// Run `script` with CASA's Python, `vis` and `caltable` in its
-/// environment as `MS` and `TABLE`: its output, or why it failed. `None`
-/// when no CASA Python is found.
-fn casa(script: &str, vis: &Path, caltable: &Path) -> Option<Result<String, String>> {
-    let Some(python) = common::discover_casa_python() else {
-        eprintln!("{}", common::casa_skip_reason());
-        return None;
-    };
-    let output = Command::new(python)
+/// Run a writable operation on a private fixture and return CASA's logs.
+fn casa(script: &str, vis: &Path, caltable: &Path) -> Result<String, String> {
+    let output = Command::new(common::casa_python())
+        .current_dir(vis.parent().expect("a working directory"))
         .env("MS", vis)
         .env("TABLE", caltable)
         .arg("-c")
@@ -198,11 +184,11 @@ fn casa(script: &str, vis: &Path, caltable: &Path) -> Option<Result<String, Stri
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    Some(if output.status.success() {
+    if output.status.success() {
         Ok(log)
     } else {
         Err(log)
-    })
+    }
 }
 
 /// Flag, with CASA's table tool, every sample of data description 1
@@ -226,16 +212,11 @@ tb.close()
 /// stride.
 #[test]
 fn gain_table_windows_match_casa_on_ngc5921() {
-    let Some(source) = common::ngc5921_ms_path() else {
-        eprintln!("{}", common::casa_skip_reason());
-        return;
-    };
+    let source = common::ngc5921_source();
     let root = TempDir::new().expect("tempdir");
     let ms = working_copy(&root, &source);
     for spw in ["0", "0:5~10;20~30", "0:41~50;3~17", "0:5~25^5"] {
-        if compare(&ms, "0", spw, 1).is_none() {
-            return;
-        }
+        compare(&ms, "0", spw, 1);
     }
 }
 
@@ -246,21 +227,14 @@ fn gain_table_windows_match_casa_on_ngc5921() {
 /// CASA leaves a window it reached but could not solve.
 #[test]
 fn gain_table_windows_match_casa_on_two_sidebands() {
-    let Some(source) = multiobs() else {
-        return;
-    };
+    let source = multiobs();
     let root = TempDir::new().expect("tempdir");
     let ms = working_copy(&root, &source);
     for spw in ["1", "0:0~2"] {
-        if compare(&ms, "", spw, 1).is_none() {
-            return;
-        }
+        compare(&ms, "", spw, 1);
     }
-    match casa(FLAG_ALL_BUT_ONE_BASELINE, &ms, Path::new("")) {
-        Some(Ok(_)) => {}
-        Some(Err(log)) => panic!("flagging failed:\n{log}"),
-        None => return,
-    }
+    casa(FLAG_ALL_BUT_ONE_BASELINE, &ms, Path::new(""))
+        .unwrap_or_else(|log| panic!("flagging failed:\n{log}"));
     compare(&ms, "", "0:0~2,1:1~2", 1);
 }
 
@@ -270,10 +244,7 @@ fn gain_table_windows_match_casa_on_two_sidebands() {
 /// column to equal its own) and adds its rows.
 #[test]
 fn casa_appends_to_a_casa_rs_gain_table() {
-    let Some(source) = common::ngc5921_ms_path() else {
-        eprintln!("{}", common::casa_skip_reason());
-        return;
-    };
+    let source = common::ngc5921_source();
     let root = TempDir::new().expect("tempdir");
     let ms = working_copy(&root, &source);
     let table = root.path().join("casa-rs.G");
@@ -291,11 +262,8 @@ gaincal(vis=os.environ["MS"], caltable=os.environ["TABLE"], field="1", spw="0",
         solint="inf", refant="0", gaintype="G", calmode="ap", minsnr=0.0,
         append=True)
 "#;
-    let log = match casa(script, &ms, &table) {
-        Some(Ok(log)) => log,
-        Some(Err(log)) => panic!("CASA gaincal(append=True):\n{log}"),
-        None => return,
-    };
+    let log =
+        casa(script, &ms, &table).unwrap_or_else(|log| panic!("CASA gaincal(append=True):\n{log}"));
     assert!(
         rows() > before.0,
         "CASA appended no rows ({} before):\n{log}",

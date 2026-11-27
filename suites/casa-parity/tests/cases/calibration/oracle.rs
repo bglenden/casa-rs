@@ -3,63 +3,60 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
+    sync::OnceLock,
 };
 
 use serde_json::Value as JsonValue;
 
-pub fn discover_casa_python() -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-    for key in ["CASA_RS_CASA_PYTHON", "CASA_PYTHON"] {
-        if let Some(value) = std::env::var_os(key) {
-            candidates.push(PathBuf::from(value));
+pub fn casa_python() -> &'static Path {
+    static PYTHON: OnceLock<PathBuf> = OnceLock::new();
+    PYTHON.get_or_init(|| {
+        let mut candidates = Vec::new();
+        for key in ["CASA_RS_CASA_PYTHON", "CASA_PYTHON"] {
+            if let Some(value) = std::env::var_os(key) {
+                candidates.push(PathBuf::from(value));
+            }
         }
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        candidates.push(
-            PathBuf::from(home)
-                .join("SoftwareProjects")
-                .join("casa-build")
-                .join("venv")
-                .join("bin")
-                .join("python"),
-        );
-    }
-    candidates.push(PathBuf::from("python3"));
-    candidates.push(PathBuf::from("python"));
-
-    candidates.into_iter().find(|program| {
-        Command::new(program)
-            .current_dir(casa_test_support::test_log_dir())
-            .arg("-c")
-            .arg("import casatasks")
-            .output()
-            .is_ok_and(|output| output.status.success())
+        if let Some(home) = std::env::var_os("HOME") {
+            candidates
+                .push(PathBuf::from(home).join("SoftwareProjects/casa-build/venv/bin/python"));
+        }
+        candidates.extend([PathBuf::from("python3"), PathBuf::from("python")]);
+        candidates
+            .into_iter()
+            .find(|program| {
+                Command::new(program)
+                    .current_dir(casa_test_support::test_log_dir())
+                    .arg("-c")
+                    .arg("import casatasks; assert casatasks.version_string() == '6.7.6.14'")
+                    .output()
+                    .is_ok_and(|output| output.status.success())
+            })
+            .expect("set CASA_RS_CASA_PYTHON to the CASA 6.7.6.14 interpreter")
     })
 }
 
-pub fn ngc5921_ms_path() -> Option<PathBuf> {
+pub fn ngc5921_source() -> PathBuf {
     casa_test_support::casatestdata_path_for_tier(
         casa_test_support::CasaTestDataTier::SlowParity,
         "measurementset/vla/ngc5921.ms",
     )
     .filter(|path| path.exists())
+    .expect("CASA_RS_TESTDATA_ROOT must provide measurementset/vla/ngc5921.ms")
 }
 
-pub fn casa_skip_reason() -> String {
-    match (discover_casa_python(), ngc5921_ms_path()) {
-        (None, _) => {
-            "CASA calibration parity skipped: no CASA-capable python found via CASA_RS_CASA_PYTHON, CASA_PYTHON, python3, or python".to_string()
-        }
-        (_, None) => {
-            "CASA calibration parity skipped: missing ngc5921.ms under CASA_RS_TESTDATA_ROOT, ../casatestdata, ~/SoftwareProjects/casatestdata, or slow-parity /Volumes/home/casatestdata".to_string()
-        }
-        _ => "CASA calibration parity skipped".to_string(),
+/// CASA calibration tasks can open the MeasurementSet for writes.
+pub fn staged_ngc5921(root: &Path) -> Result<PathBuf, String> {
+    let path = root.join("ngc5921.ms");
+    if !path.exists() {
+        copy_measurement_set(&ngc5921_source(), &path)?;
     }
+    Ok(path)
 }
 
 pub fn generate_casa_exemplars(output_dir: &Path) -> Result<(PathBuf, PathBuf, PathBuf), String> {
-    let python = discover_casa_python().ok_or_else(casa_skip_reason)?;
-    let ms_path = ngc5921_ms_path().ok_or_else(casa_skip_reason)?;
+    let python = casa_python();
+    let ms_path = staged_ngc5921(output_dir)?;
     let script = r#"
 import os
 from casatasks import bandpass, gaincal
@@ -103,7 +100,7 @@ bandpass(
     minsnr=0.0,
 )
 "#;
-    let output = Command::new(&python)
+    let output = Command::new(python)
         .current_dir(output_dir)
         .env("CASA_RS_CAL_MS", &ms_path)
         .env("CASA_RS_CAL_OUT", output_dir)
@@ -164,10 +161,8 @@ pub fn generate_casa_phase_gain(
     spw: &str,
     refant: &str,
 ) -> Result<PathBuf, String> {
-    let python = discover_casa_python().ok_or_else(casa_skip_reason)?;
-    let source = ngc5921_ms_path().ok_or_else(casa_skip_reason)?;
-    let ms_path = output_dir.join("ngc5921.ms");
-    copy_measurement_set(&source, &ms_path)?;
+    let python = casa_python();
+    let ms_path = staged_ngc5921(output_dir)?;
     let script = r#"
 import os
 from casatasks import gaincal
@@ -184,7 +179,7 @@ gaincal(
 )
 "#;
     let caltable = output_dir.join("phase.gcal");
-    let output = Command::new(&python)
+    let output = Command::new(python)
         .current_dir(output_dir)
         .env("CASA_RS_CAL_MS", &ms_path)
         .env("CASA_RS_CALTABLE", &caltable)
@@ -239,7 +234,7 @@ pub fn run_casa_applycal_with_gainfield(
     calwt: bool,
     parang: bool,
 ) -> Result<(), String> {
-    let python = discover_casa_python().ok_or_else(casa_skip_reason)?;
+    let python = casa_python();
     let script = r#"
 import os
 from casatasks import applycal
@@ -257,7 +252,7 @@ applycal(
     flagbackup=False,
 )
 "#;
-    let output = Command::new(&python)
+    let output = Command::new(python)
         .current_dir(casa_test_support::test_log_dir())
         .env("CASA_RS_APPLY_MS", ms_path)
         .env("CASA_RS_APPLY_FIELD", field)
@@ -292,7 +287,7 @@ pub fn run_casa_applycal_with_callib(
     applymode: &str,
     parang: bool,
 ) -> Result<(), String> {
-    let python = discover_casa_python().ok_or_else(casa_skip_reason)?;
+    let python = casa_python();
     let script = r#"
 import os
 from casatasks import applycal
@@ -308,7 +303,7 @@ applycal(
     flagbackup=False,
 )
 "#;
-    let output = Command::new(&python)
+    let output = Command::new(python)
         .current_dir(casa_test_support::test_log_dir())
         .env("CASA_RS_APPLY_MS", ms_path)
         .env("CASA_RS_APPLY_FIELD", field)
@@ -344,7 +339,7 @@ pub fn run_casa_applycal_chain(
     calwt: bool,
     parang: bool,
 ) -> Result<(), String> {
-    let python = discover_casa_python().ok_or_else(casa_skip_reason)?;
+    let python = casa_python();
     let script = r#"
 import os
 import json
@@ -363,7 +358,7 @@ applycal(
     flagbackup=False,
 )
 "#;
-    let mut command = Command::new(&python);
+    let mut command = Command::new(python);
     command.current_dir(casa_test_support::test_log_dir());
     let gaintables_json = serde_json::to_string(
         &caltables
@@ -408,7 +403,7 @@ pub fn run_casa_gaincal(
     ms_path: &Path,
     options: CasaGaincalOptions<'_>,
 ) -> Result<PathBuf, String> {
-    let python = discover_casa_python().ok_or_else(casa_skip_reason)?;
+    let python = casa_python();
     let script = r#"
 import os
 import json
@@ -444,7 +439,7 @@ gaincal(
             .collect::<Vec<_>>(),
     )
     .expect("serialize gaincal prior gaintables");
-    let output = Command::new(&python)
+    let output = Command::new(python)
         .current_dir(output_dir)
         .env("CASA_RS_GAIN_MS", ms_path)
         .env("CASA_RS_GAIN_CALTABLE", &caltable)
@@ -481,8 +476,8 @@ pub fn generate_casa_fluxscale_gain_fixture(
     spw: &str,
     refant: &str,
 ) -> Result<(PathBuf, PathBuf), String> {
-    let python = discover_casa_python().ok_or_else(casa_skip_reason)?;
-    let source_ms = ngc5921_ms_path().ok_or_else(casa_skip_reason)?;
+    let python = casa_python();
+    let source_ms = staged_ngc5921(output_dir)?;
     let ms_copy = output_dir.join("fluxscale.ms");
     copy_measurement_set(&source_ms, &ms_copy)?;
     let gain_table = output_dir.join("fluxscale.gcal");
@@ -514,7 +509,7 @@ gaincal(
     minsnr=0.0,
 )
 "#;
-    let output = Command::new(&python)
+    let output = Command::new(python)
         .current_dir(output_dir)
         .env("CASA_RS_FLUXSCALE_MS", &ms_copy)
         .env("CASA_RS_FLUXSCALE_GCAL", &gain_table)
@@ -543,7 +538,7 @@ pub fn run_casa_fluxscale(
     reference: &str,
     transfer: &str,
 ) -> Result<JsonValue, String> {
-    let python = discover_casa_python().ok_or_else(casa_skip_reason)?;
+    let python = casa_python();
     let script = r#"
 import os
 import json
@@ -571,7 +566,7 @@ with open(os.environ["CASA_RS_CALIBRATION_JSON"], "w") as record:
     json.dump(normalize(result), record, sort_keys=True)
 "#;
     let record = tempfile::NamedTempFile::new().map_err(|error| error.to_string())?;
-    let output = Command::new(&python)
+    let output = Command::new(python)
         .env("CASA_RS_CALIBRATION_JSON", record.path())
         .current_dir(casa_test_support::test_log_dir())
         .env("CASA_RS_FLUXSCALE_MS", ms_path)
@@ -606,7 +601,7 @@ pub fn run_casa_bandpass(
     solnorm: bool,
     parang: bool,
 ) -> Result<PathBuf, String> {
-    let python = discover_casa_python().ok_or_else(casa_skip_reason)?;
+    let python = casa_python();
     let script = r#"\
 import os
 import json
@@ -636,7 +631,7 @@ bandpass(
             .collect::<Vec<_>>(),
     )
     .expect("serialize bandpass prior gaintables");
-    let output = Command::new(&python)
+    let output = Command::new(python)
         .current_dir(output_dir)
         .env("CASA_RS_BANDPASS_MS", ms_path)
         .env("CASA_RS_BANDPASS_CALTABLE", &caltable)
@@ -675,7 +670,7 @@ pub fn run_casa_bandpass_bpoly(
     refant: &str,
     prior_gaintables: &[&Path],
 ) -> Result<PathBuf, String> {
-    let python = discover_casa_python().ok_or_else(casa_skip_reason)?;
+    let python = casa_python();
     let script = r#"
 import os
 import json
@@ -708,7 +703,7 @@ bandpass(
             .collect::<Vec<_>>(),
     )
     .expect("serialize BPOLY prior gaintables");
-    let output = Command::new(&python)
+    let output = Command::new(python)
         .current_dir(output_dir)
         .env("CASA_RS_BPOLY_MS", ms_path)
         .env("CASA_RS_BPOLY_CALTABLE", &caltable)
@@ -735,7 +730,7 @@ pub fn run_casa_calstat(
     axis: &str,
     datacolumn: &str,
 ) -> Result<JsonValue, String> {
-    let python = discover_casa_python().ok_or_else(casa_skip_reason)?;
+    let python = casa_python();
     let script = r#"
 import os
 import json
@@ -759,7 +754,7 @@ with open(os.environ["CASA_RS_CALIBRATION_JSON"], "w") as record:
     json.dump(normalize(result), record, sort_keys=True)
 "#;
     let record = tempfile::NamedTempFile::new().map_err(|error| error.to_string())?;
-    let output = Command::new(&python)
+    let output = Command::new(python)
         .env("CASA_RS_CALIBRATION_JSON", record.path())
         .current_dir(casa_test_support::test_log_dir())
         .env("CASA_RS_CALSTAT_TABLE", caltable)

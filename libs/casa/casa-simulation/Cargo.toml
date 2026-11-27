@@ -7,6 +7,8 @@ rust-version.workspace = true
 description = "CASA-compatible MeasurementSet simulation: the simulator tool and the simobserve tasks"
 repository.workspace = true
 publish = true
+# CASA reference fixtures are exercised in the workspace.
+exclude = ["/tests"]
 autotests = false
 
 [lints]

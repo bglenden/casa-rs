@@ -270,6 +270,13 @@ For timing, use release task binaries and `--trials 3`. Trials alternate the
 implementation order. The JSONL output records public task call times separately
 from setup and verification. Compare runs with passing assertions on both sides.
 
+**Live calibration parity.** Run `cargo nextest run -p casa-parity --features
+live-casa --test calibration_oracle` with `CASA_RS_CASA_PYTHON` pointing
+to CASA 6.7.6.14 and `CASA_RS_TESTDATA_ROOT` containing
+`measurementset/vla/ngc5921.ms` and `measurementset/alma/multiobs.ms`.
+The tests stage writable copies of the source tables. Failures in CASA or
+missing prerequisites fail the explicitly selected target.
+
 **Simulator.** Its Metal law, `cargo nextest run -p casa-simulation --test api -E "test(backends::)"
 --no-capture`, run outside the sandbox, predicts sessions on both
 backends and prints each case's `max |metal − cpu| / max |cpu|` (the T0

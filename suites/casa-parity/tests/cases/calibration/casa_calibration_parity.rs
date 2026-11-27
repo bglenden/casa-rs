@@ -59,13 +59,8 @@ fn run_bandpass_solve(
 #[test]
 fn summarize_casa_generated_gain_t_and_bandpass_tables() {
     let dir = TempDir::new().expect("tempdir");
-    let (g_path, t_path, b_path) = match common::generate_casa_exemplars(dir.path()) {
-        Ok(paths) => paths,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    let (g_path, t_path, b_path) =
+        common::generate_casa_exemplars(dir.path()).unwrap_or_else(|reason| panic!("{reason}"));
 
     let g_summary = summarize_table(&g_path).expect("summarize G");
     let t_summary = summarize_table(&t_path).expect("summarize T");
@@ -93,20 +88,9 @@ fn summarize_casa_generated_gain_t_and_bandpass_tables() {
 #[test]
 fn apply_phase_gain_matches_casa_applycal_on_ngc5921_subset() {
     let dir = TempDir::new().expect("tempdir");
-    let source_ms = match common::ngc5921_ms_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("{}", common::casa_skip_reason());
-            return;
-        }
-    };
-    let phase_gcal = match common::generate_casa_phase_gain(dir.path(), "0", "0", "VA15") {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    let source_ms = common::staged_ngc5921(dir.path()).expect("stage ngc5921");
+    let phase_gcal = common::generate_casa_phase_gain(dir.path(), "0", "0", "VA15")
+        .unwrap_or_else(|reason| panic!("{reason}"));
 
     let rust_ms = dir.path().join("rust-apply.ms");
     let casa_ms = dir.path().join("casa-apply.ms");
@@ -146,14 +130,8 @@ fn apply_phase_gain_matches_casa_applycal_on_ngc5921_subset() {
 #[test]
 fn apply_k_delay_matches_casa_applycal_on_ngc5921_subset() {
     let dir = TempDir::new().expect("tempdir");
-    let source_ms = match common::ngc5921_ms_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("{}", common::casa_skip_reason());
-            return;
-        }
-    };
-    let delay_kcal = match common::run_casa_gaincal(
+    let source_ms = common::staged_ngc5921(dir.path()).expect("stage ngc5921");
+    let delay_kcal = common::run_casa_gaincal(
         dir.path(),
         &source_ms,
         common::CasaGaincalOptions {
@@ -167,13 +145,8 @@ fn apply_k_delay_matches_casa_applycal_on_ngc5921_subset() {
             prior_gaintables: Vec::new(),
             parang: false,
         },
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
 
     let delay_summary = summarize_table(&delay_kcal).expect("summarize CASA K table");
     assert_eq!(delay_summary.table_subtype, "K Jones");
@@ -222,34 +195,18 @@ fn apply_k_delay_matches_casa_applycal_on_ngc5921_subset() {
 #[test]
 fn apply_bpoly_bandpass_matches_casa_applycal_on_ngc5921_subset() {
     let dir = TempDir::new().expect("tempdir");
-    let source_ms = match common::ngc5921_ms_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("{}", common::casa_skip_reason());
-            return;
-        }
-    };
-    let prior_gain = match common::generate_casa_phase_gain(dir.path(), "0", "0", "VA15") {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
-    let bpoly = match common::run_casa_bandpass_bpoly(
+    let source_ms = common::staged_ngc5921(dir.path()).expect("stage ngc5921");
+    let prior_gain = common::generate_casa_phase_gain(dir.path(), "0", "0", "VA15")
+        .unwrap_or_else(|reason| panic!("{reason}"));
+    let bpoly = common::run_casa_bandpass_bpoly(
         dir.path(),
         &source_ms,
         "0",
         "0",
         "VA15",
         &[prior_gain.as_path()],
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
 
     let bpoly_summary = summarize_table(&bpoly).expect("summarize CASA BPOLY table");
     assert_eq!(bpoly_summary.table_subtype, "BPOLY");
@@ -297,20 +254,9 @@ fn apply_bpoly_bandpass_matches_casa_applycal_on_ngc5921_subset() {
 #[test]
 fn apply_phase_gain_with_calwt_matches_casa_applycal_weights_on_ngc5921_subset() {
     let dir = TempDir::new().expect("tempdir");
-    let source_ms = match common::ngc5921_ms_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("{}", common::casa_skip_reason());
-            return;
-        }
-    };
-    let phase_gcal = match common::generate_casa_phase_gain(dir.path(), "0", "0", "VA15") {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    let source_ms = common::staged_ngc5921(dir.path()).expect("stage ngc5921");
+    let phase_gcal = common::generate_casa_phase_gain(dir.path(), "0", "0", "VA15")
+        .unwrap_or_else(|reason| panic!("{reason}"));
 
     let rust_ms = dir.path().join("rust-calwt.ms");
     let casa_ms = dir.path().join("casa-calwt.ms");
@@ -352,20 +298,9 @@ fn apply_phase_gain_with_calwt_matches_casa_applycal_weights_on_ngc5921_subset()
 #[test]
 fn apply_phase_gain_with_parang_matches_casa_applycal_on_ngc5921_subset() {
     let dir = TempDir::new().expect("tempdir");
-    let source_ms = match common::ngc5921_ms_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("{}", common::casa_skip_reason());
-            return;
-        }
-    };
-    let phase_gcal = match common::generate_casa_phase_gain(dir.path(), "0", "0", "VA15") {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    let source_ms = common::staged_ngc5921(dir.path()).expect("stage ngc5921");
+    let phase_gcal = common::generate_casa_phase_gain(dir.path(), "0", "0", "VA15")
+        .unwrap_or_else(|reason| panic!("{reason}"));
 
     let rust_ms = dir.path().join("rust-apply-parang.ms");
     let casa_ms = dir.path().join("casa-apply-parang.ms");
@@ -410,20 +345,9 @@ fn apply_phase_gain_with_parang_matches_casa_applycal_on_nasmyth_bwg_and_other_m
     // ±(E − A), X-Y by its own angle, equatorial not at all, and an empty
     // MOUNT as alt-az.
     let dir = TempDir::new().expect("tempdir");
-    let source_ms = match common::ngc5921_ms_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("{}", common::casa_skip_reason());
-            return;
-        }
-    };
-    let phase_gcal = match common::generate_casa_phase_gain(dir.path(), "0", "0", "VA15") {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    let source_ms = common::staged_ngc5921(dir.path()).expect("stage ngc5921");
+    let phase_gcal = common::generate_casa_phase_gain(dir.path(), "0", "0", "VA15")
+        .unwrap_or_else(|reason| panic!("{reason}"));
 
     let rust_ms = dir.path().join("rust-apply-parang-mounts.ms");
     let casa_ms = dir.path().join("casa-apply-parang-mounts.ms");
@@ -475,20 +399,9 @@ fn apply_phase_gain_with_parang_matches_casa_applycal_on_nasmyth_bwg_and_other_m
 #[test]
 fn apply_phase_gain_via_callib_matches_casa_applycal_on_ngc5921_subset() {
     let dir = TempDir::new().expect("tempdir");
-    let source_ms = match common::ngc5921_ms_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("{}", common::casa_skip_reason());
-            return;
-        }
-    };
-    let phase_gcal = match common::generate_casa_phase_gain(dir.path(), "0", "0", "VA15") {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    let source_ms = common::staged_ngc5921(dir.path()).expect("stage ngc5921");
+    let phase_gcal = common::generate_casa_phase_gain(dir.path(), "0", "0", "VA15")
+        .unwrap_or_else(|reason| panic!("{reason}"));
     let callib_path = dir.path().join("apply.callib");
     std::fs::write(
         &callib_path,
@@ -529,19 +442,14 @@ fn apply_phase_gain_via_callib_matches_casa_applycal_on_ngc5921_subset() {
 #[test]
 fn apply_nearest_gainfield_matches_casa_on_real_ms() {
     let dir = TempDir::new().expect("tempdir");
-    let (fixture_ms, caltable) = match common::generate_casa_fluxscale_gain_fixture(
+    let (fixture_ms, caltable) = common::generate_casa_fluxscale_gain_fixture(
         dir.path(),
         "1331+305*",
         "1445+099*",
         "0",
         "VA15",
-    ) {
-        Ok(paths) => paths,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
 
     let rust_ms = dir.path().join("rust-nearest.ms");
     let casa_ms = dir.path().join("casa-nearest.ms");
@@ -585,14 +493,8 @@ fn apply_nearest_gainfield_matches_casa_on_real_ms() {
 #[test]
 fn solve_phase_gain_matches_casa_gaincal_downstream_via_casa_applycal() {
     let dir = TempDir::new().expect("tempdir");
-    let source_ms = match common::ngc5921_ms_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("{}", common::casa_skip_reason());
-            return;
-        }
-    };
-    let casa_gcal = match common::run_casa_gaincal(
+    let source_ms = common::staged_ngc5921(dir.path()).expect("stage ngc5921");
+    let casa_gcal = common::run_casa_gaincal(
         dir.path(),
         &source_ms,
         common::CasaGaincalOptions {
@@ -606,13 +508,8 @@ fn solve_phase_gain_matches_casa_gaincal_downstream_via_casa_applycal() {
             prior_gaintables: vec![],
             parang: false,
         },
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
     let rust_gcal = dir.path().join("rust-phase.gcal");
     run_gain_solve(
         &source_ms,
@@ -678,14 +575,8 @@ fn solve_phase_gain_matches_casa_gaincal_downstream_via_casa_applycal() {
 #[test]
 fn solve_phase_gain_with_parang_matches_casa_gaincal_downstream_via_casa_applycal() {
     let dir = TempDir::new().expect("tempdir");
-    let source_ms = match common::ngc5921_ms_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("{}", common::casa_skip_reason());
-            return;
-        }
-    };
-    let casa_gcal = match common::run_casa_gaincal(
+    let source_ms = common::staged_ngc5921(dir.path()).expect("stage ngc5921");
+    let casa_gcal = common::run_casa_gaincal(
         dir.path(),
         &source_ms,
         common::CasaGaincalOptions {
@@ -699,13 +590,8 @@ fn solve_phase_gain_with_parang_matches_casa_gaincal_downstream_via_casa_applyca
             prior_gaintables: vec![],
             parang: true,
         },
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
     let rust_gcal = dir.path().join("rust-phase-parang.gcal");
     run_gain_solve(
         &source_ms,
@@ -771,14 +657,8 @@ fn solve_phase_gain_with_parang_matches_casa_gaincal_downstream_via_casa_applyca
 #[test]
 fn solve_amplitude_phase_gain_matches_casa_gaincal_downstream_via_casa_applycal() {
     let dir = TempDir::new().expect("tempdir");
-    let source_ms = match common::ngc5921_ms_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("{}", common::casa_skip_reason());
-            return;
-        }
-    };
-    let casa_gcal = match common::run_casa_gaincal(
+    let source_ms = common::staged_ngc5921(dir.path()).expect("stage ngc5921");
+    let casa_gcal = common::run_casa_gaincal(
         dir.path(),
         &source_ms,
         common::CasaGaincalOptions {
@@ -792,13 +672,8 @@ fn solve_amplitude_phase_gain_matches_casa_gaincal_downstream_via_casa_applycal(
             prior_gaintables: vec![],
             parang: false,
         },
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
     let rust_gcal = dir.path().join("rust-amplitude-phase.gcal");
     run_gain_solve(
         &source_ms,
@@ -864,14 +739,8 @@ fn solve_amplitude_phase_gain_matches_casa_gaincal_downstream_via_casa_applycal(
 #[test]
 fn solve_phase_gain_with_solint_integration_matches_casa_gaincal_downstream() {
     let dir = TempDir::new().expect("tempdir");
-    let source_ms = match common::ngc5921_ms_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("{}", common::casa_skip_reason());
-            return;
-        }
-    };
-    let casa_gcal = match common::run_casa_gaincal(
+    let source_ms = common::staged_ngc5921(dir.path()).expect("stage ngc5921");
+    let casa_gcal = common::run_casa_gaincal(
         dir.path(),
         &source_ms,
         common::CasaGaincalOptions {
@@ -885,13 +754,8 @@ fn solve_phase_gain_with_solint_integration_matches_casa_gaincal_downstream() {
             prior_gaintables: vec![],
             parang: false,
         },
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
     let rust_gcal = dir.path().join("rust-int.gcal");
     run_gain_solve(
         &source_ms,
@@ -957,14 +821,8 @@ fn solve_phase_gain_with_solint_integration_matches_casa_gaincal_downstream() {
 #[test]
 fn solve_phase_gain_with_combine_scan_matches_casa_gaincal_downstream() {
     let dir = TempDir::new().expect("tempdir");
-    let source_ms = match common::ngc5921_ms_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("{}", common::casa_skip_reason());
-            return;
-        }
-    };
-    let casa_gcal = match common::run_casa_gaincal(
+    let source_ms = common::staged_ngc5921(dir.path()).expect("stage ngc5921");
+    let casa_gcal = common::run_casa_gaincal(
         dir.path(),
         &source_ms,
         common::CasaGaincalOptions {
@@ -978,13 +836,8 @@ fn solve_phase_gain_with_combine_scan_matches_casa_gaincal_downstream() {
             prior_gaintables: vec![],
             parang: false,
         },
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
     let rust_gcal = dir.path().join("rust-combine-scan.gcal");
     run_gain_solve(
         &source_ms,
@@ -1054,14 +907,8 @@ fn solve_phase_gain_with_combine_scan_matches_casa_gaincal_downstream() {
 #[test]
 fn apply_combined_scan_field_gain_table_matches_casa_applycal_on_ngc5921_subset() {
     let dir = TempDir::new().expect("tempdir");
-    let source_ms = match common::ngc5921_ms_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("{}", common::casa_skip_reason());
-            return;
-        }
-    };
-    let casa_gcal = match common::run_casa_gaincal(
+    let source_ms = common::staged_ngc5921(dir.path()).expect("stage ngc5921");
+    let casa_gcal = common::run_casa_gaincal(
         dir.path(),
         &source_ms,
         common::CasaGaincalOptions {
@@ -1075,13 +922,8 @@ fn apply_combined_scan_field_gain_table_matches_casa_applycal_on_ngc5921_subset(
             prior_gaintables: vec![],
             parang: false,
         },
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
 
     let rust_apply_ms = dir.path().join("rust-apply-combine-scan-field.ms");
     let casa_apply_ms = dir.path().join("casa-apply-combine-scan-field.ms");
@@ -1121,10 +963,6 @@ fn apply_combined_scan_field_gain_table_matches_casa_applycal_on_ngc5921_subset(
 #[test]
 fn solve_gain_phase_g_combine_scan_and_field_writes_one_solution_group_across_fields() {
     let dir = TempDir::new().expect("tempdir");
-    if common::discover_casa_python().is_none() {
-        eprintln!("{}", common::casa_skip_reason());
-        return;
-    }
 
     let gains = [
         [Complex32::new(1.0, 0.0), Complex32::new(1.0, 0.0)],
@@ -1194,39 +1032,23 @@ fn solve_gain_phase_g_combine_scan_and_field_writes_one_solution_group_across_fi
 #[test]
 fn fluxscale_matches_casa_on_ngc5921_gain_table() {
     let dir = TempDir::new().expect("tempdir");
-    let (fixture_ms, input_gcal) = match common::generate_casa_fluxscale_gain_fixture(
+    let (fixture_ms, input_gcal) = common::generate_casa_fluxscale_gain_fixture(
         dir.path(),
         "1331+305*",
         "1445+099*",
         "0",
         "VA15",
-    ) {
-        Ok(paths) => paths,
-        Err(reason) => {
-            if reason.starts_with("CASA calibration parity skipped:") {
-                eprintln!("{reason}");
-                return;
-            }
-            panic!("{reason}");
-        }
-    };
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
     let casa_fcal = dir.path().join("casa.fcal");
-    let casa_report = match common::run_casa_fluxscale(
+    let casa_report = common::run_casa_fluxscale(
         &fixture_ms,
         &input_gcal,
         &casa_fcal,
         "1331+305*",
         "1445+099*",
-    ) {
-        Ok(report) => report,
-        Err(reason) => {
-            if reason.starts_with("CASA calibration parity skipped:") {
-                eprintln!("{reason}");
-                return;
-            }
-            panic!("{reason}");
-        }
-    };
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
 
     let rust_fcal = dir.path().join("rust.fcal");
     let rust_report = fluxscale(&FluxScaleRequest {
@@ -1295,14 +1117,8 @@ fn fluxscale_matches_casa_on_ngc5921_gain_table() {
 #[test]
 fn solve_t_phase_gain_with_prior_g_preapply_matches_casa_gaincal_downstream() {
     let dir = TempDir::new().expect("tempdir");
-    let source_ms = match common::ngc5921_ms_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("{}", common::casa_skip_reason());
-            return;
-        }
-    };
-    let prior_g = match common::run_casa_gaincal(
+    let source_ms = common::staged_ngc5921(dir.path()).expect("stage ngc5921");
+    let prior_g = common::run_casa_gaincal(
         dir.path(),
         &source_ms,
         common::CasaGaincalOptions {
@@ -1316,14 +1132,9 @@ fn solve_t_phase_gain_with_prior_g_preapply_matches_casa_gaincal_downstream() {
             prior_gaintables: vec![],
             parang: false,
         },
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
-    let casa_t = match common::run_casa_gaincal(
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
+    let casa_t = common::run_casa_gaincal(
         dir.path(),
         &source_ms,
         common::CasaGaincalOptions {
@@ -1337,13 +1148,8 @@ fn solve_t_phase_gain_with_prior_g_preapply_matches_casa_gaincal_downstream() {
             prior_gaintables: vec![prior_g.as_path()],
             parang: false,
         },
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
     let rust_t = dir.path().join("rust-prior-t.gcal");
     run_gain_solve(
         &source_ms,
@@ -1409,14 +1215,8 @@ fn solve_t_phase_gain_with_prior_g_preapply_matches_casa_gaincal_downstream() {
 #[test]
 fn solve_bandpass_with_prior_gain_matches_casa_bandpass_downstream_via_casa_applycal() {
     let dir = TempDir::new().expect("tempdir");
-    let source_ms = match common::ngc5921_ms_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("{}", common::casa_skip_reason());
-            return;
-        }
-    };
-    let prior_g = match common::run_casa_gaincal(
+    let source_ms = common::staged_ngc5921(dir.path()).expect("stage ngc5921");
+    let prior_g = common::run_casa_gaincal(
         dir.path(),
         &source_ms,
         common::CasaGaincalOptions {
@@ -1430,14 +1230,9 @@ fn solve_bandpass_with_prior_gain_matches_casa_bandpass_downstream_via_casa_appl
             prior_gaintables: vec![],
             parang: false,
         },
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
-    let casa_b = match common::run_casa_bandpass(
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
+    let casa_b = common::run_casa_bandpass(
         dir.path(),
         &source_ms,
         "0",
@@ -1447,13 +1242,8 @@ fn solve_bandpass_with_prior_gain_matches_casa_bandpass_downstream_via_casa_appl
         "",
         false,
         false,
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
     let rust_b = dir.path().join("rust-bandpass.bcal");
     run_bandpass_solve(
         &source_ms,
@@ -1518,14 +1308,8 @@ fn solve_bandpass_with_prior_gain_matches_casa_bandpass_downstream_via_casa_appl
 #[test]
 fn solve_bandpass_with_combine_field_matches_casa_bandpass_downstream_via_casa_applycal() {
     let dir = TempDir::new().expect("tempdir");
-    let source_ms = match common::ngc5921_ms_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("{}", common::casa_skip_reason());
-            return;
-        }
-    };
-    let prior_g = match common::run_casa_gaincal(
+    let source_ms = common::staged_ngc5921(dir.path()).expect("stage ngc5921");
+    let prior_g = common::run_casa_gaincal(
         dir.path(),
         &source_ms,
         common::CasaGaincalOptions {
@@ -1539,14 +1323,9 @@ fn solve_bandpass_with_combine_field_matches_casa_bandpass_downstream_via_casa_a
             prior_gaintables: vec![],
             parang: false,
         },
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
-    let casa_b = match common::run_casa_bandpass(
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
+    let casa_b = common::run_casa_bandpass(
         dir.path(),
         &source_ms,
         "0,1",
@@ -1556,13 +1335,8 @@ fn solve_bandpass_with_combine_field_matches_casa_bandpass_downstream_via_casa_a
         "field",
         false,
         false,
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
     let rust_b = dir.path().join("rust-bandpass-combine-field.bcal");
     run_bandpass_solve(
         &source_ms,
@@ -1631,14 +1405,8 @@ fn solve_bandpass_with_combine_field_matches_casa_bandpass_downstream_via_casa_a
 #[test]
 fn solve_bandpass_with_combine_scan_matches_casa_bandpass_downstream_via_casa_applycal() {
     let dir = TempDir::new().expect("tempdir");
-    let source_ms = match common::ngc5921_ms_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("{}", common::casa_skip_reason());
-            return;
-        }
-    };
-    let prior_g = match common::run_casa_gaincal(
+    let source_ms = common::staged_ngc5921(dir.path()).expect("stage ngc5921");
+    let prior_g = common::run_casa_gaincal(
         dir.path(),
         &source_ms,
         common::CasaGaincalOptions {
@@ -1652,14 +1420,9 @@ fn solve_bandpass_with_combine_scan_matches_casa_bandpass_downstream_via_casa_ap
             prior_gaintables: vec![],
             parang: false,
         },
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
-    let casa_b = match common::run_casa_bandpass(
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
+    let casa_b = common::run_casa_bandpass(
         dir.path(),
         &source_ms,
         "1",
@@ -1669,13 +1432,8 @@ fn solve_bandpass_with_combine_scan_matches_casa_bandpass_downstream_via_casa_ap
         "scan",
         false,
         false,
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
     let rust_b = dir.path().join("rust-bandpass-combine-scan.bcal");
     run_bandpass_solve(
         &source_ms,
@@ -1744,14 +1502,8 @@ fn solve_bandpass_with_combine_scan_matches_casa_bandpass_downstream_via_casa_ap
 #[test]
 fn solve_bandpass_with_combine_scan_and_field_matches_casa_bandpass_downstream_via_casa_applycal() {
     let dir = TempDir::new().expect("tempdir");
-    let source_ms = match common::ngc5921_ms_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("{}", common::casa_skip_reason());
-            return;
-        }
-    };
-    let prior_g = match common::run_casa_gaincal(
+    let source_ms = common::staged_ngc5921(dir.path()).expect("stage ngc5921");
+    let prior_g = common::run_casa_gaincal(
         dir.path(),
         &source_ms,
         common::CasaGaincalOptions {
@@ -1765,14 +1517,9 @@ fn solve_bandpass_with_combine_scan_and_field_matches_casa_bandpass_downstream_v
             prior_gaintables: vec![],
             parang: false,
         },
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
-    let casa_b = match common::run_casa_bandpass(
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
+    let casa_b = common::run_casa_bandpass(
         dir.path(),
         &source_ms,
         "0,1",
@@ -1782,13 +1529,8 @@ fn solve_bandpass_with_combine_scan_and_field_matches_casa_bandpass_downstream_v
         "scan,field",
         false,
         false,
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
     let rust_b = dir.path().join("rust-bandpass-combine-scan-field.bcal");
     run_bandpass_solve(
         &source_ms,
@@ -1857,14 +1599,8 @@ fn solve_bandpass_with_combine_scan_and_field_matches_casa_bandpass_downstream_v
 #[test]
 fn solve_bandpass_with_prior_gain_and_parang_matches_casa_bandpass_downstream() {
     let dir = TempDir::new().expect("tempdir");
-    let source_ms = match common::ngc5921_ms_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("{}", common::casa_skip_reason());
-            return;
-        }
-    };
-    let prior_g = match common::run_casa_gaincal(
+    let source_ms = common::staged_ngc5921(dir.path()).expect("stage ngc5921");
+    let prior_g = common::run_casa_gaincal(
         dir.path(),
         &source_ms,
         common::CasaGaincalOptions {
@@ -1878,14 +1614,9 @@ fn solve_bandpass_with_prior_gain_and_parang_matches_casa_bandpass_downstream() 
             prior_gaintables: vec![],
             parang: true,
         },
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
-    let casa_b = match common::run_casa_bandpass(
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
+    let casa_b = common::run_casa_bandpass(
         dir.path(),
         &source_ms,
         "0",
@@ -1895,13 +1626,8 @@ fn solve_bandpass_with_prior_gain_and_parang_matches_casa_bandpass_downstream() 
         "",
         false,
         true,
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
     let rust_b = dir.path().join("rust-bandpass-parang.bcal");
     run_bandpass_solve(
         &source_ms,
@@ -1966,14 +1692,8 @@ fn solve_bandpass_with_prior_gain_and_parang_matches_casa_bandpass_downstream() 
 #[test]
 fn solve_bandpass_with_solnorm_matches_casa_bandpass_downstream_via_casa_applycal() {
     let dir = TempDir::new().expect("tempdir");
-    let source_ms = match common::ngc5921_ms_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("{}", common::casa_skip_reason());
-            return;
-        }
-    };
-    let prior_g = match common::run_casa_gaincal(
+    let source_ms = common::staged_ngc5921(dir.path()).expect("stage ngc5921");
+    let prior_g = common::run_casa_gaincal(
         dir.path(),
         &source_ms,
         common::CasaGaincalOptions {
@@ -1987,14 +1707,9 @@ fn solve_bandpass_with_solnorm_matches_casa_bandpass_downstream_via_casa_applyca
             prior_gaintables: vec![],
             parang: false,
         },
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
-    let casa_b = match common::run_casa_bandpass(
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
+    let casa_b = common::run_casa_bandpass(
         dir.path(),
         &source_ms,
         "0",
@@ -2004,13 +1719,8 @@ fn solve_bandpass_with_solnorm_matches_casa_bandpass_downstream_via_casa_applyca
         "",
         true,
         false,
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
     let rust_b = dir.path().join("rust-bandpass-solnorm.bcal");
     run_bandpass_solve(
         &source_ms,
@@ -2075,14 +1785,8 @@ fn solve_bandpass_with_solnorm_matches_casa_bandpass_downstream_via_casa_applyca
 #[test]
 fn solve_bpoly_bandpass_with_prior_gain_matches_casa_bandpass_downstream() {
     let dir = TempDir::new().expect("tempdir");
-    let source_ms = match common::ngc5921_ms_path() {
-        Some(path) => path,
-        None => {
-            eprintln!("{}", common::casa_skip_reason());
-            return;
-        }
-    };
-    let prior_g = match common::run_casa_gaincal(
+    let source_ms = common::staged_ngc5921(dir.path()).expect("stage ngc5921");
+    let prior_g = common::run_casa_gaincal(
         dir.path(),
         &source_ms,
         common::CasaGaincalOptions {
@@ -2096,27 +1800,11 @@ fn solve_bpoly_bandpass_with_prior_gain_matches_casa_bandpass_downstream() {
             prior_gaintables: vec![],
             parang: false,
         },
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
-    let casa_bpoly = match common::run_casa_bandpass_bpoly(
-        dir.path(),
-        &source_ms,
-        "0",
-        "0",
-        "VA15",
-        &[&prior_g],
-    ) {
-        Ok(path) => path,
-        Err(reason) => {
-            eprintln!("{reason}");
-            return;
-        }
-    };
+    )
+    .unwrap_or_else(|reason| panic!("{reason}"));
+    let casa_bpoly =
+        common::run_casa_bandpass_bpoly(dir.path(), &source_ms, "0", "0", "VA15", &[&prior_g])
+            .unwrap_or_else(|reason| panic!("{reason}"));
     let rust_bpoly = dir.path().join("rust-bandpass.bpoly");
     run_bandpass_solve(
         &source_ms,
