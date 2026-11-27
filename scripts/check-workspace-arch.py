@@ -651,7 +651,7 @@ DOMAIN_FEATURES = {
     "casa-plot-data": {"calibration", "ms", "simulation"},
     "casars-cli": TASK_DOMAINS,
 }
-RUST_TOKENS = re.compile(r"""//|/\*|b?r#*"|b?["']|(?:r#)?[A-Za-z_][A-Za-z_0-9]*|::|[{};,]""")
+RUST_TOKENS = re.compile(r"""//|/\*|b?r#*"|b?["']|(?:r#)?[A-Za-z_][A-Za-z_0-9]*|::|[{}();,=]""")
 
 
 def package_tier(manifest: Path) -> str:
@@ -722,7 +722,7 @@ def requires_macos(expression: str) -> bool:
     return any(map(requires_macos, arguments))
 
 
-def dependency_rules(package: dict, by_directory: dict, definitional: set[str]) -> list[str]:
+def dependency_rules(package: dict, by_name: dict, definitional: set[str]) -> list[str]:
     name = package["name"]
     tier = package_tier(Path(package["manifest_path"]))
     if not tier:
@@ -731,7 +731,7 @@ def dependency_rules(package: dict, by_directory: dict, definitional: set[str]) 
     for dependency in package["dependencies"]:
         target_name = dependency["name"]
         directory = dependency.get("path")
-        target = by_directory.get(directory)
+        target = by_name.get(target_name)
         target_tier = package_tier(Path(target["manifest_path"])) if target is not None else ""
         dev = dependency["kind"] == "dev"
         if tier in LIBRARY_TIERS | {"surfaces"} and ui_dependency(target_name):
@@ -740,9 +740,9 @@ def dependency_rules(package: dict, by_directory: dict, definitional: set[str]) 
             failures.append(f"{name} has an upward dependency on {target_name}")
         elif not dev and target is not None and target_tier not in TIER_DEPENDENCIES[tier]:
             failures.append(f"{name} ({tier}) may not depend on {target_name} ({target_tier})")
-        if not dev and package["publish"] != [] and directory:
+        if not dev and package["publish"] != [] and (directory or target is not None):
             if target is None or target["publish"] == []:
-                failures.append(f"publishable {name} depends on private path crate {target_name}")
+                failures.append(f"publishable {name} depends on private workspace or path crate {target_name}")
             if dependency["req"] == "*":
                 failures.append(f"publishable {name} needs a registry version for {target_name}")
         if (
@@ -838,14 +838,19 @@ def allocator_or_binary_test(entry: Path) -> bool:
     return False
 
 
-def workspace_rust_files(root: Path) -> list[Path]:
-    files = []
-    for directory in ("src", "tests", "examples", "benches"):
-        files.extend(path for path in (root / directory).rglob("*.rs") if path.is_file())
+def workspace_rust_files(root: Path, targets: list[dict]) -> set[Path]:
+    files = {
+        path
+        for directory in ("src", "tests", "examples", "benches")
+        for path in (root / directory).rglob("*.rs")
+        if path.is_file()
+    }
+    for target in targets:
+        files.update(module_sources(Path(target["src_path"])))
     return files
 
 
-def unused_dependencies(package: dict, files: list[Path]) -> set[str]:
+def unused_dependencies(package: dict, files: set[Path]) -> set[str]:
     declared = {d.get("rename") or d["name"] for d in package["dependencies"]}
     if not declared:
         return set()
@@ -930,35 +935,44 @@ def dual_modules(source_paths: list[Path]) -> list[Path]:
 
 
 def has_missing_docs_lint(source: str) -> bool:
-    """Read inner crate attributes before reaching the first Rust item."""
+    """Require the crate lint and reject crate-wide suppressions, including cfg_attr."""
     position = 0
+    enabled = False
     while match := re.match(r"\s*(//|/\*|#!\[)", source[position:]):
         start = position + match.start(1)
         if match[1] != "#![":
             position = comment_end(source, start)
             continue
         position = attribute_end(source, start + 2)
-        if re.fullmatch(r"#!\[\s*warn\s*\(\s*missing_docs\s*\)\s*\]", source[start:position]):
-            return True
-    return False
+        tokens = list(rust_tokens(source[start:position]))
+        if tokens == ["warn", "(", "missing_docs", ")"]:
+            enabled = True
+        for lints in re.findall(r"\b(?:allow|expect)\s*\(([^()]*)\)", " ".join(tokens)):
+            if {"missing_docs", "warnings"} & {lint.strip() for lint in lints.split(",")}:
+                return False
+    return enabled
+
+
+def workspace_dependency_graph(packages: list[dict]) -> dict[str, set[str]]:
+    names = {package["name"] for package in packages}
+    return {
+        package["name"]: {
+            dependency["name"]
+            for dependency in package["dependencies"]
+            if dependency["kind"] != "dev" and dependency["name"] in names
+        }
+        for package in packages
+    }
 
 
 def check_workspace(policy: dict, metadata: dict) -> list[str]:
     packages = metadata["packages"]
-    by_directory = {str(Path(p["manifest_path"]).parent): p for p in packages}
+    by_name = {package["name"]: package for package in packages}
     exceptions = set(policy.get("test_target_exceptions", []))
     seen_exceptions = set()
     failures = []
-    graph = {
-        p["name"]: {
-            by_directory[d["path"]]["name"]
-            for d in p["dependencies"]
-            if d["kind"] != "dev" and d.get("path") in by_directory
-        }
-        for p in packages
-    }
     try:
-        tuple(TopologicalSorter(graph).static_order())
+        tuple(TopologicalSorter(workspace_dependency_graph(packages)).static_order())
     except CycleError as error:
         failures.append("workspace dependency cycle: " + " -> ".join(error.args[1]))
     for package in packages:
@@ -966,16 +980,16 @@ def check_workspace(policy: dict, metadata: dict) -> list[str]:
         manifest = Path(package["manifest_path"])
         root = manifest.parent
         tier = package_tier(manifest)
-        failures += dependency_rules(package, by_directory, set(policy["definitional_packages"]))
-        source_paths = workspace_rust_files(root)
+        failures += dependency_rules(package, by_name, set(policy["definitional_packages"]))
+        source_paths = workspace_rust_files(root, package["targets"])
         failures.extend(
             f"dual Rust module: move {path.relative_to(REPO_ROOT)} into its matching directory"
             for path in dual_modules(source_paths)
         )
         if tier in LIBRARY_TIERS | {"surfaces"}:
-            library = root / "src/lib.rs"
-            if not library.is_file() or not has_missing_docs_lint(library.read_text(encoding="utf-8")):
-                failures.append(f"{name} must enable #![warn(missing_docs)] at its library root")
+            libraries = [Path(target["src_path"]) for target in package["targets"] if "lib" in target["kind"]]
+            if not libraries or not all(has_missing_docs_lint(path.read_text(encoding="utf-8")) for path in libraries):
+                failures.append(f"{name} must enable #![warn(missing_docs)] at its library root without a crate-wide suppression")
             if any("bin" in target["kind"] for target in package["targets"]) or any(
                 (root / path).exists() for path in ("src/main.rs", "src/bin")
             ):
@@ -1000,7 +1014,6 @@ def check_workspace(policy: dict, metadata: dict) -> list[str]:
         for target in package["targets"]:
             if "custom-build" in target["kind"]:
                 path = Path(target["src_path"])
-                source_paths.append(path)
                 if tier in LIBRARY_TIERS and re.search(r'\bserde_json\b|\.json["\x27]', path.read_text(encoding="utf-8")):
                     failures.append(f"{name} library build script must not contain JSON probes")
         if name == "casars-python":
@@ -1028,6 +1041,11 @@ def check_workspace_self_test() -> None:
     assert not has_missing_docs_lint('/*\n#![warn(missing_docs)]\n*/\npub struct A;')
     assert not has_missing_docs_lint('pub mod nested {\n#![warn(missing_docs)]\n}')
     assert not has_missing_docs_lint('// #![warn(missing_docs)]\n#![allow(missing_docs)]')
+    assert not has_missing_docs_lint('#![warn(missing_docs)]\n#![allow(missing_docs)]')
+    assert not has_missing_docs_lint('#![warn(missing_docs)]\n#![cfg_attr(unix, allow(dead_code, warnings))]')
+    assert not has_missing_docs_lint('#![warn(missing_docs)]\n#![expect(missing_docs, reason = "audit")]')
+    assert not has_missing_docs_lint('#![warn(missing_docs)]\n#![allow(/* audit */ missing_docs, reason = "text (here)")]')
+    assert has_missing_docs_lint('#![warn(missing_docs)]\n#![doc = "allow(missing_docs)"]')
 
     def package(name, manifest, **changes):
         return {"name": name, "manifest_path": str(REPO_ROOT / manifest),
@@ -1039,10 +1057,20 @@ def check_workspace_self_test() -> None:
         "name": "app", "path": str(REPO_ROOT / "surfaces/app"),
         "kind": "build", "req": "*", "optional": False,
     }]
-    errors = dependency_rules(low, {str(REPO_ROOT / "surfaces/app"): top}, set())
+    errors = dependency_rules(low, {"app": top}, set())
     assert any("upward dependency" in e for e in errors), errors
     assert any("registry version" in e for e in errors), errors
-    assert any("private path crate" in e for e in errors), errors
+    assert any("private workspace or path crate" in e for e in errors), errors
+    high = package("high", "libs/casa/high/Cargo.toml")
+    low["dependencies"] = [{"name": "high", "kind": None, "req": "1", "optional": False}]
+    high["dependencies"] = [{"name": "lib", "kind": "build", "req": "1", "optional": False}]
+    assert any("may not depend" in e for e in dependency_rules(low, {"high": high}, set()))
+    try:
+        tuple(TopologicalSorter(workspace_dependency_graph([low, high])).static_order())
+    except CycleError:
+        pass
+    else:
+        raise AssertionError("registry/git dependencies must participate in the workspace DAG")
     assert rust_crate_references(
         '/* other::Call */ "absent::Call"; let bytes = 5; use used::Call; '
         'use {bare as alias, ::direct}; extern crate named as renamed; use std::{nested::Path, internal};'
@@ -1064,11 +1092,11 @@ def check_workspace_self_test() -> None:
     adapter = package("casa-tasks", "surfaces/casa-tasks/Cargo.toml")
     dep = {"name": "lib", "path": lib_directory, "kind": None, "req": "1", "optional": True}
     adapter["dependencies"] = [dep]
-    assert any("domain feature" in e for e in dependency_rules(adapter, {lib_directory: low}, set()))
+    assert any("domain feature" in e for e in dependency_rules(adapter, {"lib": low}, set()))
     adapter["features"] = {"slow-tests": ["dep:lib"], "calibration": ["lib?/serde"]}
-    assert any("domain feature" in e for e in dependency_rules(adapter, {lib_directory: low}, set()))
+    assert any("domain feature" in e for e in dependency_rules(adapter, {"lib": low}, set()))
     adapter["features"] = {"calibration": ["logging"], "logging": ["dep:lib"]}
-    assert not dependency_rules(adapter, {lib_directory: low}, set())
+    assert not dependency_rules(adapter, {"lib": low}, set())
 
     entry = REPO_ROOT / "libs/casacore/lib/tests/api.rs"
     target = {"name": "api", "src_path": str(entry), "test": True}
@@ -1090,6 +1118,14 @@ def check_workspace_self_test() -> None:
         entry = module.with_suffix("") / "mod.rs"
         module.rename(entry)
         assert dual_modules([entry]) == []
+    with tempfile.TemporaryDirectory(dir=REPO_ROOT / "target" if (REPO_ROOT / "target").is_dir() else REPO_ROOT) as directory:
+        root = Path(directory)
+        build = root / "build.rs"
+        module = root / "codegen" / "steps.rs"
+        module.with_suffix("").mkdir(parents=True)
+        module.touch()
+        build.write_text('#[path = "codegen/steps.rs"] mod steps;\nfn main() {}\n', encoding="utf-8")
+        assert dual_modules(workspace_rust_files(root, [{"src_path": str(build)}])) == [module]
 
 
 def main() -> int:

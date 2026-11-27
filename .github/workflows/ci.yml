@@ -163,9 +163,7 @@ jobs:
       - name: Install explicit measures runtime for integration tests
         if: needs.ci_scope.outputs.rust != 'static'
         run: |
-          mkdir -p "$RUNNER_TEMP/casa-measures"
-          tar -xzf libs/casacore/casa-measures/data/casa-measures-runtime.tar.gz -C "$RUNNER_TEMP/casa-measures"
-          cp libs/casacore/casa-measures/data/casa-measures-runtime.provenance.json "$RUNNER_TEMP/casa-measures/.casa-rs-measures-provenance.json"
+          python3 scripts/install-measures-snapshot.py "$RUNNER_TEMP/casa-measures"
           echo "CASA_RS_MEASURESPATH=$RUNNER_TEMP/casa-measures" >> "$GITHUB_ENV"
 
       - name: Install cargo-nextest
@@ -359,9 +357,7 @@ jobs:
 
       - name: Install explicit measures runtime for coverage tests
         run: |
-          mkdir -p "$RUNNER_TEMP/casa-measures"
-          tar -xzf libs/casacore/casa-measures/data/casa-measures-runtime.tar.gz -C "$RUNNER_TEMP/casa-measures"
-          cp libs/casacore/casa-measures/data/casa-measures-runtime.provenance.json "$RUNNER_TEMP/casa-measures/.casa-rs-measures-provenance.json"
+          python3 scripts/install-measures-snapshot.py "$RUNNER_TEMP/casa-measures"
           echo "CASA_RS_MEASURESPATH=$RUNNER_TEMP/casa-measures" >> "$GITHUB_ENV"
 
       - name: Run coverage (line)

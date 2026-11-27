@@ -8,7 +8,7 @@ resolved case, the tclean refusals casa-rs would raise, from two sources:
 
 * the catalog's `tclean` surface (`parameter-surfaces.json`): a binding
   marked `unimplemented` refuses any value but its default where its
-  `applies_when` holds (`casa-task-runtime/src/unimplemented.rs`), one marked
+  `applies_when` holds (`surfaces/casa-tasks/src/runtime/unimplemented.rs`), one marked
   `unimplemented_forms` refuses the forms it names, and the value domains of
   `parameter-catalog.json` refuse values of the wrong shape;
 * `libs/imaging/casa-imaging/src/tclean/mod.rs`: every
@@ -57,8 +57,8 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SURFACES = ROOT / "crates/casa-provider-contracts/resources/parameter-surfaces.json"
-CATALOG = ROOT / "crates/casa-provider-contracts/resources/parameter-catalog.json"
+SURFACES = ROOT / "surfaces/casa-contracts/resources/parameter-surfaces.json"
+CATALOG = ROOT / "surfaces/casa-contracts/resources/parameter-catalog.json"
 TCLEAN_RS = ROOT / "libs/imaging/casa-imaging/src/tclean/mod.rs"
 
 NOT_YET = "tclean.rs not_yet"
@@ -118,18 +118,22 @@ def same(given, default):
     return given == default
 
 
+def concept_key(concept):
+    return concept["id"], concept["semantic_revision"]
+
+
 class Surface:
     def __init__(self):
         surfaces = json.loads(SURFACES.read_text())["surfaces"]
         self.tclean = next(surface for surface in surfaces if surface["id"] == "tclean")
-        concepts = {c["id"]: c for c in json.loads(CATALOG.read_text())["concepts"]}
+        concepts = {concept_key(c): c for c in json.loads(CATALOG.read_text())["concepts"]}
         self.bindings = {binding["name"]: binding for binding in self.tclean["bindings"]}
         self.defaults = {
             name: plain(b["default"]["value"])
             for name, b in self.bindings.items()
             if b["default"]["kind"] == "literal"
         }
-        self.concepts = {name: concepts[b["concept"]["id"]] for name, b in self.bindings.items()}
+        self.concepts = {name: concepts[concept_key(b["concept"])] for name, b in self.bindings.items()}
 
     def predicate(self, predicate, values):
         kind = predicate["kind"]
