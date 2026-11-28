@@ -47,9 +47,6 @@ pub(super) fn load_stman_aipsio_columns(
                         undefined_cells[row_idx].insert(col_desc.col_name.clone());
                         continue;
                     }
-                    if matches!(&value, Value::Array(_)) {
-                        undefined_cells[row_idx].insert(col_desc.col_name.clone());
-                    }
                     row.push(RecordField::new(col_desc.col_name.clone(), value));
                 }
             }

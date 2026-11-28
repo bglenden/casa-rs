@@ -7,8 +7,9 @@
 //! Int column "id". The reader opens the table with `UserLocking` and prints
 //! `ready`; then, for each `read` line on stdin, it takes a read lock, reads
 //! `id(0)`, releases the lock without closing the table and prints
-//! `id <value>`. It closes the table and exits at end of input. A failure is
-//! printed as `error <message>` and ends the process with status 1.
+//! `id <value>`. A `keyword <name>` line similarly reads an Int table keyword
+//! and prints `keyword <value>`. It closes the table and exits at end of
+//! input. A failure prints `error <message>` and exits with status 1.
 
 use std::io::{BufRead, Write};
 use std::process::ExitCode;
@@ -36,12 +37,17 @@ fn main() -> ExitCode {
             Ok(line) => line,
             Err(error) => return fail(error),
         };
-        match line.trim() {
-            "read" => match reader.read_id() {
-                Ok(id) => println!("id {id}"),
-                Err(error) => return fail(error),
-            },
-            other => return fail(format!("unknown command {other:?}")),
+        let command = line.trim();
+        let (label, value) = if command == "read" {
+            ("id", reader.read_id())
+        } else if let Some(name) = command.strip_prefix("keyword ") {
+            ("keyword", reader.read_int_keyword(name))
+        } else {
+            return fail(format!("unknown command {command:?}"));
+        };
+        match value {
+            Ok(value) => println!("{label} {value}"),
+            Err(error) => return fail(error),
         }
         if let Err(error) = std::io::stdout().flush() {
             return fail(error);

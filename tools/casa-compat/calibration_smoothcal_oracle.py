@@ -7,6 +7,8 @@ from contextlib import contextmanager
 import inspect
 import os
 from pathlib import Path
+import subprocess
+import sys
 
 import casatasks as casa
 from casatools import calibrater, table
@@ -288,13 +290,32 @@ def main():
     assert handle.open(str(locked), nomodify=False, lockoptions={'option': 'user'})
     try:
         handle.lock(write=True, nattempts=1)
-        for api in (casa, native):
-            try:
-                api.smoothcal(str(vis), str(gains), str(locked))
-            except RuntimeError:
-                pass
-            else:
-                raise AssertionError('smoothcal replaced an actively write-locked destination')
+        try:
+            casa.smoothcal(str(vis), str(gains), str(locked))
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError('CASA smoothcal replaced an open destination')
+
+        # POSIX record locks belong to the process. The Python task now runs
+        # in-process, so a separate caller must contend for the CASA lock.
+        native_probe = """
+import sys
+from casars import tasks
+
+try:
+    tasks.smoothcal(*sys.argv[1:])
+except RuntimeError as error:
+    if 'another process holds a read or write lock' not in str(error):
+        raise
+else:
+    raise AssertionError('casa-rs smoothcal replaced an actively write-locked destination')
+"""
+        subprocess.run(
+            [sys.executable, '-c', native_probe, str(vis), str(gains), str(locked)],
+            check=True,
+            timeout=30,
+        )
     finally:
         handle.unlock()
         handle.close()
