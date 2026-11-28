@@ -226,6 +226,8 @@ pub(crate) fn build_solve_groups_with_control(
         Ok::<_, GainSolveError>(())
     };
     if pipelined {
+        #[cfg(feature = "solve-test-hooks")]
+        control.observe(crate::solve_test_hooks::Checkpoint::LegacyPipelineStarted);
         let dispatch = tracing::dispatcher::get_default(Clone::clone);
         std::thread::scope(|scope| {
             let (sender, receiver) = std::sync::mpsc::sync_channel(1);

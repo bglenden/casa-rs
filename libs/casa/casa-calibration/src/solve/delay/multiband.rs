@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::f64::consts::TAU;
 
-use crate::solve::{GainSolveError, GainSolveMode};
+use crate::solve::{GainSolveError, GainSolveMode, control::SolveControl};
 
 use super::{Complex32, DelaySolutions, DelaySpectrum, DelayWindow, Fft2, constrain, delay_error};
 
@@ -16,13 +16,25 @@ pub(super) fn solve(
     mode: GainSolveMode,
     cross_hand: bool,
     legacy: bool,
+    control: SolveControl<'_>,
 ) -> Result<DelaySolutions, GainSolveError> {
+    control.check()?;
     let layout = CombinedSpectrum::new(&buffers, cross_hand || legacy)?;
     if cross_hand {
         let mut spectrum = layout.empty_spectrum()?;
-        for (window, rows) in &buffers {
-            layout.add(*window, cross_samples(*window, rows, mode), &mut spectrum)?;
+        for (_index, (window, rows)) in buffers.iter().enumerate() {
+            control.check()?;
+            layout.add(
+                *window,
+                cross_samples(*window, rows, mode, control)?,
+                &mut spectrum,
+            )?;
+            #[cfg(feature = "solve-test-hooks")]
+            control.observe(crate::solve_test_hooks::Checkpoint::DelayBufferFinished(
+                _index,
+            ));
         }
+        control.check()?;
         return Ok(BTreeMap::from([(
             0,
             [Some(layout.peak(&spectrum).unwrap_or(0.)), Some(0.)],
@@ -31,6 +43,7 @@ pub(super) fn solve(
     let mut spectra = BTreeMap::new();
     for (window, rows) in &buffers {
         for row in rows.iter().filter(|row| row.parallel_hand) {
+            control.check()?;
             let (a, b) = row.antennas;
             let antenna = match (a == reference, b == reference) {
                 (true, false) => b,
@@ -61,6 +74,7 @@ pub(super) fn solve(
     }
     let mut results = BTreeMap::from([(reference, [Some(0.); 2])]);
     for ((antenna, receptor), spectrum) in spectra {
+        control.check()?;
         let sign = if antenna > reference { -1. } else { 1. };
         results.entry(antenna).or_default()[receptor] =
             layout.peak(&spectrum).map(|delay| sign * delay);
@@ -72,13 +86,15 @@ fn cross_samples(
     window: DelayWindow,
     rows: &[DelaySpectrum<'_>],
     mode: GainSolveMode,
-) -> std::vec::IntoIter<Complex32> {
+    control: SolveControl<'_>,
+) -> Result<std::vec::IntoIter<Complex32>, GainSolveError> {
     let mut pairs = BTreeMap::<_, [Option<&DelaySpectrum<'_>>; 2]>::new();
     for row in rows.iter().filter(|row| !row.parallel_hand) {
         pairs.entry(row.antennas).or_default()[usize::from(row.correlation != 1)] = Some(row);
     }
     let mut output = vec![Complex32::default(); window.channels];
     for [xy, yx] in pairs.into_values() {
+        control.check()?;
         let (Some(xy), Some(yx)) = (xy, yx) else {
             continue;
         };
@@ -91,7 +107,7 @@ fn cross_samples(
             }
         }
     }
-    output.into_iter()
+    Ok(output.into_iter())
 }
 
 struct CombinedSpectrum {
@@ -233,4 +249,49 @@ fn zeros(size: usize) -> Result<Vec<Complex32>, GainSolveError> {
     values.try_reserve_exact(size).map_err(delay_error)?;
     values.resize(size, Complex32::default());
     Ok(values)
+}
+
+#[cfg(all(test, feature = "solve-test-hooks"))]
+mod cancellation_tests {
+    use super::*;
+    use crate::solve_test_hooks::{Checkpoint, with_observer};
+    use casa_core::cancellation::Cancellation;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn a_cancelled_cross_hand_fit_does_not_transform_the_next_buffer() {
+        let window = DelayWindow {
+            start_ghz: 1.0,
+            spacing_ghz: 0.001,
+            lowest_ghz: 1.0,
+            highest_ghz: 1.003,
+            channels: 4,
+            correlations: 4,
+        };
+        let cancellation = Cancellation::new();
+        let signal = cancellation.clone();
+        let finished = Arc::new(Mutex::new(Vec::new()));
+        let observed = finished.clone();
+        let result = with_observer(
+            move |event| {
+                if let Checkpoint::DelayBufferFinished(index) = event {
+                    observed.lock().unwrap().push(index);
+                    signal.cancel();
+                }
+            },
+            false,
+            || {
+                solve(
+                    vec![(window, Vec::new()), (window, Vec::new())],
+                    0,
+                    GainSolveMode::AmplitudePhase,
+                    true,
+                    false,
+                    SolveControl(Some(&cancellation)),
+                )
+            },
+        );
+        assert!(matches!(result, Err(GainSolveError::Interrupted)));
+        assert_eq!(*finished.lock().unwrap(), [0]);
+    }
 }

@@ -423,10 +423,32 @@ pub(crate) fn prepare_calibration_solve(
     full_selection: bool,
     prior_mode: PriorCalibrationMode,
 ) -> Result<CalibrationSolveContext, GainSolveError> {
+    prepare_calibration_solve_with_control(
+        measurement_set,
+        selection,
+        refant,
+        prior_calibration_tables,
+        parang,
+        full_selection,
+        (prior_mode, SolveControl::default()),
+    )
+}
+
+pub(crate) fn prepare_calibration_solve_with_control(
+    measurement_set: &MeasurementSet,
+    selection: &MsSelection,
+    refant: &RefAntSelector,
+    prior_calibration_tables: &[ApplyCalibrationTableSpec],
+    parang: bool,
+    full_selection: bool,
+    (prior_mode, control): (PriorCalibrationMode, SolveControl<'_>),
+) -> Result<CalibrationSolveContext, GainSolveError> {
+    control.check()?;
     let refants = resolve_refants(measurement_set, refant)?;
     let refant_id = refants.first().copied().unwrap_or(-1);
     let available_antennas = all_antenna_ids(measurement_set)?;
     let rows = collect_selected_rows(measurement_set, selection, full_selection)?;
+    control.check()?;
     if !full_selection {
         // The legacy bandpass setup still addresses a description by its
         // window. Gaincal can solve descriptions separately.
@@ -444,6 +466,7 @@ pub(crate) fn prepare_calibration_solve(
             prior_calibration_tables,
             parang,
             prior_mode,
+            control,
         )?,
     })
 }

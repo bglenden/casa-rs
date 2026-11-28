@@ -21,7 +21,7 @@ use super::{
     GainType, RefAntSelector, SolvedGains, spectral_window_ids, validate_smodel,
     validate_solve_interval,
 };
-use crate::session::prepare_calibration_solve;
+use crate::session::prepare_calibration_solve_with_control;
 use crate::solve_stats::{IntervalStages, SolveStatsBuilder, ToolSolveActivity};
 
 pub(super) fn solve(
@@ -42,17 +42,20 @@ pub(super) fn solve(
     let antenna_position = request.gain_type == GainType::KAntPos;
     let legacy_multiband = legacy_iterator && request.gain_type == GainType::KMbd;
     let input_phase = crate::timing::Phase::start("gain_select_read_average");
-    let context = prepare_calibration_solve(
+    let context = prepare_calibration_solve_with_control(
         ms,
         &request.selection,
         &request.refant,
         &request.prior_calibration_tables,
         request.parang,
         true,
-        PriorCalibrationMode::Delay {
-            share_input_flags: !request.correlation_dependent_flags,
-            rotate_model: request.parang,
-        },
+        (
+            PriorCalibrationMode::Delay {
+                share_input_flags: !request.correlation_dependent_flags,
+                rotate_model: request.parang,
+            },
+            control,
+        ),
     )?;
     let windows = delay_windows(ms, &context.rows, cross_hand)?;
     let combined_output_spw = (legacy_iterator && request.combine.spectral_windows)
@@ -316,6 +319,7 @@ fn group_delays(
             mode,
             cross_hand,
             legacy,
+            control,
         );
     }
     let Some((&(dd, _, _), spectra)) = buffers.first_key_value() else {

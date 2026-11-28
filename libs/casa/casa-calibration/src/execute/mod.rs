@@ -20,6 +20,8 @@
 //!
 //! - solver output beyond the existing planner surface
 
+use crate::solve::control::SolveControl;
+
 use std::collections::{BTreeSet, HashMap};
 use std::fs::{File, OpenOptions, create_dir_all};
 use std::io::Write;
@@ -512,6 +514,9 @@ enum PreviewWeightSource {
 /// Errors returned while executing an apply plan.
 #[derive(Debug, Error)]
 pub enum ApplyExecutionError {
+    /// Cancellation interrupted a read-only calibration preview.
+    #[error("calibration preview interrupted")]
+    Interrupted,
     /// Planning failed before any mutation occurred.
     #[error(transparent)]
     Plan(Box<ApplyPlanError>),
@@ -632,12 +637,14 @@ pub(crate) fn evaluate_apply_rows(
     ms: &MeasurementSet,
     plan: &ApplyPlan,
     share_input_flags: bool,
+    control: SolveControl<'_>,
 ) -> Result<HashMap<usize, EvaluatedApplyRow>, ApplyExecutionError> {
     evaluate_rows(
         ms,
         plan,
         share_input_flags,
         PreviewWeightSource::UnitFactors,
+        control,
     )
 }
 
@@ -652,6 +659,7 @@ pub fn evaluate_plot_rows(
         plan,
         false,
         PreviewWeightSource::FromSigma { channel_weighting },
+        SolveControl::default(),
     )
 }
 

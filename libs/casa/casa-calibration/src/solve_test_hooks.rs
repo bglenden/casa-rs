@@ -10,6 +10,14 @@ pub enum Checkpoint {
     ObservationBatchStarted(usize),
     /// One visibility batch has been accumulated.
     ObservationBatchFinished(usize),
+    /// One batch of read-only prior-calibration inputs is about to be read.
+    PriorBatchStarted(usize),
+    /// One batch of read-only prior-calibration rows has been processed.
+    PriorBatchFinished(usize),
+    /// The legacy solver is about to start its input reader thread.
+    LegacyPipelineStarted,
+    /// A cross-hand delay buffer has been transformed.
+    DelayBufferFinished(usize),
     /// One legacy row batch is about to be accumulated.
     LegacyBatchStarted(usize),
     /// One legacy row batch has been accumulated.
@@ -22,6 +30,8 @@ pub enum Checkpoint {
     PolynomialSpectrumStarted(usize),
     /// The polynomial bandpass solver has processed this spectrum.
     PolynomialSpectrumFinished(usize),
+    /// All spectra have been collected for this polynomial fit.
+    PolynomialSpectraFinished,
     /// The fully staged product is about to be accepted or discarded.
     BeforePublication,
     /// The final guard accepted publication.

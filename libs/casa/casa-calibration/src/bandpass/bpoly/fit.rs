@@ -282,6 +282,8 @@ fn collect_spectra(
         #[cfg(feature = "solve-test-hooks")]
         control.observe(crate::solve_test_hooks::Checkpoint::PolynomialSpectrumFinished(_index));
     }
+    #[cfg(feature = "solve-test-hooks")]
+    control.observe(crate::solve_test_hooks::Checkpoint::PolynomialSpectraFinished);
     let [first, second] = sums;
     let [first_means, second_means] = means;
     let spectra = [(first, first_means), (second, second_means)].map(|(sum, means)| {

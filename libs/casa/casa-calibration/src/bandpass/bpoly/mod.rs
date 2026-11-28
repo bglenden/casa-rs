@@ -151,6 +151,7 @@ pub(super) fn solve_polynomial(
         tracing::warn!(
             "Spectral windows with different selected channel counts cannot be combined"
         );
+        control.check()?;
         return Ok(empty_report(
             request,
             context.refant_id,
@@ -217,6 +218,7 @@ pub(super) fn solve_polynomial(
         }
     }
     if fitted.is_empty() {
+        control.check()?;
         return Ok(empty_report(
             request,
             context.refant_id,

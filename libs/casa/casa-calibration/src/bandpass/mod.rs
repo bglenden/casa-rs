@@ -35,7 +35,7 @@ use crate::constants::{
     COL_WEIGHT,
 };
 use crate::selected_data::SelectedData;
-use crate::session::prepare_calibration_solve;
+use crate::session::{prepare_calibration_solve, prepare_calibration_solve_with_control};
 use crate::solve::grouping::{
     SelectedSolveRow, SolveAccumulator, SolveGroupOptions, SolveInputRows,
     build_solve_groups_with_control,
@@ -400,21 +400,24 @@ pub(crate) fn solve_bandpass(
         && !controls.modern_polynomial;
     let rotate_model = request.parang && use_casa_solve;
     let input_phase = crate::timing::Phase::start("bandpass_select_read_average");
-    let context = prepare_calibration_solve(
+    let context = prepare_calibration_solve_with_control(
         ms,
         &request.selection,
         &request.refant,
         &request.prior_calibration_tables,
         request.parang,
         use_casa_solve,
-        if use_casa_solve {
-            crate::solve::grouping::PriorCalibrationMode::Bandpass {
-                share_input_flags: !request.correlation_dependent_flags && !polynomial_bandpass,
-                rotate_model,
-            }
-        } else {
-            crate::solve::grouping::PriorCalibrationMode::Data
-        },
+        (
+            if use_casa_solve {
+                crate::solve::grouping::PriorCalibrationMode::Bandpass {
+                    share_input_flags: !request.correlation_dependent_flags && !polynomial_bandpass,
+                    rotate_model,
+                }
+            } else {
+                crate::solve::grouping::PriorCalibrationMode::Data
+            },
+            control,
+        ),
     );
     let context = match context {
         Ok(context) => context,

@@ -8,6 +8,7 @@ import pytest
 
 from casars import _core, tasks, tools
 from test_gaincal_formats import prepare_store
+from test_tools_simulator import configure, measures, needs_measures
 from test_native_imstat_interrupt import image_contents
 from test_native_transform_interrupt import messages
 
@@ -133,3 +134,124 @@ def test_solve_sigint_respects_calculation_and_publication(
     repeats = 3 if stage == "publication-accepted" else (2 if append else 1)
     assert_solutions(destination, reference, polynomial, repeats)
     assert not list(tmp_path.glob(".output.cal.casa-rs-*"))
+
+
+def test_gaincal_sigint_stops_prior_calibration_preview(tmp_path, monkeypatch):
+    prepare_store(tmp_path, monkeypatch, "ms_trial.ms")
+    common = dict(vis="ms_trial.ms", refant="0", smodel=[1.0], minsnr=0.0, minblperant=1)
+    tasks.bandpass(caltable="prior.cal", bandtype="B", **common)
+    prior = image_contents(tmp_path / "prior.cal")
+    request = dict(**common, **GAIN, gaintable=["prior.cal"])
+    tasks.gaincal(caltable="reference.cal", **request)
+    trace = tmp_path / "prior.logtable"
+    monkeypatch.setenv("CASA_RS_LOG_STDERR_PRIORITY", "off")
+    monkeypatch.setenv("CASA_RS_LOG_TABLE_PRIORITY", "DEBUG")
+    monkeypatch.setenv("CASA_RS_LOG_TABLE", str(trace))
+
+    _core._arm_solve_test("prior-batch", 0)
+    with pytest.raises(KeyboardInterrupt):
+        tasks.gaincal(caltable="output.cal", **request)
+    log = messages(trace)
+    prefix = "solve test checkpoint "
+    assert [line.removeprefix(prefix) for line in log if line.startswith(prefix)] == [
+        "PriorBatchStarted(0)", "PriorBatchFinished(0)",
+    ]
+    assert "gaincal interrupted task=gaincal reason=gaincal interrupted" in log
+    assert image_contents(tmp_path / "prior.cal") == prior
+    assert not (tmp_path / "output.cal").exists()
+    assert not list(tmp_path.glob(".output.cal.casa-rs-*"))
+    tasks.gaincal(caltable="output.cal", **request)
+    assert_solutions("output.cal", read_caltable("reference.cal", False), False, 1)
+
+
+def test_bpoly_sigint_after_masked_spectra_reports_interruption(tmp_path, monkeypatch):
+    prepare_store(tmp_path, monkeypatch, "ms_trial.ms")
+    trace = tmp_path / "masked.logtable"
+    monkeypatch.setenv("CASA_RS_LOG_STDERR_PRIORITY", "off")
+    monkeypatch.setenv("CASA_RS_LOG_TABLE_PRIORITY", "DEBUG")
+    monkeypatch.setenv("CASA_RS_LOG_TABLE", str(trace))
+
+    _, options = REQUESTS["bpoly"]
+    request = dict(vis="ms_trial.ms", caltable="output.cal", refant="0", smodel=[1.0],
+                   minsnr=0.0, minblperant=1, **options)
+    _core._arm_solve_test("polynomial-spectra-finished", 0)
+    with pytest.raises(KeyboardInterrupt):
+        tasks.bandpass(**request, maskcenter=8)
+    log = messages(trace)
+    checkpoints = [line for line in log if line.startswith("solve test checkpoint ")]
+    assert checkpoints[-1] == "solve test checkpoint PolynomialSpectraFinished"
+    assert "bandpass interrupted task=bandpass reason=bandpass interrupted" in log
+    assert not (tmp_path / "output.cal").exists()
+    assert not list(tmp_path.glob(".output.cal.casa-rs-*"))
+    # An uninterrupted empty fit is still successful and leaves the path free.
+    tasks.bandpass(**request, maskcenter=8)
+    assert not (tmp_path / "output.cal").exists()
+    tasks.bandpass(**request)
+    assert read_caltable("output.cal", True)[1]["ANTENNA1"].size == 5
+
+
+@needs_measures
+def test_legacy_gaincal_sigint_joins_the_pipelined_reader(tmp_path, monkeypatch):
+    import os
+    import subprocess
+    import sys
+
+
+    available = (len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity")
+                 else os.cpu_count() or 1)
+    if available < 2:
+        pytest.skip("the input pipeline requires two available CPUs")
+    monkeypatch.chdir(tmp_path)
+    simulator = tools.simulator()
+    assert simulator.open("pipeline.ms")
+    configure(simulator, autocorrelations=False)
+    assert simulator.observe("F", "L", starttime="0s", stoptime="600s")
+    assert simulator.close()
+    reader = tools.table()
+    assert reader.open("pipeline.ms", nomodify=False)
+    assert reader.nrows() > 256
+    gains = (1 + .04 * np.arange(4)) * np.exp(.13j * np.arange(4))
+    a, b = (reader.getcol(column) for column in ("ANTENNA1", "ANTENNA2"))
+    data = np.broadcast_to(gains[a] * gains[b].conj(), reader.getcol("DATA").shape).astype("complex64")
+    assert reader.putcol("DATA", data)
+    assert reader.putcol("FLAG", np.zeros(data.shape, dtype=bool))
+    assert reader.putcol("FLAG_ROW", np.zeros(a.size, dtype=bool))
+    assert reader.done()
+
+    trace = tmp_path / "pipeline.logtable"
+    monkeypatch.setenv("CASA_RS_LOG_STDERR_PRIORITY", "off")
+    monkeypatch.setenv("CASA_RS_LOG_TABLE_PRIORITY", "DEBUG")
+    monkeypatch.setenv("CASA_RS_LOG_TABLE", str(trace))
+    monkeypatch.setenv("RAYON_NUM_THREADS", "2")
+    worker = """
+from casars import _core, tasks
+_core._arm_solve_test('legacy-batch', 0)
+try:
+    tasks.gaincal(
+        vis='pipeline.ms', caltable='output.cal', gaintype='G', solint='int',
+        refant='0', refantmode='strict', smodel=[1.0], minsnr=0.0, minblperant=1,
+    )
+except KeyboardInterrupt:
+    pass
+else:
+    raise AssertionError('gaincal did not raise KeyboardInterrupt')
+"""
+    result = subprocess.run([sys.executable, "-c", worker], timeout=20,
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    log = messages(trace)
+    prefix = "solve test checkpoint "
+    assert [line.removeprefix(prefix) for line in log if line.startswith(prefix)] == [
+        "LegacyPipelineStarted", "LegacyBatchStarted(0)", "LegacyBatchFinished(0)",
+    ]
+    assert "gaincal interrupted task=gaincal reason=gaincal interrupted" in log
+    assert not (tmp_path / "output.cal").exists()
+    assert not list(tmp_path.glob(".output.cal.casa-rs-*"))
+    tasks.gaincal(
+        vis="pipeline.ms", caltable="output.cal", refant="0", smodel=[1.0],
+        minsnr=0.0, minblperant=1, **dict(GAIN, solint="int")
+    )
+    _, solution = read_caltable("output.cal", False)
+    assert not solution["FLAG"].any()
+    expected = np.broadcast_to(gains[solution["ANTENNA1"]], solution["CPARAM"].shape)
+    np.testing.assert_allclose(solution["CPARAM"], expected, rtol=1e-3, atol=2e-5)

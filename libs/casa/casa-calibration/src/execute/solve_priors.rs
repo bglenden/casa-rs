@@ -5,12 +5,14 @@ use std::cell::RefCell;
 
 use ndarray::{ArrayD, IxDyn};
 
+use super::preview::for_each_apply_row_controlled;
+use crate::solve::control::SolveControl;
+
 use super::chain::{ApplyChain, has_polarization_matrix, viscal_order};
 use super::{
     ApplyExecutionError, ApplyPlan, ArrayValue, Complex32, EvaluatedApplyRow, ExecutionRowInputs,
     HashMap, MeasurementSet, PreviewWeightSource, RowGeometryCache, applies_preview_weights,
-    apply_row, complex_visibility_from_float, evaluate_apply_rows, for_each_apply_row,
-    shared_channel_flags,
+    apply_row, complex_visibility_from_float, evaluate_apply_rows, shared_channel_flags,
 };
 
 #[derive(Clone, Copy)]
@@ -232,6 +234,7 @@ pub(crate) fn evaluate_solve_priors(
     mut plan: ApplyPlan,
     boundary: PriorSolveBoundary,
     share_input_flags: bool,
+    control: SolveControl<'_>,
 ) -> Result<PreappliedRows, ApplyExecutionError> {
     let deferred_data = matches!(
         boundary,
@@ -278,7 +281,7 @@ pub(crate) fn evaluate_solve_priors(
                 | PriorSolveBoundary::GainSpline
         );
     if !type_ordered && gain_boundary {
-        return evaluate_apply_rows(ms, &plan, share_input_flags).map(Into::into);
+        return evaluate_apply_rows(ms, &plan, share_input_flags, control).map(Into::into);
     }
     // The measurement equation corrects DATA with earlier terms and corrupts
     // MODEL_DATA with the remaining terms. The channel-dependent opacity
@@ -306,7 +309,7 @@ pub(crate) fn evaluate_solve_priors(
     let mut rows = if deferred_data {
         HashMap::new()
     } else {
-        evaluate_apply_rows(ms, &plan, share_input_flags)?
+        evaluate_apply_rows(ms, &plan, share_input_flags, control)?
     };
     if model_tables.is_empty() && !forward_parang {
         return Ok(PreappliedRows {
@@ -337,14 +340,14 @@ pub(crate) fn evaluate_solve_priors(
             polarized,
         });
     }
-    for_each_apply_row(
+    for_each_apply_row_controlled(
         ms,
         &plan,
         "DATA",
         true,
         share_input_flags,
         PreviewWeightSource::UnitFactors,
-        None,
+        (None, control),
         |index, row| {
             let data = rows.get_mut(&index).expect("same selection for both sides");
             let ArrayValue::Bool(data_flags) = &mut data.flags else {

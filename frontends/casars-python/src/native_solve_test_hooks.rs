@@ -19,6 +19,8 @@ pub(crate) fn _arm_solve_test(stage: &str, channel: usize) -> PyResult<()> {
     NEXT_SOLVE.set(Some(match stage {
         "observation-batch" => Checkpoint::ObservationBatchFinished(0),
         "legacy-batch" => Checkpoint::LegacyBatchFinished(0),
+        "prior-batch" => Checkpoint::PriorBatchFinished(0),
+        "polynomial-spectra-finished" => Checkpoint::PolynomialSpectraFinished,
         "bandpass-channel" => Checkpoint::BandpassChannelFinished(channel),
         "polynomial-spectrum" => Checkpoint::PolynomialSpectrumFinished(0),
         "before-publication" => Checkpoint::BeforePublication,
@@ -58,7 +60,9 @@ pub(super) fn run<T>(
         },
         matches!(
             interruption,
-            Checkpoint::ObservationBatchFinished(_) | Checkpoint::LegacyBatchFinished(_)
+            Checkpoint::ObservationBatchFinished(_)
+                | Checkpoint::LegacyBatchFinished(_)
+                | Checkpoint::PriorBatchFinished(_)
         ),
         run,
     )

@@ -26,7 +26,7 @@ use super::{
 };
 use crate::execute::PreappliedRows;
 use crate::output::CalibrationOutputMode;
-use crate::session::prepare_calibration_solve;
+use crate::session::prepare_calibration_solve_with_control;
 
 #[derive(Clone, Copy)]
 pub(crate) struct ToolOptions<'a> {
@@ -45,14 +45,14 @@ pub(crate) fn solve(
     let tool_mode = tool.map(|settings| settings.mode);
     let all_fields = tool.is_some_and(|settings| settings.all_fields);
     let input = crate::timing::Phase::start("gspline_select_average");
-    let context = prepare_calibration_solve(
+    let context = prepare_calibration_solve_with_control(
         ms,
         &request.selection,
         &request.refant,
         &request.prior_calibration_tables,
         request.parang,
         true,
-        PriorCalibrationMode::GainSpline,
+        (PriorCalibrationMode::GainSpline, control),
     )?;
     let preaverage = if request.preaverage_seconds > 0. && request.preaverage_seconds.is_finite() {
         request.preaverage_seconds

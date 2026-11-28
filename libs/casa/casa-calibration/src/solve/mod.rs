@@ -55,7 +55,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::session::prepare_calibration_solve;
+use crate::session::prepare_calibration_solve_with_control;
 use crate::solve_stats::{SolveStatsBuilder, ToolSolveActivity};
 use crate::{
     apply::{ApplyExecutionError, ApplyPlanError},
@@ -807,18 +807,21 @@ fn solve_gain_rows_with_settings(
         && request.gain_type == GainType::G
         && request.model_source.needs_model_rotation(request.smodel);
     let input_phase = crate::timing::Phase::start("gain_select_read_average");
-    let context = prepare_calibration_solve(
+    let context = prepare_calibration_solve_with_control(
         ms,
         &request.selection,
         &request.refant,
         &request.prior_calibration_tables,
         request.parang,
         true,
-        grouping::PriorCalibrationMode::Gain {
-            scalar: request.gain_type == GainType::T,
-            rotate_model,
-            share_input_flags: !request.correlation_dependent_flags,
-        },
+        (
+            grouping::PriorCalibrationMode::Gain {
+                scalar: request.gain_type == GainType::T,
+                rotate_model,
+                share_input_flags: !request.correlation_dependent_flags,
+            },
+            control,
+        ),
     )?;
     let tf_widths = tf
         .map(|settings| {
