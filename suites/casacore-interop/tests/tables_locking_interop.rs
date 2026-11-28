@@ -352,13 +352,21 @@ impl HeldCppReaderProcess {
 
     /// Take a read lock, read `id(0)` and release the lock, in C++.
     fn read_id(&mut self) -> i32 {
+        self.read_int("read", "id ")
+    }
+
+    fn read_keyword(&mut self, name: &str) -> i32 {
+        self.read_int(&format!("keyword {name}"), "keyword ")
+    }
+
+    fn read_int(&mut self, command: &str, prefix: &str) -> i32 {
         let stdin = self.stdin.as_mut().expect("reader stdin");
-        writeln!(stdin, "read").expect("send read");
+        writeln!(stdin, "{command}").expect("send read");
         stdin.flush().expect("flush read");
         let reply = self.reply();
         reply
-            .strip_prefix("id ")
-            .and_then(|id| id.parse().ok())
+            .strip_prefix(prefix)
+            .and_then(|value| value.parse().ok())
             .unwrap_or_else(|| panic!("C++ reader replied {reply:?}"))
     }
 }
@@ -456,6 +464,44 @@ fn cell(table: &Table, column: &str) -> ScalarValue {
         .and_then(|cell| cell.scalar())
         .expect("row 0 cell")
         .clone()
+}
+
+#[test]
+fn held_cpp_reader_relocks_and_reads_replaced_table_dat_keywords() {
+    if !casacore_oracle_available() {
+        eprintln!("skipping held C++ reader test: C++ casacore not available");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("keyword_table");
+    let mut table = build_lock_test_table();
+    table
+        .keywords_mut()
+        .upsert("revision", Value::Scalar(ScalarValue::Int32(1)));
+    table.save(TableOptions::new(&path)).expect("initial save");
+    let mut lock = TableWriteLock::acquire(&path, 1).expect("write lock");
+    lock.record_write();
+    lock.release().expect("publish the initial table");
+
+    let mut reader = HeldCppReaderProcess::open(&path);
+    assert_eq!(reader.read_keyword("revision"), 1);
+    let mut writer = Table::open_with_lock(
+        TableOptions::new(&path),
+        LockOptions::new(LockMode::UserLocking),
+    )
+    .expect("open writer");
+    for revision in [2, 3, 4] {
+        assert!(writer.lock(LockType::Write, 1).expect("write lock"));
+        writer
+            .keywords_mut()
+            .upsert("revision", Value::Scalar(ScalarValue::Int32(revision)));
+        writer.flush().expect("rewrite table.dat");
+        writer.unlock().expect("publish the new revision");
+        assert_eq!(reader.read_keyword("revision"), revision);
+    }
+    let mut reopened = HeldCppReaderProcess::open(&path);
+    assert_eq!(reopened.read_keyword("revision"), 4);
+    assert_eq!(reopened.read_id(), 42);
 }
 
 /// (a) A change flushed to disk and followed by a resync is announced when

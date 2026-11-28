@@ -273,12 +273,23 @@ impl HeldCppTableReader {
     /// Take a read lock, read `id(0)` and release the lock, keeping the
     /// table open.
     pub fn read_id(&mut self) -> Result<i32, OracleError> {
-        table_operation!("table.held_reader_read_id", {
+        self.read_int(None, "table.held_reader_read_id")
+    }
+
+    /// Take a read lock, read an Int table keyword and release the lock,
+    /// keeping the same table handle open.
+    pub fn read_int_keyword(&mut self, name: &str) -> Result<i32, OracleError> {
+        self.read_int(Some(name), "table.held_reader_read_int_keyword")
+    }
+
+    fn read_int(
+        &mut self,
+        keyword: Option<&str>,
+        operation: &'static str,
+    ) -> Result<i32, OracleError> {
+        table_operation!(operation, {
             let handle = self.handle.as_mut().expect("an open reader");
-            cpp_held_reader_read_id(handle).map_err(|message| OracleError::CppFailure {
-                operation: "table.held_reader_read_id",
-                message,
-            })
+            cpp_held_reader_read_int(handle, keyword, operation)
         })
     }
 }

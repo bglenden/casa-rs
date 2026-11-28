@@ -309,10 +309,11 @@ fn typed_arrays_fixture() -> TableFixture {
                 undefined: false,
             })
             .expect("direct fixed array column"),
+        ColumnSchema::array_variable("arr_optional", PrimitiveType::Float64, Some(1)),
     ])
     .expect("schema");
 
-    let rows = vec![
+    let mut rows = vec![
         RecordValue::new(vec![
             RecordField::new(
                 "arr_i32",
@@ -391,6 +392,15 @@ fn typed_arrays_fixture() -> TableFixture {
             ),
         ]),
     ];
+
+    for (index, samples) in [(0, vec![12.5]), (2, vec![-7.25, -7.25])] {
+        let array =
+            ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(&[samples.len()]), samples).unwrap();
+        rows[index].push(RecordField::new(
+            "arr_optional",
+            Value::Array(ArrayValue::Float64(array)),
+        ));
+    }
 
     TableFixture {
         schema,
@@ -516,6 +526,49 @@ fn all_numeric_scalars_endian_cross_matrix() {
 fn complex_scalars_endian_cross_matrix() {
     let fixture = complex_scalars_fixture();
     assert_matrix_results(&run_endian_cross_matrix(&fixture, ManagerKind::StManAipsIO));
+}
+
+#[test]
+fn materialized_aipsio_arrays_resave_to_casacore() {
+    if !casa_test_support::casacore_oracle_available() {
+        eprintln!("skipping: C++ casacore unavailable");
+        return;
+    }
+    let fixture = typed_arrays_fixture();
+    let cpp_fixture = fixture.cpp_fixture.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("casacore.tbl");
+    let saved = root.path().join("resaved.tbl");
+    TableOracle::table_write(cpp_fixture, &source).expect("casacore writes fixture");
+    TableOracle::table_verify(cpp_fixture, &source).expect("casacore reads its own table");
+
+    let table = Table::open(TableOptions::new(&source)).unwrap();
+    assert_eq!(table.rows().unwrap().len(), fixture.rows.len());
+    let resave = table.save(
+        TableOptions::new(&saved).with_data_manager(casa_tables::DataManagerKind::StManAipsIO),
+    );
+    for (row, expected) in fixture.rows.iter().enumerate() {
+        for column in ["arr_f64", "arr_optional"] {
+            let expected = expected.get(column);
+            assert_eq!(
+                table.is_cell_defined(row, column).unwrap(),
+                expected.is_some(),
+                "row {row} {column} definition after row loading; re-save: {resave:?}",
+            );
+            assert_eq!(
+                table.undefined_cells().unwrap()[row].contains(column),
+                expected.is_none(),
+                "row {row} {column} undefined marker; re-save: {resave:?}",
+            );
+            assert_eq!(
+                table.cell_accessor(row, column).unwrap().value().unwrap(),
+                expected,
+                "row {row} {column} values",
+            );
+        }
+    }
+    resave.expect("re-save the materialized table");
+    TableOracle::table_verify(cpp_fixture, &saved).expect("casacore reads the native re-save");
 }
 
 #[test]

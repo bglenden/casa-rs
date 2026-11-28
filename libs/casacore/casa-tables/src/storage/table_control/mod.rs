@@ -16,7 +16,6 @@ use super::data_type::{
     parse_column_class_name, scalar_column_class_name,
 };
 use crate::casacore_order;
-use crate::table_path::stored_table_dat_keywords;
 
 // ---------------------------------------------------------------------------
 // Parsed structures
@@ -313,19 +312,19 @@ fn is_array_data_type(dt: CasacoreDataType) -> bool {
 // Write path
 // ---------------------------------------------------------------------------
 
-/// Writes `contents` to `path`, the `table.dat` inside a table's directory.
-///
-/// Absolute table keywords are stored relative to that table, as casacore
-/// stores them ([`stored_table_dat_keywords`]).
+mod atomic_write;
+pub(crate) use atomic_write::{StagedTableDat, is_staged_table_dat};
+
+#[cfg(test)]
 pub(crate) fn write_table_dat(
     path: &Path,
     contents: &TableDatContents,
 ) -> Result<(), StorageError> {
-    let table = path.parent().unwrap_or(path);
-    let contents = stored_table_dat_keywords(contents, table);
-    // Backpatch object lengths in memory, avoiding seek-triggered file flushes.
-    std::fs::write(path, serialize_table_dat(&contents)?)?;
-    Ok(())
+    let table = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    StagedTableDat::prepare(table, path.to_path_buf(), false)?.publish(contents)
 }
 
 /// Encode the same control file before a typed array's storage is admitted.

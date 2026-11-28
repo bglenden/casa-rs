@@ -3,6 +3,7 @@ use super::*;
 #[cfg(unix)]
 use crate::lock::read_sync_data_from_table_dir;
 use crate::storage::StorageProfiler;
+use crate::storage::table_control::StagedTableDat;
 use casa_core::{ArrayValue, ScalarValue};
 
 mod persist_rows;
@@ -249,11 +250,12 @@ impl Table {
             rows = self.inner.row_count(),
             "saving CASA table"
         );
+        let control = StagedTableDat::for_full_save(&options.path)?;
         self.note_persisted_write(&options.path);
         let storage = CompositeStorage;
         storage
             .save_borrowed(
-                &options.path,
+                control,
                 self.inner.rows()?,
                 self.inner.undefined_cells()?,
                 self.inner.keywords(),
@@ -350,9 +352,10 @@ impl Table {
             dm_info: self.dm_info.clone(),
             retained_read_metadata: None,
         };
+        let control = StagedTableDat::for_existing_table(&options.path)?;
         self.note_persisted_write(&options.path);
         let storage = CompositeStorage;
-        storage.save_metadata_only(&options.path, &snapshot)?;
+        storage.save_metadata_only(control, &snapshot)?;
         if self
             .source_path
             .as_deref()
@@ -446,11 +449,12 @@ impl Table {
                 )),
             );
         }
+        let control = StagedTableDat::for_full_save(&options.path)?;
         self.note_persisted_write(&options.path);
         let storage = CompositeStorage;
         storage
             .save_with_bindings_borrowed(
-                &options.path,
+                control,
                 self.inner.rows()?,
                 self.inner.undefined_cells()?,
                 self.inner.keywords(),
@@ -531,11 +535,12 @@ impl Table {
                 )),
             );
         }
+        let control = StagedTableDat::for_full_save(&options.path)?;
         self.note_persisted_write(&options.path);
         let storage = CompositeStorage;
         storage
             .save_with_bindings_and_column_overrides_borrowed(
-                &options.path,
+                control,
                 self.inner.rows()?,
                 self.inner.undefined_cells()?,
                 self.inner.keywords(),
@@ -1065,10 +1070,11 @@ impl Table {
     pub fn shallow_copy(&self, opts: TableOptions) -> Result<(), TableError> {
         self.require_full_save_destination(&opts.path)?;
         self.validate()?;
+        let control = StagedTableDat::for_full_save(&opts.path)?;
         self.note_persisted_write(&opts.path);
         let storage = CompositeStorage;
         storage.save_borrowed(
-            &opts.path,
+            control,
             &[],
             &[],
             self.inner.keywords(),
