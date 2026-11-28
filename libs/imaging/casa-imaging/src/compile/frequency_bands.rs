@@ -53,6 +53,8 @@ use casa_imaging_model::{FrequencyBands, LinearSpacingSelection};
 use casa_ms::{CubeSpectralSetup, derived::engine::MsCalEngine};
 use casa_observation::Catalogue;
 
+use crate::{ImagingRequest, SpecMode};
+
 use super::PrepareError;
 use super::envelope::{epoch_frame, selection_band};
 use super::selection::SourceSpectralWindow;
@@ -75,6 +77,35 @@ pub(super) enum SelectionFrame {
     /// The data's frame, each range's channel centres as they are (CASA's
     /// `ignoreframe` for a selection frame of `REST` or `Undefined`).
     Data,
+}
+
+/// The bands a cube's gridding selects one store's windows' channels by at
+/// each time ([`cube_bands`]): a `cube`'s in `outframe`,
+/// or tuned to the image's band `image_band` where CASA tunes the
+/// selection; in the data's frame where tclean's selection frame is
+/// `Undefined` (`cubedata`) or `REST` (`cubesource`, or a `cube` whose
+/// `outframe` is `REST`), which select each named range's channels at
+/// every time, a range with a stride whole. None for a `fitspw` fit,
+/// which reads its channels as named.
+pub(super) fn cube_read_bands(
+    request: &ImagingRequest,
+    (catalogue, engine): (&Catalogue, &MsCalEngine),
+    survey: &Survey,
+    image_band: Option<[f64; 2]>,
+) -> Result<Option<CubeBands>, PrepareError> {
+    if request.fitspw.is_some() {
+        return Ok(None);
+    }
+    let frame = match request.specmode {
+        SpecMode::Cube if image_band.is_some() => SelectionFrame::Converted(FrequencyRef::LSRK),
+        SpecMode::Cube if request.outframe != FrequencyRef::REST => {
+            SelectionFrame::Converted(request.outframe)
+        }
+        SpecMode::Mfs | SpecMode::Cube | SpecMode::Cubedata | SpecMode::Cubesource => {
+            SelectionFrame::Data
+        }
+    };
+    cube_bands((catalogue, engine), survey, frame, image_band).map(Some)
 }
 
 /// The image's band in LSRK as `SynthesisImager::tuneSelectData` states

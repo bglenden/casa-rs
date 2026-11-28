@@ -623,20 +623,20 @@ fn store_reads(
     (image_band, tuned): (Option<[f64; 2]>, bool),
     cubic_read_band: Option<[f64; 2]>,
 ) -> Result<StoreReads, PrepareError> {
-    let bands = cube_bands(request, (catalogue, engine), survey, image_band)?;
+    let bands = frequency_bands::cube_read_bands(request, (catalogue, engine), survey, image_band)?;
     let keep_iterator_channels = tracked_aw_cube_density(
         request,
         survey.source_frequency_reference,
         setup.output_freq_ref,
     );
     let density_bands = if whole_selection_density(request) {
-        cube_bands(request, (catalogue, engine), survey, None)?
+        frequency_bands::cube_read_bands(request, (catalogue, engine), survey, None)?
     } else {
         None
     };
     let prediction_bands =
         if request.savemodel == SaveModel::ModelColumn && request.predicts_final_model() {
-            cube_bands(request, (catalogue, engine), survey, None)?
+            frequency_bands::cube_read_bands(request, (catalogue, engine), survey, None)?
         } else {
             None
         };
@@ -814,36 +814,6 @@ fn whole_selection_density(request: &ImagingRequest) -> bool {
     request.fitspw.is_none()
         && request.weighting.uses_density()
         && !(request.perchanweightdensity && request.weighting.per_channel_density())
-}
-
-/// The bands a cube's gridding selects one store's windows' channels by at
-/// each time ([`frequency_bands::cube_bands`]): a `cube`'s in `outframe`,
-/// or tuned to the image's band `image_band` where CASA tunes the
-/// selection; in the data's frame where tclean's selection frame is
-/// `Undefined` (`cubedata`) or `REST` (`cubesource`, or a `cube` whose
-/// `outframe` is `REST`), which select each named range's channels at
-/// every time, a range with a stride whole. None for a `fitspw` fit,
-/// which reads its channels as named.
-fn cube_bands(
-    request: &ImagingRequest,
-    (catalogue, engine): (&Catalogue, &MsCalEngine),
-    survey: &Survey,
-    image_band: Option<[f64; 2]>,
-) -> Result<Option<frequency_bands::CubeBands>, PrepareError> {
-    use frequency_bands::SelectionFrame;
-    if request.fitspw.is_some() {
-        return Ok(None);
-    }
-    let frame = match request.specmode {
-        SpecMode::Cube if image_band.is_some() => SelectionFrame::Converted(FrequencyRef::LSRK),
-        SpecMode::Cube if request.outframe != FrequencyRef::REST => {
-            SelectionFrame::Converted(request.outframe)
-        }
-        SpecMode::Mfs | SpecMode::Cube | SpecMode::Cubedata | SpecMode::Cubesource => {
-            SelectionFrame::Data
-        }
-    };
-    frequency_bands::cube_bands((catalogue, engine), survey, frame, image_band).map(Some)
 }
 
 /// A cube in its output frame (`cube`) or the data's (`cubedata`), laid
