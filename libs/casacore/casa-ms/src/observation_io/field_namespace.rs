@@ -256,7 +256,7 @@ fn admit(budget: usize, required: usize, what: &'static str) -> Result<(), Obser
     }
 }
 
-fn fixed_direction(
+pub(super) fn fixed_direction(
     table: &Table,
     field: &MsField<'_>,
     row: usize,
@@ -292,7 +292,7 @@ fn names_agree(msv4: &str, calibration: &str) -> bool {
             .is_some_and(|(base, suffix)| base == calibration && suffix.parse::<u32>().is_ok())
 }
 
-fn same_direction(a: &MDirection, b: &MDirection) -> bool {
+pub(super) fn same_direction(a: &MDirection, b: &MDirection) -> bool {
     // Compare the unit vectors to allow roundoff from encoding the same
     // angles in the two stores, including longitude wrap.
     const ROUNDOFF: f64 = 8.0 * f64::EPSILON;

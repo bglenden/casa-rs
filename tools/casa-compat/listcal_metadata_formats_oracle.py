@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Compare default-selector listcal files from both formats with CASA."""
+"""Compare unpaged listcal files from both formats with CASA."""
 
 import argparse
 import json
@@ -13,6 +13,7 @@ import casatasks as casa
 from casatools import table
 import numpy as np
 
+from calibration_smoothcal_oracle import fixture
 from listcal_oracle import same_text
 
 
@@ -22,9 +23,9 @@ TRIAL = (
 )
 
 
-def list_file(engine, vis, caltable, output):
+def list_file(engine, vis, caltable, output, **selectors):
     assert engine.listcal(
-        vis=str(vis), caltable=str(caltable), listfile=str(output), pagerows=0,
+        vis=str(vis), caltable=str(caltable), listfile=str(output), pagerows=0, **selectors,
     ) is None
     return output.read_bytes()
 
@@ -80,6 +81,41 @@ def renumbered_msv4(source, root):
     return reordered, missing
 
 
+def selected_file(root, tag, ms_v2, ms_v4, caltable, native, reference, candidate):
+    def opts(selectors):
+        return dict(zip(("field", "antenna", "spw"), selectors, strict=True))
+
+    expected = list_file(casa, ms_v2, caltable, root / f"{tag}-casa.txt", **opts(reference))
+    old = list_file(native, ms_v2, caltable, root / f"{tag}-msv2.txt", **opts(reference))
+    actual = list_file(native, ms_v4, caltable, root / f"{tag}-msv4.txt", **opts(candidate))
+    assert old == expected
+    expected_v4 = expected.replace(f"MS name = {ms_v2}".encode(), f"MS name = {ms_v4}".encode())
+    same_text(actual.decode(), expected_v4.decode())
+    assert actual == expected_v4
+    return actual.decode()
+
+
+def check_selected_bandpass(root, ms_v2, ms_v4, caltable, native):
+    cases = (
+        ("stride", ("0", "2,0", "0:0~3^2"), None, ["0", "2"]),
+        ("names", ("ppdisk", "VLA02", "high:2"), ("ppdisk_0", "VLA02_N02", "high_1:2"), ["2"]),
+        ("windows", ("0", "0~2", "1:1,0:3"), None, ["3", "1"]),
+        ("first-range", ("0", "0", "0:1~1;3~3"), None, ["1"]),
+    )
+    return {
+        key: assert_selected_channels(selected_file(
+            root, key, ms_v2, ms_v4, caltable, native, reference, candidate or reference,
+        ), channels)
+        for key, reference, candidate, channels in cases
+    }
+
+
+def assert_selected_channels(listing, expected):
+    channels = re.findall(r"^\S+ +ppdisk +(\d+)\|", listing, flags=re.MULTILINE)
+    assert channels == expected, (channels, expected)
+    return channels
+
+
 def check_bandpass(root, ms_v2, ms_v4, native):
     caltable = produce_bandpass(ms_v2, root)
     expected = list_file(casa, ms_v2, caltable, root / "casa-bandpass.txt")
@@ -89,7 +125,8 @@ def check_bandpass(root, ms_v2, ms_v4, native):
     assert windows == ["0", "1"]
 
     result = {"bandpass-compatible": len(actual)}
-    for source in renumbered_msv4(ms_v4, root):
+    reordered, missing = renumbered_msv4(ms_v4, root)
+    for source in (reordered, missing):
         output = root / f"{source.name}.txt"
         try:
             list_file(native, source, caltable, output)
@@ -100,7 +137,39 @@ def check_bandpass(root, ms_v2, ms_v4, native):
         else:
             raise AssertionError(f"listed the incompatible {source.name} store")
         result[source.name] = "refused before publication"
+    result.update(check_selected_bandpass(root, ms_v2, ms_v4, caltable, native))
+    output = root / "explicit-reordered.txt"
+    try:
+        list_file(native, reordered, caltable, output, spw="0:1")
+    except native.TaskParameterError as error:
+        assert error.completion.parameter == "vis"
+        assert "spectral-window identity" in error.completion.message
+        assert not output.exists()
+    else:
+        raise AssertionError("listed a selected window on the wrong physical grid")
+    selected = ("0", "1", "0:2")
+    result["explicit-missing-unselected"] = assert_selected_channels(selected_file(
+        root, "missing-unselected", ms_v2, missing, caltable, native, selected, selected,
+    ), ["2"])
     return result
+
+
+def check_field_selection(root, native):
+    root.mkdir()
+    ms_v2, ms_v4, caltable = (root / name for name in ("source.ms", "converted.ps.zarr", "gain.cal"))
+    fixture(ms_v2, caltable)
+    conversion = native.msconvert(
+        vis=str(ms_v2), outputvis=str(ms_v4), outformat="msv4", withpointing=False,
+    )
+    assert conversion.successful, conversion.describe()
+    full = list_file(casa, ms_v2, caltable, root / "unfiltered.txt", antenna="0", spw="0:0")
+    assert b"FLUX" in full and b"PHASE" in full
+    selected = selected_file(
+        root, "phase-field", ms_v2, ms_v4, caltable, native,
+        ("PHASE", "0", "0:0"), ("PHASE_1", "0", "0:0"),
+    )
+    assert "PHASE" in selected and "FLUX" not in selected
+    return "PHASE only"
 
 
 def main():
@@ -135,6 +204,7 @@ def main():
         assert actual == expected.replace(old_label, new_label)
         result["MSv4"] = len(actual)
         result.update(check_bandpass(root, ms_v2, ms_v4, native))
+        result["two-fields"] = check_field_selection(root / "two-fields", native)
 
     for subtable in ("SPECTRAL_WINDOW", "DATA_DESCRIPTION"):
         for rows in ((1,), (0, 1)):

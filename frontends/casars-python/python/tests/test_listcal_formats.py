@@ -6,7 +6,7 @@ import tarfile
 
 import pytest
 
-from casars import tasks
+from casars import tasks, tools
 
 
 TRIAL = (
@@ -47,10 +47,62 @@ def test_default_file_listing_uses_both_msv4_windows(paired_calibration, spw):
     )
 
 
-def test_selected_msv4_file_listing_returns_typed_refusal(paired_calibration):
+@pytest.mark.parametrize(("selectors_v2", "selectors_v4"), [
+    (("0", "1", "1:0"), ("0", "1", "1:0")),
+    (("ppdisk", "VLA02", "high:0"), ("ppdisk_0", "VLA02_N02", "high_1:0")),
+])
+def test_selected_file_listing_uses_the_same_physical_rows(
+    paired_calibration, selectors_v2, selectors_v4,
+):
+    ms_v2, ms_v4 = paired_calibration
+    table = tools.table()
+    assert table.open("input.cal", nomodify=False)
+    for row in range(table.nrows()):
+        assert table.putcell("FIELD_ID", row, 0)
+    assert table.close()
+
+    for vis, selectors, out in (
+        (ms_v2, selectors_v2, "reference.txt"), (ms_v4, selectors_v4, "candidate.txt"),
+    ):
+        field, antenna, spw = selectors
+        assert tasks.listcal(
+            vis=vis, caltable="input.cal", listfile=out,
+            field=field, antenna=antenna, spw=spw, pagerows=0,
+        ) is None
+    actual = Path("candidate.txt").read_text()
+    assert "SpwID = 0" not in actual and "SpwID = 1" in actual
+    assert "Ant = VLA02" in actual and "ppdisk" in actual
+    assert "Ant = VLA01" not in actual and "Ant = VLA03" not in actual
+    assert actual == Path("reference.txt").read_text().replace(
+        f"MS name = {Path(ms_v2).absolute()}", f"MS name = {Path(ms_v4).absolute()}",
+    )
+
+
+@pytest.mark.parametrize(("subtable", "column", "selector", "identity"), [
+    ("ANTENNA", "POSITION", {"antenna": "0"}, "antenna identity"),
+    ("FIELD", "PHASE_DIR", {"field": "0"}, "field identity"),
+    ("FIELD", "NUM_POLY", {"field": "0"}, "polynomial FIELD"),
+])
+def test_selected_msv4_listing_refuses_incompatible_calibration_identity(
+    paired_calibration, subtable, column, selector, identity,
+):
     _, ms_v4 = paired_calibration
-    with pytest.raises(tasks.TaskParameterError, match="default selectors") as failure:
-        tasks.listcal(vis=ms_v4, caltable="input.cal", listfile="out.txt", field="0", pagerows=0)
+    table = tools.table()
+    assert table.open(f"input.cal/{subtable}", nomodify=False)
+    before = table.getcell(column, 0)
+    assert table.putcell(column, 0, before + 1)
+    assert table.close()
+
+    with pytest.raises(tasks.TaskParameterError, match=identity) as failure:
+        tasks.listcal(vis=ms_v4, caltable="input.cal", listfile="out.txt", pagerows=0, **selector)
+    assert failure.value.completion.parameter == "vis"
+    assert not Path("out.txt").exists()
+
+
+def test_paged_msv4_file_listing_returns_typed_refusal(paired_calibration):
+    _, ms_v4 = paired_calibration
+    with pytest.raises(tasks.TaskParameterError, match="pagerows=0") as failure:
+        tasks.listcal(vis=ms_v4, caltable="input.cal", listfile="out.txt", field="0", pagerows=1)
     assert failure.value.completion.parameter == "vis"
     assert not Path("out.txt").exists()
 
