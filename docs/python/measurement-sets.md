@@ -84,8 +84,8 @@ binding individual field identities across stores.
 
 ## Solve time-binned gains
 
-For an MSv4 input, `tasks.gaincal` supports `gaintype="G"`, `calmode="ap"`,
-a positive duration such as `solint="60s"`, and an explicit unpolarized
+For an MSv4 input, `tasks.gaincal` supports `gaintype="G"`, `calmode="ap"`
+or `calmode="p"`, a positive duration such as `solint="60s"`, and an explicit unpolarized
 point source such as `smodel=[1, 0, 0, 0]`. Use the default selection,
 no prior calibration tables, and the default averaging, flagging, and
 combination controls. Keep normalization and robust fitting at their

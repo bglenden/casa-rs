@@ -59,7 +59,7 @@ def compare_gains(actual, expected):
     return {'rows': int(expected_order.size), 'gain_relative_rms': error}
 
 
-def mixed_weights(root, native):
+def mixed_weights(root, native, options):
     source = extract_trial(root)
     with editable(source) as tool:
         shape = tool.getcell('DATA', 0).shape
@@ -79,17 +79,20 @@ def mixed_weights(root, native):
                 assert tool.putcell(column, row, spectrum)
         data = tool.getcol('DATA')
         data[:, ::2, :] *= 3.
+        if options['calmode'] == 'p':
+            baselines = tool.getcol('ANTENNA1') - tool.getcol('ANTENNA2')
+            data[:, ::2, :] *= np.exp(0.27j * baselines)
         assert tool.putcol('DATA', data)
 
-    expected = solve(casa, root, 'casa', source, **TIME_BINNED_G)
-    actual = solve(native, root, 'native', source, **TIME_BINNED_G)
+    expected = solve(casa, root, 'casa', source, **options)
+    actual = solve(native, root, 'native', source, **options)
     return compare_gains(actual, expected)
 
 
-def legacy_yy_append(root, native):
+def legacy_yy_append(root, native, options):
     source = root/'yy.ms'
     make_cal_ms(str(source), stokes='YY')
-    options = TIME_BINNED_G | dict(refant='', refantmode='flex', minblperant=2)
+    options = options | dict(refant='', refantmode='flex', minblperant=2)
     expected = solve(casa, root, 'casa', source, **options)
     solve(native, root, 'native', source, **options)
     destination = root/'native.cal'
@@ -115,7 +118,7 @@ def legacy_yy_append(root, native):
     return compare_gains(legacy, expected)
 
 
-def observed_field_scan_pairs(root, native):
+def observed_field_scan_pairs(root, native, options):
     source = extract_trial(root)
     for subtable, column, value in [('FIELD', 'NAME', 'second-field'),
                                     ('STATE', 'OBS_MODE', 'CALIBRATE_PHASE.ON_SOURCE')]:
@@ -135,7 +138,7 @@ def observed_field_scan_pairs(root, native):
 
     converted = root/'converted.ps.zarr'
     native.msconvert(vis=str(source), outputvis=str(converted), outformat='msv4', withpointing=False)
-    options = TIME_BINNED_G | dict(solint='15s')
+    options = options | dict(solint='15s')
     expected = solve(casa, root, 'casa', source, **options)
     assert set(zip(expected['FIELD_ID'], expected['SCAN_NUMBER'])) == {(0, 1), (0, 2), (1, 1), (1, 2)}
     assert expected['TIME'].size == 60
@@ -143,13 +146,31 @@ def observed_field_scan_pairs(root, native):
             for fmt, vis in [('MSv2', source), ('MSv4', converted)]}
 
 
-CASES = (mixed_weights, legacy_yy_append, observed_field_scan_pairs)
+def phase_flags(root, native, options):
+    source = extract_trial(root)
+    converted = root/'converted.ps.zarr'
+    native.msconvert(vis=str(source), outputvis=str(converted), outformat='msv4', withpointing=False)
+    options = options | dict(calmode='p', minsnr=22., minblperant=4)
+    expected = solve(casa, root, 'casa', source, **options)
+    flags = expected['FLAG']
+    assert flags.any() and (~flags).any()
+    results = {}
+    for fmt, vis in [('MSv2', source), ('MSv4', converted)]:
+        actual = solve(native, root, fmt, vis, **options)
+        results[fmt] = compare_gains(actual, expected)
+        np.testing.assert_array_equal(actual['CPARAM'][actual['FLAG']], 1. + 0.j)
+        results[fmt]['flagged_solutions'] = int(actual['FLAG'].sum())
+    return results
+
+
+CASES = (mixed_weights, legacy_yy_append, observed_field_scan_pairs, phase_flags)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--case', choices=[case.__name__ for case in CASES])
+    parser.add_argument('--calmode', choices=['ap', 'p'], default='ap')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     from casars import tasks as native
@@ -158,11 +179,14 @@ def main():
     root.mkdir(parents=True, exist_ok=True)
     assert not any(root.iterdir()), 'work directory must be empty'
     os.chdir(root)
+    options = TIME_BINNED_G | dict(calmode=args.calmode)
     for case in CASES:
+        if case is phase_flags and args.case is None and args.calmode != 'p':
+            continue
         if args.case is None or args.case == case.__name__:
             directory = root/case.__name__
             directory.mkdir()
-            print(json.dumps({case.__name__: case(directory, native)}), flush=True)
+            print(json.dumps({case.__name__: case(directory, native, options)}), flush=True)
 
 
 if __name__ == '__main__':

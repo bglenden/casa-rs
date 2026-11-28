@@ -25,10 +25,11 @@ def prepare_store(tmp_path, monkeypatch, store):
 
 
 @pytest.mark.parametrize("store", ["ms_trial.ms", "ms_trial.ps.zarr"])
-def test_time_binned_point_source_gaincal(tmp_path, monkeypatch, store):
+@pytest.mark.parametrize("calmode", ["ap", "p"])
+def test_time_binned_point_source_gaincal(tmp_path, monkeypatch, store, calmode):
     prepare_store(tmp_path, monkeypatch, store)
     result = tasks.gaincal(
-        vis=store, caltable="solved.cal", gaintype="G", calmode="ap", solint="60s",
+        vis=store, caltable="solved.cal", gaintype="G", calmode=calmode, solint="60s",
         refant="0", refantmode="strict", smodel=[1.0, 0.0, 0.0, 0.0], minsnr=3.0,
     )
 
@@ -60,11 +61,34 @@ def test_time_binned_point_source_gaincal(tmp_path, monkeypatch, store):
     true_gains = np.array(truth["re"]) + 1j * np.array(truth["im"])
     reference = true_gains[:, :1, :]
     referred = true_gains * reference.conj() / np.abs(reference)
+    if calmode == "p":
+        np.testing.assert_allclose(np.abs(gains), 1, atol=5e-7, rtol=0)
+        referred /= np.abs(referred)
     interval = np.searchsorted(np.unique(times), times)
     ratio = gains / referred[interval, antennas, :]
     # The fixture has a second faint source outside the supplied point model.
     assert np.max(np.abs(np.angle(ratio))) < 0.2
     assert np.max(np.abs(np.abs(ratio) - 1.0)) < 0.2
+
+
+@pytest.mark.parametrize("store", ["ms_trial.ms", "ms_trial.ps.zarr"])
+def test_phase_only_gaincal_persists_unity_for_flagged_solutions(tmp_path, monkeypatch, store):
+    prepare_store(tmp_path, monkeypatch, store)
+    tasks.gaincal(
+        vis=store, caltable="solved.cal", gaintype="G", calmode="p", solint="60s",
+        refant="0", refantmode="strict", smodel=[1.0, 0.0, 0.0, 0.0], minsnr=22,
+    )
+    table = tools.table()
+    assert table.open("solved.cal")
+    try:
+        assert table.nrows() == 10
+        flags = table.getcol("FLAG")
+        gains = table.getcol("CPARAM")
+        assert flags.any() and (~flags).any()
+        np.testing.assert_array_equal(gains[flags], 1.0 + 0.0j)
+        np.testing.assert_allclose(np.abs(gains[~flags]), 1, atol=5e-7, rtol=0)
+    finally:
+        assert table.close()
 
 
 @pytest.mark.parametrize("store", ["ms_trial.ms", "ms_trial.ps.zarr"])

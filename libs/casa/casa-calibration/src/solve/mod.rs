@@ -892,23 +892,7 @@ fn solve_gain_rows_with_settings(
         solution_rows.extend(group_rows);
     }
     apply_requested_reference(ms, &mut solution_rows, &request.refant, &context)?;
-    // CASA enforces amplitudes on the final gains after referencing and
-    // before normalizing across all intervals (`globalPostSolveTinker`).
-    if request.solve_mode != GainSolveMode::AmplitudePhase {
-        for row in &mut solution_rows {
-            for (gain, flagged) in row.gains.iter_mut().zip(&row.flags) {
-                if *flagged {
-                    *gain = Complex32::new(1.0, 0.0);
-                } else if request.solve_mode == GainSolveMode::Amplitude {
-                    let amplitude = gain.norm();
-                    *gain = Complex32::new(if amplitude == 0.0 { 1.0 } else { amplitude }, 0.0);
-                }
-            }
-        }
-    }
-    if request.solve_mode != GainSolveMode::Phase && request.normalize_average_amplitude {
-        normalize_gain_solution_amplitudes(&mut solution_rows, request.normalization_type);
-    }
+    finish_gain_amplitudes(&mut solution_rows, request);
     tally_references(&solution_rows, &mut solve_stats);
     drop(kernel_phase);
     let mut channel_selections = BTreeMap::new();
@@ -935,6 +919,26 @@ fn solve_gain_rows_with_settings(
             selected_rows: context.rows,
         }),
     ))
+}
+
+fn finish_gain_amplitudes(rows: &mut [kernel::SolutionRow], request: &GainSolveRequest) {
+    // CASA enforces amplitudes on the final gains after referencing and
+    // before normalizing across all intervals (`globalPostSolveTinker`).
+    if request.solve_mode != GainSolveMode::AmplitudePhase {
+        for row in rows.iter_mut() {
+            for (gain, flagged) in row.gains.iter_mut().zip(&row.flags) {
+                if *flagged {
+                    *gain = Complex32::new(1.0, 0.0);
+                } else if request.solve_mode == GainSolveMode::Amplitude {
+                    let amplitude = gain.norm();
+                    *gain = Complex32::new(if amplitude == 0.0 { 1.0 } else { amplitude }, 0.0);
+                }
+            }
+        }
+    }
+    if request.solve_mode != GainSolveMode::Phase && request.normalize_average_amplitude {
+        normalize_gain_solution_amplitudes(rows, request.normalization_type);
+    }
 }
 
 /// Gather at the shorter positive user preaverage or solution interval.

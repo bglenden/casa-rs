@@ -222,7 +222,7 @@ pub(crate) fn solve_calibration_with_activity(
                     }
                 } else if casa_ms::observation_io::is_msv4_store(&path) {
                     return Err(GainSolveError::from(casa_observation::ObservationError::Unsupported {
-                        what: "an MSv4 gain solve outside the time-binned G amplitude-and-phase point-source mode (#1055)",
+                        what: "an MSv4 gain solve outside the time-binned G point-source modes (calmode='ap' or 'p') (#1055)",
                     }).into());
                 }
             }
