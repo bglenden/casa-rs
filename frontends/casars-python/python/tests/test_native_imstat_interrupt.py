@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Drive SIGINT through the public imstat provider at calculation boundaries."""
+"""Drive SIGINT through public imstat during calculation and before publication."""
 
 import numpy as np
 import pytest
@@ -26,10 +26,11 @@ def image_contents(source):
     [
         pytest.param("plane", False, True, id="plane-overwrite"),
         pytest.param("plane", True, True, id="plane-append"),
-        pytest.param("calculated", False, False, id="before-logfile"),
+        pytest.param("before-logfile", False, False, id="before-logfile-create"),
+        pytest.param("before-logfile", False, True, id="before-logfile-overwrite"),
     ],
 )
-def test_imstat_sigint_stops_calculation_and_preserves_logfile(
+def test_imstat_sigint_preserves_logfile(
     tmp_path, monkeypatch, stage, append, existing
 ):
     monkeypatch.chdir(tmp_path)
@@ -60,12 +61,12 @@ def test_imstat_sigint_stops_calculation_and_preserves_logfile(
     prefix = "imstat test checkpoint "
     checkpoints = [line.removeprefix(prefix) for line in log if line.startswith(prefix)]
     plane = ["PlaneStarted", "PlaneFinished"]
-    assert checkpoints == (plane if stage == "plane" else plane * 3 + ["CalculationFinished"])
-    assert "imstat interrupted task=imstat reason=imstat interrupted" in log
+    assert checkpoints == (plane if stage == "plane" else plane * 3 + ["BeforeLogfile"])
     if existing:
         assert logfile.read_bytes() == sentinel
     else:
         assert not logfile.exists()
+    assert "imstat interrupted task=imstat reason=imstat interrupted" in log
     assert image_contents(source) == original
     assert image.open("cube.im")
     np.testing.assert_array_equal(image.getchunk(), pixels)

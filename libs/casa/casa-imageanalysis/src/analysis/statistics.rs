@@ -105,8 +105,6 @@ where
         )?;
         ImstatOutcome::Planes(summary)
     };
-    #[cfg(feature = "imstat-test-hooks")]
-    observe(Checkpoint::CalculationFinished);
     Ok(outcome)
 }
 

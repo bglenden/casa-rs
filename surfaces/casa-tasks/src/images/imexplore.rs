@@ -9,6 +9,8 @@ use std::path::Path;
 
 use crate::{CasaValue, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::ParameterValue;
+#[cfg(feature = "imstat-test-hooks")]
+use casa_imageanalysis::imstat_test_hooks::{Checkpoint, observe};
 use casa_imageanalysis::{
     ImageHeaderSummary, ImageStatisticsSummary, ImheadValue, ImstatOutcome, ImstatPlanesSummary,
     ImstatRequest, imhead, imhead_add_delete, imhead_extrema, imhead_put, imstat_with_cancellation,
@@ -403,6 +405,8 @@ fn run_imstat(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         ImstatOutcome::Global(summary) => statistics_block(summary, algorithm.kind(), true, true),
         ImstatOutcome::Planes(summary) => planes_block(summary, algorithm.kind(), true, true),
     };
+    #[cfg(feature = "imstat-test-hooks")]
+    observe(Checkpoint::BeforeLogfile);
     // Once logfile publication is accepted, finish its append or overwrite.
     if cancellation.is_some_and(crate::TaskCancellation::is_cancelled) {
         return Err(TaskFailure::interrupted("imstat interrupted"));

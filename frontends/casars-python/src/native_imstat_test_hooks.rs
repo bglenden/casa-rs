@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Opt-in SIGINT injection at native imstat calculation boundaries.
+//! Opt-in SIGINT injection at native imstat checkpoints.
 
 use std::cell::Cell;
 use std::sync::mpsc::Sender;
@@ -18,7 +18,7 @@ thread_local! {
 pub(crate) fn _arm_imstat_test(stage: &str) -> PyResult<()> {
     NEXT_IMSTAT.set(Some(match stage {
         "plane" => Checkpoint::PlaneFinished,
-        "calculated" => Checkpoint::CalculationFinished,
+        "before-logfile" => Checkpoint::BeforeLogfile,
         _ => return Err(PyValueError::new_err("unknown imstat test checkpoint")),
     }));
     Ok(())
