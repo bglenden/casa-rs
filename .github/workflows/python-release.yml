@@ -13,12 +13,57 @@ permissions:
   contents: read
 
 jobs:
+  release_version:
+    name: Resolve release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      python_version: ${{ steps.version.outputs.python_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Read workspace version and check release tag
+        id: version
+        shell: python
+        run: |
+          import os
+          import re
+          import tomllib
+
+          with open("Cargo.toml", "rb") as manifest:
+              version = tomllib.load(manifest)["workspace"]["package"]["version"]
+          base = r"(?:0|[1-9][0-9]*)"
+          match = re.fullmatch(rf"({base}\.{base}\.{base})(?:-rc([0-9]+))?", version)
+          if match is None:
+              raise SystemExit(f"expected a workspace version of x.y.z or x.y.z-rcN, got {version!r}")
+
+          ref = os.environ["GITHUB_REF"]
+          if ref.startswith("refs/tags/") and ref != f"refs/tags/v{version}":
+              raise SystemExit(f"tag {ref!r} does not match Cargo workspace version {version!r}")
+
+          # Maturin converts Cargo's -rcN to the PEP 440 spelling in Python metadata.
+          python_version, rc = match.groups()
+          if rc is not None:
+              python_version += f"rc{int(rc)}"
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              print(f"version={version}", file=output)
+              print(f"python_version={python_version}", file=output)
+
   release_checks:
     if: startsWith(github.ref, 'refs/tags/v')
+    needs: release_version
     uses: ./.github/workflows/ci.yml
 
   build_wheels:
     name: Build release assets (${{ matrix.platform }})
+    needs: release_version
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -29,13 +74,11 @@ jobs:
             platform: linux-x86_64
             target: x86_64-unknown-linux-gnu
             manylinux: auto
-            smoke_wheel_glob: dist/*cp312*.whl
-          - os: macos-14
+          - os: macos-15
             artifact_name: release-assets-macos-arm64
             platform: macos-arm64
             target: aarch64-apple-darwin
             manylinux: off
-            smoke_wheel_glob: dist/*cp312*.whl
 
     steps:
       - name: Checkout
@@ -82,39 +125,27 @@ jobs:
 
       - name: Smoke-test built wheel
         shell: bash
+        env:
+          PYTHON_RELEASE_VERSION: ${{ needs.release_version.outputs.python_version }}
         run: |
           set -euo pipefail
           shopt -s nullglob
-          wheels=( ${{ matrix.smoke_wheel_glob }} )
+          wheels=(dist/*-cp312-*.whl)
           if [[ ${#wheels[@]} -ne 1 ]]; then
             echo "expected exactly one cp312 wheel, found ${#wheels[@]}" >&2
             printf '%s\n' "${wheels[@]}" >&2
             exit 1
           fi
-
-          python -m pip install --upgrade pip
-          python -m pip install "${wheels[0]}"
-          python - <<'PY'
-          import inspect
-          import casars
-          from casars import tasks
-          from casars.parameters import TaskParameters
-
-          assert casars.__version__
-          for name in ("calibrate", "importvla", "msexplore", "imager", "immoments", "impbcor", "exportfits", "importfits"):
-              assert callable(getattr(tasks, name))
-          assert "vis" in inspect.signature(tasks.calibrate).parameters
-          assert "imagename" in inspect.signature(tasks.immoments).parameters
-          assert TaskParameters.defaults("calibrate").surface == "calibrate"
-          PY
+          bash scripts/test-release-python-artifact.sh "${wheels[0]}" "$PYTHON_RELEASE_VERSION"
 
       - name: Package suite and standalone binary bundles
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.release_version.outputs.version }}
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
           scripts/package-suite-bundle.sh \
-            --version "$version" \
+            --version "$RELEASE_VERSION" \
             --platform "${{ matrix.platform }}" \
             --bin-dir target/release \
             --wheel-dir dist \
@@ -135,6 +166,7 @@ jobs:
 
   build_sdist:
     name: Build sdist
+    needs: release_version
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -155,41 +187,20 @@ jobs:
           rust-toolchain: stable
           args: --manifest-path frontends/casars-python/Cargo.toml --out dist
 
-      - name: Build task binaries for smoke test
-        shell: bash
-        run: |
-          set -euo pipefail
-          while read -r package binary; do
-            cargo build -q -p "$package" --bin "$binary"
-          done < <(scripts/list-suite-binaries.py --package-binary)
-
       - name: Smoke-test built sdist
         shell: bash
+        env:
+          PYTHON_RELEASE_VERSION: ${{ needs.release_version.outputs.python_version }}
         run: |
           set -euo pipefail
           shopt -s nullglob
-          sdists=( dist/*.tar.gz )
+          sdists=(dist/*.tar.gz)
           if [[ ${#sdists[@]} -ne 1 ]]; then
             echo "expected exactly one sdist, found ${#sdists[@]}" >&2
             printf '%s\n' "${sdists[@]}" >&2
             exit 1
           fi
-
-          python -m pip install --upgrade pip
-          python -m pip install "${sdists[0]}"
-          python - <<'PY'
-          import inspect
-          import casars
-          from casars import tasks
-          from casars.parameters import TaskParameters
-
-          assert casars.__version__
-          for name in ("calibrate", "importvla", "msexplore", "imager", "immoments", "impbcor", "exportfits", "importfits"):
-              assert callable(getattr(tasks, name))
-          assert "vis" in inspect.signature(tasks.calibrate).parameters
-          assert "imagename" in inspect.signature(tasks.immoments).parameters
-          assert TaskParameters.defaults("calibrate").surface == "calibrate"
-          PY
+          bash scripts/test-release-python-artifact.sh "${sdists[0]}" "$PYTHON_RELEASE_VERSION"
 
       - name: Upload sdist artifact
         uses: actions/upload-artifact@v4
