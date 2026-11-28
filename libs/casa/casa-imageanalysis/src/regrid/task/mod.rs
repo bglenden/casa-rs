@@ -23,7 +23,7 @@ use super::{
     DirectionSampling, Plane, RegridMethod, RegridPixel, RegridTemplate, Regridded,
     direction_affine, jy_per_pixel_scale, positions,
     progress::{self, check, coordinate_positions},
-    same_axes, sample_direction_planes,
+    same_axes_with_cancellation, sample_direction_planes,
     spectral::SpectralPlan,
 };
 use casa_images::{ImageError, ImageInterface, ImagePixel};
@@ -488,7 +488,7 @@ fn regrid_spectral_coordinate<T: RegridPixel>(
     let target: CoordinateModel = coordinate.clone().into();
     if options.force()
         || old_length != length
-        || !same_axes(&source, &target, &[length])
+        || !same_axes_with_cancellation(&source, &target, &[length], options.cancellation)?
         || ours.world_frequency_ref() != theirs.world_frequency_ref()
     {
         let positions = spectral_positions(

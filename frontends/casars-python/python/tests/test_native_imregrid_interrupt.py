@@ -107,3 +107,33 @@ def test_imregrid_sigint_respects_calculation_and_publication(tmp_path, monkeypa
     assert tasks.imregrid(**parameters) is None
     assert_regrid(output, template, expected, expected_mask)
     assert not list(tmp_path.glob(".tmp*"))
+
+
+def test_imregrid_sigint_stops_spectral_grid_comparison(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    pixels = np.arange(2 * 3 * 8193, dtype=np.float32).reshape(2, 3, 8193)
+    writer = tools.image()
+    assert writer.fromarray("source.im", pixels)
+    assert writer.done()
+    template = tasks.imregrid("source.im", template="get")
+
+    trace = tmp_path / "spectral.logtable"
+    monkeypatch.setenv("CASA_RS_LOG_STDERR_PRIORITY", "off")
+    monkeypatch.setenv("CASA_RS_LOG_TABLE_PRIORITY", "DEBUG")
+    monkeypatch.setenv("CASA_RS_LOG_TABLE", str(trace))
+    # Equal spectral grids skip interpolation only after comparing every channel.
+    request = dict(imagename="source.im", output="output.im", template=template,
+                   axes=[2], asvelocity=False)
+    _core._arm_imregrid_test("coordinate-batch")
+    with pytest.raises(KeyboardInterrupt):
+        tasks.imregrid(**request)
+    log = messages(trace)
+    prefix = "imregrid test checkpoint "
+    assert [line.removeprefix(prefix) for line in log if line.startswith(prefix)] == [
+        "CoordinateBatchStarted(0)", "CoordinateBatchFinished(0)",
+    ]
+    assert "imregrid interrupted task=imregrid reason=imregrid interrupted" in log
+    assert not (tmp_path / "output.im").exists()
+    assert not list(tmp_path.glob(".tmp*"))
+    assert tasks.imregrid(**request) is None
+    assert_regrid(tmp_path / "output.im", template, pixels, np.ones(pixels.shape, dtype=bool))
