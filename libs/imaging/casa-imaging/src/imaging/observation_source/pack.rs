@@ -468,6 +468,12 @@ impl Packer<'_> {
         Ok(())
     }
 
+    fn uses_selection_centres(&self) -> bool {
+        let kernel = self.problem.science().spectral().sampling().kernel();
+        kernel == SpectralKernel::Linear
+            || (kernel == SpectralKernel::Cubic && super::super::uses_tracked_widths(self.problem))
+    }
+
     /// The first pair of channels the untrimmed selection delivers at
     /// this time. Apply the same compacting predicates and frequency
     /// conversion as the resident traversal, including its rounding at
@@ -609,10 +615,7 @@ impl Packer<'_> {
         let rest_aw = super::super::rest_aw_uses_native_wavelengths(self.problem);
         let channels = partition.channels_for(values, prediction);
         let spacing = partition.native_spacing_for(values, prediction);
-        let kernel = self.problem.science().spectral().sampling().kernel();
-        let uses_selection_centres = kernel == SpectralKernel::Linear
-            || (kernel == SpectralKernel::Cubic && super::super::uses_tracked_widths(self.problem));
-        let needs_spacing = uses_selection_centres
+        let needs_spacing = self.uses_selection_centres()
             && (spacing.is_some() || input_layout.channel_indices.len() < channels.len())
             && layout.channel_indices.len() >= 2;
         let mut selection_centres_hz = None;
