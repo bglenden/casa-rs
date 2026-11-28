@@ -54,6 +54,8 @@ use crate::plane::PlaneIndex;
 use casa_images::{ImageError, ImageInterface, ImagePixel};
 
 mod spectral;
+
+pub(crate) mod progress;
 mod task;
 
 use casa_images::resample::{Plane, RegridMethod, RegridPixel};
@@ -425,26 +427,28 @@ fn positions(
     input: &DirectionCoordinate,
     output: &DirectionCoordinate,
     [nx, ny]: [usize; 2],
-) -> Vec<Option<[f64; 2]>> {
+    cancellation: Option<&casa_core::cancellation::Cancellation>,
+) -> Result<Vec<Option<[f64; 2]>>, ImageError> {
+    let pixels = || (0..ny).flat_map(|j| (0..nx).map(move |i| [i as f64, j as f64]));
     if let Some(affine) = direction_affine(input, output, [nx, ny]) {
-        return (0..ny)
-            .flat_map(|j| (0..nx).map(move |i| [i as f64, j as f64]))
-            .map(|output| Some(affine.source_pixel(output)))
-            .collect();
+        return progress::coordinate_positions(
+            nx * ny,
+            pixels().map(|output| Some(affine.source_pixel(output))),
+            cancellation,
+        );
     }
-    let mut grid = Vec::with_capacity(nx * ny);
-    for j in 0..ny {
-        for i in 0..nx {
-            let position = output
-                .to_world(&[i as f64, j as f64])
+    progress::coordinate_positions(
+        nx * ny,
+        pixels().map(|pixel| {
+            output
+                .to_world(&pixel)
                 .and_then(|world| input.to_pixel(&world))
                 .ok()
                 .filter(|pixel| pixel.iter().all(|value| value.is_finite()))
-                .map(|pixel| [pixel[0], pixel[1]]);
-            grid.push(position);
-        }
-    }
-    grid
+                .map(|pixel| [pixel[0], pixel[1]])
+        }),
+        cancellation,
+    )
 }
 
 /// Whether an image of `coordinates` and `shape` can be regridded onto
@@ -569,7 +573,7 @@ where
             scale,
         });
     }
-    let mut grid = positions(input_direction, output_direction, out_plane);
+    let mut grid = positions(input_direction, output_direction, out_plane, None)?;
     let method = if mosaic_pointing
         && clip_pointing_grid(
             &mut grid,
@@ -596,13 +600,14 @@ where
             positions: &grid,
             method,
             scale,
+            cancellation: None,
         },
         1,
         |value: T, _| value.into(),
         |_, _, value| T::from(value as f32),
-    );
+    )?;
     if let Some(spectral) = &plan.spectral {
-        (out_data, out_mask) = spectral.apply(&out_data, &out_mask, &template.shape);
+        (out_data, out_mask) = spectral.apply(&out_data, &out_mask, &template.shape)?;
     }
     Ok(Regridded {
         data: out_data,
@@ -619,6 +624,7 @@ struct DirectionSampling<'a> {
     positions: &'a [Option<[f64; 2]>],
     method: RegridMethod,
     scale: f64,
+    cancellation: Option<&'a casa_core::cancellation::Cancellation>,
 }
 
 fn sample_direction_planes<T>(
@@ -628,7 +634,7 @@ fn sample_direction_planes<T>(
     components: usize,
     read: impl Fn(T, usize) -> f64,
     write: impl Fn(T, usize, f64) -> T,
-) -> (ArrayD<T>, ArrayD<bool>)
+) -> Result<(ArrayD<T>, ArrayD<bool>), ImageError>
 where
     T: ImagePixel + Copy,
 {
@@ -638,6 +644,7 @@ where
         positions,
         method,
         scale,
+        cancellation,
     } = sampling;
     let input_shape = data.shape();
     let in_plane = in_axis.map(|axis| input_shape[axis]);
@@ -654,27 +661,46 @@ where
     let planes = PlaneIndex::new(input_shape, in_axis);
     let out_planes = PlaneIndex::new(&direction_shape, out_axis);
     for plane_number in 0..planes.count() {
+        progress::check(cancellation)?;
         if let (Some(values), Some(mask)) = (plane_mask.as_mut(), mask) {
             planes.read(plane_number, mask, values, |v| *v);
         }
         for component in 0..components {
+            progress::check(cancellation)?;
             planes.read(plane_number, data, &mut plane, |v| read(*v, component));
             let view = Plane {
                 data: &plane,
                 mask: plane_mask.as_deref(),
                 shape: in_plane,
             };
-            for (k, at) in positions.iter().enumerate() {
-                let sampled = at.and_then(|at| view.sample(method, at));
-                let value = sampled.map_or(0.0, |value| scale * value);
-                out_values[k] = write(out_values[k], component, value);
-                out_valid[k] = sampled.is_some();
+            for (batch, positions) in positions.chunks(progress::BATCH_SIZE).enumerate() {
+                progress::check(cancellation)?;
+                let start = batch * progress::BATCH_SIZE;
+                #[cfg(feature = "imregrid-test-hooks")]
+                if plane_number == 0 && component == 0 {
+                    use crate::imregrid_test_hooks::{Checkpoint, observe};
+                    observe(Checkpoint::InterpolationBatchStarted(start));
+                }
+                let values = &mut out_values[start..start + positions.len()];
+                let valid = &mut out_valid[start..start + positions.len()];
+                for ((at, pixel), good) in positions.iter().zip(values).zip(valid) {
+                    let sampled = at.and_then(|at| view.sample(method, at));
+                    let value = sampled.map_or(0.0, |value| scale * value);
+                    *pixel = write(*pixel, component, value);
+                    *good = sampled.is_some();
+                }
+                #[cfg(feature = "imregrid-test-hooks")]
+                if plane_number == 0 && component == 0 {
+                    use crate::imregrid_test_hooks::{Checkpoint, observe};
+                    observe(Checkpoint::InterpolationBatchFinished(start));
+                }
             }
+            progress::check(cancellation)?;
         }
         out_planes.write(plane_number, &out_values, &mut out_data);
         out_planes.write(plane_number, &out_valid, &mut out_mask);
     }
-    (out_data, out_mask)
+    Ok((out_data, out_mask))
 }
 
 fn clip_pointing_grid(
@@ -783,6 +809,7 @@ mod tests {
                 replicate: false,
                 method: RegridMethod::Nearest,
                 image_tool: None,
+                cancellation: None,
             },
         )
         .unwrap();
@@ -915,7 +942,7 @@ mod tests {
             .with_reference_pixel([30.0, 32.5])
             .with_increment([-0.5 * arcsec, 0.5 * arcsec]);
         assert!(same_tangent_plane(&input, &output, 0.0));
-        let affine = positions(&input, &output, [60, 64]);
+        let affine = positions(&input, &output, [60, 64], None).unwrap();
         for (k, at) in affine.iter().enumerate() {
             let (i, j) = ((k % 60) as f64, (k / 60) as f64);
             let world = output.to_world(&[i, j]).unwrap();
@@ -941,7 +968,7 @@ mod tests {
         );
         let output = input.clone().with_reference_pixel([16.1, 16.0]);
         assert!(output.to_world(&[0.0, 0.0]).is_err());
-        let grid = positions(&input, &output, [33, 33]);
+        let grid = positions(&input, &output, [33, 33], None).unwrap();
         assert!(grid[0].is_none(), "{:?}", grid[0]);
         assert!(grid[16 + 16 * 33].is_some());
     }

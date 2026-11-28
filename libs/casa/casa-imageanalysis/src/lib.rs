@@ -7,6 +7,9 @@ pub mod convolve2d;
 #[cfg(feature = "immoments-test-hooks")]
 #[doc(hidden)]
 pub mod immoments_test_hooks;
+#[cfg(feature = "imregrid-test-hooks")]
+#[doc(hidden)]
+pub mod imregrid_test_hooks;
 #[cfg(feature = "imstat-test-hooks")]
 pub mod imstat_test_hooks;
 mod linear_mosaic;
@@ -22,8 +25,8 @@ pub use analysis::{
     MomentMapSummary, PbcorBeam, PbcorRegion, PbcorSummary, PvAmount, PvImageSummary, PvPosition,
     export_fits, exportfits, feather, imhead, imhead_add_delete, imhead_extrema, imhead_put,
     immath, immoments, immoments_with_cancellation, impbcor, import_fits, importfits, impv,
-    imregrid, imstat, imstat_with_cancellation, imsubimage, parse_image_channel_selection,
-    parse_imstat_algorithm,
+    imregrid, imregrid_with_cancellation, imstat, imstat_with_cancellation, imsubimage,
+    parse_image_channel_selection, parse_imstat_algorithm,
 };
 pub use analysis::{ImregridOutcome, ImregridTemplate};
 pub use component_list_image::ComponentListImage;
