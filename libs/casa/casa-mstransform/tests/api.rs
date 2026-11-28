@@ -4,6 +4,9 @@ mod common;
 mod continuum;
 #[cfg(feature = "msv4")]
 mod observation_io;
+#[cfg(feature = "transform-test-hooks")]
+#[path = "api_cases/transform_cancellation.rs"]
+mod transform_cancellation;
 
 use casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_ms::schema::main_table::VisibilityDataColumn;

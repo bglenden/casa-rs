@@ -27,9 +27,7 @@ mod team;
 mod wave;
 mod weights;
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-
+pub use casa_core::cancellation::Cancellation as Cancel;
 use casa_imaging_operator::{
     DensityGrid, DensityGridShape, GridAccumulator, MeasurementOperator, ModeSet, NormalImages,
     OperatorError, PlacedRow, PlaneRange, PredictionScratch, PreparedModelGrids, SampleBuffer,
@@ -128,30 +126,6 @@ pub enum PassError {
     /// a panic during accumulation propagate instead.
     #[error("an owner's accumulation panicked")]
     OwnerPanicked,
-}
-
-/// Cooperative cancellation shared between the caller and running passes;
-/// a pass stops at the next block boundary.
-#[derive(Clone, Debug, Default)]
-pub struct Cancel(Arc<AtomicBool>);
-
-impl Cancel {
-    /// A token that is not cancelled.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Request cancellation.
-    pub fn cancel(&self) {
-        self.0.store(true, Ordering::Release);
-    }
-
-    /// Whether cancellation was requested.
-    #[must_use]
-    pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::Acquire)
-    }
 }
 
 /// What one traversal of a [`BoundedSource`] reads of each sample.

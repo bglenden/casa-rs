@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -22,6 +22,9 @@ use tracing_subscriber::{Registry, layer::SubscriberExt};
 use crate::convert::reply_value::reply_value;
 use crate::parameters::{parameter_values, reason_error, to_python};
 use crate::tasks::{TaskTableWrite, completion, decode_plot_documents};
+
+#[cfg(all(unix, feature = "transform-test-hooks"))]
+use crate::native_transform_test_hooks as transform_test_hooks;
 
 #[derive(FromPyObject)]
 #[pyo3(from_item_all)]
@@ -122,12 +125,14 @@ impl NativeTaskResult {
     }
 }
 
-enum WorkerMessage {
+pub(crate) enum WorkerMessage {
     Log(String),
+    #[cfg(all(unix, feature = "transform-test-hooks"))]
+    TestInterrupt(Sender<()>),
     Finished,
 }
 
-struct LogWriter(SyncSender<WorkerMessage>);
+struct LogWriter(Sender<WorkerMessage>);
 
 impl io::Write for LogWriter {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
@@ -171,7 +176,7 @@ impl TaskLogging {
         })
     }
 
-    fn sink(self, sender: SyncSender<WorkerMessage>) -> Arc<dyn CasaLogSink> {
+    fn sink(self, sender: Sender<WorkerMessage>) -> Arc<dyn CasaLogSink> {
         let mut sinks: Vec<Arc<dyn CasaLogSink>> = Vec::new();
         if let Some((path, priority)) = self.table {
             sinks.push(Arc::new(CasaTableLogSink::new(
@@ -210,7 +215,7 @@ pub(crate) fn run_native_task(
     let originals = parameter_values(originals)?;
     let sys = py.import("sys")?;
     let logging = TaskLogging::read(&workspace)?;
-    let (sender, mut receiver) = sync_channel(64);
+    let (sender, mut receiver) = channel();
     let diagnostic_lines = sender.clone();
     let execution = NativeTaskOptions {
         default_logs: logging.default_output,
@@ -228,13 +233,15 @@ pub(crate) fn run_native_task(
             .and_then(|write| write.borrow(py).reservations.clone()),
         ..NativeTaskOptions::default()
     };
-    let cancel = execution.imaging.cancel.clone();
+    let cancel = execution.cancel.clone();
+    #[cfg(all(unix, feature = "transform-test-hooks"))]
+    let transform_test = transform_test_hooks::take(&surface);
     let worker = std::thread::Builder::new()
         .name(format!("casars-{surface}"))
         .spawn(move || {
             let sink = logging.sink(sender.clone());
             let subscriber = Registry::default().with(CasaLogLayer::filtered(sink.clone()));
-            let (reply, lines) = tracing::subscriber::with_default(subscriber, || {
+            let run = || {
                 run_task_in_process(
                     &surface,
                     values,
@@ -243,7 +250,10 @@ pub(crate) fn run_native_task(
                     &workspace,
                     &execution,
                 )
-            });
+            };
+            #[cfg(all(unix, feature = "transform-test-hooks"))]
+            let run = || transform_test_hooks::run(transform_test, &sender, run);
+            let (reply, lines) = tracing::subscriber::with_default(subscriber, run);
             for line in lines {
                 if sender.send(WorkerMessage::Log(line + "\n")).is_err() {
                     break;
@@ -294,6 +304,17 @@ fn collect_logs(
                     cancel.cancel();
                     interrupted = Some(error);
                 }
+            }
+            #[cfg(all(unix, feature = "transform-test-hooks"))]
+            Ok(WorkerMessage::TestInterrupt(resume)) => {
+                // SAFETY: a standard process signal handled by Python. This
+                // collector is the same Python thread running the public task.
+                assert_eq!(unsafe { libc::raise(libc::SIGINT) }, 0);
+                if let Err(error) = py.check_signals() {
+                    cancel.cancel();
+                    interrupted.get_or_insert(error);
+                }
+                drop(resume);
             }
             Err(RecvTimeoutError::Timeout) if !worker.is_finished() => {}
             Ok(WorkerMessage::Finished) | Err(_) => break,

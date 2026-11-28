@@ -41,7 +41,9 @@ editable_venv="$tmp_root/editable-venv"
 echo "==> Installing editable casars package and running Python tests"
 "$python_bin" -m venv "$editable_venv"
 source "$editable_venv/bin/activate"
-python -m pip install -e "frontends/casars-python[$extras]"
+# The interrupt tests use the opt-in checkpoints in the editable build.
+MATURIN_PEP517_ARGS="${MATURIN_PEP517_ARGS:-} --features transform-test-hooks" \
+  python -m pip install -e "frontends/casars-python[$extras]"
 pytest frontends/casars-python/python/tests -q
 deactivate
 if [[ "$editable_only" == true ]]; then

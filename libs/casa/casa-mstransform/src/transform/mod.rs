@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use casa_core::cancellation::Cancellation;
 use casa_core::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use casa_tables::streamed_tiled::StreamedTiledShapeValueType;
 use casa_tables::{
@@ -28,6 +29,7 @@ use thiserror::Error;
 
 use casa_ms::MeasurementSet;
 use casa_ms::MsError;
+use casa_ms::observation_io::creation::Stage;
 use casa_ms::schema::SubtableId;
 use casa_ms::schema::main_table::OptionalMainColumn;
 use casa_ms::selection::{
@@ -37,8 +39,8 @@ use casa_ms::selection::{
 use casa_ms::subtables::SubTable;
 use casa_ms::{
     MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
-    MeasurementSetCreateTarget, MeasurementSetScalarColumnPlan, MeasurementSetWritePlan,
-    MeasurementSetWriteResources, MeasurementSetWriteSession, MeasurementSetWriteTelemetry,
+    MeasurementSetScalarColumnPlan, MeasurementSetWritePlan, MeasurementSetWriteResources,
+    MeasurementSetWriteSession, MeasurementSetWriteTelemetry,
 };
 use casa_ms::{measurement_set_main_table_bindings, measurement_set_table_options};
 
@@ -105,6 +107,8 @@ mod channel_transforms;
 mod main_output;
 use casa_ms::open_staged_subtable_for_write;
 mod staged;
+#[cfg(feature = "transform-test-hooks")]
+pub mod test_hooks;
 
 use array_io::*;
 use channel_transforms::*;
@@ -161,6 +165,9 @@ pub struct MsTransformRequest {
 /// Additional options used by the CASA task surfaces.
 #[derive(Debug, Clone, Default)]
 pub struct MsTransformTaskOptions {
+    /// Stop at a safe boundary when cancellation is requested. An interrupted
+    /// transform discards its staged output before returning.
+    pub cancel: Option<Cancellation>,
     /// Explicit visibility columns for callers that accept arbitrary combinations.
     /// Ordinary task surfaces select a predefined combination on the request.
     pub visibility_columns: Option<Vec<OptionalMainColumn>>,
@@ -206,6 +213,15 @@ pub struct MsTransformTaskOptions {
     pub multi_ms: Option<MsTransformMultiMsOptions>,
     /// Computed arrays to read in place of stored input values.
     pub input_view: Option<Arc<dyn TransformInputView>>,
+}
+
+impl MsTransformTaskOptions {
+    fn check_cancelled(&self) -> Result<(), MsTransformError> {
+        if self.cancel.as_ref().is_some_and(Cancellation::is_cancelled) {
+            return Err(MsTransformError::Interrupted);
+        }
+        Ok(())
+    }
 }
 
 /// Materialization behavior for the public legacy MeasurementSet tools.
@@ -345,6 +361,9 @@ pub struct MsTransformReport {
 /// Errors returned by [`mstransform`].
 #[derive(Debug, Error)]
 pub enum MsTransformError {
+    /// The caller cancelled the transform before the final output was published.
+    #[error("MeasurementSet transform interrupted")]
+    Interrupted,
     /// Validation or computation of the selected spectrum failed.
     #[error("{0}")]
     Spectrum(String),
@@ -547,7 +566,7 @@ fn materialize_transform(
             path: request.input_ms.display().to_string(),
         });
     }
-    if request.output_ms.exists() {
+    if request.output_ms.symlink_metadata().is_ok() {
         return Err(MsTransformError::OutputExists {
             path: request.output_ms.display().to_string(),
         });
@@ -558,15 +577,33 @@ fn materialize_transform(
             path: flagversions.display().to_string(),
         });
     }
-    let target =
-        MeasurementSetCreateTarget::prepare(&request.output_ms, false).map_err(|error| {
-            MsTransformError::PrepareOutput {
-                path: request.output_ms.display().to_string(),
-                reason: error.to_string(),
-            }
-        })?;
+    options.check_cancelled()?;
+    let output = &request.output_ms;
+    if let Some(parent) = output.parent().filter(|path| !path.as_os_str().is_empty()) {
+        fs::create_dir_all(parent).map_err(|error| output_error(output, error))?;
+    }
+    let stage = Stage::reserve(output, "casa-rs-incomplete")
+        .map_err(|error| output_error(output, error))?;
+    let result = stage_then_publish_transform(request, grammar, options, &stage);
+    stage.remove();
+    result
+}
+
+fn output_error(output: &Path, error: impl ToString) -> MsTransformError {
+    MsTransformError::PrepareOutput {
+        path: output.display().to_string(),
+        reason: error.to_string(),
+    }
+}
+
+fn stage_then_publish_transform(
+    request: &MsTransformRequest,
+    grammar: RowGrammar,
+    options: &MsTransformTaskOptions,
+    stage: &Stage,
+) -> Result<MsTransformReport, MsTransformError> {
     let mut physical_request = request.clone();
-    physical_request.output_ms = target.staging_path().to_path_buf();
+    physical_request.output_ms = stage.path().to_path_buf();
     if let Some(configuration) = options.multi_ms
         && let Some(mut report) = multi_ms::transform(
             &physical_request,
@@ -577,12 +614,9 @@ fn materialize_transform(
         )?
     {
         if report.row_count > 0 {
-            target
-                .commit()
-                .map_err(|error| MsTransformError::PrepareOutput {
-                    path: request.output_ms.display().to_string(),
-                    reason: error.to_string(),
-                })?;
+            publish_transform_stage(request, options, stage)?;
+        } else {
+            options.check_cancelled()?;
         }
         report.output_ms.clone_from(&request.output_ms);
         return Ok(report);
@@ -602,6 +636,7 @@ fn materialize_transform(
                 &members,
             )?
             else {
+                options.check_cancelled()?;
                 return Ok(empty_transform_report(request));
             };
             report
@@ -615,14 +650,22 @@ fn materialize_transform(
         )?,
         _ => transform_product(&physical_request, grammar, options, None, None)?,
     };
-    target
-        .commit()
-        .map_err(|error| MsTransformError::PrepareOutput {
-            path: request.output_ms.display().to_string(),
-            reason: error.to_string(),
-        })?;
+    publish_transform_stage(request, options, stage)?;
     report.output_ms = request.output_ms.clone();
     Ok(report)
+}
+
+fn publish_transform_stage(
+    request: &MsTransformRequest,
+    options: &MsTransformTaskOptions,
+    stage: &Stage,
+) -> Result<(), MsTransformError> {
+    #[cfg(feature = "transform-test-hooks")]
+    test_hooks::notify(test_hooks::Checkpoint::BeforePublication);
+    options.check_cancelled()?;
+    stage
+        .publish_new(&request.output_ms)
+        .map_err(|error| output_error(&request.output_ms, error))
 }
 
 fn empty_transform_report(request: &MsTransformRequest) -> MsTransformReport {
@@ -667,6 +710,7 @@ fn transform_selected_product(
     operation: Option<SpectralOperation<'_>>,
     partition: Option<TransformSelection>,
 ) -> Result<MsTransformReport, MsTransformError> {
+    options.check_cancelled()?;
     let report = mstransform_staged(
         request,
         grammar,
@@ -675,6 +719,7 @@ fn transform_selected_product(
         operation,
         partition,
     )?;
+    options.check_cancelled()?;
     if let Some(history) = &options.history {
         task_history::append_task_history(&request.output_ms, history)?;
     }

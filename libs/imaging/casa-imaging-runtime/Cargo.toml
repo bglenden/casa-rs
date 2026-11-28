@@ -20,6 +20,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 workspace = true
 
 [dependencies]
+casa-core.workspace = true
 tracing.workspace = true
 casa-imaging-deconvolution.workspace = true
 casa-imaging-metal.workspace = true
@@ -39,7 +40,6 @@ tempfile = "3"
 thiserror.workspace = true
 
 [dev-dependencies]
-casa-core.workspace = true
 ndarray.workspace = true
 
 [[test]]
