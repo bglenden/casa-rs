@@ -31,6 +31,7 @@ images = [
     "dep:casa-images",
     "dep:casa-lattices",
 ]
+imstat-test-hooks = ["images", "casa-imageanalysis/imstat-test-hooks"]
 ms = [
     "dep:casa-tables",
     "dep:casa-flagging",

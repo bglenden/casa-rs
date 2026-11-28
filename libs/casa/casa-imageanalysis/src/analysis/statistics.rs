@@ -2,14 +2,19 @@
 
 use super::*;
 
+#[cfg(feature = "imstat-test-hooks")]
+use crate::imstat_test_hooks::{Checkpoint, observe};
+
 pub(super) fn imstat_typed<T>(
     path: &Path,
     image: &PagedImage<T>,
     request: &ImstatRequest,
+    cancellation: Option<&Cancellation>,
 ) -> Result<ImstatOutcome, ImageError>
 where
     T: ImagePixel + ImageExprValue + PartialOrd + ExprValueConvert + StatsElement,
 {
+    check_imstat_cancelled(cancellation)?;
     let algorithm = parse_imstat_algorithm(request).map_err(ImageError::InvalidMetadata)?;
     let axes =
         parse_axes(request.axes.as_deref(), image.ndim()).map_err(ImageError::CasaSelection)?;
@@ -43,6 +48,7 @@ where
         request.chans.as_deref(),
         request.stokes.as_deref(),
     )?;
+    check_imstat_cancelled(cancellation)?;
     let pixel_mask = selection_pixel_mask(
         image,
         effective_region,
@@ -59,6 +65,7 @@ where
     let trc = trc_pixels(&selection.start, &selection.shape);
     let blcf = world_text(&blc)?;
     let trcf = world_text(&trc)?;
+    check_imstat_cancelled(cancellation)?;
 
     let display_axes: Vec<usize> = match &axes {
         AxisSelection::All => Vec::new(),
@@ -66,7 +73,7 @@ where
             .filter(|axis| !collapse.contains(axis))
             .collect(),
     };
-    if display_axes.is_empty() {
+    let outcome = if display_axes.is_empty() {
         let summary = imstat_global_summary(
             path,
             image,
@@ -80,7 +87,7 @@ where
             trcf,
             &world_text,
         )?;
-        Ok(ImstatOutcome::Global(summary))
+        ImstatOutcome::Global(summary)
     } else {
         let summary = imstat_planes_summary(
             path,
@@ -94,9 +101,11 @@ where
             trc,
             blcf,
             trcf,
+            cancellation,
         )?;
-        Ok(ImstatOutcome::Planes(summary))
-    }
+        ImstatOutcome::Planes(summary)
+    };
+    Ok(outcome)
 }
 
 /// The whole selection's statistics, as `imstat` reports them with every
@@ -279,6 +288,7 @@ pub(super) fn imstat_planes_summary<T>(
     trc: Vec<usize>,
     blcf: String,
     trcf: String,
+    cancellation: Option<&Cancellation>,
 ) -> Result<ImstatPlanesSummary, ImageError>
 where
     T: ImagePixel + StatsElement,
@@ -298,6 +308,7 @@ where
     // One pass over the selection's pixels, bucketed by display
     // position: each pixel's plane is its display coordinates' index.
     let pixels = image.get_slice(&selection.start, &selection.shape)?;
+    check_imstat_cancelled(cancellation)?;
     let mut buckets: Vec<Vec<SamplePoint>> = vec![Vec::new(); plane_count];
     let stokes_collapsed = selection
         .stokes_axis
@@ -308,7 +319,10 @@ where
         strides.push(stride);
         stride *= axis_length as u64;
     }
-    for (index, value) in pixels.indexed_iter() {
+    for (visited, (index, value)) in pixels.indexed_iter().enumerate() {
+        if visited.is_multiple_of(4096) {
+            check_imstat_cancelled(cancellation)?;
+        }
         if let Some(mask) = pixel_mask {
             let mask_index: &[usize] = index.slice();
             if !mask[mask_index] {
@@ -394,6 +408,9 @@ where
     };
     let mut iterations = Vec::new();
     for bucket in &buckets {
+        check_imstat_cancelled(cancellation)?;
+        #[cfg(feature = "imstat-test-hooks")]
+        observe(Checkpoint::PlaneStarted);
         let mut sample = bucket.clone();
         sample.sort_by_key(|point| point.position);
         match compute_robust_stats(&sample, algorithm)? {
@@ -443,6 +460,8 @@ where
                 planes.quartile.push(f64::NAN);
             }
         }
+        #[cfg(feature = "imstat-test-hooks")]
+        observe(Checkpoint::PlaneFinished);
     }
     if biweight {
         planes.flux = None;
@@ -459,6 +478,7 @@ where
             display_axes,
             &display_positions,
             &iterations,
+            cancellation,
         )?;
     }
     Ok(planes)

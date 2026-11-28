@@ -9,9 +9,11 @@ use std::path::Path;
 
 use crate::{CasaValue, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::ParameterValue;
+#[cfg(feature = "imstat-test-hooks")]
+use casa_imageanalysis::imstat_test_hooks::{Checkpoint, observe};
 use casa_imageanalysis::{
     ImageHeaderSummary, ImageStatisticsSummary, ImheadValue, ImstatOutcome, ImstatPlanesSummary,
-    ImstatRequest, imhead, imhead_add_delete, imhead_extrema, imhead_put, imstat,
+    ImstatRequest, imhead, imhead_add_delete, imhead_extrema, imhead_put, imstat_with_cancellation,
     parse_imstat_algorithm,
 };
 use casa_images::{ImageError, StatisticsAlgorithmKind};
@@ -388,18 +390,27 @@ fn run_imstat(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         ..ImstatRequest::default()
     };
     let algorithm = parse_imstat_algorithm(&request).map_err(TaskFailure::execution)?;
-    let outcome = imstat(&request).map_err(|error| match error {
-        ImageError::RobustStats(message) | ImageError::CasaSelection(message) => {
-            TaskFailure::execution(message)
-        }
-        other => image_error("imstat", &path, other),
-    })?;
+    let cancellation = task.native_options().map(|options| &options.cancel);
+    let outcome =
+        imstat_with_cancellation(&request, cancellation).map_err(|error| match error {
+            ImageError::Interrupted => TaskFailure::interrupted("imstat interrupted"),
+            ImageError::RobustStats(message) | ImageError::CasaSelection(message) => {
+                TaskFailure::execution(message)
+            }
+            other => image_error("imstat", &path, other),
+        })?;
     // CASA writes the statistics block to the logfile whatever `listit`
     // holds, and prints it to the logger under `listit` and `verbose`.
     let block = match &outcome {
         ImstatOutcome::Global(summary) => statistics_block(summary, algorithm.kind(), true, true),
         ImstatOutcome::Planes(summary) => planes_block(summary, algorithm.kind(), true, true),
     };
+    #[cfg(feature = "imstat-test-hooks")]
+    observe(Checkpoint::BeforeLogfile);
+    // Once logfile publication is accepted, finish its append or overwrite.
+    if cancellation.is_some_and(crate::TaskCancellation::is_cancelled) {
+        return Err(TaskFailure::interrupted("imstat interrupted"));
+    }
     if let Some(logfile) = request
         .logfile
         .as_deref()

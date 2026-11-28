@@ -3,6 +3,8 @@
 mod convert;
 #[cfg(all(unix, feature = "flagdata-test-hooks"))]
 mod native_flagdata_test_hooks;
+#[cfg(all(unix, feature = "imstat-test-hooks"))]
+mod native_imstat_test_hooks;
 mod native_tasks;
 #[cfg(all(unix, feature = "transform-test-hooks"))]
 mod native_transform_test_hooks;
@@ -102,6 +104,11 @@ fn _core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(native_tasks::run_native_task, module)?)?;
+    #[cfg(all(unix, feature = "imstat-test-hooks"))]
+    module.add_function(wrap_pyfunction!(
+        native_imstat_test_hooks::_arm_imstat_test,
+        module
+    )?)?;
     #[cfg(all(unix, feature = "flagdata-test-hooks"))]
     module.add_function(wrap_pyfunction!(
         native_flagdata_test_hooks::_arm_flagdata_test,
