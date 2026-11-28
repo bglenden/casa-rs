@@ -200,12 +200,20 @@ pub(crate) fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFai
     let result = if let Some(report) = multi {
         CalibrationTaskResult::ApplyMultiMs(report)
     } else if let CalibrationTaskRequest::ExecuteApply(request) = &request {
+        let cancellation = if task.surface() == "applycal" {
+            task.native_options().map(|options| &options.cancel)
+        } else {
+            None
+        };
         request
-            .execute_apply()
+            .execute_apply_controlled(cancellation)
             .map(CalibrationTaskResult::Apply)
             .map_err(|error| {
                 let failure = TaskFailure::execution(error.to_string());
                 match *error {
+                    ApplyExecutionError::Interrupted => {
+                        TaskFailure::interrupted("applycal interrupted")
+                    }
                     ApplyExecutionError::Plan(source) => match *source {
                         ApplyPlanError::Argument(ApplyArgumentError::MissingCalwt) => {
                             failure.at("calwt")

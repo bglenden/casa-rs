@@ -8,7 +8,7 @@ fn calibration_table(ms: &MeasurementSet) -> bool {
     ms.main_table().info().table_type == "Calibration"
 }
 
-fn has_row_flags(ms: &MeasurementSet) -> bool {
+pub(super) fn has_row_flags(ms: &MeasurementSet) -> bool {
     !calibration_table(ms)
         || ms
             .main_table()

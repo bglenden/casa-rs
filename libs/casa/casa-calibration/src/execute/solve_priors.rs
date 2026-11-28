@@ -5,7 +5,7 @@ use std::cell::RefCell;
 
 use ndarray::{ArrayD, IxDyn};
 
-use super::preview::for_each_apply_row_controlled;
+use super::preview::{PreviewControl, for_each_apply_row_controlled};
 use crate::solve::control::SolveControl;
 
 use super::chain::{ApplyChain, has_polarization_matrix, viscal_order};
@@ -347,7 +347,7 @@ pub(crate) fn evaluate_solve_priors(
         true,
         share_input_flags,
         PreviewWeightSource::UnitFactors,
-        (None, control),
+        (None, PreviewControl::Solve(control)),
         |index, row| {
             let data = rows.get_mut(&index).expect("same selection for both sides");
             let ArrayValue::Bool(data_flags) = &mut data.flags else {

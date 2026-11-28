@@ -4,9 +4,9 @@
 pub use crate::execute::SolvePriorApply;
 pub use crate::execute::{
     ApplyExecutionError, ApplyExecutionOptions, ApplyExecutionReport, ApplyExecutionTimings,
-    EvaluatedApplyRow, PlotWeights, evaluate_plot_rows, execute_apply, execute_apply_from_path,
-    execute_apply_from_path_with_options, execute_apply_with_preparation_error,
-    execute_single_dish_apply, legacy_bpoly_chebyshev_value,
+    EvaluatedApplyRow, PlotWeights, evaluate_plot_rows, execute_apply, execute_apply_cancellable,
+    execute_apply_from_path, execute_apply_from_path_with_options,
+    execute_apply_with_preparation_error, execute_single_dish_apply, legacy_bpoly_chebyshev_value,
 };
 pub use crate::plan::{
     ApplyArgumentError, ApplyCalibrationTablePlan, ApplyCalibrationTableSpec,

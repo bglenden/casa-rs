@@ -11,33 +11,42 @@ pub(super) fn ensure_corrected_data_column(
     ms: &mut MeasurementSet,
     observed_column: &str,
 ) -> Result<CorrectedDataCreation, TableError> {
-    if ms
-        .main_table()
-        .schema()
-        .is_some_and(|schema| schema.contains_column(VisibilityDataColumn::CorrectedData.name()))
-    {
+    ensure_corrected_data_column_holding(ms, observed_column, None)
+}
+
+pub(super) fn ensure_corrected_data_column_holding(
+    ms: &mut MeasurementSet,
+    observed_column: &str,
+    lock: Option<&mut TableWriteLock>,
+) -> Result<CorrectedDataCreation, TableError> {
+    if crate::model_columns::has_column(ms, VisibilityDataColumn::CorrectedData) {
         return Ok(CorrectedDataCreation { created: false });
     }
     if observed_column == "FLOAT_DATA"
         && let Some(path) = ms.path()
     {
-        let lock = casa_tables::TableWriteLock::acquire_to_reread(path, 1)?;
-        crate::model_columns::initialize_calibrater_columns(ms, false, true, false, lock).map_err(
-            |error| match error {
-                MsError::Table(error) => error,
-                other => TableError::Storage(other.to_string()),
-            },
-        )?;
+        let result = match lock {
+            Some(lock) => crate::model_columns::initialize_calibrater_columns_holding(
+                ms, false, true, false, lock,
+            ),
+            None => {
+                let lock = TableWriteLock::acquire_to_reread(path, 1)?;
+                crate::model_columns::initialize_calibrater_columns(ms, false, true, false, lock)
+                    .map(|_| ())
+            }
+        };
+        result.map_err(scratch_error)?;
         return Ok(CorrectedDataCreation { created: true });
     }
 
     // CASA's `addScrCols` clears the cached sort keywords first.
-    casa_ms::prepare_write(ms, VisibilityDataColumn::CorrectedData, true).map_err(|error| {
-        match error {
-            MsError::Table(error) => error,
-            other => TableError::Storage(other.to_string()),
+    match lock {
+        Some(lock) => {
+            casa_ms::prepare_write_holding(ms, VisibilityDataColumn::CorrectedData, true, lock)
         }
-    })?;
+        None => casa_ms::prepare_write(ms, VisibilityDataColumn::CorrectedData, true),
+    }
+    .map_err(scratch_error)?;
     let column_def = *VisibilityDataColumn::CorrectedData
         .optional_column()
         .column_def();
@@ -80,6 +89,13 @@ pub(super) fn ensure_corrected_data_column(
     }
 
     Ok(CorrectedDataCreation { created: true })
+}
+
+fn scratch_error(error: MsError) -> TableError {
+    match error {
+        MsError::Table(error) => error,
+        other => TableError::Storage(other.to_string()),
+    }
 }
 
 pub(super) fn apply_observed_column(ms: &MeasurementSet, prefer_float: bool) -> &'static str {

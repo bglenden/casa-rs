@@ -86,7 +86,8 @@ mod version_storage;
 pub use clip_models::{FlagDataModelFactory, FlagDataModelPredictor};
 pub use summary::{FlagCounts, FlagSummaryBreakdown, FlagSummaryOptions};
 pub use version_backup::{
-    save_next_casa_flag_backup, save_next_flag_backup, save_next_partition_flag_backup,
+    save_next_casa_flag_backup, save_next_flag_backup, save_next_flag_backup_without_replacing,
+    save_next_partition_flag_backup,
 };
 pub use version_storage::{
     restore_flag_version, save_agent_disk_flag_version, save_disk_flag_version, save_flag_version,

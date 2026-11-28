@@ -1,12 +1,52 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Automatic flag versions for ordinary and partitioned MeasurementSets.
 
-use super::version_storage::flag_version_schema;
+use super::initial_version::write_flag_snapshot;
+use super::version_storage::{flag_version_schema, has_row_flags};
 use super::*;
 
 /// Save the MAIN flags to the next free `<task>_N` flag version.
 pub fn save_next_flag_backup(ms: &MeasurementSet, task: &str) -> Result<String, FlaggingError> {
     save_next_flag_backup_with_comment(ms, task, &format!("{task} auto-backup"))
+}
+
+/// Save the MAIN flags as a new automatic version without acquiring the lock
+/// of any existing version. A caller holding MAIN can use this to avoid
+/// reversing the lock order of flag-version restore.
+///
+/// A version already present on disk is preserved, including one missing
+/// from the version list after an incomplete earlier save.
+///
+/// # Errors
+/// Returns an error for an invalid prefix or failure to save or list the backup.
+pub fn save_next_flag_backup_without_replacing(
+    ms: &MeasurementSet,
+    task: &str,
+) -> Result<String, FlaggingError> {
+    let path = ms_path(ms)?;
+    let names = unlisted_automatic_names(path, task)?;
+    let failure = |error: std::io::Error| FlaggingError::FlagVersion {
+        path: path.display().to_string(),
+        reason: format!("save {task} auto-backup: {error}"),
+    };
+    let stage = tempfile::Builder::new()
+        .prefix(".flag-version-")
+        .tempdir_in(ensure_flagversions_dir(path)?)
+        .map_err(failure)?;
+    let snapshot = stage.path().join("flags");
+    write_flag_snapshot(ms, &snapshot, None, has_row_flags(ms))?;
+    for name in names {
+        let destination = flag_version_table_path(path, &name);
+        match casa_tables::publication::rename_without_replacing(&snapshot, &destination) {
+            Ok(()) => {
+                append_flag_version_entry(path, &name, &format!("{task} auto-backup"))?;
+                return Ok(name);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(failure(error)),
+        }
+    }
+    unreachable!("finite set of flag versions")
 }
 
 /// Back up the working flags with the timestamp recorded by the CASA task.
@@ -28,6 +68,15 @@ fn save_next_flag_backup_with_comment(
 }
 
 fn next_version(path: &Path, task: &str) -> Result<String, FlaggingError> {
+    Ok(unlisted_automatic_names(path, task)?
+        .next()
+        .expect("finite set of flag versions"))
+}
+
+fn unlisted_automatic_names(
+    path: &Path,
+    task: &str,
+) -> Result<impl Iterator<Item = String>, FlaggingError> {
     if task.contains('/') {
         return Err(FlaggingError::FlagVersion {
             path: path.display().to_string(),
@@ -35,14 +84,9 @@ fn next_version(path: &Path, task: &str) -> Result<String, FlaggingError> {
         });
     }
     let versions = list_flag_versions_for_path(path)?;
-    let index = (1..)
-        .find(|i| {
-            !versions
-                .iter()
-                .any(|entry| entry.name == format!("{task}_{i}"))
-        })
-        .expect("finite set of flag versions");
-    Ok(format!("{task}_{index}"))
+    Ok((1..)
+        .map(move |index| format!("{task}_{index}"))
+        .filter(move |name| !versions.iter().any(|entry| &entry.name == name)))
 }
 
 /// Back up the flags of a Multi-MS once, in the aggregate's row order.

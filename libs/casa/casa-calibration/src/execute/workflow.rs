@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use super::*;
+use staging::{ApplyMutation, MainSnapshot};
 
 /// Plan and execute calibration application against an on-disk MeasurementSet.
 ///
@@ -20,7 +21,7 @@ pub fn execute_apply_from_path_with_options(
     request: &ApplyPlanRequest,
     options: ApplyExecutionOptions,
 ) -> Result<ApplyExecutionReport, ApplyExecutionError> {
-    execute_apply_from_path_inner(path.as_ref(), request, options, None, false)
+    execute_apply_from_path_inner(path.as_ref(), request, options, None, false, None)
 }
 
 /// Execute `applycal` with optional deferred preparation error checked after MS setup.
@@ -30,7 +31,27 @@ pub fn execute_apply_with_preparation_error(
     options: ApplyExecutionOptions,
     preparation_error: Option<crate::plan::ApplyPreparationError<'_>>,
 ) -> Result<ApplyExecutionReport, ApplyExecutionError> {
-    execute_apply_from_path_inner(path, request, options, preparation_error, true)
+    execute_apply_from_path_inner(path, request, options, preparation_error, true, None)
+}
+
+/// Execute public applycal with cooperative cancellation before durable writes.
+/// For a valid mutating request, stage selected outputs within bounded memory
+/// then complete the existing on-disk writes and backup once accepted.
+pub fn execute_apply_cancellable(
+    path: &Path,
+    request: &ApplyPlanRequest,
+    options: ApplyExecutionOptions,
+    preparation_error: Option<crate::plan::ApplyPreparationError<'_>>,
+    cancellation: &Cancellation,
+) -> Result<ApplyExecutionReport, ApplyExecutionError> {
+    execute_apply_from_path_inner(
+        path,
+        request,
+        options,
+        preparation_error,
+        true,
+        Some(cancellation),
+    )
 }
 
 /// Execute single-dish calibration application against an on-disk MeasurementSet.
@@ -38,7 +59,14 @@ pub fn execute_single_dish_apply(
     path: &Path,
     request: &ApplyPlanRequest,
 ) -> Result<ApplyExecutionReport, ApplyExecutionError> {
-    execute_apply_from_path_inner(path, request, ApplyExecutionOptions::default(), None, true)
+    execute_apply_from_path_inner(
+        path,
+        request,
+        ApplyExecutionOptions::default(),
+        None,
+        true,
+        None,
+    )
 }
 
 pub(super) fn execute_apply_from_path_inner(
@@ -47,12 +75,20 @@ pub(super) fn execute_apply_from_path_inner(
     options: ApplyExecutionOptions,
     preparation_error: Option<crate::plan::ApplyPreparationError<'_>>,
     prefer_float: bool,
+    cancellation: Option<&Cancellation>,
 ) -> Result<ApplyExecutionReport, ApplyExecutionError> {
     let path = path.to_path_buf();
     let total_started_at = Instant::now();
     let mut perf_tracer = CalibrationPerfTracer::from_env();
     let (mut report, plan_trace_summary, pre_drop_total_ns) = {
+        staging::check(cancellation)?;
         let open_started_at = Instant::now();
+        let snapshot = cancellation
+            .filter(|_| request.apply_mode != ApplyMode::Trial)
+            .map(|cancellation| {
+                MainSnapshot::capture(&path).map(|snapshot| (snapshot, cancellation))
+            })
+            .transpose()?;
         let mut ms = MeasurementSet::open(&path).map_err(|source| {
             ApplyExecutionError::OpenMeasurementSet {
                 path: path.display().to_string(),
@@ -61,18 +97,26 @@ pub(super) fn execute_apply_from_path_inner(
         })?;
         let observed_column = apply_observed_column(&ms, prefer_float);
         let open_measurement_set_ns = open_started_at.elapsed().as_nanos() as u64;
-        let flag_backup_version = save_apply_flag_backup(&ms, request.apply_mode, options)?;
+        let flag_backup_version = if snapshot.is_none() {
+            save_apply_flag_backup(&ms, request.apply_mode, options, None)?
+        } else {
+            None
+        };
         let planning_started_at = Instant::now();
         let (plan, plan_timings) =
             match crate::plan::plan_apply_with_preparation_error(&ms, request, preparation_error) {
                 Ok(planned) => planned,
                 Err(error) => {
-                    // CASA opens with addcorr=True before selectvis/setapply. Keep
-                    // successful application on the existing single-write path;
-                    // reproduce that initialization if planning rejects a request.
-                    if request.apply_mode.writes_corrected_data() {
-                        initialization::corrected_data(&mut ms, observed_column)?;
-                    }
+                    finish_rejected_request(
+                        &mut ms,
+                        request.apply_mode,
+                        options,
+                        observed_column,
+                        snapshot,
+                    )?;
+                    staging::check(
+                        cancellation.filter(|_| request.apply_mode == ApplyMode::Trial),
+                    )?;
                     return Err(error.into());
                 }
             };
@@ -80,14 +124,14 @@ pub(super) fn execute_apply_from_path_inner(
         if plan.apply_mode == ApplyMode::Trial {
             // Calibrater::correct2 still runs the calibration operators in
             // trial mode, including their input/basis validation.
-            for_each_apply_row(
+            preview::for_each_apply_row_controlled(
                 &ms,
                 &plan,
                 observed_column,
                 false,
                 false,
                 PreviewWeightSource::UnitFactors,
-                None,
+                (None, preview::PreviewControl::Trial(cancellation)),
                 |_, _| {},
             )?;
             return Ok(ApplyExecutionReport {
@@ -112,18 +156,24 @@ pub(super) fn execute_apply_from_path_inner(
             });
         }
 
-        let (mut report, trace_summary) = execute_apply_plan(
-            &mut ms,
-            plan,
-            ApplyInput {
-                observed_column,
-                use_row_cache: false,
-            },
-            Some(&mut perf_tracer),
-            None,
-            None,
-        )?;
-        report.flag_backup_version = flag_backup_version;
+        let input = ApplyInput {
+            observed_column,
+            use_row_cache: false,
+        };
+        let (mut report, trace_summary) = if let Some(snapshot) = snapshot {
+            staging::execute(&mut ms, plan, input, &mut perf_tracer, options, snapshot)?
+        } else {
+            let (mut report, trace) = execute_apply_plan(
+                &mut ms,
+                plan,
+                input,
+                Some(&mut perf_tracer),
+                ApplyMutation::Direct(None),
+                None,
+            )?;
+            report.flag_backup_version = flag_backup_version;
+            (report, trace)
+        };
         report.timings.planning_ns = planning_ns;
         report.timings.planning_selection_ns = plan_timings.selection_ns;
         report.timings.planning_selected_rows_ns = plan_timings.selected_rows_ns;
@@ -168,15 +218,47 @@ pub(super) fn execute_apply_from_path_inner(
     Ok(report)
 }
 
+/// CASA opens with addcorr=True and takes the requested backup before
+/// selectvis/setapply. Preserve those effects when planning rejects a call.
+fn finish_rejected_request(
+    ms: &mut MeasurementSet,
+    mode: ApplyMode,
+    options: ApplyExecutionOptions,
+    observed: &str,
+    snapshot: Option<(MainSnapshot, &Cancellation)>,
+) -> Result<(), ApplyExecutionError> {
+    let mut lock = if let Some((snapshot, cancellation)) = snapshot {
+        // No writes or backup are requested in a read-only mode.
+        if !mode.writes_corrected_data() && !(mode.writes_flags() && options.flag_backup) {
+            return staging::check(Some(cancellation));
+        }
+        let lock = snapshot.accept(ms.path().expect("disk-backed MS"), cancellation)?;
+        save_apply_flag_backup(ms, mode, options, Some(&lock))?;
+        Some(lock)
+    } else {
+        None
+    };
+    if mode.writes_corrected_data() {
+        initialization::corrected_data(ms, observed, lock.as_mut())?;
+    }
+    Ok(())
+}
+
 pub(super) fn save_apply_flag_backup(
     ms: &MeasurementSet,
     mode: ApplyMode,
     options: ApplyExecutionOptions,
+    main_lock: Option<&TableWriteLock>,
 ) -> Result<Option<String>, ApplyExecutionError> {
     if !options.flag_backup || !mode.writes_flags() {
         return Ok(None);
     }
-    save_next_flag_backup(ms, "applycal")
+    let result = if main_lock.is_some() {
+        save_next_flag_backup_without_replacing(ms, "applycal")
+    } else {
+        save_next_flag_backup(ms, "applycal")
+    };
+    result
         .map(Some)
         .map_err(|source| ApplyExecutionError::FlagBackup {
             path: display_ms_path(ms),
@@ -235,7 +317,7 @@ pub fn execute_apply(
             use_row_cache: true,
         },
         Some(&mut perf_tracer),
-        None,
+        ApplyMutation::Direct(None),
         None,
     )?;
     report.timings.planning_ns = planning_ns;
@@ -351,7 +433,7 @@ pub(crate) fn execute_tool_apply(
                 use_row_cache: true,
             },
             None,
-            Some(lock),
+            ApplyMutation::Direct(Some(lock)),
             Some(&mut run),
         )?;
     }
@@ -374,7 +456,7 @@ pub(super) fn execute_apply_available(
     plan: ApplyPlan,
     input: ApplyInput<'_>,
     perf_tracer: Option<&mut CalibrationPerfTracer>,
-    lock: Option<&mut TableWriteLock>,
+    mutation: &mut ApplyMutation<'_, '_>,
     mut tool: Option<&mut ToolApplyExecution<'_>>,
     retained_chain: Option<&ApplyChain>,
 ) -> Result<(ApplyExecutionReport, ExecuteApplyPlanTraceSummary), ApplyExecutionError> {
@@ -397,23 +479,28 @@ pub(super) fn execute_apply_available(
     let trial = correction.is_some_and(|tool| tool.trial);
     let calibration_load_ns = calibration_load_started_at.elapsed().as_nanos() as u64;
     let ensure_corrected_data_started_at = Instant::now();
-    if lock.is_some() && plan.requires_corrected_data_column && !plan.selected_rows.is_empty() {
+    if mutation.tool_holds_lock()
+        && plan.requires_corrected_data_column
+        && !plan.selected_rows.is_empty()
+    {
         return Err(ApplyExecutionError::MutateMeasurementSet {
             path: ms_path,
             source: MsError::ColumnNotPresent(VisibilityDataColumn::CorrectedData.name().into()),
         });
     }
-    let corrected_data_creation = if plan.apply_mode.writes_corrected_data() && lock.is_none() {
-        ensure_corrected_data_column(ms, observed_column).map_err(|source| {
-            ApplyExecutionError::CreateCorrectedData {
-                path: ms_path.clone(),
-                source,
-            }
-        })?
-    } else {
-        CorrectedDataCreation { created: false }
-    };
-    let created_corrected_data_column = corrected_data_creation.created;
+    let created_corrected_data_column =
+        if !plan.apply_mode.writes_corrected_data() || mutation.tool_holds_lock() {
+            false
+        } else if mutation.is_staged() {
+            !crate::model_columns::has_column(ms, VisibilityDataColumn::CorrectedData)
+        } else {
+            ensure_corrected_data_column(ms, observed_column)
+                .map_err(|source| ApplyExecutionError::CreateCorrectedData {
+                    path: ms_path.clone(),
+                    source,
+                })?
+                .created
+        };
     let ensure_corrected_data_ns = ensure_corrected_data_started_at.elapsed().as_nanos() as u64;
 
     let correlation_lookup_started_at = Instant::now();
@@ -527,7 +614,6 @@ pub(super) fn execute_apply_available(
         path: ms_path.clone(),
         source: MsError::InvalidInput(source.to_string()),
     })?;
-    let batch_rows = write_plan.batch_rows().max(1);
     let write_error =
         |source: casa_ms::MeasurementSetWriteError| ApplyExecutionError::MutateMeasurementSet {
             path: ms_path.clone(),
@@ -535,229 +621,218 @@ pub(super) fn execute_apply_available(
         };
 
     let row_field_index_lookup_ns = 0;
-    let (save_started_at, _) = MeasurementSetWriteSession::mutate_selected_rows(
-        ms,
-        write_plan,
-        lock,
-        write_error,
-        |write_session, ms| {
-            for planned_rows in plan.selected_rows.chunks(batch_rows) {
-                let selected_row_indices = planned_rows
-                    .iter()
-                    .map(|row| row.row_index)
-                    .collect::<Vec<_>>();
-                let row_read_started_at = Instant::now();
-                let row_fetch_started_at = Instant::now();
-                let read_cells = |name: &str| {
-                    ms.main_table()
-                        .column_accessor(name)
-                        .and_then(|column| {
-                            if input.use_row_cache {
-                                column.array_cells_owned(&selected_row_indices)
-                            } else {
-                                column.array_cells_owned_uncached(&selected_row_indices)
-                            }
-                        })
-                        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                            path: ms_path.clone(),
-                            source: MsError::from(source),
-                        })
-                };
-                let data_values = read_cells(observed_column)?;
-                let flag_values = (plan.apply_mode.writes_flags() || tool.is_some())
-                    .then(|| read_cells("FLAG"))
-                    .transpose()?;
-                let weight_values = any_calwt.then(|| read_cells("SIGMA")).transpose()?;
-                let weight_spectrum_values = has_sigma_spectrum
-                    .then(|| read_cells("SIGMA_SPECTRUM"))
-                    .transpose()?;
-                let partial_channels = planned_rows
-                    .iter()
-                    .any(|row| plan.channel_selections.contains_key(&row.data_spw_id));
-                let preserved_corrected_values = (partial_channels
-                    && plan.apply_mode.writes_corrected_data()
-                    && !created_corrected_data_column)
-                    .then(|| read_cells("CORRECTED_DATA"))
-                    .transpose()?;
-                let preserved_spectrum_values = (partial_channels && has_weight_spectrum)
-                    .then(|| read_cells("WEIGHT_SPECTRUM"))
-                    .transpose()?;
-                row_fetch_ns += row_fetch_started_at.elapsed().as_nanos() as u64;
-                row_read_total_ns += row_read_started_at.elapsed().as_nanos() as u64;
-                let mut data_values = data_values.into_iter();
-                let mut flag_values = flag_values.map(Vec::into_iter);
-                let mut weight_values = weight_values.map(Vec::into_iter);
-                let mut weight_spectrum_values = weight_spectrum_values.map(Vec::into_iter);
-                let mut preserved_corrected_values = preserved_corrected_values.map(Vec::into_iter);
-                let mut preserved_spectrum_values = preserved_spectrum_values.map(Vec::into_iter);
-                let mut corrected_batch = Vec::with_capacity(planned_rows.len());
-                let mut flag_batch = Vec::with_capacity(planned_rows.len());
-                let mut weight_batch = Vec::with_capacity(planned_rows.len());
-                let mut weight_spectrum_batch = Vec::with_capacity(planned_rows.len());
+    let save_started_at = mutation.write(ms, write_plan, write_error, |output, ms| {
+        for (batch, planned_rows) in plan.selected_rows.chunks(output.batch_rows()).enumerate() {
+            output.begin(batch)?;
+            let selected_row_indices = planned_rows
+                .iter()
+                .map(|row| row.row_index)
+                .collect::<Vec<_>>();
+            let row_read_started_at = Instant::now();
+            let row_fetch_started_at = Instant::now();
+            let read_cells = |name: &str| {
+                ms.main_table()
+                    .column_accessor(name)
+                    .and_then(|column| {
+                        if input.use_row_cache {
+                            column.array_cells_owned(&selected_row_indices)
+                        } else {
+                            column.array_cells_owned_uncached(&selected_row_indices)
+                        }
+                    })
+                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                        path: ms_path.clone(),
+                        source: MsError::from(source),
+                    })
+            };
+            let data_values = read_cells(observed_column)?;
+            let flag_values = (plan.apply_mode.writes_flags() || tool.is_some())
+                .then(|| read_cells("FLAG"))
+                .transpose()?;
+            let weight_values = any_calwt.then(|| read_cells("SIGMA")).transpose()?;
+            let weight_spectrum_values = has_sigma_spectrum
+                .then(|| read_cells("SIGMA_SPECTRUM"))
+                .transpose()?;
+            let partial_channels = planned_rows
+                .iter()
+                .any(|row| plan.channel_selections.contains_key(&row.data_spw_id));
+            let preserved_corrected_values = (partial_channels
+                && plan.apply_mode.writes_corrected_data()
+                && !created_corrected_data_column)
+                .then(|| read_cells("CORRECTED_DATA"))
+                .transpose()?;
+            let preserved_spectrum_values = (partial_channels && has_weight_spectrum)
+                .then(|| read_cells("WEIGHT_SPECTRUM"))
+                .transpose()?;
+            row_fetch_ns += row_fetch_started_at.elapsed().as_nanos() as u64;
+            row_read_total_ns += row_read_started_at.elapsed().as_nanos() as u64;
+            let mut data_values = data_values.into_iter();
+            let mut flag_values = flag_values.map(Vec::into_iter);
+            let mut weight_values = weight_values.map(Vec::into_iter);
+            let mut weight_spectrum_values = weight_spectrum_values.map(Vec::into_iter);
+            let mut preserved_corrected_values = preserved_corrected_values.map(Vec::into_iter);
+            let mut preserved_spectrum_values = preserved_spectrum_values.map(Vec::into_iter);
+            let mut corrected_batch = Vec::with_capacity(planned_rows.len());
+            let mut flag_batch = Vec::with_capacity(planned_rows.len());
+            let mut weight_batch = Vec::with_capacity(planned_rows.len());
+            let mut weight_spectrum_batch = Vec::with_capacity(planned_rows.len());
 
-                for row in planned_rows {
-                    let data = required_prefetched_array(
-                        data_values.next().flatten(),
-                        row.row_index,
-                        observed_column,
-                        &ms_path,
-                    )?;
-                    let data = match data {
-                        ArrayValue::Float32(values) => complex_visibility_from_float(&values),
-                        data => data,
-                    };
-                    let prefetched = PrefetchedExecutionRowInputs {
-                        trial,
-                        parang_calwt,
-                        preserved_corrected_data: preserved_corrected_values
-                            .as_mut()
-                            .and_then(|values| values.next().flatten()),
-                        preserved_weight_spectrum: preserved_spectrum_values
-                            .as_mut()
-                            .and_then(|values| values.next().flatten()),
-                        data,
-                        original_flags: flag_values
-                            .as_mut()
-                            .map(|values| {
+            for row in planned_rows {
+                let data = required_prefetched_array(
+                    data_values.next().flatten(),
+                    row.row_index,
+                    observed_column,
+                    &ms_path,
+                )?;
+                let data = match data {
+                    ArrayValue::Float32(values) => complex_visibility_from_float(&values),
+                    data => data,
+                };
+                let prefetched = PrefetchedExecutionRowInputs {
+                    trial,
+                    parang_calwt,
+                    preserved_corrected_data: preserved_corrected_values
+                        .as_mut()
+                        .and_then(|values| values.next().flatten()),
+                    preserved_weight_spectrum: preserved_spectrum_values
+                        .as_mut()
+                        .and_then(|values| values.next().flatten()),
+                    data,
+                    original_flags: flag_values
+                        .as_mut()
+                        .map(|values| {
+                            required_prefetched_array(
+                                values.next().flatten(),
+                                row.row_index,
+                                "FLAG",
+                                &ms_path,
+                            )
+                        })
+                        .transpose()?,
+                    original_weight: weight_values
+                        .as_mut()
+                        .map(|values| {
+                            weights::from_sigma(
                                 required_prefetched_array(
                                     values.next().flatten(),
                                     row.row_index,
-                                    "FLAG",
-                                    &ms_path,
-                                )
-                            })
-                            .transpose()?,
-                        original_weight: weight_values
-                            .as_mut()
-                            .map(|values| {
-                                weights::from_sigma(
-                                    required_prefetched_array(
-                                        values.next().flatten(),
-                                        row.row_index,
-                                        "SIGMA",
-                                        &ms_path,
-                                    )?,
                                     "SIGMA",
-                                )
-                            })
-                            .transpose()?,
-                        original_weight_spectrum: weight_spectrum_values
-                            .as_mut()
-                            .map(|values| {
-                                weights::from_sigma(
-                                    required_prefetched_array(
-                                        values.next().flatten(),
-                                        row.row_index,
-                                        "SIGMA_SPECTRUM",
-                                        &ms_path,
-                                    )?,
+                                    &ms_path,
+                                )?,
+                                "SIGMA",
+                            )
+                        })
+                        .transpose()?,
+                    original_weight_spectrum: weight_spectrum_values
+                        .as_mut()
+                        .map(|values| {
+                            weights::from_sigma(
+                                required_prefetched_array(
+                                    values.next().flatten(),
+                                    row.row_index,
                                     "SIGMA_SPECTRUM",
-                                )
-                            })
-                            .transpose()?,
-                    };
-                    let correlation_types = correlation_types_by_ddid
-                        .get(&row.data_desc_id)
-                        .ok_or_else(|| ApplyExecutionError::UnsupportedCorrelationLayout {
-                            data_desc_id: row.data_desc_id,
-                            correlation_types: Vec::new(),
-                        })?;
-                    let row_compute_started_at = Instant::now();
-                    let result = apply_row_prefetched(
-                        row,
-                        correlation_types,
-                        &prefetched,
-                        any_calwt && has_weight_spectrum,
-                        &plan,
-                        chain,
-                        Some(&mut geometry_cache),
-                        row_compute_profile.as_mut(),
-                        tool.as_deref_mut().map(|run| &mut *run.activity),
-                    )?;
-                    row_compute_ns += row_compute_started_at.elapsed().as_nanos() as u64;
-                    if plan.apply_mode.writes_corrected_data() {
-                        corrected_batch.push(result.corrected_data);
-                    }
-                    if plan.apply_mode.writes_flags() {
-                        flag_batch.push(result.updated_flags.unwrap_or_else(|| {
-                            prefetched
-                                .original_flags
-                                .expect("CalFlag rows always prefetch FLAG")
-                        }));
-                        if result.row_became_fully_flagged {
-                            flagged_row_count += 1;
-                        }
-                        flagged_sample_count += result.newly_flagged_samples;
-                    }
-                    if any_calwt {
-                        weight_batch.push(result.updated_weight.ok_or_else(|| {
-                            ApplyExecutionError::MutateMeasurementSet {
-                                path: ms_path.clone(),
-                                source: MsError::InvalidInput(
-                                    "calwt row did not produce WEIGHT output".to_string(),
-                                ),
-                            }
-                        })?);
-                        if has_weight_spectrum {
-                            weight_spectrum_batch.push(result.updated_weight_spectrum.ok_or_else(
-                                || {
-                                    ApplyExecutionError::MutateMeasurementSet {
-                                        path: ms_path.clone(),
-                                        source: MsError::InvalidInput(
-                                            "calwt row did not produce WEIGHT_SPECTRUM output"
-                                                .to_string(),
-                                        ),
-                                    }
-                                },
-                            )?);
-                        }
-                    }
-                    updated_row_count += 1;
-                }
-
-                let mut columns = if plan.apply_mode.writes_corrected_data() {
-                    vec![MeasurementSetMutationColumnBatch {
-                        name: VisibilityDataColumn::CorrectedData.name().to_string(),
-                        values: MeasurementSetMutationColumnValues::Arrays(corrected_batch),
-                    }]
-                } else {
-                    Vec::new()
+                                    &ms_path,
+                                )?,
+                                "SIGMA_SPECTRUM",
+                            )
+                        })
+                        .transpose()?,
                 };
+                let correlation_types = correlation_types_by_ddid
+                    .get(&row.data_desc_id)
+                    .ok_or_else(|| ApplyExecutionError::UnsupportedCorrelationLayout {
+                        data_desc_id: row.data_desc_id,
+                        correlation_types: Vec::new(),
+                    })?;
+                let row_compute_started_at = Instant::now();
+                let result = apply_row_prefetched(
+                    row,
+                    correlation_types,
+                    &prefetched,
+                    any_calwt && has_weight_spectrum,
+                    &plan,
+                    chain,
+                    Some(&mut geometry_cache),
+                    row_compute_profile.as_mut(),
+                    tool.as_deref_mut().map(|run| &mut *run.activity),
+                )?;
+                row_compute_ns += row_compute_started_at.elapsed().as_nanos() as u64;
+                if plan.apply_mode.writes_corrected_data() {
+                    corrected_batch.push(result.corrected_data);
+                }
                 if plan.apply_mode.writes_flags() {
-                    columns.push(MeasurementSetMutationColumnBatch {
-                        name: "FLAG".to_string(),
-                        values: MeasurementSetMutationColumnValues::Arrays(flag_batch),
-                    });
+                    flag_batch.push(result.updated_flags.unwrap_or_else(|| {
+                        prefetched
+                            .original_flags
+                            .expect("CalFlag rows always prefetch FLAG")
+                    }));
+                    if result.row_became_fully_flagged {
+                        flagged_row_count += 1;
+                    }
+                    flagged_sample_count += result.newly_flagged_samples;
                 }
                 if any_calwt {
-                    columns.push(MeasurementSetMutationColumnBatch {
-                        name: "WEIGHT".to_string(),
-                        values: MeasurementSetMutationColumnValues::Arrays(weight_batch),
-                    });
-                    if has_weight_spectrum {
-                        columns.push(MeasurementSetMutationColumnBatch {
-                            name: "WEIGHT_SPECTRUM".to_string(),
-                            values: MeasurementSetMutationColumnValues::Arrays(
-                                weight_spectrum_batch,
+                    weight_batch.push(result.updated_weight.ok_or_else(|| {
+                        ApplyExecutionError::MutateMeasurementSet {
+                            path: ms_path.clone(),
+                            source: MsError::InvalidInput(
+                                "calwt row did not produce WEIGHT output".to_string(),
                             ),
-                        });
+                        }
+                    })?);
+                    if has_weight_spectrum {
+                        weight_spectrum_batch.push(result.updated_weight_spectrum.ok_or_else(
+                            || ApplyExecutionError::MutateMeasurementSet {
+                                path: ms_path.clone(),
+                                source: MsError::InvalidInput(
+                                    "calwt row did not produce WEIGHT_SPECTRUM output".to_string(),
+                                ),
+                            },
+                        )?);
                     }
                 }
-                let row_writeback_started_at = Instant::now();
-                write_session
-                    .write_mutation_batch(
-                        ms,
-                        MeasurementSetMutationBatch {
-                            row_indices: selected_row_indices,
-                            columns,
-                        },
-                    )
-                    .map_err(write_error)?;
-                row_writeback_ns += row_writeback_started_at.elapsed().as_nanos() as u64;
+                updated_row_count += 1;
             }
-            Ok(Instant::now())
-        },
-    )?;
+
+            let mut columns = if plan.apply_mode.writes_corrected_data() {
+                vec![MeasurementSetMutationColumnBatch {
+                    name: VisibilityDataColumn::CorrectedData.name().to_string(),
+                    values: MeasurementSetMutationColumnValues::Arrays(corrected_batch),
+                }]
+            } else {
+                Vec::new()
+            };
+            if plan.apply_mode.writes_flags() {
+                columns.push(MeasurementSetMutationColumnBatch {
+                    name: "FLAG".to_string(),
+                    values: MeasurementSetMutationColumnValues::Arrays(flag_batch),
+                });
+            }
+            if any_calwt {
+                columns.push(MeasurementSetMutationColumnBatch {
+                    name: "WEIGHT".to_string(),
+                    values: MeasurementSetMutationColumnValues::Arrays(weight_batch),
+                });
+                if has_weight_spectrum {
+                    columns.push(MeasurementSetMutationColumnBatch {
+                        name: "WEIGHT_SPECTRUM".to_string(),
+                        values: MeasurementSetMutationColumnValues::Arrays(weight_spectrum_batch),
+                    });
+                }
+            }
+            let row_writeback_started_at = Instant::now();
+            output.write(
+                ms,
+                MeasurementSetMutationBatch {
+                    row_indices: selected_row_indices,
+                    columns,
+                },
+                batch,
+            )?;
+            row_writeback_ns += row_writeback_started_at.elapsed().as_nanos() as u64;
+        }
+        Ok(Instant::now())
+    })?;
     let row_loop_ns = save_started_at
         .duration_since(row_loop_started_at)
         .as_nanos() as u64;
