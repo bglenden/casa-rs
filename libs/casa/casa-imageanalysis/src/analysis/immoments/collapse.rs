@@ -2,13 +2,20 @@
 //! CASA's moment calculations over valid samples of an image profile.
 
 use casa_core::ArrayD;
+use casa_core::cancellation::Cancellation;
 use ndarray::{Axis, IxDyn, ShapeBuilder};
 
 use super::axis::ProfileCoordinates;
 use super::window::{Method, Selection};
+use super::{CHANNEL_BATCH_SIZE, check_cancelled};
 use crate::ImmomentsRequest;
 use crate::analysis::imsubimage::fitprofile::selection::Lane;
 use casa_images::ImageError;
+
+#[cfg(feature = "immoments-test-hooks")]
+use crate::immoments_test_hooks::{Checkpoint, observe};
+
+const PROFILE_BATCH_SIZE: usize = 32;
 
 #[derive(Clone, Copy)]
 pub(in crate::analysis) enum PixelClip {
@@ -79,6 +86,7 @@ pub(super) struct CollapsedMoment {
     pub(super) valid: ArrayD<bool>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn collapse_moments<T>(
     input: &ArrayD<T>,
     mask: Option<&ArrayD<bool>>,
@@ -87,7 +95,8 @@ pub(super) fn collapse_moments<T>(
     scale: f64,
     clip: PixelClip,
     moments: &[i32],
-) -> Vec<CollapsedMoment>
+    cancellation: Option<&Cancellation>,
+) -> Result<Vec<CollapsedMoment>, ImageError>
 where
     T: Into<f64> + Copy,
 {
@@ -103,40 +112,56 @@ where
         .collect();
     let mut samples = Vec::with_capacity(input.shape()[axis]);
     let mut mask_lanes = mask.map(|mask| mask.lanes(Axis(axis)).into_iter());
-    for (mut offset, lane) in input.lanes(Axis(axis)).into_iter().enumerate() {
-        for (pixel, &length) in cursor.iter_mut().zip(&shape).rev() {
-            *pixel = offset % length;
-            offset /= length;
-        }
-        let mask = mask_lanes.as_mut().and_then(Iterator::next);
-        let positions = coordinates.at(&cursor);
-        samples.clear();
-        for (i, &value) in lane.iter().enumerate() {
-            let value = value.into();
-            if mask.as_ref().is_none_or(|mask| mask[i]) && clip.keeps(value) {
-                samples.push(Sample {
-                    value,
-                    position: positions[i],
-                });
+    let mut lanes = input.lanes(Axis(axis)).into_iter();
+    let profile_count: usize = shape.iter().product();
+    for first in (0..profile_count).step_by(PROFILE_BATCH_SIZE) {
+        check_cancelled(cancellation)?;
+        #[cfg(feature = "immoments-test-hooks")]
+        observe(Checkpoint::ProfileBatchStarted(first));
+        for (local, lane) in lanes.by_ref().take(PROFILE_BATCH_SIZE).enumerate() {
+            let mut offset = first + local;
+            for (pixel, &length) in cursor.iter_mut().zip(&shape).rev() {
+                *pixel = offset % length;
+                offset /= length;
+            }
+            let mask = mask_lanes.as_mut().and_then(Iterator::next);
+            let positions = coordinates.at(&cursor);
+            samples.clear();
+            let mut pixels = lane.iter().enumerate();
+            for start in (0..lane.len()).step_by(CHANNEL_BATCH_SIZE) {
+                if start != 0 {
+                    check_cancelled(cancellation)?;
+                }
+                for (i, &value) in pixels.by_ref().take(CHANNEL_BATCH_SIZE) {
+                    let value = value.into();
+                    if mask.as_ref().is_none_or(|mask| mask[i]) && clip.keeps(value) {
+                        samples.push(Sample {
+                            value,
+                            position: positions[i],
+                        });
+                    }
+                }
+            }
+            if samples.is_empty() {
+                continue;
+            }
+            let sum = sum_samples(&samples, cancellation, |sample| sample.value)?;
+            let index = IxDyn(&cursor);
+            for (&moment, output) in moments.iter().zip(&mut result) {
+                if let Some(value) = calculate(&samples, sum, scale, moment, cancellation)? {
+                    output.values[index.clone()] = value as f32;
+                    output.valid[index.clone()] = true;
+                }
             }
         }
-        if samples.is_empty() {
-            continue;
-        }
-        let sum = samples.iter().map(|sample| sample.value).sum::<f64>();
-        let index = IxDyn(&cursor);
-        for (&moment, output) in moments.iter().zip(&mut result) {
-            if let Some(value) = calculate(&samples, sum, scale, moment) {
-                output.values[index.clone()] = value as f32;
-                output.valid[index.clone()] = true;
-            }
-        }
+        #[cfg(feature = "immoments-test-hooks")]
+        observe(Checkpoint::ProfileBatchFinished(first));
     }
     for output in &mut result {
         output.values = std::mem::take(&mut output.values).insert_axis(Axis(axis));
         output.valid = std::mem::take(&mut output.valid).insert_axis(Axis(axis));
     }
-    result
+    Ok(result)
 }
 
 struct Sample {
@@ -214,45 +239,72 @@ impl MomentSamples {
         if self.samples.is_empty() {
             None
         } else {
-            calculate(&self.samples, self.sum, self.scale, moment)
+            calculate(&self.samples, self.sum, self.scale, moment, None)
+                .expect("no cancellation token supplied")
         }
     }
 }
 
-fn calculate(samples: &[Sample], sum: f64, scale: f64, moment: i32) -> Option<f64> {
+fn sample_batches<'a>(
+    samples: &'a [Sample],
+    cancellation: Option<&'a Cancellation>,
+) -> impl Iterator<Item = Result<&'a [Sample], ImageError>> {
+    samples.chunks(CHANNEL_BATCH_SIZE).map(move |batch| {
+        check_cancelled(cancellation)?;
+        Ok(batch)
+    })
+}
+
+fn sum_samples(
+    samples: &[Sample],
+    cancellation: Option<&Cancellation>,
+    term: impl Fn(&Sample) -> f64,
+) -> Result<f64, ImageError> {
+    // Retain the f64 Sum identity and the original order of additions.
+    let mut sum = -0.0;
+    for batch in sample_batches(samples, cancellation) {
+        sum = batch?.iter().fold(sum, |sum, sample| sum + term(sample));
+    }
+    Ok(sum)
+}
+
+fn calculate(
+    samples: &[Sample],
+    sum: f64,
+    scale: f64,
+    moment: i32,
+    cancellation: Option<&Cancellation>,
+) -> Result<Option<f64>, ImageError> {
     let n = samples.len() as f64;
-    let sum_squares = || {
-        samples
-            .iter()
-            .map(|sample| sample.value * sample.value)
-            .sum::<f64>()
-    };
+    let sum_squares = || sum_samples(samples, cancellation, |sample| sample.value * sample.value);
     let weighted_mean = || {
-        samples
-            .iter()
-            .map(|sample| sample.position * sample.value)
-            .sum::<f64>()
-            / sum
+        sum_samples(samples, cancellation, |sample| {
+            sample.position * sample.value
+        })
+        .map(|weighted| weighted / sum)
     };
-    match moment {
+    Ok(match moment {
         -1 => Some(sum / n),
         0 => Some(sum * scale),
-        1 if sum != 0.0 => Some(weighted_mean()),
+        1 if sum != 0.0 => Some(weighted_mean()?),
         2 if sum != 0.0 => {
-            let mean = weighted_mean() as f32;
-            let squares = samples
-                .iter()
-                .map(|sample| sample.value * sample.position * sample.position)
-                .sum::<f64>();
+            let mean = weighted_mean()? as f32;
+            let squares = sum_samples(samples, cancellation, |sample| {
+                sample.value * sample.position * sample.position
+            })?;
             let variance = f64::from(((squares / sum - f64::from(mean * mean)) as f32).abs());
             (variance > 0.0).then(|| variance.sqrt())
         }
         3 => {
-            let mut values: Vec<_> = samples.iter().map(|sample| sample.value).collect();
+            let mut values = Vec::with_capacity(samples.len());
+            for batch in sample_batches(samples, cancellation) {
+                values.extend(batch?.iter().map(|sample| sample.value));
+            }
             // casacore averages the middle pair for short, even profiles.
             // Above 100 samples it uses the lower middle value.
             let mid = (values.len() - 1) / 2;
             let average_middle = values.len() <= 100 && values.len().is_multiple_of(2);
+            check_cancelled(cancellation)?;
             let (_, middle, upper) = values.select_nth_unstable_by(mid, f64::total_cmp);
             let median = if average_middle {
                 (*middle
@@ -267,76 +319,71 @@ fn calculate(samples: &[Sample], sum: f64, scale: f64, moment: i32) -> Option<f6
             };
             Some(median)
         }
-        4 => Some(median_coordinate(samples)),
+        4 => Some(median_coordinate(samples, cancellation)?),
         5 if n > 1.0 => {
-            let variance = (sum_squares() - sum * sum / n) / (n - 1.0);
+            let variance = (sum_squares()? - sum * sum / n) / (n - 1.0);
             (variance as f32 > 0.0).then(|| variance.sqrt())
         }
-        6 => Some((sum_squares() / n).sqrt()),
+        6 => Some((sum_squares()? / n).sqrt()),
         7 => {
             let mean = f64::from((sum / n) as f32);
-            Some(
-                samples
-                    .iter()
-                    .map(|sample| (sample.value - mean).abs())
-                    .sum::<f64>()
-                    / n,
-            )
+            let deviation =
+                sum_samples(samples, cancellation, |sample| (sample.value - mean).abs())?;
+            Some(deviation / n)
         }
-        8 | 9 => {
+        8..=11 => {
             // CASA keeps the first location when values tie.
-            let maximum = samples.iter().reduce(|best, sample| {
-                if sample.value > best.value {
-                    sample
-                } else {
-                    best
+            let mut best = &samples[0];
+            for batch in sample_batches(&samples[1..], cancellation) {
+                for sample in batch? {
+                    let better = if moment <= 9 {
+                        sample.value > best.value
+                    } else {
+                        sample.value < best.value
+                    };
+                    if better {
+                        best = sample;
+                    }
                 }
-            })?;
-            Some(if moment == 8 {
-                maximum.value
+            }
+            Some(if matches!(moment, 8 | 10) {
+                best.value
             } else {
-                maximum.position
-            })
-        }
-        10 | 11 => {
-            let minimum = samples.iter().reduce(|best, sample| {
-                if sample.value < best.value {
-                    sample
-                } else {
-                    best
-                }
-            })?;
-            Some(if moment == 10 {
-                minimum.value
-            } else {
-                minimum.position
+                best.position
             })
         }
         _ => None,
-    }
+    })
 }
 
-fn median_coordinate(samples: &[Sample]) -> f64 {
+fn median_coordinate(
+    samples: &[Sample],
+    cancellation: Option<&Cancellation>,
+) -> Result<f64, ImageError> {
     // MomentClip accumulates Float values, adding the absolute value of the
     // previous cumulative value. The first bin at half the maximum is used.
     let mut cumulative = (samples[0].value as f32).abs();
     let mut maximum = cumulative;
-    for sample in &samples[1..] {
-        cumulative = sample.value as f32 + cumulative.abs();
-        maximum = maximum.max(cumulative);
+    for batch in sample_batches(&samples[1..], cancellation) {
+        for sample in batch? {
+            cumulative = sample.value as f32 + cumulative.abs();
+            maximum = maximum.max(cumulative);
+        }
     }
     let half = maximum / 2.0;
     cumulative = (samples[0].value as f32).abs();
     if cumulative >= half {
-        return samples[0].position;
+        return Ok(samples[0].position);
     }
-    for sample in &samples[1..] {
-        cumulative = sample.value as f32 + cumulative.abs();
-        if cumulative >= half {
-            return sample.position;
+    for batch in sample_batches(&samples[1..], cancellation) {
+        for sample in batch? {
+            cumulative = sample.value as f32 + cumulative.abs();
+            if cumulative >= half {
+                return Ok(sample.position);
+            }
         }
     }
-    samples[0].position
+    Ok(samples[0].position)
 }
 
 #[cfg(test)]
@@ -349,6 +396,8 @@ pub(in crate::analysis) fn collapse_moment<T: Into<f64> + Copy>(
     clip: PixelClip,
     moment: i32,
 ) -> (ArrayD<f32>, ArrayD<bool>) {
-    let result = collapse_moments(input, mask, axis, coordinates, scale, clip, &[moment]).remove(0);
+    let result = collapse_moments(input, mask, axis, coordinates, scale, clip, &[moment], None)
+        .unwrap()
+        .remove(0);
     (result.values, result.valid)
 }

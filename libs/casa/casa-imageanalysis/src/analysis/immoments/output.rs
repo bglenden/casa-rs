@@ -126,7 +126,13 @@ impl Destinations {
         for (index, destination) in self.paths.iter().enumerate() {
             let staged = stage.path().join(index.to_string());
             match self.publish_one(&staged, destination) {
-                Ok(exchanged) => exchanges.push(exchanged),
+                Ok(exchanged) => {
+                    exchanges.push(exchanged);
+                    #[cfg(feature = "immoments-test-hooks")]
+                    crate::immoments_test_hooks::observe(
+                        crate::immoments_test_hooks::Checkpoint::ProductPublished(index),
+                    );
+                }
                 Err(error) => {
                     let mut failed = Vec::new();
                     for (i, exchanged) in exchanges.into_iter().enumerate().rev() {
