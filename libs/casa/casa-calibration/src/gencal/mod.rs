@@ -221,6 +221,14 @@ pub enum GencalError {
         /// Source error.
         source: Box<casa_ms::MsError>,
     },
+    /// Opening an observation's calibration namespace failed.
+    #[error("failed to open measurement set {path}: {source}")]
+    Observation {
+        /// Path that failed.
+        path: String,
+        /// Source error.
+        source: Box<casa_observation::ObservationError>,
+    },
     /// Opening the VLA GainCurves table failed.
     #[error("failed to open VLA GainCurves table {path}: {source}")]
     OpenGainCurves {
@@ -356,7 +364,20 @@ fn generate_prior(
         )
         .map_err(|error| GencalError::InvalidRequest(error.to_string()));
     }
-    let ms = open_measurement_set(&request.measurement_set)?;
+    let path = &request.measurement_set;
+    let ms = if matches!(
+        request.caltype,
+        GencalType::Amp | GencalType::Ph | GencalType::Sbd | GencalType::Mbd | GencalType::Opac
+    ) {
+        casa_ms::observation_io::calibration_subtables(path).map_err(|source| {
+            GencalError::Observation {
+                path: path.display().to_string(),
+                source: Box::new(source),
+            }
+        })?
+    } else {
+        open_measurement_set(path)?
+    };
     let switched_power = request
         .caltype
         .is_switched_power()
@@ -1017,7 +1038,8 @@ fn write_prior_caltable(
             parameter_type: Some(parameter_name),
             measurement_set_name: ms
                 .path()
-                .and_then(Path::file_name)
+                .unwrap_or(&request.measurement_set)
+                .file_name()
                 .map(|name| name.to_string_lossy().to_string())
                 .unwrap_or_else(|| "<in-memory>".to_string()),
             include_polarization_basis: true,
