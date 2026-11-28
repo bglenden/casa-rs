@@ -101,6 +101,23 @@ pub fn list_calibration(
     spw: &str,
     page_rows: i32,
 ) -> Result<CalibrationListing, String> {
+    list_calibration_named(ms, ms.path(), input, field, antenna, spw, page_rows)
+}
+
+/// List calibration solutions using an explicit observation path for a
+/// metadata namespace that is held in memory.
+///
+/// # Errors
+/// The same selector and calibration table errors as [`list_calibration`].
+pub fn list_calibration_named(
+    ms: &MeasurementSet,
+    observed_path: Option<&Path>,
+    input: &Path,
+    field: &str,
+    antenna: &str,
+    spw: &str,
+    page_rows: i32,
+) -> Result<CalibrationListing, String> {
     let options = TableOptions::new(input);
     #[cfg(unix)]
     let table = Table::open_with_lock(
@@ -114,8 +131,7 @@ pub fn list_calibration(
         return Err(format!("{} is not a calibration table", input.display()));
     }
     let subtype = listing_subtype(&table.info().sub_type)?;
-    let ms_name = ms
-        .path()
+    let ms_name = observed_path
         .map(std::path::absolute)
         .transpose()
         .map_err(display)?;
