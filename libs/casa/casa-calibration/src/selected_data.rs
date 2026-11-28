@@ -84,7 +84,7 @@ impl SelectedData {
 
 /// Every intent `ms`'s `STATE` table names, sorted and distinct; none when
 /// the MeasurementSet has no `STATE` table.
-fn intents(ms: &MeasurementSet) -> Result<Vec<String>, GainSolveError> {
+pub(crate) fn intents(ms: &MeasurementSet) -> Result<Vec<String>, GainSolveError> {
     let Ok(state) = ms.state() else {
         return Ok(Vec::new());
     };

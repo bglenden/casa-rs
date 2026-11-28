@@ -25,6 +25,8 @@ pub(crate) mod gspline;
 pub(crate) mod kernel;
 mod model;
 mod normal;
+#[cfg(unix)]
+pub(crate) mod observation_gain;
 mod trace;
 pub(crate) mod writer;
 
@@ -365,6 +367,10 @@ pub struct GainSolveReport {
 /// Errors returned by the limited `gaincal` solver.
 #[derive(Debug, Error)]
 pub enum GainSolveError {
+    /// Opening or traversing the shared observation boundary failed.
+    #[error(transparent)]
+    Observation(#[from] casa_observation::ObservationError),
+
     /// A real opacity solve reached the unavailable fitting stage.
     #[error("The configured opacity type cannot solve a calibration table.")]
     OpacityCannotFit,
@@ -859,28 +865,16 @@ fn solve_gain_rows_with_settings(
         }
         group.finalize_for_solve(request.solve_mode, request.robustness.enabled());
         trace::trace_group(&base_key, &bucket_key, &group, request);
-        solve_stats.interval(&IntervalStages::of(
-            &group,
-            request.min_baselines_per_antenna,
-        ));
-        let spw_id = group.spw_id;
-        let Some(group_rows) = solve_closed_group(
+        let Some(group_rows) = solve_group_with_stats(
             group,
             &context.available_antennas,
             request,
             context.refant_id,
             correlation_dependent_flags,
+            &mut solve_stats,
         ) else {
             continue;
         };
-        solve_stats.record_success(spw_id, true);
-        solve_stats.solutions(
-            spw_id,
-            group_rows.iter().map(|row| AntennaSolution {
-                antenna_id: row.antenna_id,
-                passed: row.flags.iter().map(|flagged| !flagged).collect(),
-            }),
-        );
         trace::trace_solution_rows(
             &base_key,
             &bucket_key,
@@ -1027,6 +1021,37 @@ pub(crate) fn solve_closed_group(
             robustness: request.robustness.enabled().then_some(&request.robustness),
         },
     )
+}
+
+fn solve_group_with_stats(
+    group: grouping::SolveAccumulator,
+    available_antennas: &BTreeSet<i32>,
+    request: &GainSolveRequest,
+    refant_id: i32,
+    correlation_dependent_flags: bool,
+    stats: &mut SolveStatsBuilder,
+) -> Option<Vec<kernel::SolutionRow>> {
+    stats.interval(&IntervalStages::of(
+        &group,
+        request.min_baselines_per_antenna,
+    ));
+    let spw_id = group.spw_id;
+    let rows = solve_closed_group(
+        group,
+        available_antennas,
+        request,
+        refant_id,
+        correlation_dependent_flags,
+    )?;
+    stats.record_success(spw_id, true);
+    stats.solutions(
+        spw_id,
+        rows.iter().map(|row| AntennaSolution {
+            antenna_id: row.antenna_id,
+            passed: row.flags.iter().map(|flagged| !flagged).collect(),
+        }),
+    );
+    Some(rows)
 }
 
 /// The antennas other than `refant_id`, nearest it first: the alternates

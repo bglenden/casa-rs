@@ -31,6 +31,7 @@ casa-imaging-singledish.workspace = true
 casa-measures.workspace = true
 casa-ms.workspace = true
 casa-numerics.workspace = true
+casa-observation.workspace = true
 casa-tables.workspace = true
 casa-core.workspace = true
 libm = "0.2"
@@ -51,7 +52,6 @@ csv-core = "0.1.13"
 casa-mstransform = { workspace = true, features = ["msv4"] }
 casa-simulation = { path = "../casa-simulation" }
 casa-ms = { workspace = true, features = ["msv4"] }
-casa-observation.workspace = true
 flate2 = "1"
 tar = "0.4"
 casa-test-support = { path = "../../../dev/casa-test-support" }

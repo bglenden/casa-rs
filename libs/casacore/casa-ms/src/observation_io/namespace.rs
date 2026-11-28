@@ -24,6 +24,8 @@ use std::sync::Arc;
 use casa_core::measures::direction::MDirection;
 use casa_core::measures::frequency::FrequencyRef;
 use casa_core::{ArrayValue, ScalarValue};
+#[cfg(unix)]
+use casa_observation::Observation;
 use casa_observation::{Catalogue, ObservationError, PartitionId};
 use casa_tables::{Table, TableOptions};
 
@@ -146,6 +148,118 @@ impl PersistedNamespace {
     }
 }
 
+/// A visibility partition's IDs for CASA calibration-table products and
+/// solution boundaries. The store-local partition index is not an SPW ID.
+#[cfg(unix)]
+pub struct CalibrationPartition {
+    /// The persisted `SPECTRAL_WINDOW` row.
+    pub window: u32,
+    /// The underlying polarization and SPW combination.
+    pub data_description: u32,
+    /// The partition's common MSv2 `ARRAY_ID`, or zero for MSv4. `None`
+    /// means more than one array occurs in the partition.
+    pub array: Option<i32>,
+}
+
+/// The single observation opening used by a calibration solve and the
+/// subtables it uses for CASA-format publication.
+#[cfg(unix)]
+pub struct CalibrationObservation<'a> {
+    /// Store-neutral visibility traversal and catalogue.
+    pub observation: &'a dyn Observation,
+    /// The subtables that define the caltable's row numbers.
+    pub subtables: &'a MeasurementSet,
+    /// The legacy IDs used for solution grouping and publication, in
+    /// catalogue partition order.
+    pub partitions: &'a [CalibrationPartition],
+    /// The observation budget remaining once its reader and subtables are held.
+    pub available_bytes: usize,
+}
+
+/// Run a caltable consumer using one admitted observation opening. An MSv2
+/// supplies its stored subtable row numbers. An MSv4 supplies the same
+/// namespace an MSv2 conversion would persist.
+///
+/// # Errors
+/// When the observation is unreadable, the namespace cannot be represented
+/// as CASA subtables, or the read would exceed the observation budget.
+#[cfg(unix)]
+pub fn with_calibration_observation<T>(
+    source: &Path,
+    query: impl FnOnce(CalibrationObservation<'_>) -> T,
+) -> Result<T, ObservationError> {
+    let budget = super::creation::default_memory_bytes()?;
+    let mut grant = |required| {
+        if required > budget {
+            Err(ObservationError::OverBudget {
+                what: "calibration observation opening and persisted namespace",
+                required,
+                budget,
+            })
+        } else {
+            Ok(())
+        }
+    };
+    if super::is_msv4_store(source) {
+        #[cfg(feature = "msv4")]
+        {
+            let observation =
+                super::Msv4Observation::open_granted(source, &OpenOptions::default(), &mut grant)?;
+            let catalogue = observation.catalogue();
+            let held = observation
+                .held_bytes()
+                .saturating_add(super::creation::subtables_bytes(catalogue))
+                .saturating_add(calibration_partition_bytes(catalogue));
+            grant(held)?;
+            let (subtables, indices) = super::creation::catalogue_subtables(&observation)?;
+            let partitions = indices
+                .into_iter()
+                .map(|(window, data_description)| CalibrationPartition {
+                    window: window as u32,
+                    data_description: data_description as u32,
+                    array: Some(0),
+                })
+                .collect::<Vec<_>>();
+            return Ok(query(CalibrationObservation {
+                observation: &observation,
+                subtables: &subtables,
+                partitions: &partitions,
+                available_bytes: budget - held,
+            }));
+        }
+        #[cfg(not(feature = "msv4"))]
+        return Err(ObservationError::Unsupported {
+            what: "an MSv4 store's namespace without casa-ms's msv4 feature",
+        });
+    }
+    let observation = Msv2Observation::open_granted(source, &OpenOptions::default(), &mut grant)?;
+    let held = observation
+        .retained_bytes()
+        .saturating_add(calibration_partition_bytes(observation.catalogue()));
+    grant(held)?;
+    let partitions = observation
+        .catalogue()
+        .partition_ids()
+        .into_iter()
+        .map(|partition| CalibrationPartition {
+            window: observation.spectral_window_id(partition),
+            data_description: observation.data_description_id(partition),
+            array: observation.array_id(partition),
+        })
+        .collect::<Vec<_>>();
+    Ok(query(CalibrationObservation {
+        observation: &observation,
+        subtables: observation.measurement_set(),
+        partitions: &partitions,
+        available_bytes: budget - held,
+    }))
+}
+
+#[cfg(unix)]
+fn calibration_partition_bytes(catalogue: &Catalogue) -> usize {
+    catalogue.partitions.len() * (size_of::<CalibrationPartition>() + size_of::<PartitionId>())
+}
+
 /// The namespace of the store at `source` as [`super::open`] opens it with
 /// `options`, which decide its partitions: an MSv2's own subtables, its
 /// catalogue's antennas, fields and sessions being their rows and each
@@ -198,8 +312,11 @@ fn msv4_subtables(
     options: &OpenOptions,
 ) -> Result<(MeasurementSet, Vec<u32>, Arc<Catalogue>), ObservationError> {
     let observation = super::Msv4Observation::open_with(source, options)?;
-    let (subtables, windows) = super::creation::catalogue_subtables(&observation)?;
-    let windows = windows.into_iter().map(|row| row as u32).collect();
+    let (subtables, indices) = super::creation::catalogue_subtables(&observation)?;
+    let windows = indices
+        .into_iter()
+        .map(|(window, _)| window as u32)
+        .collect();
     Ok((subtables, windows, Arc::clone(observation.catalogue())))
 }
 

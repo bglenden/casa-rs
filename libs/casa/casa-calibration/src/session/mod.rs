@@ -198,6 +198,17 @@ pub(crate) fn solve_calibration_with_activity(
     }
     match dataset {
         CalibrationDataset::Path(path) => {
+            #[cfg(unix)]
+            if let CalibrationSolveRequest::Gain(gain) = &request
+                && activity.is_none()
+                && options.tf.is_none()
+                && !options.legacy_iterator
+                && !options.invalid_mode
+                && crate::solve::observation_gain::supports(gain)
+                && let Some(report) = crate::solve::observation_gain::solve(&path, gain, mode)?
+            {
+                return Ok(CalibrationSolveResult::Gain(report));
+            }
             let open_phase = crate::timing::Phase::start("open_ms");
             let measurement_set = MeasurementSet::open(&path).map_err(|source| {
                 CalibrationError::OpenMeasurementSet {

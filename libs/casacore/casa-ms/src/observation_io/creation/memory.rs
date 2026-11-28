@@ -192,7 +192,7 @@ pub(super) fn merge_bound(catalogues: usize) -> usize {
 /// antenna's in each window, and a data description, a polarization and a
 /// state of intents for each partition) and the entities' strings and
 /// arrays again.
-pub(super) fn subtables_bytes(catalogue: &Catalogue) -> usize {
+pub(in crate::observation_io) fn subtables_bytes(catalogue: &Catalogue) -> usize {
     let windows = catalogue.windows.len();
     let records: usize = catalogue
         .sources

@@ -345,7 +345,7 @@ pub(super) fn bucketed_rows(
                         if legacy_intervals {
                             row.time_seconds
                         } else {
-                            row.time_seconds - 0.01
+                            time_bin_origin(row.time_seconds)
                         },
                         0,
                     ));
@@ -362,13 +362,23 @@ pub(super) fn bucketed_rows(
                     } else {
                         // MSIter2 uses a fixed grid whose origin is 10 ms
                         // before the first timestamp.
-                        SolveBucketKey::Seconds((elapsed / interval).floor().max(0.0) as u64)
+                        SolveBucketKey::Seconds(time_bin(row.time_seconds, *start, seconds))
                     }
                 }
             };
             (row, base_key, bucket_key)
         })
         .collect()
+}
+
+pub(crate) fn time_bin_origin(first_time: f64) -> f64 {
+    first_time - 0.01
+}
+
+pub(crate) fn time_bin(time: f64, origin: f64, seconds: f64) -> u64 {
+    ((time - origin) / f64::from(seconds as f32))
+        .floor()
+        .max(0.0) as u64
 }
 
 /// CASA's time-averaging iterator starts a new baseline solution when a

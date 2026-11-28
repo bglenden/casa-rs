@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+
+import json
+from pathlib import Path
+import sys
+import tarfile
+
+import numpy as np
+import pytest
+
+from casars import tasks, tools
+
+
+TRIAL = (
+    Path(__file__).resolve().parents[4]
+    / "libs/casacore/casa-ms/tests/fixtures/ms_trial"
+)
+
+
+@pytest.mark.parametrize("store", ["ms_trial.ms", "ms_trial.ps.zarr"])
+def test_time_binned_point_source_gaincal(tmp_path, monkeypatch, store):
+    with tarfile.open(TRIAL / f"{store}.tgz") as archive:
+        extract_opts = {"filter": "data"} if sys.version_info >= (3, 12) else {}
+        archive.extractall(tmp_path, **extract_opts)
+    monkeypatch.chdir(tmp_path)
+    result = tasks.gaincal(
+        vis=store, caltable="solved.cal", gaintype="G", calmode="ap", solint="60s",
+        refant="0", refantmode="strict", smodel=[1.0, 0.0, 0.0, 0.0], minsnr=3.0,
+    )
+
+    selected = result["selectvis"]
+    np.testing.assert_array_equal(selected["antennas"], np.arange(5))
+    for axis in ("field", "observation", "spw"):
+        np.testing.assert_array_equal(selected[axis], [0])
+    np.testing.assert_array_equal(selected["scan"], [1])
+    np.testing.assert_array_equal(selected["intents"], ["TARGET.ON_SOURCE"])
+    np.testing.assert_array_equal(result["solvestats"]["expected"], [2, 2])
+
+    table = tools.table()
+    assert table.open("solved.cal")
+    try:
+        assert table.nrows() == 10
+        times = table.getcol("TIME")
+        antennas = table.getcol("ANTENNA1")
+        gains = table.getcol("CPARAM")[:, 0, :].T
+        assert np.unique(times).size == 2
+        assert not table.getcol("FLAG").any()
+        for column in ("ANTENNA2", "FIELD_ID", "SPECTRAL_WINDOW_ID", "OBSERVATION_ID"):
+            np.testing.assert_array_equal(table.getcol(column), np.zeros(10))
+        np.testing.assert_array_equal(table.getcol("SCAN_NUMBER"), np.ones(10))
+    finally:
+        table.close()
+
+    fixture = json.loads((TRIAL / "manifest.json").read_text())
+    truth = fixture["corruption"]["true_gains"]
+    true_gains = np.array(truth["re"]) + 1j * np.array(truth["im"])
+    reference = true_gains[:, :1, :]
+    referred = true_gains * reference.conj() / np.abs(reference)
+    interval = np.searchsorted(np.unique(times), times)
+    ratio = gains / referred[interval, antennas, :]
+    # The fixture has a second faint source outside the supplied point model.
+    assert np.max(np.abs(np.angle(ratio))) < 0.2
+    assert np.max(np.abs(np.abs(ratio) - 1.0)) < 0.2
