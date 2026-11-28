@@ -17,7 +17,7 @@ pub(super) fn evaluate_rows(
         false,
         share_input_flags,
         weight_source,
-        (None, control),
+        (None, PreviewControl::Solve(control)),
         |index, row| {
             rows.insert(index, row);
         },
@@ -48,7 +48,7 @@ pub(super) fn for_each_apply_row(
         forward_model,
         share_input_flags,
         weight_source,
-        (tool, SolveControl::default()),
+        (tool, PreviewControl::Trial(None)),
         consume,
     )
 }
@@ -66,7 +66,7 @@ pub(super) fn for_each_apply_row_controlled(
     forward_model: bool,
     share_input_flags: bool,
     weight_source: PreviewWeightSource,
-    (mut tool, control): (Option<&mut ToolApplyExecution<'_>>, SolveControl<'_>),
+    (mut tool, control): (Option<&mut ToolApplyExecution<'_>>, PreviewControl<'_>),
     mut consume: impl FnMut(usize, EvaluatedApplyRow),
 ) -> Result<(), ApplyExecutionError> {
     let ms_path = display_ms_path(ms);
@@ -101,7 +101,7 @@ pub(super) fn for_each_apply_row_controlled(
     };
     let mut readers = PreviewReaders::new(ms.main_table(), &columns).map_err(read_error)?;
     let data_index = (!forward_model).then_some(1);
-    let batch_rows = preview_batch_rows(plan, &correlation_types_by_ddid);
+    let batch_rows = control.batch_rows(preview_batch_rows(plan, &correlation_types_by_ddid));
     #[cfg(feature = "solve-test-hooks")]
     let batch_rows = if crate::solve_test_hooks::small_batches() {
         batch_rows.min(32)
@@ -110,11 +110,9 @@ pub(super) fn for_each_apply_row_controlled(
     };
     let mut geometry_cache = RowGeometryCache::default();
     for (_batch_index, batch) in plan.selected_rows.chunks(batch_rows).enumerate() {
-        check_preview(control)?;
+        control.check()?;
         #[cfg(feature = "solve-test-hooks")]
-        control.observe(crate::solve_test_hooks::Checkpoint::PriorBatchStarted(
-            _batch_index,
-        ));
+        control.observe_batch(_batch_index, false);
         let indices: Vec<_> = batch.iter().map(|row| row.row_index).collect();
         let arrays = readers
             .selected
@@ -265,19 +263,45 @@ pub(super) fn for_each_apply_row_controlled(
             );
         }
         #[cfg(feature = "solve-test-hooks")]
-        control.observe(crate::solve_test_hooks::Checkpoint::PriorBatchFinished(
-            _batch_index,
-        ));
+        control.observe_batch(_batch_index, true);
     }
 
-    check_preview(control)
+    control.check()
 }
 
-fn check_preview(control: SolveControl<'_>) -> Result<(), ApplyExecutionError> {
-    if control.is_cancelled() {
-        return Err(ApplyExecutionError::Interrupted);
+#[derive(Clone, Copy)]
+pub(super) enum PreviewControl<'a> {
+    Solve(SolveControl<'a>),
+    Trial(Option<&'a Cancellation>),
+}
+
+impl PreviewControl<'_> {
+    fn check(self) -> Result<(), ApplyExecutionError> {
+        match self {
+            Self::Solve(control) if control.is_cancelled() => Err(ApplyExecutionError::Interrupted),
+            Self::Solve(_) => Ok(()),
+            Self::Trial(cancellation) => staging::check(cancellation),
+        }
     }
-    Ok(())
+
+    fn batch_rows(self, rows: usize) -> usize {
+        match self {
+            Self::Trial(Some(_)) => rows.min(staging::CANCELLABLE_BATCH_ROWS),
+            _ => rows,
+        }
+    }
+
+    #[cfg(feature = "solve-test-hooks")]
+    fn observe_batch(self, index: usize, finished: bool) {
+        use crate::solve_test_hooks::{Checkpoint, observe};
+        match (self, finished) {
+            (Self::Solve(control), false) => control.observe(Checkpoint::PriorBatchStarted(index)),
+            (Self::Solve(control), true) => control.observe(Checkpoint::PriorBatchFinished(index)),
+            (Self::Trial(Some(_)), false) => observe(Checkpoint::ApplyTrialBatchStarted(index)),
+            (Self::Trial(Some(_)), true) => observe(Checkpoint::ApplyTrialBatchFinished(index)),
+            (Self::Trial(None), _) => {}
+        }
+    }
 }
 
 pub(super) struct PreviewReaders<'a> {

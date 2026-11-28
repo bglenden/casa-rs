@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Opt-in SIGINT at calibration solve checkpoints.
+//! Opt-in SIGINT at calibration task checkpoints.
 
 use std::cell::Cell;
 use std::sync::mpsc::Sender;
@@ -17,6 +17,11 @@ thread_local! {
 #[pyfunction]
 pub(crate) fn _arm_solve_test(stage: &str, channel: usize) -> PyResult<()> {
     NEXT_SOLVE.set(Some(match stage {
+        "apply-batch" => Checkpoint::ApplyBatchFinished(0, 0),
+        "apply-strict-batch" => Checkpoint::ApplyBatchFinished(1, 0),
+        "apply-trial-batch" => Checkpoint::ApplyTrialBatchFinished(0),
+        "apply-before-commit" => Checkpoint::ApplyBeforeCommit,
+        "apply-main-committed" => Checkpoint::ApplyMainCommitted,
         "observation-batch" => Checkpoint::ObservationBatchFinished(0),
         "legacy-batch" => Checkpoint::LegacyBatchFinished(0),
         "prior-batch" => Checkpoint::PriorBatchFinished(0),
@@ -35,7 +40,7 @@ pub(crate) fn _arm_solve_test(stage: &str, channel: usize) -> PyResult<()> {
 }
 
 pub(super) fn take(surface: &str) -> Option<Checkpoint> {
-    if matches!(surface, "gaincal" | "bandpass") {
+    if matches!(surface, "applycal" | "gaincal" | "bandpass") {
         NEXT_SOLVE.take()
     } else {
         None
