@@ -476,11 +476,8 @@ fn classical_stats_of_values(
     let mut moments = RunningStats::default();
     let first = values.first().copied().unwrap_or(f64::NAN);
     let (mut min, mut max) = (first, first);
-    let mut workspace = Vec::with_capacity(npts);
     for batch in batches(values, cancellation) {
-        let batch = batch?;
-        workspace.extend_from_slice(batch);
-        for &value in batch {
+        for &value in batch? {
             moments.push(value);
             if value.total_cmp(&min).is_lt() {
                 min = value;
@@ -502,6 +499,11 @@ fn classical_stats_of_values(
         ]
         .map(|statistic| moments.finish(statistic))
     };
+    check(cancellation)?;
+    let mut workspace = Vec::with_capacity(npts);
+    for batch in batches(values, cancellation) {
+        workspace.extend_from_slice(batch?);
+    }
     let OrderStatsSummary {
         median,
         q1,
