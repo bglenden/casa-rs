@@ -4,7 +4,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use casa_core::{ArrayValue, ScalarValue, Value, quanta::time::MvTime};
-use casa_ms::{MeasurementSet, schema::SubtableId};
+use casa_ms::{MeasurementSet, observation_io::ObservationError, schema::SubtableId};
 
 use super::{GencalError, GencalRequest, get_string};
 
@@ -126,24 +126,24 @@ pub(super) fn affected_tropo_epoch(time: MvTime) -> bool {
     mjd > 57_609.0 && mjd < 57_707.0
 }
 
-pub(super) fn tropo_keyword(
-    ms: &MeasurementSet,
-    request: &GencalRequest,
-    mode: crate::output::CalibrationOutputMode,
-) -> Result<Option<Value>, GencalError> {
-    if crate::antpos_vla::only_vla_observations(ms).map_err(invalid)?
-        && affected_tropo_epoch(observation_start(ms)?)
+pub(super) fn validate_tropo_epoch(ms: &MeasurementSet) -> Result<(), ObservationError> {
+    if ms.path().is_none()
+        && crate::antpos_vla::only_vla_observations(ms)
+            .map_err(|source| ObservationError::Storage(Box::new(source)))?
     {
-        return Ok(Some(Value::Scalar(ScalarValue::Float64(1.0))));
+        // The snapshot's integration span cannot supply the stated session
+        // extent that determines whether CASA writes VLATrDelCorr.
+        return Err(ObservationError::Unsupported {
+            what: "VLA antenna position offsets from MSv4 without a stated OBSERVATION.TIME_RANGE",
+        });
     }
-    if mode == crate::output::CalibrationOutputMode::Update && request.output_table.exists() {
-        let previous = crate::output_merge::open(&request.output_table)?;
-        return Ok(previous
-            .keywords()
-            .get(crate::antpos_vla::TROPO_KEYWORD)
-            .cloned());
-    }
-    Ok(None)
+    Ok(())
+}
+
+pub(super) fn tropo_keyword(ms: &MeasurementSet) -> Result<Option<Value>, GencalError> {
+    let applies = crate::antpos_vla::only_vla_observations(ms).map_err(invalid)?
+        && affected_tropo_epoch(observation_start(ms)?);
+    Ok(applies.then_some(Value::Scalar(ScalarValue::Float64(1.0))))
 }
 
 fn load_antennas(ms: &MeasurementSet) -> Result<Vec<Antenna>, GencalError> {

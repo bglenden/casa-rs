@@ -25,6 +25,12 @@ pub(super) fn metadata_bytes(path: &Path) -> usize {
     METADATA_FACTOR * metadata_files(path, 3)
 }
 
+/// Admitted bytes for decoding one Zarr group's header.
+#[cfg(unix)]
+pub(super) fn group_metadata_bytes(directory: &Path) -> usize {
+    METADATA_FACTOR.saturating_mul(metadata_files(directory, 0))
+}
+
 /// The bytes of the `zarr.json` files at most `depth` levels below
 /// `directory`, its own included.
 fn metadata_files(directory: &Path, depth: usize) -> usize {

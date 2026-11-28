@@ -11,6 +11,8 @@ import casatasks as casa
 import numpy as np
 
 from calibration_gencal_specify_oracle import compare_tables, generate, product, with_second_window
+from calibration_smoothcal_oracle import opened as open_table
+from record_casa_returns import make_cal_ms
 
 
 TRIAL = (
@@ -31,30 +33,152 @@ CASES = {
 }
 
 
+def paired_sources(ms_v2, native, msv2_only):
+    sources = {"MSv2": ms_v2}
+    if not msv2_only:
+        # The basename is part of the CASA product, irrespective of format.
+        ms_v4 = ms_v2.parents[1] / "MSv4" / ms_v2.name
+        ms_v4.parent.mkdir()
+        converted = ms_v4.parent / "paired.ps.zarr"
+        result = native.msconvert(
+            vis=str(ms_v2), outputvis=str(converted), outformat="msv4", withpointing=False,
+        )
+        assert result.successful, result.describe()
+        converted.rename(ms_v4)
+        sources["MSv4"] = ms_v4
+    return sources
+
+
+def tropo_keyword(caltable):
+    with open_table(caltable) as tool:
+        return tool.getkeyword("VLATrDelCorr") if "VLATrDelCorr" in tool.keywordnames() else None
+
+
+def seed_tropo_keyword(caltable):
+    with open_table(caltable, write=True) as tool:
+        assert tool.putkeyword("VLATrDelCorr", 2.0)
+
+
+def check_antenna_offsets(root, native, msv2_only):
+    source = root / "MSv2" / "offsets.ms"
+    source.parent.mkdir()
+    make_cal_ms(str(source), telescope="ALMA")
+    with_second_window(source)
+    sources = paired_sources(source, native, msv2_only)
+    results = {}
+    for mode in ("antpos", "antposvla"):
+        expected = root / f"{mode}-CASA.cal"
+        stages = (
+            {"antenna": "1,0", "spw": "1", "parameter": [0.17, 0.28, 0.34, 0.4, 0.59, 0.63]},
+            {"antenna": "0", "parameter": [0.01, 0.02, 0.03]},
+        )
+        candidates = {name: root / f"{mode}-{name}.cal" for name in sources}
+        cross = root / f"{mode}-CASA-create-MSv4-update.cal"
+        for phase, options in zip(("create", "update"), stages, strict=True):
+            if phase == "update":
+                for caltable in (expected, *candidates.values()):
+                    seed_tropo_keyword(caltable)
+                if not msv2_only:
+                    seed_tropo_keyword(cross)
+            generate(casa, source, expected, [(mode, options)])
+            _, rows, _ = product(expected)
+            np.testing.assert_array_equal(rows["ANTENNA1"], np.arange(5))
+            np.testing.assert_array_equal(rows["SPECTRAL_WINDOW_ID"], np.zeros(5))
+            assert not rows["FLAG"].any() and tropo_keyword(expected) is None
+            metrics = {}
+            for name, vis in sources.items():
+                candidate = candidates[name]
+                generate(native, vis, candidate, [(mode, options)])
+                assert tropo_keyword(candidate) is None
+                metrics[name] = compare_tables(candidate, expected)
+            if not msv2_only:
+                if phase == "create":
+                    generate(casa, source, cross, [(mode, options)])
+                else:
+                    generate(native, sources["MSv4"], cross, [(mode, options)])
+                    assert tropo_keyword(cross) is None
+                    metrics["CASA-create-MSv4-update"] = compare_tables(cross, expected)
+            results[f"{mode}-{phase}"] = metrics
+    if not msv2_only:
+        results["VLA-epoch"] = check_vla_epoch_refusal(root, native)
+    return results
+
+
+def check_vla_epoch_refusal(root, native):
+    boundary = 57609 * 86400.0
+    fixture = TRIAL.with_name("ms_trial_lines.ms.tgz")
+    keywords, reconstructed = [], []
+    for label, stated_start in (("earlier", -5), ("later", 3)):
+        case = root / label
+        case.mkdir()
+        with tarfile.open(fixture) as archive:
+            archive.extractall(case, filter="data")
+        vis = case / "ms_trial_lines.ms"
+        with open_table(vis, write=True) as main:
+            time, interval = main.getcol("TIME"), main.getcol("INTERVAL")
+            shift = boundary + 5 - np.min(time - interval / 2)
+            for name in ("TIME", "TIME_CENTROID"):
+                assert main.putcol(name, main.getcol(name) + shift)
+        with open_table(vis / "OBSERVATION", write=True) as observation:
+            assert "VLA" in observation.getcell("TELESCOPE_NAME", 0)
+            assert observation.putcell("TIME_RANGE", 0, [
+                boundary + stated_start, np.max(time + shift + interval / 2),
+            ])
+        options = dict(caltype="antpos", antenna="0", parameter=[0.1, 0.2, 0.3])
+        caltable = case / "CASA.cal"
+        assert casa.gencal(vis=str(vis), caltable=str(caltable), **options) is None
+        keywords.append(tropo_keyword(caltable))
+        rust_ms_v2 = case / "native-MSv2.cal"
+        assert native.gencal(vis=str(vis), caltable=str(rust_ms_v2), **options) is None
+        for engine, product_path in ((casa, caltable), (native, rust_ms_v2)):
+            seed_tropo_keyword(product_path)
+            assert engine.gencal(vis=str(vis), caltable=str(product_path), **options) is None
+            assert tropo_keyword(product_path) == keywords[-1]
+        assert compare_tables(rust_ms_v2, caltable) == 0
+        processing_set = case / "source.ps.zarr"
+        result = native.msconvert(vis=str(vis), outputvis=str(processing_set),
+                                  outformat="msv4", withpointing=False)
+        assert result.successful, result.describe()
+        rebuilt = case / "reopened.ms"
+        result = native.msconvert(vis=str(processing_set), outputvis=str(rebuilt), outformat="msv2")
+        assert result.successful, result.describe()
+        with open_table(rebuilt / "OBSERVATION") as observation:
+            reconstructed.append(observation.getcell("TIME_RANGE", 0))
+        output = case / "refused.cal"
+        try:
+            native.gencal(vis=str(processing_set), caltable=str(output), **options)
+        except native.TaskParameterError as error:
+            assert error.completion.parameter == "vis"
+            assert "stated OBSERVATION.TIME_RANGE" in error.completion.message
+            assert not output.exists()
+        else:
+            raise AssertionError("inferred a VLA tropospheric correction from the reconstructed start")
+    assert keywords == [None, 1.0]
+    np.testing.assert_array_equal(reconstructed[0], reconstructed[1])
+    assert reconstructed[0][0] == boundary + 5
+    return {"CASA-keywords": keywords, "reconstructed-start-seconds-after-boundary": 5}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--msv2-only", action="store_true")
+    parser.add_argument("--antenna-offsets", action="store_true")
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     from casars import tasks as native
 
     root = args.work.resolve()
     root.mkdir()
+    if args.antenna_offsets:
+        print(json.dumps(check_antenna_offsets(root, native, args.msv2_only)))
+        return
     ms_v2 = root / "MSv2" / "ms_trial.ms"
     ms_v2.parent.mkdir()
     with tarfile.open(TRIAL) as archive:
         archive.extractall(ms_v2.parent, filter="data")
     with_second_window(ms_v2)
-    sources = {"MSv2": ms_v2}
-    if not args.msv2_only:
-        # The basename is part of the CASA product, irrespective of format.
-        ms_v4 = root / "MSv4" / ms_v2.name
-        ms_v4.parent.mkdir()
-        converted = ms_v4.parent / "paired.ps.zarr"
-        native.msconvert(vis=str(ms_v2), outputvis=str(converted), outformat="msv4", withpointing=False)
-        converted.rename(ms_v4)
-        sources["MSv4"] = ms_v4
+    sources = paired_sources(ms_v2, native, args.msv2_only)
 
     results = {}
     for case, stages in CASES.items():
