@@ -70,6 +70,7 @@ mod order;
 pub(crate) mod progress;
 
 use cache::{BasicStatsCache, OrderStatsCache};
+use order::absolute_deviations;
 pub(crate) use order::{
     OrderStatsSummary, framework_order_summary, quartiles_and_median, selection_median,
 };
@@ -588,10 +589,7 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
                 check(cancellation)?;
                 accumulate_global_order_chunk(values, &chunk, &filters)
             },
-            |values, other| {
-                values.extend(other);
-                Ok(())
-            },
+            |values, other| merge_order_values(values, other, cancellation),
         )?;
 
         check(cancellation)?;
@@ -636,10 +634,7 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
                 check(cancellation)?;
                 accumulate_axis_order_chunk(buckets, layout, &chunk, &filters)
             },
-            |buckets, other| {
-                merge_order_buckets(buckets, other);
-                Ok(())
-            },
+            |buckets, other| merge_order_buckets(buckets, other, cancellation),
         )?;
 
         let mut summaries = Vec::with_capacity(layout.n_out);
@@ -1127,10 +1122,31 @@ fn merge_running_stats(accumulators: &mut [RunningStats], other: Vec<RunningStat
     }
 }
 
-fn merge_order_buckets(buckets: &mut [Vec<f64>], other: Vec<Vec<f64>>) {
+fn merge_order_buckets(
+    buckets: &mut [Vec<f64>],
+    other: Vec<Vec<f64>>,
+    cancellation: Option<&Cancellation>,
+) -> Result<(), LatticeError> {
     for (lhs, rhs) in buckets.iter_mut().zip(other) {
-        lhs.extend(rhs);
+        merge_order_values(lhs, rhs, cancellation)?;
     }
+    Ok(())
+}
+
+fn merge_order_values(
+    values: &mut Vec<f64>,
+    other: Vec<f64>,
+    cancellation: Option<&Cancellation>,
+) -> Result<(), LatticeError> {
+    if cancellation.is_none() {
+        values.extend(other);
+    } else {
+        check(cancellation)?;
+        for batch in batches(&other, cancellation) {
+            values.extend_from_slice(batch?);
+        }
+    }
+    Ok(())
 }
 
 fn advance_position_in_axis_order(
@@ -1236,16 +1252,21 @@ fn compute_order_summary(
     values: &mut [f64],
     cancellation: Option<&Cancellation>,
 ) -> Result<OrderStatsSummary, LatticeError> {
+    let mut has_nan = false;
     for batch in batches(values, cancellation) {
         if batch?.iter().any(|value| value.is_nan()) {
-            return legacy_order_summary(values, cancellation);
+            has_nan = true;
+            break;
         }
+    }
+    if has_nan {
+        return legacy_order_summary(values, cancellation);
     }
     Ok(framework_order_summary(values, cancellation)?)
 }
 
 fn legacy_order_summary(
-    values: &[f64],
+    values: &mut [f64],
     cancellation: Option<&Cancellation>,
 ) -> Result<OrderStatsSummary, LatticeError> {
     check(cancellation)?;
@@ -1254,13 +1275,15 @@ fn legacy_order_summary(
     let q1 = casacore_fractile(values, 0.25);
     check(cancellation)?;
     let q3 = casacore_fractile(values, 0.75);
+    absolute_deviations(values, median, cancellation)?;
     check(cancellation)?;
+    values.sort_by(nan_safe_cmp);
     Ok(OrderStatsSummary {
         median,
         q1,
         q3,
         quartile: q3 - q1,
-        mad: casacore_madfm(values),
+        mad: median_from_sorted(values),
     })
 }
 
@@ -1268,6 +1291,10 @@ fn legacy_order_summary(
 pub(crate) fn casacore_median(values: &[f64]) -> f64 {
     let mut sorted = values.to_vec();
     sorted.sort_by(nan_safe_cmp);
+    median_from_sorted(&sorted)
+}
+
+fn median_from_sorted(sorted: &[f64]) -> f64 {
     let n = sorted.len();
     let n2 = (n - 1) / 2;
     if n.is_multiple_of(2) {
@@ -1291,13 +1318,7 @@ pub(crate) fn casacore_madfm(values: &[f64]) -> f64 {
     let med = casacore_median(values);
     let mut devs: Vec<f64> = values.iter().map(|value| (value - med).abs()).collect();
     devs.sort_by(nan_safe_cmp);
-    let n = devs.len();
-    let n2 = (n - 1) / 2;
-    if n.is_multiple_of(2) {
-        (devs[n2] + devs[n2 + 1]) / 2.0
-    } else {
-        devs[n2]
-    }
+    median_from_sorted(&devs)
 }
 
 /// NaN-safe comparator for f64 sorting (NaNs sort to the end).

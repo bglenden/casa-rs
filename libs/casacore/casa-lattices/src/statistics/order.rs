@@ -36,6 +36,21 @@ pub(crate) fn framework_order_summary(
         return Ok(OrderStatsSummary::nan());
     }
     let [q1, median, q3] = quartiles_and_median(values, cancellation)?;
+    absolute_deviations(values, median, cancellation)?;
+    Ok(OrderStatsSummary {
+        median,
+        q1,
+        q3,
+        quartile: q3 - q1,
+        mad: selection_median(values, cancellation)?,
+    })
+}
+
+pub(super) fn absolute_deviations(
+    values: &mut [f64],
+    median: f64,
+    cancellation: Option<&Cancellation>,
+) -> Result<(), StatisticsInterrupted> {
     for batch in values.chunks_mut(BATCH_SIZE) {
         check(cancellation)?;
         #[cfg(feature = "statistics-test-hooks")]
@@ -46,13 +61,7 @@ pub(crate) fn framework_order_summary(
         #[cfg(feature = "statistics-test-hooks")]
         observe(Checkpoint::DeviationBatchFinished);
     }
-    Ok(OrderStatsSummary {
-        median,
-        q1,
-        q3,
-        quartile: q3 - q1,
-        mad: selection_median(values, cancellation)?,
-    })
+    Ok(())
 }
 
 /// Casacore takes the fractile at ceil(q * n) - 1 and averages the middle

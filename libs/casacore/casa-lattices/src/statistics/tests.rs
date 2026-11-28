@@ -6,6 +6,23 @@ use super::*;
 use crate::{ArrayLattice, near_tol};
 
 #[test]
+fn interrupted_order_partial_is_not_appended() {
+    let mut values = vec![3.0, 1.0];
+    let partial = vec![2.0, -1.0];
+    let cancelled = Cancellation::new();
+    cancelled.cancel();
+    assert!(matches!(
+        merge_order_values(&mut values, partial.clone(), Some(&cancelled)),
+        Err(LatticeError::Interrupted)
+    ));
+    assert_eq!(values, [3.0, 1.0]);
+
+    let fresh = Cancellation::new();
+    merge_order_values(&mut values, partial, Some(&fresh)).unwrap();
+    assert_eq!(values, [3.0, 1.0, 2.0, -1.0]);
+}
+
+#[test]
 fn paged_statistic_columns_match_memory_and_release_their_scratch() {
     let data = ArrayD::from_shape_fn(IxDyn(&[8, 4, 3]), |index| {
         (5 * index[0]) as f64 - (2 * index[1]) as f64 + index[2] as f64

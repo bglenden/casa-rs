@@ -85,17 +85,23 @@ def test_imstat_sigint_preserves_logfile(
 
 
 @pytest.mark.parametrize(
-    ("planes", "algorithm"),
+    ("planes", "algorithm", "legacy_nan"),
     [
-        pytest.param(False, "classic", id="global-lattice"),
-        pytest.param(False, "hinges-fences", id="global-sampled"),
-        pytest.param(True, "classic", id="within-plane"),
-        pytest.param(True, "hinges-fences", id="within-robust-plane"),
+        pytest.param(False, "classic", False, id="global-lattice"),
+        pytest.param(False, "classic", True, id="global-lattice-nan"),
+        pytest.param(False, "hinges-fences", False, id="global-sampled"),
+        pytest.param(True, "classic", False, id="within-plane"),
+        pytest.param(True, "hinges-fences", False, id="within-robust-plane"),
     ],
 )
-def test_imstat_sigint_stops_before_next_deviation_batch(tmp_path, monkeypatch, planes, algorithm):
+def test_imstat_sigint_stops_before_next_deviation_batch(
+    tmp_path, monkeypatch, planes, algorithm, legacy_nan
+):
     monkeypatch.chdir(tmp_path)
     pixels = np.arange(128 * 128 * 2, dtype=np.float32).reshape(128, 128, 2)
+    if legacy_nan:
+        pixels.fill(1)
+        pixels[-1, -1, -1] = np.nan
     image = tools.image()
     assert image.fromarray("cube.im", pixels)
     assert image.done()
@@ -134,10 +140,11 @@ def test_imstat_sigint_stops_before_next_deviation_batch(tmp_path, monkeypatch, 
 
     result = tasks.imstat(**parameters)
     axes = (0, 1) if planes else (0, 1, 2)
-    median = np.median(pixels, axis=axes, keepdims=True)
     np.testing.assert_array_equal(result["npts"], [128 * 128] * 2 if planes else [pixels.size])
     np.testing.assert_allclose(result["mean"], np.atleast_1d(pixels.mean(axis=axes, dtype=np.float64)))
+    center = np.nanmedian if legacy_nan else np.median
+    median = center(pixels, axis=axes, keepdims=True)
     np.testing.assert_allclose(result["median"], median.reshape(-1))
     deviations = np.abs(pixels - median)
-    np.testing.assert_allclose(result["medabsdevmed"], np.atleast_1d(np.median(deviations, axis=axes)))
+    np.testing.assert_allclose(result["medabsdevmed"], np.atleast_1d(center(deviations, axis=axes)))
     assert b"cube.im" in logfile.read_bytes()
