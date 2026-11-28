@@ -172,10 +172,10 @@ struct CatalogRow {
     source_ref: DirectionRef,
 }
 
-// Before/after for interpolation, and before/after among the nonpositive
-// samples that may win a CASA AW covered lookup.
-type Endpoints = [Option<CandidateMetadata>; 4];
-const ENDPOINTS_PER_ANTENNA: usize = 4;
+// Before/after for interpolation. AW also allocates a second pair per
+// antenna for nonpositive samples that may win a covered lookup.
+const ENDPOINTS_PER_SET: usize = 2;
+type Endpoints = [Option<CandidateMetadata>; ENDPOINTS_PER_SET];
 
 pub(crate) const SCALAR_SCAN_BYTES_PER_ROW: usize =
     size_of::<usize>() + 5 * size_of::<Option<ScalarValue>>();
@@ -187,6 +187,8 @@ pub(crate) struct SelectedPointingCatalogMeasurements {
     source_rows_scanned: usize,
     retained_rows: usize,
     build_nanos: u64,
+    #[cfg(test)]
+    candidate_growths: usize,
 }
 
 impl SelectedPointingCatalogMeasurements {
@@ -333,12 +335,17 @@ impl MeasurementSet {
             }
             Err(error) => return Err(error),
         };
-        let endpoint_count = domain.antenna_ids().len();
+        // The observation's public bound must also admit an AW query.
+        let endpoint_count = domain
+            .antenna_ids()
+            .len()
+            .checked_mul(2)
+            .ok_or_else(byte_overflow)?;
         let endpoint_bytes = endpoint_count
             .checked_mul(size_of::<Endpoints>())
             .ok_or_else(byte_overflow)?;
         let prechecked_rows = endpoint_count
-            .checked_mul(ENDPOINTS_PER_ANTENNA)
+            .checked_mul(ENDPOINTS_PER_SET)
             .and_then(|endpoints| rows.checked_add(endpoints))
             .ok_or_else(byte_overflow)?;
         let scan_fixed_bytes =
@@ -366,6 +373,8 @@ impl MeasurementSet {
                 source_rows_scanned: rows,
                 retained_rows: rows,
                 build_nanos: 0,
+                #[cfg(test)]
+                candidate_growths: 0,
             },
             SCALAR_SCAN_BYTES_PER_ROW,
         ))
@@ -399,7 +408,13 @@ impl MeasurementSet {
         };
         let table = pointing.table();
         let mut retained = Vec::<CandidateMetadata>::new();
-        let endpoint_count = domain.antenna_ids().len();
+        let antenna_count = domain.antenna_ids().len();
+        let endpoint_count = antenna_count
+            .checked_mul(1 + usize::from(plan.aw_coverage))
+            .ok_or_else(byte_overflow)?;
+        let endpoint_slots = endpoint_count
+            .checked_mul(ENDPOINTS_PER_SET)
+            .ok_or_else(byte_overflow)?;
         let endpoint_bytes = endpoint_count
             .checked_mul(size_of::<Endpoints>())
             .ok_or_else(byte_overflow)?;
@@ -413,11 +428,15 @@ impl MeasurementSet {
         endpoints.try_reserve_exact(endpoint_count).map_err(|_| {
             MsError::InvalidInput("POINTING endpoint allocation failed".to_string())
         })?;
-        endpoints.resize(endpoint_count, [None; ENDPOINTS_PER_ANTENNA]);
+        endpoints.resize(endpoint_count, [None; ENDPOINTS_PER_SET]);
         let mut construction_peak_bytes = 0usize;
+        #[cfg(test)]
+        let mut candidate_growths = 0usize;
 
-        for block_start in (0..pointing.row_count()).step_by(plan.scan_rows_per_block) {
-            let block_end = (block_start + plan.scan_rows_per_block).min(pointing.row_count());
+        let row_count = pointing.row_count();
+        let candidate_bytes = catalog_upper_bound_bytes(1, plan.maximum_polynomial_terms)?;
+        for block_start in (0..row_count).step_by(plan.scan_rows_per_block) {
+            let block_end = (block_start + plan.scan_rows_per_block).min(row_count);
             let rows = (block_start..block_end).collect::<Vec<_>>();
             let antennas = table
                 .column_accessor("ANTENNA_ID")?
@@ -441,11 +460,9 @@ impl MeasurementSet {
                     + time_origins.capacity()
                     + orders.capacity())
                     * size_of::<Option<ScalarValue>>();
-            construction_peak_bytes = construction_peak_bytes.max(
-                retained.capacity() * size_of::<CandidateMetadata>()
-                    + endpoints.capacity() * size_of::<Endpoints>()
-                    + scan_bytes,
-            );
+            let fixed_bytes = scan_bytes
+                .checked_add(endpoint_bytes)
+                .ok_or_else(byte_overflow)?;
 
             for (slot, row_index) in rows.into_iter().enumerate() {
                 let antenna_id = required_i32(&antennas, slot, "ANTENNA_ID", row_index)?;
@@ -489,23 +506,37 @@ impl MeasurementSet {
                     && time_mjd_seconds + half_interval >= first_query_time
                     && time_mjd_seconds - half_interval <= last_query_time;
                 if plan.aw_coverage || time_inside || interval_intersects {
-                    let next_rows = retained
-                        .len()
-                        .checked_add(1 + ENDPOINTS_PER_ANTENNA * endpoints.len())
+                    if retained.len() == retained.capacity() {
+                        let next = retained.len() + 1;
+                        let required = catalog_upper_bound_bytes(
+                            next.checked_add(endpoint_slots).ok_or_else(byte_overflow)?,
+                            plan.maximum_polynomial_terms,
+                        )?
+                        .checked_add(fixed_bytes)
                         .ok_or_else(byte_overflow)?;
-                    let required =
-                        catalog_upper_bound_bytes(next_rows, plan.maximum_polynomial_terms)?
-                            .checked_add(scan_bytes)
-                            .and_then(|bytes| {
-                                bytes.checked_add(endpoints.capacity() * size_of::<Endpoints>())
-                            })
-                            .ok_or_else(byte_overflow)?;
-                    ensure_budget(required, plan.maximum_catalog_bytes)?;
-                    retained.try_reserve_exact(1).map_err(|_| {
-                        MsError::InvalidInput(
-                            "POINTING candidate metadata allocation failed".to_string(),
-                        )
-                    })?;
+                        ensure_budget(required, plan.maximum_catalog_bytes)?;
+                        let capacity = if plan.aw_coverage {
+                            let admitted =
+                                (plan.maximum_catalog_bytes - fixed_bytes) / candidate_bytes;
+                            let limit = row_count.min(admitted - endpoint_slots);
+                            // Grow geometrically within the row bound and the charge
+                            // remaining after this scalar block and its endpoints.
+                            retained.capacity().saturating_mul(2).max(next).min(limit)
+                        } else {
+                            next
+                        };
+                        retained
+                            .try_reserve_exact(capacity - retained.len())
+                            .map_err(|_| {
+                                MsError::InvalidInput(
+                                    "POINTING candidate metadata allocation failed".to_string(),
+                                )
+                            })?;
+                        #[cfg(test)]
+                        {
+                            candidate_growths += 1;
+                        }
+                    }
                     retained.push(candidate);
                 } else {
                     let endpoint_index = domain
@@ -523,15 +554,23 @@ impl MeasurementSet {
             }
             ensure_budget(
                 catalog_upper_bound_bytes(
-                    retained.capacity() + ENDPOINTS_PER_ANTENNA * endpoints.len(),
+                    retained
+                        .capacity()
+                        .checked_add(endpoint_slots)
+                        .ok_or_else(byte_overflow)?,
                     plan.maximum_polynomial_terms,
-                )?,
+                )?
+                .checked_add(if plan.aw_coverage { fixed_bytes } else { 0 })
+                .ok_or_else(byte_overflow)?,
                 plan.maximum_catalog_bytes,
             )?;
+            construction_peak_bytes = construction_peak_bytes
+                .max(retained.capacity() * size_of::<CandidateMetadata>() + fixed_bytes);
         }
 
         if plan.aw_coverage {
-            select_aw_rows(&mut retained, domain, &mut endpoints);
+            let (ordinary, nonpositive) = endpoints.split_at_mut(antenna_count);
+            select_aw_rows(&mut retained, domain, ordinary, nonpositive);
         }
         let endpoint_rows = endpoints.iter().flatten().flatten().count();
         let final_metadata_rows = retained
@@ -672,6 +711,8 @@ impl MeasurementSet {
             construction_peak_bytes,
             source_rows_scanned: pointing.row_count(),
             retained_rows: catalog_rows.len(),
+            #[cfg(test)]
+            candidate_growths,
             build_nanos: elapsed_nanos(started),
         };
         Ok(PreparedSelectedPointingCatalog {
@@ -785,6 +826,7 @@ fn select_aw_rows(
     rows: &mut Vec<CandidateMetadata>,
     domain: &SelectedPointingQueryDomain,
     endpoints: &mut [Endpoints],
+    nonpositive: &mut [Endpoints],
 ) {
     rows.sort_unstable_by_key(|row| (row.antenna_id, row.row_index));
     for own in rows.chunk_by_mut(|a, b| a.antenna_id == b.antenna_id) {
@@ -804,14 +846,14 @@ fn select_aw_rows(
                 retain_later(&mut end[0], row);
             }
             if row.interval_seconds <= 0.0 {
-                retain_later(&mut end[2], row);
+                retain_later(&mut nonpositive[index][0], row);
             }
         } else if time > span[1] {
             if !reaches {
                 retain_earlier(&mut end[1], row);
             }
             if row.interval_seconds <= 0.0 {
-                retain_earlier(&mut end[3], row);
+                retain_earlier(&mut nonpositive[index][1], row);
             }
         }
         reaches
@@ -892,7 +934,7 @@ pub(crate) fn catalog_peak_bytes(
     scan_rows: usize,
     maximum_polynomial_terms: usize,
 ) -> Option<usize> {
-    let rows = rows.checked_add(antennas.checked_mul(ENDPOINTS_PER_ANTENNA)?)?;
+    let rows = rows.checked_add(antennas.checked_mul(ENDPOINTS_PER_SET)?)?;
     let coefficients = 2 * maximum_polynomial_terms * size_of::<f64>();
     // Metadata, row index, direction cell and its heap, catalog row and its
     // coefficients, and the series' time, interval, origin and coefficients.
@@ -903,8 +945,7 @@ pub(crate) fn catalog_peak_bytes(
         + 4 * size_of::<usize>()
         + size_of::<CatalogRow>()
         + coefficients
-        + 4 * size_of::<f64>()
-        + 2 * size_of::<usize>()
+        + 3 * size_of::<f64>()
         + coefficients;
     catalog_upper_bound_bytes(rows, maximum_polynomial_terms)
         .ok()?
@@ -985,6 +1026,71 @@ mod tests {
             );
             assert!(catalog.measurements().construction_peak_bytes() <= budget);
         }
+    }
+
+    #[test]
+    fn aw_candidate_growth_is_bounded_for_a_long_narrow_selection() {
+        use casa_core::{RecordField, RecordValue, Value};
+
+        const ROWS: usize = 2048;
+        let mut ms = MeasurementSet::create_memory(crate::MeasurementSetBuilder::new()).unwrap();
+        let mut record = RecordValue::new(
+            crate::schema::pointing::REQUIRED_COLUMNS
+                .iter()
+                .map(|column| {
+                    RecordField::new(
+                        column.name,
+                        crate::test_helpers::default_value_for_def(column),
+                    )
+                })
+                .collect(),
+        );
+        record.upsert("ANTENNA_ID", Value::Scalar(ScalarValue::Int32(0)));
+        record.upsert("INTERVAL", Value::Scalar(ScalarValue::Float64(0.0)));
+        record.upsert(
+            "DIRECTION",
+            Value::Array(ArrayValue::Float64(
+                ndarray::arr2(&[[1.0], [0.0]]).into_dyn(),
+            )),
+        );
+        {
+            let mut pointing = ms.pointing_mut().unwrap();
+            for row in 0..ROWS {
+                for column in ["TIME", "TIME_ORIGIN"] {
+                    record.upsert(column, Value::Scalar(ScalarValue::Float64(row as f64)));
+                }
+                pointing.table_mut().add_row(record.clone()).unwrap();
+            }
+        }
+        let mut domain = SelectedPointingQueryDomain::builder();
+        domain.observe_row(0, 0, 1024.5).unwrap();
+        let domain = domain.finish().unwrap().unwrap();
+        let (bound, scan_bytes) = ms
+            .selected_pointing_catalog_requirements(&domain, 1)
+            .unwrap();
+        let scan = 16;
+        let budget = bound.construction_peak_bytes() + scan * scan_bytes;
+        let plan = PointingReadPlan::new(scan, 1, budget)
+            .unwrap()
+            .with_aw_coverage(true);
+        let catalog = ms
+            .prepare_selected_pointing_catalog(PointingDirectionColumn::Direction, &domain, plan)
+            .unwrap();
+        let measurements = catalog.measurements();
+        assert_eq!(measurements.source_rows_scanned(), ROWS);
+        assert_eq!(measurements.retained_rows(), 4);
+        assert!(measurements.construction_peak_bytes() <= budget);
+        eprintln!(
+            "{} scanned and {} retained rows, {} candidate buffer growths",
+            ROWS,
+            measurements.retained_rows(),
+            measurements.candidate_growths
+        );
+        assert!(
+            measurements.candidate_growths <= ROWS.ilog2() as usize + 1,
+            "narrow query grew its candidate buffer {} times",
+            measurements.candidate_growths
+        );
     }
 
     #[test]

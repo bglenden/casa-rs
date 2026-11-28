@@ -587,9 +587,25 @@ fn lost_columns(table: &Table, destination: Store) -> Vec<Loss> {
 mod tests {
     use casa_observation::AntennaId;
 
-    use super::{Partition, Scan, antenna_reads};
+    use super::{Partition, Scan, antenna_reads, partition_reads};
     use crate::observation_io::msv2::{POLYNOMIAL_TERMS, scan_rows};
     use crate::selected_pointing::catalog_peak_bytes;
+
+    /// Ordinary MSv2 samples fit a tight MSv4 conversion budget without
+    /// the rows and indices the A/W imaging query would reserve.
+    #[test]
+    fn partition_reads_charge_only_ordinary_pointing() {
+        let partitions = [Partition {
+            antennas: vec![AntennaId(0), AntennaId(1)],
+            times: Some(0.0..=100.0),
+        }];
+        let mut scan = Scan::default();
+        scan.within.push(100);
+        let reads = partition_reads(&scan, &partitions, 76_000).expect("ordinary pointing fits");
+        assert_eq!(reads.len(), 1);
+        assert_eq!(reads[0].antennas, [AntennaId(0), AntennaId(1)]);
+        assert!(partition_reads(&scan, &partitions, 60_000).is_err());
+    }
 
     /// An MSv2 destination reads each antenna once, its antennas grouped in
     /// ascending order so that each read's catalog fits the budget, the
