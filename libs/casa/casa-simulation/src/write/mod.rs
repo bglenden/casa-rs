@@ -24,6 +24,7 @@ mod data;
 pub(crate) mod geometry;
 mod grids;
 mod mixed;
+mod msv4;
 mod patch;
 mod patch_ranges;
 mod pipeline;
@@ -39,11 +40,11 @@ use std::time::Instant;
 use casa_core::ScalarValue;
 use casa_imaging_runtime::ReservationWindow;
 use casa_imaging_runtime::pass::WorkerTeam;
+use casa_ms::observation_io::creation::Msv2MainWriter;
 use casa_ms::schema::SubtableId;
 use casa_ms::{
     MeasurementSet, MeasurementSetBuilder, MeasurementSetCreateTarget, MeasurementSetWritePlan,
-    MeasurementSetWriteSession, MeasurementSetWriteTelemetry, OptionalMainColumn, ScalarColumnId,
-    VisibilityColumns,
+    MeasurementSetWriteTelemetry, OptionalMainColumn, ScalarColumnId, VisibilityColumns,
 };
 use casa_tables::{ColumnOverrides, StreamedScalarValues, TableInfo};
 
@@ -54,15 +55,22 @@ use crate::session::plan::DataPlan;
 use data::DataStage;
 pub(crate) use geometry::ArrayGeometry;
 use geometry::RowGeometry;
+pub(crate) use msv4::write_processing_set;
 pub(crate) use patch::patch_measurement_set;
 use pipeline::{NoiseContext, Pipeline};
-use resources::{MainAdmission, MainShape, NoiseScales};
+use resources::{MainAdmission, MainShape, NoiseScales, PipelineAdmission};
 
 /// The readme CASA's simulator gives MAIN.
 const MAIN_README: [&str; 2] = [
     "This is a MeasurementSet Table holding measurements from a Telescope",
     "This is a MeasurementSet Table holding simulated astronomical observations",
 ];
+
+fn creation_error(
+    what: &str,
+) -> impl Fn(casa_ms::observation_io::ObservationError) -> SimulatorError + '_ {
+    move |error| SimulatorError::raised(format!("{what}: {error}"))
+}
 
 fn write_error(what: &str) -> impl Fn(casa_ms::MeasurementSetWriteError) -> SimulatorError + '_ {
     move |error| SimulatorError::raised(format!("{what}: {error}"))
@@ -92,7 +100,6 @@ pub(crate) fn write_measurement_set(session: &Simulator) -> SimulatorResult<()> 
     let target = MeasurementSetCreateTarget::prepare(session.path(), true)
         .map_err(write_error("prepare the MeasurementSet"))?;
     let staging = target.staging_path().to_path_buf();
-    let mut ms = create_staged_ms(session, &staging)?;
     let generated = subtables::subtable_overrides(session, &planned)?;
     match shape.zip(admission) {
         Some((shape, admission)) => {
@@ -101,34 +108,42 @@ pub(crate) fn write_measurement_set(session: &Simulator) -> SimulatorResult<()> 
                 generated: &generated,
                 window: &window,
             };
-            write_main(
-                &mut ms,
-                (session, &planned),
-                &main,
-                &shape,
-                (admission, prediction),
-            )?;
+            write_main((session, &planned), &main, &shape, (admission, prediction))?;
         }
-        None => ms
-            .save_with_column_overrides(&ColumnOverrides::for_row_count(0), &generated)
-            .map_err(|error| SimulatorError::raised(format!("save the MeasurementSet: {error}")))?,
+        None => {
+            let mut ms = create_empty_ms(session, &staging)?;
+            ms.save_with_column_overrides(&ColumnOverrides::for_row_count(0), &generated)
+                .map_err(|error| {
+                    SimulatorError::raised(format!("save the MeasurementSet: {error}"))
+                })?;
+        }
     }
     target
         .commit()
         .map_err(write_error("publish the MeasurementSet"))
 }
 
-fn create_staged_ms(
+fn ms_builder() -> MeasurementSetBuilder {
+    MeasurementSetBuilder::new()
+        .with_main_column(OptionalMainColumn::Data)
+        .with_optional_subtable(SubtableId::Source)
+}
+
+fn create_empty_ms(
     session: &Simulator,
     staging: &std::path::Path,
 ) -> SimulatorResult<MeasurementSet> {
-    let mut ms = MeasurementSet::create(
-        staging,
-        MeasurementSetBuilder::new()
-            .with_main_column(OptionalMainColumn::Data)
-            .with_optional_subtable(SubtableId::Source),
-    )
-    .map_err(|error| SimulatorError::raised(format!("create the MeasurementSet: {error}")))?;
+    let mut ms = MeasurementSet::create(staging, ms_builder())
+        .map_err(|error| SimulatorError::raised(format!("create the MeasurementSet: {error}")))?;
+    prepare_descriptor(session, staging, &mut ms)?;
+    Ok(ms)
+}
+
+fn prepare_descriptor(
+    session: &Simulator,
+    staging: &std::path::Path,
+    ms: &mut MeasurementSet,
+) -> SimulatorResult<()> {
     std::fs::create_dir_all(staging).map_err(|error| {
         SimulatorError::raised(format!("create {}: {error}", staging.display()))
     })?;
@@ -138,8 +153,7 @@ fn create_staged_ms(
         sub_type: "simulator".to_string(),
         readme: MAIN_README.iter().map(|line| (*line).to_string()).collect(),
     });
-    subtables::write_subtables(&mut ms, session)?;
-    Ok(ms)
+    subtables::write_subtables(ms, session)
 }
 
 /// The cell shape every scan shares: (correlations, channels).
@@ -264,28 +278,28 @@ struct MainTarget<'a> {
 /// Write MAIN and save the MeasurementSet, holding `admission` until done,
 /// predicting with `prediction` when the session predicts.
 fn write_main<'s>(
-    ms: &mut MeasurementSet,
     (session, planned): (&'s Simulator, &[PlannedScan<'_>]),
     target: &MainTarget<'_>,
     shape: &MainShape<'_>,
     (admission, prediction): (MainAdmission, Option<DataStage<'s>>),
 ) -> SimulatorResult<()> {
     let started = Instant::now();
-    let mut writer = MainWriter::start(target.staging, admission.plan.clone())?;
+    let (mut ms, mut writer) = MainWriter::create(session, target.staging, admission.plan.clone())?;
     let summary = run_main(
         session,
         planned,
         shape,
-        (&admission, prediction),
+        (&admission.pipeline, prediction),
         &mut writer,
         0..session.scans().len(),
         0..shape.rows,
     )?;
-    let batch_rows = admission.plan.batch_rows().max(1);
+    let admission = admission.pipeline;
+    let batch_rows = admission.batch_rows.max(1);
     let backend = summary.backend;
     let setup = summary.setup;
     let finishing = Instant::now();
-    let written = writer.finish(ms, shape.rows, target.generated)?;
+    let written = writer.finish(&mut ms, target.generated)?;
     let finish = finishing.elapsed();
     let times = &summary.times;
     let (grid_preparations, grid_prepare) = summary.grids;
@@ -331,13 +345,13 @@ fn run_main<'s>(
     session: &'s Simulator,
     planned: &[PlannedScan<'s>],
     shape: &MainShape<'_>,
-    (admission, mut prediction): (&MainAdmission, Option<DataStage<'s>>),
-    writer: &mut MainWriter,
+    (admission, mut prediction): (&PipelineAdmission, Option<DataStage<'s>>),
+    writer: &mut impl BatchWriter,
     scan_scope: std::ops::Range<usize>,
     rows: std::ops::Range<usize>,
 ) -> SimulatorResult<RunSummary> {
     let started = Instant::now();
-    let batch_rows = admission.plan.batch_rows().max(1);
+    let batch_rows = admission.batch_rows.max(1);
     if let Some(stage) = &mut prediction {
         stage.start(
             admission.block_rows,
@@ -415,31 +429,51 @@ struct ScalarColumns {
     constants: [(ScalarColumnId, &'static str); 11],
 }
 
+/// A batch destination for the common geometry and prediction pipeline.
+/// MSv2 streams scalar runs separately from its recycled payload columns.
+/// MSv4 declares those coordinates before receiving whole integrations.
+trait BatchWriter: Send {
+    fn visibility_columns(&mut self) -> VisibilityColumns;
+    fn push_scalars(
+        &mut self,
+        scan: PlannedScan<'_>,
+        time_s: f64,
+        rows: &[RowGeometry],
+    ) -> SimulatorResult<()>;
+    fn send(&mut self, batch: VisibilityColumns) -> SimulatorResult<()>;
+}
+
 /// MAIN's write session and the scalar runs of the integration being
 /// pushed.
 struct MainWriter {
-    session: MeasurementSetWriteSession,
+    session: Msv2MainWriter,
     columns: ScalarColumns,
     antenna1: Vec<i32>,
     antenna2: Vec<i32>,
     flag_row: Vec<bool>,
     variable: Option<(usize, usize)>,
-    recycled: Option<VisibilityColumns>,
     _reservation: casa_imaging_runtime::Reservation,
 }
 
 impl MainWriter {
-    fn start(staging: &std::path::Path, plan: MeasurementSetWritePlan) -> SimulatorResult<Self> {
-        let session = MeasurementSetWriteSession::start(staging, plan)
-            .map_err(write_error("start the MAIN write"))?;
-        Self::from_session(session)
+    fn create(
+        simulator: &Simulator,
+        staging: &std::path::Path,
+        plan: MeasurementSetWritePlan,
+    ) -> SimulatorResult<(MeasurementSet, Self)> {
+        // The native creation writer creates the descriptor and MAIN row
+        // plans together. The simulator then adds its own subtables.
+        let (mut ms, writer) = Msv2MainWriter::create(staging, ms_builder(), plan)
+            .map_err(creation_error("start the MeasurementSet creation"))?;
+        prepare_descriptor(simulator, staging, &mut ms)?;
+        Ok((ms, Self::from_session(writer)?))
     }
 
-    fn from_session(session: MeasurementSetWriteSession) -> SimulatorResult<Self> {
+    fn from_session(session: Msv2MainWriter) -> SimulatorResult<Self> {
         let id = |name: &str| {
             session
                 .scalar_column(name)
-                .map_err(write_error("MAIN scalar column"))
+                .map_err(creation_error("MAIN scalar column"))
         };
         let constant = |name: &'static str| id(name).map(|column| (column, name));
         let columns = ScalarColumns {
@@ -469,11 +503,22 @@ impl MainWriter {
             antenna2: Vec::new(),
             flag_row: Vec::new(),
             variable: None,
-            recycled: None,
             _reservation: casa_imaging_runtime::Reservation::none(),
         })
     }
 
+    fn finish(
+        self,
+        ms: &mut MeasurementSet,
+        generated: &casa_ms::SubtableColumnOverrides,
+    ) -> SimulatorResult<MeasurementSetWriteTelemetry> {
+        self.session
+            .finish_with_subtables(ms, generated)
+            .map_err(creation_error("finish the MAIN write"))
+    }
+}
+
+impl BatchWriter for MainWriter {
     /// Append the scalar columns of one integration of `scan` at stored
     /// TIME `time_s`, whose rows are `rows`.
     fn push_scalars(
@@ -494,7 +539,7 @@ impl MainWriter {
             self.flag_row.push(row.flagged);
         }
         let count = rows.len();
-        let error = write_error("MAIN scalars");
+        let error = creation_error("MAIN scalars");
         let columns = &self.columns;
         let session = &mut self.session;
         session
@@ -514,7 +559,7 @@ impl MainWriter {
             .map_err(&error)?;
         for column in [columns.time, columns.time_centroid] {
             session
-                .push_repeated_scalar(column, Some(ScalarValue::Float64(time_s)), count)
+                .push_repeated_scalar(column, ScalarValue::Float64(time_s), count)
                 .map_err(&error)?;
         }
         for (column, name) in columns.constants {
@@ -531,7 +576,7 @@ impl MainWriter {
                 _ => ScalarValue::Int32(0),
             };
             session
-                .push_repeated_scalar(column, Some(value), count)
+                .push_repeated_scalar(column, value, count)
                 .map_err(&error)?;
         }
         Ok(())
@@ -540,36 +585,14 @@ impl MainWriter {
     /// An empty batch, with the buffers of one the writer has finished with
     /// when there is one.
     fn visibility_columns(&mut self) -> VisibilityColumns {
-        if self.variable.is_some() {
-            self.recycled.take().unwrap_or_default()
-        } else {
-            self.session.visibility_columns()
-        }
+        self.session.visibility_columns(self.variable.is_some())
     }
 
     /// Queue a full batch for the writer's thread; blocks while its queue is
     /// full.
     fn send(&mut self, batch: VisibilityColumns) -> SimulatorResult<()> {
-        if let Some(cell) = self.variable {
-            return mixed::send(self, batch, cell);
-        }
         self.session
-            .send_visibility_columns(batch)
-            .map_err(write_error("MAIN visibility batch"))
-    }
-
-    fn finish(
-        self,
-        ms: &mut MeasurementSet,
-        row_count: usize,
-        generated: &casa_ms::SubtableColumnOverrides,
-    ) -> SimulatorResult<MeasurementSetWriteTelemetry> {
-        let mut overrides = ColumnOverrides::for_row_count(row_count);
-        for column in ["DATA", "FLAG", "FLAG_CATEGORY", "UVW", "WEIGHT", "SIGMA"] {
-            overrides.insert_deferred(column);
-        }
-        self.session
-            .save_and_finish_with_subtables(ms, &overrides, generated)
-            .map_err(write_error("finish the MAIN write"))
+            .send_visibility_columns(batch, self.variable)
+            .map_err(creation_error("MAIN visibility batch"))
     }
 }

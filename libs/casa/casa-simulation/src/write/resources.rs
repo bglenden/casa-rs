@@ -159,11 +159,17 @@ impl NoiseScales {
     }
 }
 
-/// What `close` was admitted: the write plan, the workers that fit, and the
-/// memory, held until the write ends.
+/// The regular MSv2 writer and its admitted producer.
 #[derive(Debug)]
 pub(super) struct MainAdmission {
     pub(super) plan: MeasurementSetWritePlan,
+    pub(super) pipeline: PipelineAdmission,
+}
+
+/// The workers and memory admitted for a format's batch size.
+#[derive(Debug)]
+pub(super) struct PipelineAdmission {
+    pub(super) batch_rows: usize,
     pub(super) cores: CoreAllocation,
     /// The policy's allocation, before admission shrank it.
     pub(super) policy_cores: CoreAllocation,
@@ -204,21 +210,21 @@ pub(super) fn admit_main_write(
         },
     )
     .map_err(SimulatorError::admission)?;
-    admit_pipeline(resources, shape, prediction, plan, reservation)
+    let pipeline = admit_pipeline(resources, shape, prediction, plan.batch_rows(), reservation)?;
+    Ok(MainAdmission { plan, pipeline })
 }
 
 pub(super) fn admit_pipeline(
     resources: &SessionResources,
     shape: &MainShape<'_>,
     prediction: Option<&DataStage<'_>>,
-    plan: MeasurementSetWritePlan,
+    batch_rows: usize,
     mut reservation: Reservation,
-) -> SimulatorResult<MainAdmission> {
+) -> SimulatorResult<PipelineAdmission> {
     let (host, policy) = (resources.host(), resources.policy());
     let policy_cores = resources
         .close_cores(prediction.is_some_and(|stage| stage.backend() == BackendChoice::Metal));
     let free = free_memory(host, policy);
-    let batch_rows = plan.batch_rows();
     let demand = |cores: CoreAllocation, block_rows: usize| {
         pipeline_bytes(shape, batch_rows, cores)
             + prediction.map_or(0, |stage| {
@@ -249,8 +255,8 @@ pub(super) fn admit_pipeline(
     .map_err(SimulatorError::admission)?;
     reservation.join(pipeline);
     let grid_bytes = admit_field_grids(resources, prediction, &mut reservation)?;
-    Ok(MainAdmission {
-        plan,
+    Ok(PipelineAdmission {
+        batch_rows,
         cores,
         policy_cores,
         block_rows,
@@ -415,12 +421,17 @@ mod tests {
     #[test]
     fn the_writer_takes_half_the_budget_and_the_pipeline_fits_the_rest() {
         let admitted = admit_main_write(&resources(1 << 30, 5), &shape(), None).expect("fits");
-        assert_eq!(admitted.cores.streaming_workers, 4);
+        assert_eq!(admitted.pipeline.cores.streaming_workers, 4);
         let writer = admitted.plan.maximum_resident_bytes() as u64;
         assert!(writer <= 1 << 29);
         assert_eq!(
-            admitted.reservation.memory(),
-            writer + pipeline_bytes(&shape(), admitted.plan.batch_rows(), admitted.cores)
+            admitted.pipeline.reservation.memory(),
+            writer
+                + pipeline_bytes(
+                    &shape(),
+                    admitted.plan.batch_rows(),
+                    admitted.pipeline.cores
+                )
         );
     }
 
@@ -461,8 +472,8 @@ mod tests {
         assert!(two <= left, "two workers fit: {two} of {left}");
         assert!(pipeline_bytes(&shape, plan.batch_rows(), four.at_most(3)) > left);
         let admitted = admit_main_write(&resources(budget, 5), &shape, None).expect("two fit");
-        assert_eq!(admitted.policy_cores, four);
-        assert_eq!(admitted.cores, four.at_most(2));
+        assert_eq!(admitted.pipeline.policy_cores, four);
+        assert_eq!(admitted.pipeline.cores, four.at_most(2));
         drop(admitted);
         let error = admit_main_write(
             &resources(budget, 5),

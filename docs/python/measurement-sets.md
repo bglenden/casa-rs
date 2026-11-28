@@ -8,6 +8,7 @@ in `.ps.zarr`.
 
 | Public Python parameter | Operation | MSv2 | MSv4 | End-to-end tests |
 | --- | --- | --- | --- | --- |
+| `tools.simulator.open(ms=…, outformat=…)` | Create a simulated observation at `close()` | Default or `outformat="msv2"` | `outformat="msv4"` with [simulation limits](#simulate-an-observation) | [CASA and XRADIO simulation checks][simulator-tests] |
 | `tasks.importvla(vis=…, outformat=…)` | Create a MeasurementSet from a VLA archive | Default or `outformat="msv2"` | `outformat="msv4"` with [archive limits](#import-vla-archives) | [CASA and XRADIO archive checks][importvla-tests] |
 | `tasks.msconvert(vis=…)` | Read an existing MeasurementSet | Yes | Yes | [All four input/output pairings][format-tests] |
 | `tasks.msconvert(outputvis=…, outformat=…)` | Create a new MeasurementSet | `outformat="msv2"` | `outformat="msv4"` | [All four input/output pairings][format-tests] |
@@ -17,6 +18,7 @@ in `.ps.zarr`.
 | `tasks.gencal(vis=…)` | Read metadata for explicit calibration prescriptions | Yes | `amp`, `ph`, `sbd`, `mbd`, `opac`, [manual antenna offsets](#prescribe-calibration-values) | [Create and accumulate priors on both stores][gencal-tests] |
 | `tasks.listcal(vis=…)` | Read metadata for a CASA calibration listing | Yes | Fixed fields, terminal and file output | [Verify file output on both stores][listcal-tests] |
 
+[simulator-tests]: https://github.com/bglenden/casa-rs/blob/main/tools/simulation/sm_creation_oracle.py
 [importvla-tests]: https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/importvla_oracle.py
 [format-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_msconvert_formats.py
 [rerefant-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_rerefant_formats.py
@@ -44,6 +46,29 @@ The input format is detected from the store. Give both `outputvis` and
 `outformat` to choose its destination and format explicitly. With
 `outformat` omitted, the task selects the other format. An existing
 destination requires `overwrite=True`.
+
+## Simulate an observation
+
+```python
+from casars.tools import simulator
+
+sm = simulator()
+sm.open("simulation.ps.zarr", outformat="msv4")
+# Set array, feeds, fields, windows, and observe or predict as with MSv2.
+# sm.close() publishes a configured observation.
+```
+
+MSv2 is the default, regardless of the destination's suffix. MSv4 creation
+requires a fresh destination, at least one populated dataset, and distinct
+XRADIO antenna names for the antennas used. Both formats support different
+channel and correlation counts across spectral windows. MSv4 carries the
+field phase centres, scan intents, and sampled antenna beam pointings.
+Single-dish spectrum prediction requires MSv2.
+
+At close, MSv4 reports individual MSv2 columns it cannot carry, including
+`SIGMA`, the stated observation extent, and the pointing target and interval.
+It folds any row flags into the element flags. Use `outformat="msv2"` when the
+original row flag or those metadata are required.
 
 ## Import VLA archives
 

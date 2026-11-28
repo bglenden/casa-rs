@@ -179,6 +179,7 @@ pub(crate) struct Method {
     pub(crate) status: Status,
     /// Whether the method writes persistent data.
     pub(crate) mutating: bool,
+    pub(crate) keyword_only: &'static [&'static str],
 }
 
 /// A parameter.
@@ -203,6 +204,7 @@ pub(crate) const fn method(
         returns,
         status,
         mutating: false,
+        keyword_only: &[],
     }
 }
 
@@ -252,7 +254,7 @@ impl ToolSurface {
 
     /// The Python projection of the class: its module and class, the
     /// parameter order of the constructor (keyword-only) and of each method
-    /// (positional or keyword), which JSON Schema's unordered properties do
+    /// (including keyword-only extensions), which JSON Schema properties do
     /// not carry.
     pub(crate) fn python_projection(&self) -> JsonValue {
         let names = |parameters: &[Parameter]| {
@@ -266,13 +268,23 @@ impl ToolSurface {
             .iter()
             .map(|method| (method.name.to_string(), json!(names(method.parameters))))
             .collect::<Map<_, _>>();
-        json!({
+        let keyword_only = self
+            .methods
+            .iter()
+            .filter(|method| !method.keyword_only.is_empty())
+            .map(|method| (method.name.to_string(), json!(method.keyword_only)))
+            .collect::<Map<_, _>>();
+        let mut projection = json!({
             "name": self.name,
             "class_name": self.name,
             "module": self.module,
             "constructor_keyword_only": names(self.constructor),
             "method_parameters": methods,
-        })
+        });
+        if !keyword_only.is_empty() {
+            projection["method_keyword_only"] = JsonValue::Object(keyword_only);
+        }
+        projection
     }
 
     /// Python annotations: the class and what casa-rs does with each method.

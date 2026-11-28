@@ -280,7 +280,10 @@ fn the_measurement_set_is_the_same_for_any_worker_count_and_budget() {
     let batch_rows = |memory: u64, workers: usize| {
         let admitted =
             admit_main_write(&resources(workers, memory), &shape, None).expect("admitted");
-        (admitted.plan.batch_rows(), admitted.cores.streaming_workers)
+        (
+            admitted.plan.batch_rows(),
+            admitted.pipeline.cores.streaming_workers,
+        )
     };
     let (large_rows, four) = batch_rows(large, 5);
     let (small_rows, small_four) = batch_rows(small, 5);
@@ -349,7 +352,7 @@ fn the_predicted_measurement_set_is_the_same_for_any_worker_count_and_budget() {
             .expect("the session predicts");
         let fits = |budget: u64| {
             admit_main_write(&resources(5, budget), &shape, Some(&stage)).is_ok_and(|admitted| {
-                admitted.cores.streaming_workers == 4 && admitted.plan.batch_rows() >= 97
+                admitted.pipeline.cores.streaming_workers == 4 && admitted.plan.batch_rows() >= 97
             })
         };
         let (mut low, mut high) = (1_u64, large);

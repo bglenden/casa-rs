@@ -9,6 +9,7 @@ table. The behaviour tests follow CASA 6.7.6's probed outcomes.
 
 from __future__ import annotations
 
+from contextlib import closing
 import gc
 import inspect
 import json
@@ -49,6 +50,7 @@ IMPLEMENTED = {
 }
 NOT_YET_IMPLEMENTED: set[str] = set()
 DISABLED_IN_CASA = {"setbandpass", "setpa", "setpointingerror"}
+OPEN_EXTENSION = {"name": "outformat", "kind": "KEYWORD_ONLY", "default": "'msv2'"}
 
 
 @pytest.fixture(scope="module")
@@ -97,7 +99,8 @@ def test_every_casa_method_exists_with_casas_signature() -> None:
         CASA["methods"]
     )
     for name, parameters in CASA["methods"].items():
-        assert describe(getattr(simulator, name)) == parameters, name
+        expected = parameters + [OPEN_EXTENSION] if name == "open" else parameters
+        assert describe(getattr(simulator, name)) == expected, name
 
 
 def test_signatures_match_a_live_casa_when_one_is_importable() -> None:
@@ -107,7 +110,10 @@ def test_signatures_match_a_live_casa_when_one_is_importable() -> None:
         name for name, _ in inspect.getmembers(live, inspect.isfunction) if not name.startswith("_")
     }
     for name in public_methods(simulator):
-        assert describe(getattr(simulator, name)) == describe(getattr(live, name)), name
+        expected = describe(getattr(live, name))
+        if name == "open":
+            expected.append(OPEN_EXTENSION)
+        assert describe(getattr(simulator, name)) == expected, name
 
 
 CONSTRUCTOR = [("memory_budget", None), ("backend", "auto"), ("workers", None)]
@@ -164,6 +170,7 @@ def test_the_bundle_describes_the_class_signatures() -> None:
     methods = {method["name"]: method for method in contract["methods"]}
     assert set(methods) == public_methods(simulator)
     assert set(projection["method_parameters"]) == set(methods)
+    assert projection["method_keyword_only"] == {"open": ["outformat"]}
     for name, method in methods.items():
         properties = method["parameters_schema"].get("properties", {})
         order = projection["method_parameters"][name]
@@ -173,7 +180,10 @@ def test_the_bundle_describes_the_class_signatures() -> None:
         assert [p.name for p in found] == order, name
         for parameter in found:
             default = properties[parameter.name]["default"]
-            assert parameter.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+            keyword_only = projection["method_keyword_only"].get(name, [])
+            expected_kind = (inspect.Parameter.KEYWORD_ONLY if parameter.name in keyword_only
+                             else inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            assert parameter.kind is expected_kind
             assert parameter.default == default, (name, parameter.name)
             assert type(parameter.default) is type(default), (name, parameter.name)
     constructor = contract["constructors"][0]["parameters_schema"]["properties"]
@@ -190,10 +200,11 @@ def test_the_bundle_describes_the_class_signatures() -> None:
 
 
 def configure(sm: simulator, *, autocorrelations: bool = True, telescope: str = "VLA",
-              stokes: str = "RR LL") -> None:
+              stokes: str = "RR LL", duplicate_names: bool = False) -> None:
     assert sm.setconfig(
         telescopename=telescope, x=X, y=Y, z=Z, dishdiameter=[25.0], mount=["ALT-AZ"],
-        antname=["A1", "A2", "A3", "A4"], padname=["P1", "P2", "P3", "P4"],
+        antname=["A"] if duplicate_names else ["A1", "A2", "A3", "A4"],
+        padname=["P"] if duplicate_names else ["P1", "P2", "P3", "P4"],
         coordsystem="global",
     )
     assert sm.setspwindow(
@@ -204,6 +215,78 @@ def configure(sm: simulator, *, autocorrelations: bool = True, telescope: str = 
     assert sm.setfield(sourcename="F", sourcedirection=DIRECTION)
     if not autocorrelations:
         assert sm.setauto(0.0)
+
+
+@needs_measures
+def test_explicit_msv4_session_reopens_as_msv4(tmp_path: Path, capfd) -> None:
+    path = tmp_path / "explicit.ms"  # The format is independent of the suffix.
+    sm = simulator()
+    assert sm.open(str(path), outformat="msv4")
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="20s")
+    assert not path.exists()
+    assert sm.close()
+    assert "SIGMA is not carried" in capfd.readouterr().err
+    assert not (path / "table.dat").exists()
+
+    reopened = tmp_path / "reopened.ms"
+    result = casars.tasks.msconvert(
+        vis=str(path), outputvis=str(reopened), outformat="msv2", padding="omitted"
+    )
+    assert result.successful, result.describe()
+    assert result.value["informat"] == "msv4"
+    with closing(open_table(reopened)) as table:
+        assert table.nrows() == 20
+        np.testing.assert_array_equal(np.unique(read_column(table, "TIME")),
+                                      58849.0 * 86400.0 + np.array([5.0, 15.0]))
+
+
+@needs_measures
+def test_creation_format_refusals_leave_existing_session_or_product(tmp_path: Path) -> None:
+    path = tmp_path / "kept.ms"
+    sm = simulator()
+    assert sm.open(str(path), outformat="msv4")
+    with pytest.raises(ValueError, match="outformat"):
+        sm.open(str(tmp_path / "invalid"), outformat="fits")
+    assert sm.name() == str(path)
+    assert not list(tmp_path.iterdir())
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="20s")
+    assert sm.close()
+
+    original = (path / "zarr.json").read_bytes()
+    assert sm.open(str(path), outformat="msv4")
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="10s")
+    with pytest.raises(RuntimeError, match="exists"):
+        sm.close()
+    assert (path / "zarr.json").read_bytes() == original
+    assert list(tmp_path.iterdir()) == [path]
+
+
+@needs_measures
+@pytest.mark.parametrize("duplicate_names", [False, True])
+def test_empty_or_ambiguous_msv4_does_not_publish(tmp_path: Path, duplicate_names: bool) -> None:
+    sm = simulator()
+    assert sm.open(str(tmp_path / "invalid.ps.zarr"), outformat="msv4")
+    if duplicate_names:
+        configure(sm, duplicate_names=True)
+        assert sm.observe("F", "L", starttime="0s", stoptime="10s")
+    expected = "distinct antenna names" if duplicate_names else "needs a populated dataset"
+    with pytest.raises(NotImplementedError, match=expected):
+        sm.close()
+    assert not list(tmp_path.iterdir())
+
+
+@needs_measures
+def test_msv4_refuses_an_unadmitted_time_axis(tmp_path: Path) -> None:
+    sm = simulator(memory_budget=32 << 20, workers=1, backend="cpu")
+    assert sm.open(str(tmp_path / "too-long.ps.zarr"), outformat="msv4")
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="10000000s")
+    with pytest.raises(RuntimeError, match="MSv4 catalogue and grid coordinates"):
+        sm.close()
+    assert not list(tmp_path.iterdir())
 
 
 @needs_measures
@@ -1307,6 +1390,20 @@ def test_wproject_predicts_and_refuses_as_casa_does(
     with pytest.raises(RuntimeError, match="at least two planes"):
         sm.predict(imagename=str(model))
     sm.close()
+
+
+@needs_measures
+def test_msv4_refuses_single_dish_predictions_before_shutdown(tmp_path: Path) -> None:
+    path = tmp_path / "single-dish.ps.zarr"
+    sm = simulator()
+    assert sm.open(str(path), outformat="msv4")
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="10s")
+    assert sm.setoptions(ftmachine="sd", gridfunction="BOX")
+    assert sm.predict(imagename=str(sky_model(tmp_path)))
+    with pytest.raises(NotImplementedError, match="single-dish spectra"):
+        sm.close()
+    assert not path.exists()
 
 
 @needs_measures
