@@ -141,8 +141,217 @@ fn flush_writes_changes_to_disk() {
 
 #[test]
 fn flush_without_path_fails() {
-    let table = Table::new();
+    let mut table = Table::new();
     assert!(table.flush().is_err());
+}
+
+#[test]
+fn flush_keeps_mixed_manager_assignments_and_values() {
+    let dir = tempfile::tempdir().unwrap();
+    let opts = TableOptions::new(dir.path()).with_data_manager(DataManagerKind::StandardStMan);
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::scalar("flag", PrimitiveType::Bool),
+    ])
+    .unwrap();
+    let mut table = Table::with_schema(schema);
+    table
+        .add_row(RecordValue::new(vec![
+            RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
+            RecordField::new("flag", Value::Scalar(ScalarValue::Bool(false))),
+        ]))
+        .unwrap();
+    let bindings = HashMap::from([(
+        "flag".to_owned(),
+        ColumnBinding {
+            data_manager: DataManagerKind::StManAipsIO,
+            tile_shape: None,
+        },
+    )]);
+    table.save_with_bindings(opts.clone(), &bindings).unwrap();
+    let mut table = Table::open(opts.clone()).unwrap();
+    let managers = table.data_manager_info().to_vec();
+    table
+        .set_cell(0, "id", Value::Scalar(ScalarValue::Int32(2)))
+        .unwrap();
+    table
+        .set_cell(0, "flag", Value::Scalar(ScalarValue::Bool(true)))
+        .unwrap();
+    table.flush().unwrap();
+    let fresh = Table::open(opts).unwrap();
+    assert_eq!(fresh.data_manager_info(), managers);
+    assert_eq!(
+        fresh.get_scalar_cell(0, "id").unwrap(),
+        &ScalarValue::Int32(2)
+    );
+    assert_eq!(
+        fresh.get_scalar_cell(0, "flag").unwrap(),
+        &ScalarValue::Bool(true)
+    );
+}
+
+#[test]
+fn a_second_flush_uses_the_manager_of_an_added_column() {
+    let dir = tempfile::tempdir().unwrap();
+    let opts = TableOptions::new(dir.path()).with_data_manager(DataManagerKind::StandardStMan);
+    let schema = TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)]).unwrap();
+    let mut table = Table::with_schema(schema);
+    table
+        .add_row(RecordValue::new(vec![RecordField::new(
+            "id",
+            Value::Scalar(ScalarValue::Int32(1)),
+        )]))
+        .unwrap();
+    table.save(opts.clone()).unwrap();
+    let mut table = Table::open(opts.clone()).unwrap();
+    table
+        .add_column(
+            ColumnSchema::scalar("added", PrimitiveType::Int32),
+            Some(Value::Scalar(ScalarValue::Int32(0))),
+        )
+        .unwrap();
+    table.flush().unwrap();
+    table
+        .set_cell(0, "added", Value::Scalar(ScalarValue::Int32(7)))
+        .unwrap();
+    table.flush().unwrap();
+    assert_eq!(
+        Table::open(opts)
+            .unwrap()
+            .get_scalar_cell(0, "added")
+            .unwrap(),
+        &ScalarValue::Int32(7)
+    );
+}
+
+#[test]
+fn flush_keeps_a_named_aipsio_manager_when_rewriting_a_string() {
+    use crate::storage::{stman_aipsio::write_named_stman_file, table_control::read_table_dat};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    let opts = TableOptions::new(path);
+    let schema =
+        TableSchema::new(vec![ColumnSchema::scalar("name", PrimitiveType::String)]).unwrap();
+    let mut table = Table::with_schema(schema);
+    let string = |text: &str| Value::Scalar(ScalarValue::String(text.into()));
+    table
+        .add_row(RecordValue::new(vec![RecordField::new(
+            "name",
+            string("old"),
+        )]))
+        .unwrap();
+    table.save(opts.clone()).unwrap();
+    let dat = read_table_dat(&path.join("table.dat")).unwrap();
+    write_named_stman_file(
+        &path.join("table.f0"),
+        0,
+        &dat.table_desc.columns,
+        table.inner.rows().unwrap(),
+        casa_aipsio::ByteOrder::BigEndian,
+        "CustomAips",
+    )
+    .unwrap();
+    let mut table = Table::open(opts.clone()).unwrap();
+    assert_eq!(table.data_manager_info()[0].name, "CustomAips");
+    table
+        .set_cell(0, "name", string("a different string width"))
+        .unwrap();
+    table.flush().unwrap();
+    let fresh = Table::open(opts).unwrap();
+    assert_eq!(fresh.data_manager_info()[0].name, "CustomAips");
+    assert_eq!(
+        fresh.get_scalar_cell(0, "name").unwrap(),
+        &ScalarValue::String("a different string width".into())
+    );
+}
+
+#[test]
+fn flush_preflights_virtual_cells_before_touching_a_physical_group() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("target");
+    let opts = TableOptions::new(dir.path().join("forward"));
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::scalar("linked", PrimitiveType::Int32),
+    ])
+    .unwrap();
+    let mut table = Table::with_schema(schema);
+    for value in [1, 2] {
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("id", Value::Scalar(ScalarValue::Int32(value))),
+                RecordField::new("linked", Value::Scalar(ScalarValue::Int32(value))),
+            ]))
+            .unwrap();
+    }
+    table.save(TableOptions::new(&target)).unwrap();
+    table.bind_forward_column("linked", &target).unwrap();
+    table.save(opts.clone()).unwrap();
+    let generation = crate::TableWriteLock::read_modify_counter(opts.path()).unwrap();
+    let mut table = Table::open(opts.clone()).unwrap();
+    table
+        .set_cell(0, "id", Value::Scalar(ScalarValue::Int32(11)))
+        .unwrap();
+    table
+        .set_cell(1, "linked", Value::Scalar(ScalarValue::Int32(22)))
+        .unwrap();
+    assert!(table.flush().is_err());
+    assert_eq!(
+        crate::TableWriteLock::read_modify_counter(opts.path()).unwrap(),
+        generation
+    );
+    let read = Table::open(opts).unwrap();
+    assert_eq!(
+        read.get_scalar_cell(0, "id").unwrap(),
+        &ScalarValue::Int32(1)
+    );
+    assert_eq!(
+        read.get_scalar_cell(1, "linked").unwrap(),
+        &ScalarValue::Int32(2)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn flush_rejects_a_manager_inode_shared_with_another_table() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = [dir.path().join("first"), dir.path().join("second")];
+    let options = paths
+        .each_ref()
+        .map(|path| TableOptions::new(path).with_data_manager(DataManagerKind::StandardStMan));
+    let schema = TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)]).unwrap();
+    let mut table = Table::with_schema(schema);
+    table
+        .add_row(RecordValue::new(vec![RecordField::new(
+            "id",
+            Value::Scalar(ScalarValue::Int32(1)),
+        )]))
+        .unwrap();
+    for opts in &options {
+        table.save(opts.clone()).unwrap();
+    }
+    let second_file = paths[1].join("table.f0");
+    std::fs::remove_file(&second_file).unwrap();
+    std::fs::hard_link(paths[0].join("table.f0"), &second_file).unwrap();
+    let generations = || {
+        paths
+            .each_ref()
+            .map(|path| crate::TableWriteLock::read_modify_counter(path).unwrap())
+    };
+    let before = generations();
+    let mut writer = Table::open(options[0].clone()).unwrap();
+    writer
+        .set_cell(0, "id", Value::Scalar(ScalarValue::Int32(2)))
+        .unwrap();
+    assert!(writer.flush().is_err());
+    assert_eq!(generations(), before);
+    for opts in options {
+        assert_eq!(
+            Table::open(opts).unwrap().get_scalar_cell(0, "id").unwrap(),
+            &ScalarValue::Int32(1)
+        );
+    }
 }
 
 #[test]

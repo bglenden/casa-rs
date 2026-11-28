@@ -22,7 +22,6 @@ impl CompositeStorage {
         dm_kind: crate::table::DataManagerKind,
         dm_group_name: Option<&str>,
         casacore_default_ssm: bool,
-        preserve_ssm_group_name: bool,
         big_endian: bool,
         tile_shape: Option<&[usize]>,
     ) -> Result<(), StorageError> {
@@ -148,22 +147,16 @@ impl CompositeStorage {
                     .filter(|c| !virtual_columns.contains(&c.col_name))
                     .cloned()
                     .collect();
-                dm_data = if casacore_default_ssm || preserve_ssm_group_name {
-                    write_ssm_file_with_options(
-                        &data_path,
-                        &stored_col_descs,
-                        rows_for_data,
-                        big_endian,
-                        casacore_default_ssm,
-                        if preserve_ssm_group_name {
-                            dm_group_name.unwrap_or("StandardStMan")
-                        } else {
-                            "SSM"
-                        },
-                    )?
-                } else {
-                    write_ssm_file(&data_path, &stored_col_descs, rows_for_data, big_endian)?
-                };
+                let group_name = dm_group_name.unwrap_or(&dm_type_name);
+                let existing_name = control.existing_ssm_name(0, group_name);
+                dm_data = write_ssm_file_with_options(
+                    &data_path,
+                    &stored_col_descs,
+                    rows_for_data,
+                    big_endian,
+                    casacore_default_ssm,
+                    existing_name.as_deref().unwrap_or(group_name),
+                )?;
                 let mut table_dat = if has_virtual {
                     TableDatContents::from_snapshot_with_virtual(
                         schema,
@@ -190,7 +183,7 @@ impl CompositeStorage {
                 apply_physical_dm_descriptor_group(
                     &mut table_dat,
                     &dm_type_name,
-                    dm_group_name.unwrap_or(&dm_type_name),
+                    group_name,
                     virtual_columns,
                 );
                 control.publish(&table_dat)?;
@@ -529,6 +522,19 @@ impl CompositeStorage {
                 groups[0].col_names.push(col_name.to_string());
             }
         }
+        if !groups[0].col_names.is_empty() && default_dm == DataManagerKind::StandardStMan {
+            let first_name = groups[0].dm_group_name.clone();
+            for group in groups.iter_mut().skip(1).filter(|group| {
+                group.dm_kind == DataManagerKind::StandardStMan && group.dm_group_name == first_name
+            }) {
+                if control
+                    .existing_ssm_name(group.seq_nr, &first_name)
+                    .is_none()
+                {
+                    group.dm_group_name = format!("{first_name}_1");
+                }
+            }
+        }
         if let Some(profiler) = profiler.as_mut() {
             profiler.mark_with_detail(
                 "group_columns",
@@ -838,12 +844,16 @@ impl CompositeStorage {
                     )?;
                 }
                 DataManagerKind::StandardStMan => {
+                    let existing_name =
+                        control.existing_ssm_name(group.seq_nr, &group.dm_group_name);
+                    let name = existing_name.as_deref().unwrap_or(&group.dm_group_name);
                     let dm_data = if let Some(override_sources) = override_sources.as_ref() {
                         write_ssm_file_column_sources(
                             &data_path,
                             &group_col_descs,
                             override_sources,
                             big_endian,
+                            name,
                         )?
                     } else if let Some(group_col_indices) = group_col_indices.as_ref() {
                         write_ssm_file_indexed(
@@ -852,15 +862,18 @@ impl CompositeStorage {
                             filtered_rows,
                             group_col_indices,
                             big_endian,
+                            name,
                         )?
                     } else {
-                        write_ssm_file(
+                        write_ssm_file_with_options(
                             &data_path,
                             &group_col_descs,
                             group_rows
                                 .as_ref()
                                 .expect("row projection for StandardStMan"),
                             big_endian,
+                            false,
+                            name,
                         )?
                     };
                     // Update the DM blob in the table_dat.

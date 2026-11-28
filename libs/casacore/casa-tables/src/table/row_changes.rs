@@ -449,6 +449,55 @@ impl Table {
         Ok(schema.default_row())
     }
 
+    /// Persist a tracked append while the caller holds the table write lock.
+    /// Earlier rows must still be in their original positions and unchanged.
+    pub(super) fn persist_buffered_append(
+        &mut self,
+        path: &Path,
+        first: usize,
+    ) -> Result<(), TableError> {
+        let dat = crate::storage::table_control::read_table_dat(
+            &path.join(crate::storage::TABLE_CONTROL_FILE),
+        )?;
+        dat.require_separate_storage_for_write()?;
+        let old = super::persisted_rows::persisted_row_count(path, &dat);
+        if old != first as u64 || first >= self.row_count() {
+            return Err(TableError::Storage(
+                "buffered append no longer matches the persisted row count".into(),
+            ));
+        }
+        let records: Vec<_> = self.inner.rows()?[first..]
+            .iter()
+            .zip(&self.inner.undefined_cells()?[first..])
+            .map(|(row, undefined)| {
+                RecordValue::new(
+                    row.fields()
+                        .iter()
+                        .filter(|field| !undefined.contains(&field.name))
+                        .cloned()
+                        .collect(),
+                )
+            })
+            .collect();
+        let defaults = self.record_append_defaults(&records)?;
+        let plan = StagedEdit::stage(
+            path,
+            dat,
+            old,
+            Rows::AppendRecords {
+                records: &records,
+                defaults: &defaults,
+                encoded: None,
+                existing_scalar: None,
+            },
+        )?;
+        self.note_persisted_write(path);
+        plan.publish()?;
+        self.inner.note_rows_persisted();
+        self.inner.note_append_saved();
+        Ok(())
+    }
+
     /// Keep the given rows in an existing plain table, in ascending order,
     /// and delete all others. This operation preserves manager bindings.
     ///

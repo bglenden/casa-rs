@@ -4,8 +4,7 @@ use super::*;
 
 /// The manager's name is what the table on disk says it is
 /// (`DataManager::dataManagerName()`): for `StandardStMan` and
-/// `IncrementalStMan` the name in the manager's blob of `table.dat`, which
-/// casa-rs writes as the manager's type tag (casacore writes the group); for
+/// `IncrementalStMan` the name in the manager's blob of `table.dat`; for
 /// `StManAipsIO` the name in the header of its file, which casa-rs writes
 /// empty; for the others the group the columns were saved with.
 #[test]
@@ -17,7 +16,7 @@ fn a_data_manager_info_names_the_manager_as_the_table_on_disk_does() {
     .expect("schema");
     for (kind, name) in [
         (DataManagerKind::StManAipsIO, ""),
-        (DataManagerKind::StandardStMan, "SSM"),
+        (DataManagerKind::StandardStMan, "MyGroup"),
         (DataManagerKind::IncrementalStMan, "ISM"),
     ] {
         let root = unique_test_dir(&format!("dm_name_{kind:?}"));

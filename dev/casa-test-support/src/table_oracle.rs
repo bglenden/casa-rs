@@ -18,6 +18,15 @@ pub struct TableOracle;
 
 #[cfg_attr(not(has_casacore_cpp), allow(unused_variables))]
 impl TableOracle {
+    /// Read the bound manager's actual name from casacore's column descriptor.
+    pub fn column_manager_name(
+        path: &std::path::Path,
+        column: &str,
+    ) -> Result<String, OracleError> {
+        table_operation!("table.column_manager_name", {
+            cpp_column_manager_name(path, column)
+        })
+    }
     #[allow(clippy::too_many_arguments)]
     pub fn table_write(
         fixture: CppTableFixture,
