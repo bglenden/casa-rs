@@ -61,13 +61,19 @@ flag-version snapshot. Both choices return `None`.
 
 An MSv4 import creates XRADIO datasets directly from the archive. It
 converts TAI timestamps to UTC and carries the visibility groups, weights,
-UVW and element flags. It reports the features that the output profile
-cannot carry. These include the independent row flags (folded into the
-element flags), `FLAG_CATEGORY`, `SIGMA`, and the MSv2 history and flag-version
-snapshot. MSv4 requires a supported direction and UVW frame and a time
-representable as UNIX/UTC. For example, a B1950_VLA archive or an
-integration on a leap-second day returns a typed `outformat` error before
-publishing a store.
+UVW and element flags. Each imported archive occurrence has a local
+`session_reference_UID` derived from its record digest and position in
+`archivefiles`. This preserves separate sessions even when the archives
+have the same project and observation metadata.
+
+The task reports information the MSv4 profile cannot carry, including
+`FLAG_CATEGORY`, `SIGMA`, field code and reference time, spectral-window
+IF chain and frequency-group metadata, and the MSv2 history and flag-version
+snapshot. It folds independent row flags into the element flags. MSv4
+requires known J2000 archive directions and UVW, with times representable
+as UNIX/UTC. A B1950_VLA, apparent or unknown archive frame, an integration
+on a leap-second day, or an antenna name whose station has two positions
+returns a typed `outformat` error before publishing a store.
 
 ## Conversion limits
 

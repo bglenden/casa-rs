@@ -4,7 +4,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::f64::consts::PI;
 use std::fs::{File, OpenOptions, create_dir_all};
-use std::hash::{DefaultHasher, Hash};
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -32,6 +31,7 @@ use casa_tables::{ColumnSchema, Table};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::disk::LogicalRecord;
 use crate::output::ImportOutput;
@@ -445,22 +445,27 @@ impl VlaImportState {
     }
 }
 
+#[derive(PartialEq, Eq)]
+struct ArchiveDigest {
+    fingerprint: String,
+    observation: Option<usize>,
+}
+
 fn process_archive_records(
     writer: &mut VlaImportState,
     options: &ImportVlaOptions,
     selection: &ArchiveSelection,
-    mut digest: Option<&mut DefaultHasher>,
+    mut archive_digests: Option<&mut Vec<ArchiveDigest>>,
     mut push: impl FnMut(&mut VlaImportState, NormalizedRecord) -> Result<(), VlaError>,
 ) -> Result<(), VlaError> {
     for path in options.require_archivefiles()? {
-        if let Some(digest) = digest.as_deref_mut() {
-            path.hash(digest);
-        }
+        let mut digest = archive_digests.is_some().then(Sha256::new);
         let mut reader = open_import_archive(path)?;
         let mut frequency_tolerance = options.frequencytol_hz;
         while let Some(record) = reader.next_record()? {
-            if let Some(digest) = digest.as_deref_mut() {
-                record.bytes().hash(digest);
+            if let Some(digest) = &mut digest {
+                digest.update((record.bytes().len() as u64).to_le_bytes());
+                digest.update(record.bytes());
             }
             writer.logical_records_seen += 1;
             let normalize_started = Instant::now();
@@ -483,6 +488,15 @@ fn process_archive_records(
                 writer.logical_records_skipped += 1;
                 writer.note_skipped_record();
             }
+        }
+        if let Some((digests, digest)) = archive_digests.as_deref_mut().zip(digest) {
+            digests.push(ArchiveDigest {
+                fingerprint: format!("{:x}", digest.finalize()),
+                observation: writer
+                    .archive_observation
+                    .as_ref()
+                    .map(|obs| obs.id as usize),
+            });
         }
         writer.finish_archive()?;
     }

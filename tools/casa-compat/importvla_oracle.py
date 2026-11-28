@@ -7,6 +7,7 @@ import ast
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, redirect_stderr
 import hashlib
+import math
 from io import StringIO
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -34,14 +35,15 @@ MAIN = (
 SUBTABLES = {
     "ANTENNA": ("NAME", "STATION", "POSITION", "DISH_DIAMETER", "FLAG_ROW"),
     "DATA_DESCRIPTION": ("SPECTRAL_WINDOW_ID", "POLARIZATION_ID", "FLAG_ROW"),
-    "FIELD": ("NAME", "CODE", "SOURCE_ID", "PHASE_DIR", "DELAY_DIR", "REFERENCE_DIR"),
+    "FIELD": ("NAME", "CODE", "TIME", "SOURCE_ID", "PHASE_DIR", "DELAY_DIR", "REFERENCE_DIR"),
     "FEED": ("ANTENNA_ID", "FEED_ID", "NUM_RECEPTORS", "POLARIZATION_TYPE", "RECEPTOR_ANGLE"),
     "OBSERVATION": ("PROJECT", "TELESCOPE_NAME", "TIME_RANGE", "RELEASE_DATE",
                     "FLAG_ROW", "LOG", "OBSERVER", "SCHEDULE", "SCHEDULE_TYPE"),
     "POLARIZATION": ("NUM_CORR", "CORR_TYPE", "CORR_PRODUCT", "FLAG_ROW"),
     "SOURCE": ("SOURCE_ID", "SPECTRAL_WINDOW_ID", "NAME", "DIRECTION", "NUM_LINES"),
     "SPECTRAL_WINDOW": ("NAME", "NUM_CHAN", "REF_FREQUENCY", "CHAN_FREQ", "CHAN_WIDTH",
-                        "EFFECTIVE_BW", "RESOLUTION", "TOTAL_BANDWIDTH", "MEAS_FREQ_REF"),
+                        "EFFECTIVE_BW", "RESOLUTION", "TOTAL_BANDWIDTH", "MEAS_FREQ_REF",
+                        "IF_CONV_CHAIN", "FREQ_GROUP", "FREQ_GROUP_NAME"),
 }
 
 
@@ -255,11 +257,12 @@ def logical_record_starts(contents):
         if number != 1 or not 0 < blocks <= 39 or words <= 0:
             start += SECTOR_BYTES
             continue
-        yield start + HEADER_BYTES
         tail = 2 * words - (blocks - 1) * (RECORD_BYTES - HEADER_BYTES)
-        start += (blocks - 1) * RECORD_BYTES + (
+        end = start + (blocks - 1) * RECORD_BYTES + (
             (tail + SECTOR_BYTES - 1) // SECTOR_BYTES * SECTOR_BYTES
         )
+        yield start + HEADER_BYTES, end
+        start = end
 
 
 def mixed_shapes(root, continuum, spectral):
@@ -268,7 +271,7 @@ def mixed_shapes(root, continuum, spectral):
     # inputs can fill one synthetic product. The original archive is
     # read only. Neither dataset's sky position is used in a science test.
     scratch = bytearray(continuum.read_bytes())
-    for rca in logical_record_starts(scratch):
+    for rca, _ in logical_record_starts(scratch):
         offset = 2 * struct.unpack_from(">I", scratch, rca + 2 * 12)[0]
         epoch = rca + offset + 2 * 161
         assert struct.unpack_from(">h", scratch, epoch) == (1950,)
@@ -288,7 +291,7 @@ def changed_archive(root, source):
     # identifiers still agree with what the first pass declared.
     raw = source.read_bytes()
     location = None
-    for rca in logical_record_starts(raw):
+    for rca, _ in logical_record_starts(raw):
         antennas = struct.unpack_from(">H", raw, rca + 2 * 17)[0]
         for cda in range(4):
             base = rca + 8 * cda
@@ -330,6 +333,107 @@ def changed_archive(root, source):
     print("passed changed archive refusal before publication", flush=True)
 
 
+def one_spectral_integration(source):
+    contents = source.read_bytes()
+    for rca, end in logical_record_starts(contents):
+        sda = rca + 2 * struct.unpack_from(">I", contents, rca + 2 * 12)[0]
+        if contents[sda + 30:sda + 32] == b"  " and contents[sda + 314:sda + 318] == b"1A  ":
+            return bytearray(contents[rca - HEADER_BYTES:end])
+    raise AssertionError("no standard 1A integration found in the public spectral fixture")
+
+
+def sda_offset(record):
+    return HEADER_BYTES + 2 * struct.unpack_from(">I", record, HEADER_BYTES + 2 * 12)[0]
+
+
+def move_first_antenna(record, metres):
+    ada = HEADER_BYTES + 2 * struct.unpack_from(">I", record, HEADER_BYTES + 2 * 14)[0]
+    offset = ada + 2 * 42
+    encoded = struct.unpack_from(">q", record, offset)[0]
+    magnitude = abs(encoded)
+    # ModComp stores a 54-bit fraction and a nine-bit biased exponent.
+    fraction = magnitude & ((1 << 54) - 1)
+    value = math.ldexp(fraction, (magnitude >> 54) - 310)
+    value = math.copysign(value, encoded) + metres / 0.299792458
+    significand, exponent = math.frexp(abs(value))
+    encoded = ((exponent + 256) << 54) | round(significand * (1 << 54))
+    struct.pack_into(">q", record, offset, encoded if value >= 0 else -encoded)
+
+
+def refuse_msv4(root, archives, expected):
+    output = root / "protected.ps.zarr"
+    for path in (output, Path(f"{output}.flagversions")):
+        assert not path.exists()
+    try:
+        tasks.importvla(archivefiles=archives, vis=output, outformat="msv4")
+    except tasks.TaskParameterError as error:
+        assert error.completion.parameter == "outformat" and expected in str(error), str(error)
+    else:
+        raise AssertionError(f"MSv4 published an input requiring refusal for {expected}")
+    assert not output.exists() and not Path(f"{output}.flagversions").exists()
+    assert not list(root.glob(".*.staging-*"))
+
+
+def review_layout_cases(root, continuum, spectral, xradio_python):
+    single = one_spectral_integration(spectral)
+    first, second = root / "archive-1", root / "archive-2"
+    for path in (first, second):
+        path.write_bytes(single)
+
+    # CASA and casa-rs MSv2 preserve each archive as its own observation,
+    # including when the bytes of the two archives match.
+    reference = paired(root, [first, second], "two-sessions", outformat="msv2")
+    with table(reference / "OBSERVATION") as tab:
+        assert tab.nrows() == 2
+        assert len(set(tab.getcol("PROJECT"))) == 1
+    with table(reference) as tab:
+        assert set(tab.getcol("OBSERVATION_ID")) == {0, 1}
+    output = root / "two-sessions.ps.zarr"
+    assert tasks.importvla(archivefiles=[first, second], vis=output, outformat="msv4") is None
+    compare_xradio(xradio_python, reference, output, "--sessions", "2")
+    reopened = root / "two-reopened.ms"
+    tasks.msconvert(vis=output, outputvis=reopened, outformat="msv2", padding="omitted")
+    with table(reopened / "OBSERVATION") as tab:
+        assert tab.nrows() == 2
+    with table(reopened) as tab:
+        assert set(tab.getcol("OBSERVATION_ID")) == {0, 1}
+
+    unknown = bytearray(single)
+    struct.pack_into(">h", unknown, sda_offset(unknown) + 2 * 161, 0)
+    second.write_bytes(unknown)
+    legacy = root / "unknown-epoch-casa.ms"
+    assert casatasks.importvla(archivefiles=[str(second)], vis=str(legacy)) is None
+    with table(legacy) as tab:
+        assert tab.getcolkeyword("UVW", "MEASINFO")["Ref"] == "B1950_VLA"
+    refuse_msv4(root, [second], "unknown SDA epoch 0")
+    refuse_msv4(root, [first, continuum], "B1950_VLA")
+
+    moved = bytearray(single)
+    move_first_antenna(moved, 2.0)
+    second.write_bytes(moved)
+    ms_v2 = root / "moved-antenna.ms"
+    tasks.importvla(archivefiles=[first, second], vis=ms_v2, outformat="msv2")
+    with table(ms_v2 / "ANTENNA") as tab:
+        antennas = {}
+        for name, station, position in zip(tab.getcol("NAME"), tab.getcol("STATION"),
+                                           tab.getcol("POSITION").T, strict=True):
+            antennas.setdefault((name, station), []).append(position)
+        placements = [pair for pair in antennas.values() if len(pair) == 2]
+        assert len(placements) == 1
+        left, right = placements[0]
+        np.testing.assert_allclose(right - left, [0.0, 0.0, 2.0], atol=1e-8, rtol=0)
+    refuse_msv4(root, [first, second], "has two positions")
+    print("passed distinct sessions and typed frame/antenna refusals", flush=True)
+
+
+def compare_xradio(xradio_python, reference, output, *options):
+    compare = Path(__file__).resolve().parents[1] / "ms-trial" / "check_importvla.py"
+    # The pinned XRADIO interpreter owns its dependency environment.
+    child_env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    subprocess.run([str(xradio_python), str(compare), str(reference), str(output), *options],
+                   env=child_env, check=True)
+
+
 def format_cases(root, continuum, spectral, xradio_python):
     expected = paired(root, [spectral], "explicit-v2", outformat="msv2")
     output = root / "explicit-v4.ms"
@@ -338,15 +442,20 @@ def format_cases(root, continuum, spectral, xradio_python):
         assert tasks.importvla(archivefiles=[spectral], vis=output, outformat="msv4") is None
     assert (output / "zarr.json").is_file()
     assert not (output / "table.dat").exists() and not Path(f"{output}.flagversions").exists()
+    with table(expected / "FIELD") as tab:
+        assert "A" in tab.getcol("CODE") and len(set(tab.getcol("TIME"))) > 1
+    with table(expected / "SPECTRAL_WINDOW") as tab:
+        assert tab.getcell("IF_CONV_CHAIN", 0) == 0
+        assert tab.getcell("FREQ_GROUP", 0) == 1
+        assert tab.getcell("FREQ_GROUP_NAME", 0) == "Group 1"
     for loss in ("FLAG_CATEGORY is not carried", "FLAG_ROW is folded into FLAG",
-                 "SIGMA is not carried", "Original flag-version snapshot is not carried"):
+                 "SIGMA is not carried", "Original flag-version snapshot is not carried",
+                 "FIELD.CODE is not carried", "FIELD.TIME is not carried",
+                 "SPECTRAL_WINDOW.IF_CONV_CHAIN is not carried",
+                 "SPECTRAL_WINDOW.FREQ_GROUP is not carried",
+                 "SPECTRAL_WINDOW.FREQ_GROUP_NAME is not carried"):
         assert loss in errors.getvalue(), errors.getvalue()
-    compare = Path(__file__).resolve().parents[1] / "ms-trial" / "check_importvla.py"
-    # The pinned XRADIO interpreter uses its own dependencies and never
-    # loads the CASA/PyO3 modules installed for this interpreter.
-    child_env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
-    subprocess.run([str(xradio_python), str(compare), str(expected), str(output)],
-                   env=child_env, check=True)
+    compare_xradio(xradio_python, expected, output)
     original = (output / "zarr.json").read_bytes()
     try:
         tasks.importvla(archivefiles=[spectral], vis=output, outformat="msv4")
@@ -356,16 +465,8 @@ def format_cases(root, continuum, spectral, xradio_python):
         raise AssertionError("the second import replaced an existing MSv4")
     assert (output / "zarr.json").read_bytes() == original
 
-    refused = root / "b1950.ps.zarr"
-    try:
-        tasks.importvla(archivefiles=[continuum], vis=refused, outformat="msv4", bandname="C")
-    except tasks.TaskParameterError as error:
-        assert error.completion.parameter == "outformat", str(error)
-        assert "UVW frame" in str(error), str(error)
-    else:
-        raise AssertionError("this B1950_VLA archive unexpectedly published an MSv4")
-    assert not refused.exists() and not Path(f"{refused}.flagversions").exists()
-    assert not list(root.glob(".*.staging-*"))
+    with TemporaryDirectory(prefix="unsupported-") as directory:
+        refuse_msv4(Path(directory), [continuum], "B1950_VLA")
 
 
 def main():
@@ -413,6 +514,12 @@ def main():
             parser.error("changed-archive requires --spectral")
         with TemporaryDirectory(prefix="importvla-") as temporary:
             changed_archive(Path(temporary), args.spectral.resolve(strict=True))
+    if "review-layouts" in args.cases:
+        if args.spectral is None or args.xradio_python is None:
+            parser.error("review-layouts requires --spectral and --xradio-python")
+        with TemporaryDirectory(prefix="importvla-") as temporary:
+            review_layout_cases(Path(temporary), archive, args.spectral.resolve(strict=True),
+                                args.xradio_python.absolute())
     if selected("formats") and args.spectral:
         if args.xradio_python is None:
             parser.error("--spectral requires --xradio-python")

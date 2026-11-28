@@ -4,13 +4,14 @@
 //! Only the metadata and the current archive record's payload are retained.
 
 use std::collections::BTreeSet;
-use std::hash::Hasher;
 
 use casa_core::measures::MjdHighPrec;
 use casa_ms::observation_io::creation::{
     Loss, Msv2CreationPartition, catalogue_for_creation, default_memory_bytes, losses,
 };
-use casa_ms::observation_io::{Msv4Codec, Msv4ProcessingSetWriter, Msv4StorageOptions, Msv4Writer};
+use casa_ms::observation_io::{
+    Msv4Codec, Msv4ProcessingSetWriter, Msv4StorageOptions, Msv4WriteScratch, Msv4Writer,
+};
 use casa_observation::{
     AntennaId, BatchBuffers, BatchHeader, Catalogue, CorrelationAxis, FieldId, ObservationError,
     ObservationId, OrderedBaseline, PartitionId, Roles, ScanEntry, ScanId, Sharing,
@@ -171,13 +172,14 @@ pub(super) fn import(
         budget: default_memory_bytes().map_err(provider_error)?,
         planned_bytes: 0,
     };
-    let mut described = DefaultHasher::new();
+    let mut described = Vec::new();
     process_archive_records(
         &mut describe,
         options,
         selection,
         Some(&mut described),
         |state, record| {
+            require_frame(record.direction_epoch)?;
             state.visit_integrations(record, |_, integration, antennas, baselines| {
                 inventory.add(integration, antennas, &baselines)
             })
@@ -194,28 +196,30 @@ pub(super) fn import(
         .into_iter()
         .map(DatasetPlan::grid)
         .collect();
-    let catalogue = describe_catalogue(&describe, &grids)?;
+    let catalogue = describe_catalogue(&describe, &grids, &described)?;
     drop(describe);
     let set = Msv4ProcessingSetWriter::create(&vis).map_err(provider_error)?;
     let mut datasets = start_datasets(&set, &catalogue, &grids, &vis)?;
     let mut buffers =
         std::array::from_fn(|_| BatchBuffers::with_envelope(inventory.budget / DATA_GROUPS.len()));
+    let mut scratch = Msv4WriteScratch::default();
     let mut row_flags = false;
     let mut replay = metadata(options)?;
-    let mut filled = DefaultHasher::new();
+    let mut filled = Vec::new();
     process_archive_records(
         &mut replay,
         options,
         selection,
         Some(&mut filled),
         |state, record| {
+            require_frame(record.direction_epoch)?;
             state.visit_integrations(record, |writer, integration, antennas, baselines| {
                 let id = *inventory.ids.get(&integration.into()).ok_or_else(changed)?;
                 let time = unix_utc(integration.time, &inventory.frame)?;
                 let rows = baselines.len();
                 row_flags |= write_integration(
                     &mut datasets[id.0 as usize],
-                    &mut buffers,
+                    (&mut buffers, &mut scratch),
                     &catalogue,
                     id,
                     (integration, time),
@@ -230,7 +234,7 @@ pub(super) fn import(
     // A change can preserve dimensions and ordinal IDs while replacing the
     // physical field, window or antenna coordinates used to declare them.
     // Admit replay only if both passes saw the same input records.
-    if described.finish() != filled.finish() {
+    if described != filled {
         return Err(changed());
     }
     for dataset in datasets {
@@ -256,6 +260,7 @@ fn metadata(options: &ImportVlaOptions) -> Result<VlaImportState, VlaError> {
 fn describe_catalogue(
     state: &VlaImportState,
     grids: &[(Key, TimeBaselineGrid)],
+    archives: &[ArchiveDigest],
 ) -> Result<Arc<Catalogue>, VlaError> {
     let scans = (1..state.next_scan_number)
         .map(|number| ScanEntry {
@@ -273,9 +278,61 @@ fn describe_catalogue(
             grid,
         })
         .collect();
-    catalogue_for_creation(&state.ms, scans, &specs)
-        .map(Arc::new)
-        .map_err(provider_error)
+    let mut catalogue = catalogue_for_creation(&state.ms, scans, &specs).map_err(provider_error)?;
+    if let Some(antenna) = conflicting_antenna(&catalogue) {
+        return Err(refused(format!(
+            "one MSv4 antenna name {} at station {} has two positions",
+            antenna.name, antenna.station
+        )));
+    }
+    for (ordinal, digest) in archives.iter().enumerate() {
+        if let Some(observation) = digest.observation {
+            catalogue.observations[observation].session_reference = Some(format!(
+                "urn:casa-rs:importvla:archive:{}:{ordinal}",
+                digest.fingerprint
+            ));
+        }
+    }
+    Ok(Arc::new(catalogue))
+}
+
+fn conflicting_antenna(catalogue: &Catalogue) -> Option<&casa_observation::AntennaEntry> {
+    let mut used = vec![false; catalogue.antennas.len()];
+    for baseline in catalogue
+        .partitions
+        .iter()
+        .flat_map(|entry| &entry.baselines)
+    {
+        used[baseline.antenna1.0 as usize] = true;
+        used[baseline.antenna2.0 as usize] = true;
+    }
+    let mut positions = HashMap::new();
+    catalogue
+        .antennas
+        .iter()
+        .zip(used)
+        .find_map(|(antenna, used)| {
+            if !used {
+                return None;
+            }
+            let position = antenna.position.values();
+            let known = positions
+                .entry((&antenna.name, &antenna.station))
+                .or_insert(position);
+            (*known != position).then_some(antenna)
+        })
+}
+
+fn require_frame(epoch: DirectionEpoch) -> Result<(), VlaError> {
+    let unsupported = match epoch {
+        DirectionEpoch::J2000 => return Ok(()),
+        DirectionEpoch::B1950Vla => "B1950_VLA".into(),
+        DirectionEpoch::Apparent => "apparent".into(),
+        DirectionEpoch::Unknown(code) => format!("unknown SDA epoch {code}"),
+    };
+    Err(refused(format!(
+        "the archive's direction and UVW frame {unsupported} cannot be written to MSv4"
+    )))
 }
 
 fn loss_metadata<'a>(
@@ -284,11 +341,19 @@ fn loss_metadata<'a>(
     record_history: bool,
 ) -> Result<Vec<Loss>, VlaError> {
     let mut found = losses::msv4_subtable_losses(ms).map_err(provider_error)?;
-    found.extend([
-        Loss::FlagCategories,
-        Loss::Sigma,
-        Loss::Column("OBSERVATION.TIME_RANGE and RELEASE_DATE".into()),
-    ]);
+    found.extend([Loss::FlagCategories, Loss::Sigma]);
+    found.extend(
+        [
+            "FIELD.CODE",
+            "FIELD.TIME",
+            "OBSERVATION.TIME_RANGE",
+            "OBSERVATION.RELEASE_DATE",
+            "SPECTRAL_WINDOW.IF_CONV_CHAIN",
+            "SPECTRAL_WINDOW.FREQ_GROUP",
+            "SPECTRAL_WINDOW.FREQ_GROUP_NAME",
+        ]
+        .map(|name| Loss::Column(name.into())),
+    );
     if keys.map(|key| key.array).any(|array| array != 0) {
         found.push(Loss::Column("ARRAY_ID".into()));
     }
@@ -407,7 +472,7 @@ fn refused(message: impl Into<String>) -> VlaError {
 
 fn write_integration(
     dataset: &mut Msv4Writer,
-    storage: &mut [BatchBuffers; 3],
+    (storage, scratch): (&mut [BatchBuffers; 3], &mut Msv4WriteScratch),
     catalogue: &Arc<Catalogue>,
     id: PartitionId,
     (integration, time): (Integration, f64),
@@ -534,7 +599,9 @@ fn write_integration(
     let batches = storage
         .each_ref()
         .map(|group| group.batch().expect("finished all three groups"));
-    dataset.write_groups(&batches).map_err(provider_error)?;
+    dataset
+        .write_groups_reusing(&batches, scratch)
+        .map_err(provider_error)?;
     Ok(flag_row)
 }
 

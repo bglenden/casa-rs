@@ -38,7 +38,8 @@ pub use msv2::{MainRowKeys, Msv2Cursor, Msv2Observation};
 #[cfg(feature = "msv4")]
 pub use msv4::{
     Msv4Codec, Msv4Cursor, Msv4Observation, Msv4ProcessingSetWriter, Msv4StorageOptions,
-    Msv4WriteCounters, Msv4Writer, STATION_NAMED, check_fields, kept_samples, unix_times,
+    Msv4WriteCounters, Msv4WriteScratch, Msv4Writer, STATION_NAMED, check_fields, kept_samples,
+    unix_times,
 };
 pub use namespace::{
     AntennaNamespace, NamespaceAntenna, NamespaceField, NamespaceRows, NamespaceWindow,

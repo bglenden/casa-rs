@@ -22,7 +22,7 @@ def millis(seconds):
     return np.rint(seconds * 1000.0).astype(np.int64)
 
 
-def check(casa, zarr):
+def check(casa, zarr, sessions=None):
     root = open_processing_set(str(zarr))
     issues = check_datatree(root)
     assert not issues, str(issues)
@@ -62,6 +62,18 @@ def check(casa, zarr):
         "", "DATA", "CORRECTED_DATA", "MODEL_DATA", "FLAG", "FLAG_ROW", "WEIGHT", "UVW"
     )
     assert np.count_nonzero(row_flags), "the fixture must exercise folded row flags"
+    if sessions is not None:
+        references = {
+            node.attrs["observation_info"]["session_reference_UID"]
+            for node in root.children.values()
+        }
+        assert len(references) == sessions
+        assert all(uid.startswith("urn:casa-rs:importvla:archive:") for uid in references)
+        digest_and_index = [uid.rsplit(":", 2)[-2:] for uid in references]
+        assert {int(index) for _, index in digest_and_index} == set(range(sessions))
+        # This case imports separate files with identical record bytes.
+        assert len({fingerprint for fingerprint, _ in digest_and_index}) == 1
+        assert all(len(fingerprint) == 64 for fingerprint, _ in digest_and_index)
     actual_count = 0
     seen = np.zeros(len(time), dtype=bool)
     for node in root.children.values():
@@ -128,5 +140,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("casa", type=Path)
     parser.add_argument("zarr", type=Path)
+    parser.add_argument("--sessions", type=int)
     args = parser.parse_args()
-    check(args.casa, args.zarr)
+    check(args.casa, args.zarr, args.sessions)
