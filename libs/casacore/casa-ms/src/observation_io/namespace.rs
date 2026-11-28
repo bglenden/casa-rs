@@ -297,6 +297,49 @@ fn validate_calibration_scan_numbers(catalogue: &Catalogue) -> Result<(), Observ
     Ok(())
 }
 
+/// Open the subtables for a calibration that uses metadata alone.
+/// MSv2 retains its stored row numbers and columns. MSv4 supplies the
+/// CASA namespace its MSv2 conversion would persist. Neither route reads
+/// visibility values or requires the scan names to fit CASA scan numbers.
+///
+/// # Errors
+///
+/// When the store cannot be read, its namespace cannot be represented in
+/// CASA subtables, an MSv4 field moves with an ephemeris, or opening an
+/// MSv4 catalogue exceeds its memory grant.
+pub fn calibration_subtables(source: &Path) -> Result<MeasurementSet, ObservationError> {
+    if !super::is_msv4_store(source) {
+        return MeasurementSet::open(source).map_err(storage);
+    }
+    #[cfg(all(feature = "msv4", unix))]
+    {
+        let budget = super::creation::default_memory_bytes()?;
+        let mut grant = |required| {
+            if required > budget {
+                Err(ObservationError::OverBudget {
+                    what: "calibration subtables and their observation catalogue",
+                    required,
+                    budget,
+                })
+            } else {
+                Ok(())
+            }
+        };
+        let observation =
+            super::Msv4Observation::open_granted(source, &OpenOptions::default(), &mut grant)?;
+        grant(
+            observation
+                .held_bytes()
+                .saturating_add(super::creation::subtables_bytes(observation.catalogue())),
+        )?;
+        super::creation::prescribed_calibration_subtables(&observation)
+    }
+    #[cfg(not(all(feature = "msv4", unix)))]
+    Err(ObservationError::Unsupported {
+        what: "an MSv4 calibration namespace without casa-ms's msv4 feature",
+    })
+}
+
 /// The namespace of the store at `source` as [`super::open`] opens it with
 /// `options`, which decide its partitions: an MSv2's own subtables, its
 /// catalogue's antennas, fields and sessions being their rows and each
@@ -420,6 +463,20 @@ impl NamespaceRows {
         let table = Table::open(TableOptions::new(directory.join("ANTENNA")))
             .map_err(|error| storage(MsError::from(error)))?;
         antennas(&table)
+    }
+
+    /// Read the physical spectral window identities of a persisted
+    /// calibration table in its row order.
+    ///
+    /// # Errors
+    /// When the SPECTRAL_WINDOW subtable is unreadable or its frequency metadata
+    /// is invalid.
+    pub fn read_spectral_windows(
+        directory: &Path,
+    ) -> Result<Vec<NamespaceWindow>, ObservationError> {
+        let table = Table::open(TableOptions::new(directory.join("SPECTRAL_WINDOW")))
+            .map_err(|error| storage(MsError::from(error)))?;
+        windows(&table)
     }
 
     /// The rows of the `ANTENNA`, `FIELD` and `SPECTRAL_WINDOW` subtables

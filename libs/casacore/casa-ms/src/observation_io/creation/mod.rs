@@ -60,6 +60,8 @@ pub use memory::{MemoryCharges, default_memory_bytes};
 pub use plan::CreationPlan;
 #[cfg(feature = "msv4")]
 pub(crate) use plan::catalogue_subtables;
+#[cfg(feature = "msv4")]
+pub(super) use plan::prescribed_calibration_subtables;
 pub use replace::Replacement;
 pub use replace::Stage;
 

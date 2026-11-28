@@ -213,7 +213,7 @@ impl CreationPlan {
         found.dedup();
         losses::refuse_unaccepted(&found, &options.accept)?;
         for input in &inputs {
-            refuse_unwritable(input.observation().catalogue())?;
+            refuse_unwritable(input.observation().catalogue(), true)?;
         }
         // A conversion writes the ephemerides its fields follow (#942);
         // combining them, as concat merges ephemeris tables, is not done.
@@ -251,7 +251,7 @@ impl CreationPlan {
                  acquisition of another",
             ));
         }
-        refuse_unwritable(&combined.catalogue)?;
+        refuse_unwritable(&combined.catalogue, true)?;
         found.extend(combined.losses.iter().cloned());
         found.extend(msv2_ephemeris::filled_rows(&combined.catalogue));
         found.extend(
@@ -600,7 +600,7 @@ fn unit(units: &VisibilityUnits) -> Option<String> {
 /// without channels, a field in another frame than J2000, what its
 /// subtables cannot say ([`msv2_tables::refuse_unwritable`]) and an
 /// ephemeris its table cannot hold ([`msv2_ephemeris::refuse_unwritable`]).
-fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), ObservationError> {
+fn refuse_unwritable(catalogue: &Catalogue, preserve_scans: bool) -> Result<(), ObservationError> {
     if catalogue
         .fields
         .iter()
@@ -627,7 +627,7 @@ fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), ObservationError> {
             });
         }
     }
-    msv2_tables::refuse_unwritable(catalogue)?;
+    msv2_tables::refuse_unwritable(catalogue, preserve_scans)?;
     msv2_ephemeris::refuse_unwritable(catalogue)
 }
 
@@ -713,8 +713,35 @@ fn written(
 pub(crate) fn catalogue_subtables(
     observation: &dyn casa_observation::Observation,
 ) -> Result<(MeasurementSet, Vec<(i32, i32)>), ObservationError> {
+    build_catalogue_subtables(observation, true)
+}
+
+/// A prescribed caltable has no scan identity. Its direction columns need
+/// physical directions; the persisted table carries no moving-field link.
+#[cfg(feature = "msv4")]
+pub(in crate::observation_io) fn prescribed_calibration_subtables(
+    observation: &dyn casa_observation::Observation,
+) -> Result<MeasurementSet, ObservationError> {
+    if observation
+        .catalogue()
+        .fields
+        .iter()
+        .any(|field| field.ephemeris.is_some())
+    {
+        return Err(ObservationError::Unsupported {
+            what: "a moving FIELD in an MSv4 calibration prescription",
+        });
+    }
+    build_catalogue_subtables(observation, false).map(|(ms, _)| ms)
+}
+
+#[cfg(feature = "msv4")]
+fn build_catalogue_subtables(
+    observation: &dyn casa_observation::Observation,
+    preserve_scans: bool,
+) -> Result<(MeasurementSet, Vec<(i32, i32)>), ObservationError> {
     let catalogue = observation.catalogue();
-    refuse_unwritable(catalogue)?;
+    refuse_unwritable(catalogue, preserve_scans)?;
     let spans = match catalogue
         .partitions
         .first()

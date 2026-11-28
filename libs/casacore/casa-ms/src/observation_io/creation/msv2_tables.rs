@@ -97,11 +97,15 @@ impl Notes {
 }
 
 /// Refuse what an MSv2's subtables cannot say of `catalogue`, before
-/// anything is written: a scan without a casacore number, feeds whose
-/// receptors differ, or a correlation product the feeds cannot name (a
-/// Stokes product, or a receptor they lack).
-pub(super) fn refuse_unwritable(catalogue: &Catalogue) -> Result<(), ObservationError> {
-    scan_numbers(catalogue)?;
+/// anything is written: when preserving scans, a missing casacore scan
+/// number, or a correlation product the feeds cannot name.
+pub(super) fn refuse_unwritable(
+    catalogue: &Catalogue,
+    preserve_scans: bool,
+) -> Result<(), ObservationError> {
+    if preserve_scans {
+        scan_numbers(catalogue)?;
+    }
     let receptors = feed_receptors(catalogue)?;
     for entry in &catalogue.partitions {
         for correlation in &entry.correlations {
