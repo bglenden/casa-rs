@@ -12,6 +12,7 @@ use casa_ms::MsSelection;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 
+use crate::TaskFailure;
 use crate::calibration::managed_output::CalibrationTaskResult;
 use casa_calibration::{
     apply::{
@@ -25,9 +26,9 @@ use casa_calibration::{
     fluxscale::FluxScaleRequest,
     gencal::GencalRequest,
     solve::{
-        CalibrationDataset, CalibrationSolveRequest, CalibrationSolveResult, GainNormalization,
-        GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest,
-        GainSplineControls, GainType, RefAntSelector,
+        CalibrationDataset, CalibrationError, CalibrationSolveRequest, CalibrationSolveResult,
+        GainNormalization, GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode,
+        GainSolveModelSource, GainSolveRequest, GainSplineControls, GainType, RefAntSelector,
     },
     table::{CalibrationStatsAxis, CalibrationStatsRequest, calibration_stats, summarize_tables},
 };
@@ -501,17 +502,20 @@ impl CalibrationTaskRequest {
     /// Execute the request and return the canonical task result envelope.
     pub fn execute(&self) -> Result<CalibrationTaskResult, String> {
         self.execute_with_output_mode(None)
+            .map_err(|failure| failure.message)
     }
 
     pub(crate) fn execute_with_output_mode(
         &self,
         mode: Option<casa_calibration::output::CalibrationOutputMode>,
-    ) -> Result<CalibrationTaskResult, String> {
+    ) -> Result<CalibrationTaskResult, TaskFailure> {
         use casa_calibration::output::CalibrationOutputMode::{Append, Create, Replace, Update};
         match self {
             Self::Summary(request) => {
                 if request.paths.is_empty() {
-                    return Err("summary requires at least one calibration-table path".to_string());
+                    return Err(TaskFailure::execution(
+                        "summary requires at least one calibration-table path",
+                    ));
                 }
                 let path_refs = request
                     .paths
@@ -520,7 +524,7 @@ impl CalibrationTaskRequest {
                     .collect::<Vec<_>>();
                 summarize_tables(path_refs)
                     .map(CalibrationTaskResult::Summary)
-                    .map_err(|error| error.to_string())
+                    .map_err(|error| TaskFailure::execution(error.to_string()))
             }
             Self::Stats(request) => calibration_stats(
                 &request.path,
@@ -531,7 +535,7 @@ impl CalibrationTaskRequest {
                 },
             )
             .map(CalibrationTaskResult::Stats)
-            .map_err(|error| error.to_string()),
+            .map_err(|error| TaskFailure::execution(error.to_string())),
             Self::PlanApply(request) => plan_apply_from_path(
                 &request.measurement_set,
                 &ApplyPlanRequest {
@@ -542,11 +546,11 @@ impl CalibrationTaskRequest {
                 },
             )
             .map(CalibrationTaskResult::PlanApply)
-            .map_err(|error| error.to_string()),
+            .map_err(|error| TaskFailure::execution(error.to_string())),
             Self::ExecuteApply(request) => request
                 .execute_apply()
                 .map(CalibrationTaskResult::Apply)
-                .map_err(|error| error.to_string()),
+                .map_err(|error| TaskFailure::execution(error.to_string())),
             Self::ExportCorrectedData(request) => {
                 casa_calibration::corrected_export::export_corrected_data_with_overwrite(
                     &casa_calibration::corrected_export::ExportCorrectedDataRequest {
@@ -557,7 +561,7 @@ impl CalibrationTaskRequest {
                     mode == Some(Replace),
                 )
                 .map(CalibrationTaskResult::ExportCorrectedData)
-                .map_err(|error| error.to_string())
+                .map_err(|error| TaskFailure::execution(error.to_string()))
             }
             Self::SolveGain(request)
             | Self::SolveAccor(request)
@@ -613,7 +617,7 @@ impl CalibrationTaskRequest {
                     _ => unreachable!("gain request result"),
                 })
                 .map(CalibrationTaskResult::SolveGain)
-                .map_err(|error| error.to_string())
+                .map_err(gain_failure)
             }
             Self::SolveBandpass(request) => {
                 casa_calibration::solve::solve_calibration_with_output_mode(
@@ -643,19 +647,34 @@ impl CalibrationTaskRequest {
                     _ => unreachable!("bandpass request result"),
                 })
                 .map(CalibrationTaskResult::SolveBandpass)
-                .map_err(|error| error.to_string())
+                .map_err(|error| TaskFailure::execution(error.to_string()))
             }
             Self::FluxScale(request) => casa_calibration::fluxscale::fluxscale_with_output_mode(
                 request,
                 mode.unwrap_or(if request.append { Append } else { Create }),
             )
             .map(CalibrationTaskResult::FluxScale)
-            .map_err(|error| error.to_string()),
+            .map_err(|error| TaskFailure::execution(error.to_string())),
             Self::Gencal(request) => request
                 .generate(mode.unwrap_or(Update))
                 .map(CalibrationTaskResult::Gencal)
-                .map_err(|error| error.to_string()),
+                .map_err(|error| TaskFailure::execution(error.to_string())),
         }
+    }
+}
+
+fn gain_failure(error: CalibrationError) -> TaskFailure {
+    if matches!(
+        &error,
+        CalibrationError::Gain(source)
+            if matches!(
+                source.as_ref(),
+                GainSolveError::Observation(casa_observation::ObservationError::Unsupported { .. })
+            )
+    ) {
+        TaskFailure::validation(error.to_string()).at("vis")
+    } else {
+        TaskFailure::execution(error.to_string())
     }
 }
 

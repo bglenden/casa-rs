@@ -47,7 +47,7 @@ fn fixture(root: &Path, name: &str) -> PathBuf {
 
 /// `gaincal(gaintype='G', calmode='ap', solint='60s', refant=antenna 0)`
 /// against a 1 Jy point source.
-fn gain_request(output_table: PathBuf) -> GainSolveRequest {
+pub(super) fn gain_request(output_table: PathBuf) -> GainSolveRequest {
     GainSolveRequest {
         selection: MsSelection::new(),
         output_table,

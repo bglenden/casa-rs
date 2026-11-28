@@ -12,10 +12,12 @@ in `.ps.zarr`.
 | `tasks.msconvert(outputvis=…, outformat=…)` | Create a new MeasurementSet | `outformat="msv2"` | `outformat="msv4"` | [All four input/output pairings][format-tests] |
 | `tasks.rerefant(vis=…)` | Read antenna metadata for re-referencing a calibration table | Yes | Yes | [Read and verify the output calibration table][rerefant-tests] |
 | `tasks.smoothcal(vis=…)` | Read field metadata for smoothing a calibration table | Yes | Yes | [Verify field-specific smoothing on both stores][smoothcal-tests] |
+| `tasks.gaincal(vis=…)` | Read visibilities for a time-binned per-receptor G gain solve | Yes | [Point-source mode below](#solve-time-binned-gains) | [Verify gains for both stores][gaincal-tests] |
 
 [format-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_msconvert_formats.py
 [rerefant-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_rerefant_formats.py
 [smoothcal-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_smoothcal_formats.py
+[gaincal-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_gaincal_formats.py
 
 ## Choose the output format
 
@@ -79,3 +81,14 @@ directions. The calibration `FIELD` subtable must store its own rows.
 With MSv2, `field` selects from the MeasurementSet's `FIELD`
 subtable. An empty selector smooths every calibration-table field without
 binding individual field identities across stores.
+
+## Solve time-binned gains
+
+For an MSv4 input, `tasks.gaincal` supports `gaintype="G"`, `calmode="ap"`,
+a positive duration such as `solint="60s"`, and an explicit unpolarized
+point source such as `smodel=[1, 0, 0, 0]`. Use the default selection,
+no prior calibration tables, and the default averaging, flagging, and
+combination controls. Keep normalization and robust fitting at their
+defaults. The task writes a CASA-format calibration table.
+MSv4 uses the processing set's stored weights. MSv2 uses the weights derived
+from its stored sigmas, following CASA.

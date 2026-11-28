@@ -232,7 +232,13 @@ pub fn with_calibration_observation<T>(
             what: "an MSv4 store's namespace without casa-ms's msv4 feature",
         });
     }
-    let observation = Msv2Observation::open_granted(source, &OpenOptions::default(), &mut grant)?;
+    let described = Msv2Observation::opening_table_bytes(source);
+    grant(described)?;
+    let ms = MeasurementSet::open_retained_read(source).map_err(storage)?;
+    let catalogue_rows = super::msv2::held::read_bytes(&ms);
+    grant(described.saturating_add(catalogue_rows.saturating_mul(2)))?;
+    super::msv2::held::prefetch_catalogue_rows(&ms);
+    let observation = Msv2Observation::open_granted_on(ms, &OpenOptions::default(), &mut grant)?;
     let held = observation
         .retained_bytes()
         .saturating_add(calibration_partition_bytes(observation.catalogue()));

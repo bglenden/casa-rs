@@ -260,9 +260,7 @@ pub(crate) fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFai
                 error => TaskFailure::execution(error.to_string()),
             })?
     } else {
-        request
-            .execute_with_output_mode(mode)
-            .map_err(TaskFailure::execution)?
+        request.execute_with_output_mode(mode)?
     };
     if task.surface() == "fluxscale"
         && let (

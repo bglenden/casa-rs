@@ -27,7 +27,7 @@ use super::{
     spectral_window_ids, tally_references,
 };
 use crate::output::CalibrationOutputMode;
-use crate::selected_data::{SelectedData, intents};
+use crate::selected_data::SelectedDataBuilder;
 use crate::solve_stats::SolveStatsBuilder;
 
 pub(crate) fn supports(request: &GainSolveRequest) -> bool {
@@ -132,31 +132,6 @@ fn unrepresented_layout(input: &CalibrationObservation<'_>) -> Option<&'static s
     None
 }
 
-#[derive(Default)]
-struct SelectionSummary {
-    antennas: BTreeSet<i32>,
-    fields: BTreeSet<i32>,
-    observations: BTreeSet<i32>,
-    scans: BTreeSet<i32>,
-    windows: BTreeSet<i32>,
-}
-
-impl SelectionSummary {
-    fn finish(self, input: &CalibrationObservation<'_>) -> Result<SelectedData, GainSolveError> {
-        if self.antennas.is_empty() {
-            return Err(GainSolveError::EmptySelection);
-        }
-        Ok(SelectedData {
-            antennas: self.antennas.into_iter().collect(),
-            fields: self.fields.into_iter().collect(),
-            intents: intents(input.subtables)?,
-            observations: self.observations.into_iter().collect(),
-            scans: self.scans.into_iter().collect(),
-            spectral_windows: self.windows.into_iter().collect(),
-        })
-    }
-}
-
 struct GainAccumulator<'a> {
     request: &'a GainSolveRequest,
     groups: BTreeMap<GroupKey, ScanAccumulator>,
@@ -166,7 +141,7 @@ struct GainAccumulator<'a> {
     available_antennas: BTreeSet<i32>,
     preferred: i32,
     attempted_spws: BTreeSet<i32>,
-    selection: SelectionSummary,
+    selection: SelectedDataBuilder,
     flags: Vec<bool>,
 }
 
@@ -202,7 +177,7 @@ fn read_solutions(
         available_antennas,
         preferred,
         attempted_spws: BTreeSet::new(),
-        selection: SelectionSummary::default(),
+        selection: SelectedDataBuilder::default(),
         flags: Vec::new(),
     };
     for id in input.observation.catalogue().partition_ids() {
@@ -223,9 +198,12 @@ fn read_solutions(
         }
         apply_reference_antenna(&mut state.rows, preferred, &alternates, strict);
     }
+    if state.selection.is_empty() {
+        return Err(GainSolveError::EmptySelection);
+    }
     tally_references(&state.rows, &mut state.stats);
     Ok(SolvedGains {
-        selected_data: state.selection.finish(input)?,
+        selected_data: state.selection.finish(input.subtables)?,
         rows: state.rows,
         refant_id: preferred,
         attempted_spw_ids: state.attempted_spws,
@@ -242,31 +220,8 @@ fn read_partition(
 ) -> Result<(), GainSolveError> {
     let partition = input.observation.catalogue().partition(id);
     let persisted = &input.partitions[id.0 as usize];
-    let request = AccessRequest {
-        partitions: vec![id],
-        data_group: "base".to_owned(),
-        roles: Roles {
-            uvw: false,
-            exposure: false,
-            ..Roles::ALL
-        },
-        channels: 0..partition.frequencies_hz.len(),
-        correlations: CorrelationRequest::ALL,
-        times: TimeSelection::All,
-        fields: FieldSelection::All,
-        weights: WeightRequest::InverseSigmaSquared {
-            fallback: SigmaFallback::StoredWeights,
-        },
-        grouping: Grouping::PerScan {
-            combine_fields: false,
-        },
-        // Leave room for the fragment's validity cube, which holds fewer
-        // bytes than the visibility batch it is built from.
-        batch_bytes: budget / 2,
-    };
-    let bind = crate::timing::Phase::start("gain_observation_bind");
+    let request = partition_access(input, id, budget);
     let mut traversal = input.observation.bind_read(&request)?;
-    drop(bind);
     let mut buffers = BatchBuffers::default();
     let channels: Vec<_> = request.channels.clone().collect();
     let codes: Vec<_> = partition
@@ -274,12 +229,7 @@ fn read_partition(
         .iter()
         .map(|code| code.casacore_code())
         .collect();
-    loop {
-        let read = crate::timing::Phase::start("gain_observation_read");
-        let event = traversal.next(&mut buffers)?;
-        drop(read);
-        let Some(event) = event else { break };
-        let _accumulate = crate::timing::Phase::start("gain_observation_accumulate");
+    while let Some(event) = traversal.next(&mut buffers)? {
         match event {
             ReadEvent::GroupEnd(key) => state.finish_group(key),
             ReadEvent::Batch(batch) => {
@@ -309,6 +259,36 @@ fn read_partition(
         .into());
     }
     Ok(())
+}
+
+fn partition_access(
+    input: &CalibrationObservation<'_>,
+    id: PartitionId,
+    budget: usize,
+) -> AccessRequest {
+    let partition = input.observation.catalogue().partition(id);
+    AccessRequest {
+        partitions: vec![id],
+        data_group: "base".to_owned(),
+        roles: Roles {
+            uvw: false,
+            exposure: false,
+            ..Roles::ALL
+        },
+        channels: 0..partition.frequencies_hz.len(),
+        correlations: CorrelationRequest::ALL,
+        times: TimeSelection::All,
+        fields: FieldSelection::All,
+        weights: WeightRequest::InverseSigmaSquared {
+            fallback: SigmaFallback::StoredWeights,
+        },
+        grouping: Grouping::PerScan {
+            combine_fields: false,
+        },
+        // Leave room for the fragment's validity cube, which holds fewer
+        // bytes than the visibility batch it is built from.
+        batch_bytes: budget / 2,
+    }
 }
 
 impl GainAccumulator<'_> {
@@ -365,11 +345,8 @@ impl GainAccumulator<'_> {
                 })?;
             let antenna1 = coordinates.baseline.antenna1.0 as i32;
             let antenna2 = coordinates.baseline.antenna2.0 as i32;
-            self.selection.antennas.extend([antenna1, antenna2]);
-            self.selection.fields.insert(field);
-            self.selection.observations.insert(observation);
-            self.selection.scans.insert(scan);
-            self.selection.windows.insert(spw);
+            self.selection
+                .add([antenna1, antenna2], field, observation, scan, spw);
             let time = batch.time.seconds_since(sample / per_time, zero);
             self.advance_group(fragment.key, time, (field, spw, observation));
             let flags_from = (sample - fragment.samples.start) * cell;
@@ -447,5 +424,52 @@ impl GainAccumulator<'_> {
         ) {
             self.rows.extend(rows);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gaincal_keeps_time_bins_across_physical_batch_boundaries() {
+        let root = tempfile::tempdir().unwrap();
+        let archive =
+            include_bytes!("../../../../casacore/casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
+        tar::Archive::new(flate2::read::GzDecoder::new(&archive[..]))
+            .unpack(root.path())
+            .unwrap();
+        let request = super::super::batch_trial::gain_request(root.path().join("unused.cal"));
+        with_calibration_observation(&root.path().join("ms_trial.ms"), |input| {
+            let id = PartitionId(0);
+            let unlimited = partition_access(&input, id, input.available_bytes);
+            let estimate = input.observation.estimate(&unlimited).unwrap();
+            let one_time_limit = estimate.partitions[0].held_bytes_per_time() * 2;
+            let split = partition_access(&input, id, one_time_limit);
+            let mut reads = input.observation.bind_read(&split).unwrap();
+            let mut buffers = BatchBuffers::default();
+            let mut fragments = 0;
+            while let Some(event) = reads.next(&mut buffers).unwrap() {
+                if let ReadEvent::Batch(data) = event {
+                    assert_eq!(data.times(), 1);
+                    fragments += data.fragments.len();
+                }
+            }
+            assert!(fragments > 2);
+
+            let whole = read_solutions(&input, &request, input.available_bytes).unwrap();
+            let fragmented = read_solutions(&input, &request, one_time_limit).unwrap();
+            assert_eq!(whole.selected_data, fragmented.selected_data);
+            assert_eq!(whole.solve_stats, fragmented.solve_stats);
+            assert_eq!(whole.rows.len(), 10);
+            assert_eq!(whole.rows.len(), fragmented.rows.len());
+            for (whole, split) in whole.rows.iter().zip(&fragmented.rows) {
+                assert_eq!(whole.time_seconds, split.time_seconds);
+                assert_eq!(whole.antenna_id, split.antenna_id);
+                assert_eq!(whole.flags, split.flags);
+                assert_eq!(whole.gains, split.gains);
+            }
+        })
+        .unwrap();
     }
 }

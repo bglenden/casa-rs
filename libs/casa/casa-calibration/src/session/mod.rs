@@ -204,10 +204,17 @@ pub(crate) fn solve_calibration_with_activity(
                 && options.tf.is_none()
                 && !options.legacy_iterator
                 && !options.invalid_mode
-                && crate::solve::observation_gain::supports(gain)
-                && let Some(report) = crate::solve::observation_gain::solve(&path, gain, mode)?
             {
-                return Ok(CalibrationSolveResult::Gain(report));
+                if crate::solve::observation_gain::supports(gain) {
+                    if let Some(report) = crate::solve::observation_gain::solve(&path, gain, mode)?
+                    {
+                        return Ok(CalibrationSolveResult::Gain(report));
+                    }
+                } else if casa_ms::observation_io::is_msv4_store(&path) {
+                    return Err(GainSolveError::from(casa_observation::ObservationError::Unsupported {
+                        what: "an MSv4 gain solve outside the time-binned G amplitude-and-phase point-source mode (#1055)",
+                    }).into());
+                }
             }
             let open_phase = crate::timing::Phase::start("open_ms");
             let measurement_set = MeasurementSet::open(&path).map_err(|source| {

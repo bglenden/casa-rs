@@ -17,12 +17,16 @@ TRIAL = (
 )
 
 
-@pytest.mark.parametrize("store", ["ms_trial.ms", "ms_trial.ps.zarr"])
-def test_time_binned_point_source_gaincal(tmp_path, monkeypatch, store):
+def prepare_store(tmp_path, monkeypatch, store):
     with tarfile.open(TRIAL / f"{store}.tgz") as archive:
         extract_opts = {"filter": "data"} if sys.version_info >= (3, 12) else {}
         archive.extractall(tmp_path, **extract_opts)
     monkeypatch.chdir(tmp_path)
+
+
+@pytest.mark.parametrize("store", ["ms_trial.ms", "ms_trial.ps.zarr"])
+def test_time_binned_point_source_gaincal(tmp_path, monkeypatch, store):
+    prepare_store(tmp_path, monkeypatch, store)
     result = tasks.gaincal(
         vis=store, caltable="solved.cal", gaintype="G", calmode="ap", solint="60s",
         refant="0", refantmode="strict", smodel=[1.0, 0.0, 0.0, 0.0], minsnr=3.0,
@@ -61,3 +65,17 @@ def test_time_binned_point_source_gaincal(tmp_path, monkeypatch, store):
     # The fixture has a second faint source outside the supplied point model.
     assert np.max(np.abs(np.angle(ratio))) < 0.2
     assert np.max(np.abs(np.abs(ratio) - 1.0)) < 0.2
+
+
+def test_gaincal_refuses_an_unavailable_msv4_mode_before_publication(tmp_path, monkeypatch):
+    store = "ms_trial.ps.zarr"
+    prepare_store(tmp_path, monkeypatch, store)
+
+    with pytest.raises(tasks.TaskParameterError, match="outside the time-binned G") as failure:
+        tasks.gaincal(
+            vis=store, caltable="solved.cal", gaintype="G", calmode="ap", solint="int",
+            refant="0", smodel=[1.0, 0.0, 0.0, 0.0],
+        )
+
+    assert failure.value.completion.parameter == "vis"
+    assert not Path("solved.cal").exists()
