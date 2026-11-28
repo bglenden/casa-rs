@@ -500,6 +500,69 @@ fn failed_full_save_leaves_the_previous_table_readable() {
 }
 
 #[test]
+fn full_save_refuses_rebinding_a_virtual_column_held_by_cpp() {
+    if !casacore_oracle_available() {
+        eprintln!("skipping held C++ reader test: C++ casacore not available");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a");
+    let b = dir.path().join("b");
+    let path = dir.path().join("forward");
+    let table_with_id = |id| {
+        let schema =
+            TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)]).unwrap();
+        let mut table = Table::with_schema(schema);
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "id",
+                Value::Scalar(ScalarValue::Int32(id)),
+            )]))
+            .unwrap();
+        table
+    };
+    for (target, id) in [(&a, 11), (&b, 22)] {
+        table_with_id(id).save(TableOptions::new(target)).unwrap();
+    }
+    let mut original = table_with_id(0);
+    original.bind_forward_column("id", &a).unwrap();
+    let options = TableOptions::new(&path);
+    original.save(options.clone()).unwrap();
+    original.save(options.clone()).unwrap();
+    let before = published_counter(&path);
+    let mut held = HeldCppReaderProcess::open(&path);
+    assert_eq!(held.read_id(), 11);
+
+    let mut changed = table_with_id(0);
+    changed.bind_forward_column("id", &b).unwrap();
+    let saved = changed.save(options.clone());
+    let held_id = held.read_id();
+    let fresh_id = HeldCppReaderProcess::open(&path).read_id();
+    assert!(
+        saved
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("layout of an open table"))
+            && held_id == 11
+            && fresh_id == 11
+            && published_counter(&path) == before,
+        "forwarding save returned {saved:?}, held C++ reader {held_id}, fresh C++ reader {fresh_id}"
+    );
+    assert_eq!(
+        cell(&Table::open(options.clone()).unwrap(), "id"),
+        ScalarValue::Int32(11)
+    );
+
+    drop(held);
+    changed.save(options.clone()).unwrap();
+    assert_eq!(published_counter(&path), before + 1);
+    assert_eq!(HeldCppReaderProcess::open(&path).read_id(), 22);
+    assert_eq!(
+        cell(&Table::open(options).unwrap(), "id"),
+        ScalarValue::Int32(22)
+    );
+}
+
+#[test]
 fn full_save_refuses_read_only_descriptor_without_changing_table() {
     if !casacore_oracle_available() {
         eprintln!("skipping full-save readback: C++ casacore not available");

@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs::{self, File};
-use std::io::{BufReader, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use crate::storage::TABLE_INFO_FILE;
@@ -29,6 +29,7 @@ enum Update {
         original: File,
         updated: File,
     },
+    FullRewrite(FullRewrite),
     AppendStandard {
         file: File,
         original: File,
@@ -70,6 +71,7 @@ impl Update {
                 new_len,
             } => file.set_len((*new_len).max(*old_len)),
             Self::Rewrite { file, updated, .. } => rewrite(file, updated, None),
+            Self::FullRewrite(change) => change.apply(),
             Self::AppendStandard { file, records, .. } => {
                 file.seek(SeekFrom::Start(records.retained_end))?;
                 std::io::copy(&mut records.tail, file)?;
@@ -98,6 +100,7 @@ impl Update {
             } => write_index(file, *offset, original),
             Self::Extend { file, old_len, .. } => file.set_len(*old_len),
             Self::Rewrite { file, original, .. } => rewrite(file, original, None),
+            Self::FullRewrite(change) => change.undo(),
             Self::AppendStandard {
                 file,
                 original,
@@ -136,6 +139,93 @@ impl Update {
             // its original in place, and success commits the transaction.
             Self::PublishControl { .. } => Ok(()),
         }
+    }
+}
+
+/// A full table may have one payload per tile shape. Keep its backups on
+/// disk and reopen only the two files needed for one update at a time.
+struct FullRewrite {
+    target: PathBuf,
+    original: PathBuf,
+    updated: PathBuf,
+    identity: fs::Metadata,
+    started: bool,
+}
+
+impl FullRewrite {
+    fn prepare(target: PathBuf, original: PathBuf, updated: PathBuf) -> io::Result<Self> {
+        let identity = crate::publication::private_table_file_metadata(&target)?;
+        let change = Self {
+            target,
+            original,
+            updated,
+            identity,
+            started: false,
+        };
+        let mut file = change.open_target()?;
+        let mut backup = File::options()
+            .write(true)
+            .create_new(true)
+            .open(&change.original)?;
+        io::copy(&mut file, &mut backup)?;
+        File::open(&change.updated)?;
+        Ok(change)
+    }
+
+    fn open_target(&self) -> io::Result<File> {
+        let mut options = File::options();
+        options.read(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        }
+        let file = options.open(&self.target)?;
+        let current = file.metadata()?;
+        let same_file = current.is_file();
+        #[cfg(unix)]
+        let same_file = {
+            use std::os::unix::fs::MetadataExt;
+            same_file
+                && current.nlink() == 1
+                && current.dev() == self.identity.dev()
+                && current.ino() == self.identity.ino()
+        };
+        if !same_file {
+            return Err(self.changed_target());
+        }
+        Ok(file)
+    }
+
+    fn changed_target(&self) -> io::Error {
+        io::Error::other(format!(
+            "full save target changed during publication: {}",
+            self.target.display()
+        ))
+    }
+
+    fn apply(&mut self) -> io::Result<()> {
+        let mut file = self.open_target()?;
+        let current = file.metadata()?;
+        if current.len() != self.identity.len()
+            || current.modified().ok() != self.identity.modified().ok()
+        {
+            return Err(self.changed_target());
+        }
+        let mut updated = File::open(&self.updated)?;
+        self.started = true;
+        rewrite(&mut file, &mut updated, None)
+    }
+
+    fn undo(&mut self) -> io::Result<()> {
+        if self.started {
+            rewrite(
+                &mut self.open_target()?,
+                &mut File::open(&self.original)?,
+                None,
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -200,13 +290,11 @@ impl StagedEdit<'_> {
             let staged = entry.path();
             match target.symlink_metadata() {
                 Ok(_) if original_managers.remove(&name) || name == TABLE_INFO_FILE => {
-                    crate::publication::private_table_file_metadata(&target)?;
-                    let file = File::options().read(true).write(true).open(&target)?;
-                    changes.push(backup_rewrite(
-                        file,
-                        &staged,
-                        &rollback_path(staging, &name),
-                    )?);
+                    changes.push(Update::FullRewrite(FullRewrite::prepare(
+                        target,
+                        rollback_path(staging, &name),
+                        staged,
+                    )?));
                 }
                 Ok(_) => {
                     return Err(StorageError::FormatMismatch(format!(

@@ -231,6 +231,9 @@ impl Table {
     /// On Unix the save holds the destination's casacore write lock during
     /// publication. Existing manager files are updated in place so open
     /// readers can resynchronize when they take their next lock.
+    /// User locking requires this handle's write lock for a save to its own
+    /// table. Automatic locking refuses a snapshot when its handle's
+    /// observed generation is stale.
     ///
     /// # Errors
     ///
@@ -249,27 +252,15 @@ impl Table {
         options: TableOptions,
         lock: Option<&crate::TableWriteLock>,
     ) -> Result<(), TableError> {
-        self.require_full_save_destination(&options.path)?;
-        self.validate()?;
-        self.persist_all(options, lock)
+        self.persist_all(options, lock, true)
     }
 
-    /// Saves the table to disk without re-validating every row against the schema.
-    ///
-    /// This is intended for advanced callers that already know the in-memory
-    /// table is schema-valid because all mutations went through validating APIs
-    /// such as [`add_row`](crate::Table::add_row), [`add_column`](crate::Table::add_column),
-    /// [`cell_accessor_mut`](crate::Table::cell_accessor_mut), and
-    /// [`column_accessor_mut`](crate::Table::column_accessor_mut). It preserves the exact same
-    /// on-disk format as [`save`](Table::save), but skips the extra full-table
-    /// validation pass before serialization.
-    ///
-    /// Callers that are unsure whether the table state is valid should keep
-    /// using [`save`](Table::save).
+    /// The detached concatenation path already supplies validated rows.
     fn persist_all(
         &self,
         options: TableOptions,
         lock: Option<&crate::TableWriteLock>,
+        validate: bool,
     ) -> Result<(), TableError> {
         self.require_full_save_destination(&options.path)?;
         tracing::info!(
@@ -277,13 +268,11 @@ impl Table {
             rows = self.inner.row_count(),
             "saving CASA table"
         );
-        let rows = self.inner.rows()?;
-        let undefined = self.inner.undefined_cells()?;
-        self.write_full_table(&options.path, lock, |control| {
+        self.write_full_table(&options.path, lock, validate, |control| {
             CompositeStorage.save_borrowed(
                 control,
-                rows,
-                undefined,
+                self.inner.rows()?,
+                self.inner.undefined_cells()?,
                 self.inner.keywords(),
                 self.inner.all_column_keywords(),
                 self.inner.schema(),
@@ -296,7 +285,8 @@ impl Table {
                 options.preserve_ssm_group_name,
                 options.endian_format.is_big_endian(),
                 options.tile_shape.as_deref(),
-            )
+            )?;
+            Ok(())
         })
         .map_err(|error| {
             tracing::error!(
@@ -332,7 +322,7 @@ impl Table {
         table.table_info = snapshot.table_info;
         table.virtual_columns = snapshot.virtual_columns;
         table.virtual_bindings = snapshot.virtual_bindings;
-        table.persist_all(options, None)
+        table.persist_all(options, None, false)
     }
 
     fn require_full_save_destination(&self, target: &Path) -> Result<(), TableError> {
@@ -449,23 +439,9 @@ impl Table {
         bindings: &std::collections::HashMap<String, ColumnBinding>,
         lock: Option<&crate::TableWriteLock>,
     ) -> Result<(), TableError> {
-        self.require_full_save_destination(&options.path)?;
-        self.validate()?;
         self.persist_with_bindings(options, bindings, lock)
     }
 
-    /// Save the table with per-column data manager bindings without re-validating rows.
-    ///
-    /// This is the bindings-aware counterpart to [`persist_all`](Self::persist_all).
-    /// It preserves the same on-disk layout as [`save_with_bindings`](Self::save_with_bindings),
-    /// but skips the extra full-table validation pass and avoids cloning the entire row set
-    /// before serialization.
-    ///
-    /// This entrypoint is intended for high-volume writers that already know
-    /// their table contents satisfy the schema through validated construction.
-    /// On large tables it avoids a measurable amount of redundant work while
-    /// still using the same bindings-driven storage-manager layout as
-    /// [`save_with_bindings`](Self::save_with_bindings).
     fn persist_with_bindings(
         &self,
         options: TableOptions,
@@ -487,13 +463,11 @@ impl Table {
                 )),
             );
         }
-        let rows = self.inner.rows()?;
-        let undefined = self.inner.undefined_cells()?;
-        self.write_full_table(&options.path, lock, |control| {
+        self.write_full_table(&options.path, lock, true, |control| {
             CompositeStorage.save_with_bindings_borrowed(
                 control,
-                rows,
-                undefined,
+                self.inner.rows()?,
+                self.inner.undefined_cells()?,
                 self.inner.keywords(),
                 self.inner.all_column_keywords(),
                 self.inner.schema(),
@@ -505,7 +479,8 @@ impl Table {
                 options.endian_format.is_big_endian(),
                 options.tile_shape.as_deref(),
                 bindings,
-            )
+            )?;
+            Ok(())
         })
         .map_err(|error| {
             tracing::error!(
@@ -574,13 +549,11 @@ impl Table {
                 )),
             );
         }
-        let rows = self.inner.rows()?;
-        let undefined = self.inner.undefined_cells()?;
-        self.write_full_table(&options.path, lock, |control| {
+        self.write_full_table(&options.path, lock, false, |control| {
             CompositeStorage.save_with_bindings_and_column_overrides_borrowed(
                 control,
-                rows,
-                undefined,
+                self.inner.rows()?,
+                self.inner.undefined_cells()?,
                 self.inner.keywords(),
                 self.inner.all_column_keywords(),
                 self.inner.schema(),
@@ -593,7 +566,8 @@ impl Table {
                 options.tile_shape.as_deref(),
                 bindings,
                 column_overrides,
-            )
+            )?;
+            Ok(())
         })
         .map_err(|error| {
             tracing::error!(
@@ -1108,8 +1082,7 @@ impl Table {
     /// `TableCopy::makeEmptyTable(name, ..., noRows=True)`.
     pub fn shallow_copy(&self, opts: TableOptions) -> Result<(), TableError> {
         self.require_full_save_destination(&opts.path)?;
-        self.validate()?;
-        self.write_full_table(&opts.path, None, |control| {
+        self.write_full_table(&opts.path, None, true, |control| {
             CompositeStorage.save_borrowed(
                 control,
                 &[],
@@ -1126,7 +1099,8 @@ impl Table {
                 opts.preserve_ssm_group_name,
                 opts.endian_format.is_big_endian(),
                 opts.tile_shape.as_deref(),
-            )
+            )?;
+            Ok(())
         })?;
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&opts.path);
         Ok(())

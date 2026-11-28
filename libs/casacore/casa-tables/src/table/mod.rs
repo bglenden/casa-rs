@@ -12,7 +12,6 @@ use thiserror::Error;
 
 #[cfg(unix)]
 use crate::lock::LockFile;
-use crate::lock::SyncData;
 #[cfg(unix)]
 use crate::lock::publish_persisted_write;
 use crate::lock::{LockMode, LockOptions, LockType};
@@ -854,7 +853,9 @@ impl From<SchemaError> for TableError {
 struct LockState {
     path: PathBuf,
     lock_file: LockFile,
-    sync_data: SyncData,
+    /// The published generation reflected in this handle, updated by
+    /// explicit lock transitions and successful automatic full saves.
+    observed_modify_counter: std::sync::atomic::AtomicU32,
     options: LockOptions,
     data_manager: DataManagerKind,
     endian_format: EndianFormat,
@@ -884,6 +885,16 @@ struct LockState {
 
 #[cfg(unix)]
 impl LockState {
+    fn observed_modify_counter(&self) -> u32 {
+        self.observed_modify_counter
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn observe_modify_counter(&self, counter: u32) {
+        self.observed_modify_counter
+            .store(counter, std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Whether the table changed since its state last matched the disk.
     fn has_unflushed_changes(&self, table: &TableImpl) -> bool {
         table.has_dirty_changes().unwrap_or_else(|| {
@@ -1067,13 +1078,7 @@ impl Table {
         if let Some(lock) = &self.lock_state {
             bytes = bytes
                 .checked_add(crate::table_impl::path_heap_bytes(&lock.path))?
-                .checked_add(lock.lock_file.retained_heap_bytes())?
-                .checked_add(
-                    lock.sync_data
-                        .data_man_change_counters
-                        .capacity()
-                        .checked_mul(size_of::<u32>())?,
-                )?;
+                .checked_add(lock.lock_file.retained_heap_bytes())?;
         }
         Some(bytes)
     }

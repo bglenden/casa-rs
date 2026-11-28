@@ -11,6 +11,7 @@ use super::table_control::{
     ColumnSetStorage, DataManagerEntry, StagedTableDat, read_table_dat, read_table_dat_dispatch,
 };
 use super::{StorageError, TABLE_CONTROL_FILE, TableDatContents, TableDatResult};
+use crate::TableError;
 use crate::publication::table_manager_file_sequence;
 
 /// Serialize the complete save in private storage. The caller holds the
@@ -18,8 +19,8 @@ use crate::publication::table_manager_file_sequence;
 pub(crate) fn prepare(
     table: &Path,
     has_open_readers: impl FnOnce() -> bool,
-    write: impl FnOnce(StagedTableDat<'_>) -> Result<(), StorageError>,
-) -> Result<(ReversibleEdit, bool), StorageError> {
+    write: impl FnOnce(StagedTableDat<'_>) -> Result<(), TableError>,
+) -> Result<(ReversibleEdit, bool), TableError> {
     let control = StagedTableDat::in_table_directory(table)?;
     let path = table.join(TABLE_CONTROL_FILE);
     let previous = match path.symlink_metadata() {
@@ -29,11 +30,11 @@ pub(crate) fn prepare(
                 return Err(StorageError::FormatMismatch(
                     "cannot overwrite a reference or concatenated table; materialize it at a new path"
                         .into(),
-                ));
+                ).into());
             }
         },
         Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error.into()),
+        Err(error) => return Err(StorageError::from(error).into()),
     };
     let original_files = if let Some(dat) = &previous {
         dat.require_separate_storage_for_write()?;
@@ -45,7 +46,8 @@ pub(crate) fn prepare(
             return Err(StorageError::FormatMismatch(
                 "full save requires separate manager files; materialize the table at a new path"
                     .into(),
-            ));
+            )
+            .into());
         }
         if dat
             .column_set
@@ -55,7 +57,8 @@ pub(crate) fn prepare(
         {
             return Err(StorageError::FormatMismatch(
                 "AsdmStMan is read-only. Materialize the table at a new path.".into(),
-            ));
+            )
+            .into());
         }
         manager_files(table, dat)?
     } else {
@@ -72,7 +75,8 @@ pub(crate) fn prepare(
         return Err(StorageError::FormatMismatch(
             "full save would change the layout of an open table; close its other handles and retry"
                 .into(),
-        ));
+        )
+        .into());
     }
     Ok((
         edit.prepare_full_publication(control, original_files)?,
@@ -143,8 +147,19 @@ fn compatible_with_open_managers(
                 fs::read(table.join(&header))? == fs::read(stage.join(header))?
             }
             other => {
+                // Engines such as ForwardColumn bind to the column's
+                // keywords in prepare(). A keyword resync keeps that binding.
                 super::is_virtual_engine(other)
                     && before.table_desc.table_keywords == after.table_desc.table_keywords
+                    && before
+                        .table_desc
+                        .columns
+                        .iter()
+                        .zip(&after.table_desc.columns)
+                        .zip(&before.column_set.columns)
+                        .all(|((old, new), binding)| {
+                            binding.dm_seq_nr != sequence || old.keywords == new.keywords
+                        })
             }
         };
         if !same_geometry {

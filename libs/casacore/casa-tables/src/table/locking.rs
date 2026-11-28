@@ -131,18 +131,18 @@ impl Table {
         table.inner.track_dirty_changes();
 
         // Read sync data if available.
-        let sync_data = lock_file
+        let observed_modify_counter = lock_file
             .read_sync_data()
             .map_err(|e| TableError::LockIo {
                 path: options.path.display().to_string(),
                 message: e.to_string(),
             })?
-            .unwrap_or_else(SyncData::new);
+            .map_or(0, |sync| sync.modify_counter);
 
         table.lock_state = Some(LockState {
             path: lock_path,
             lock_file,
-            sync_data,
+            observed_modify_counter: std::sync::atomic::AtomicU32::new(observed_modify_counter),
             options: lock_opts,
             data_manager: options.data_manager,
             endian_format: options.endian_format,
@@ -244,7 +244,7 @@ impl Table {
         else {
             return Ok(false);
         };
-        if !state.sync_data.needs_reload(&new_sync) {
+        if !new_sync.needs_reload(state.observed_modify_counter()) {
             return Ok(false);
         }
         // Reopen the descriptor just as a fresh reader would. This drops
@@ -258,7 +258,10 @@ impl Table {
                 path: path.display().to_string(),
                 message: error.to_string(),
             })?;
-        self.lock_state.as_mut().expect("open lock state").sync_data = new_sync;
+        self.lock_state
+            .as_ref()
+            .expect("open lock state")
+            .observe_modify_counter(new_sync.modify_counter);
         Ok(true)
     }
 
@@ -358,7 +361,7 @@ impl Table {
         if !(state.lock_file.has_lock(LockType::Write) && state.has_unpublished_write()) {
             return Ok(false);
         }
-        state.sync_data = publish_persisted_write(
+        let sync = publish_persisted_write(
             &state.lock_file,
             &state.path,
             state.table_dat_before_write.get().map(Vec::as_slice),
@@ -367,6 +370,7 @@ impl Table {
             path: state.path.display().to_string(),
             message: e.to_string(),
         })?;
+        state.observe_modify_counter(sync.modify_counter);
         state
             .unpublished_write
             .store(false, std::sync::atomic::Ordering::Relaxed);
@@ -658,7 +662,7 @@ impl Table {
                 operation: "locked_modify_counter".into(),
             });
         }
-        Ok(state.sync_data.modify_counter)
+        Ok(state.observed_modify_counter())
     }
 
     /// Tests if the table is opened by another process.
