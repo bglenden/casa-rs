@@ -126,24 +126,10 @@ pub(super) fn affected_tropo_epoch(time: MvTime) -> bool {
     mjd > 57_609.0 && mjd < 57_707.0
 }
 
-pub(super) fn tropo_keyword(
-    ms: &MeasurementSet,
-    request: &GencalRequest,
-    mode: crate::output::CalibrationOutputMode,
-) -> Result<Option<Value>, GencalError> {
-    if crate::antpos_vla::only_vla_observations(ms).map_err(invalid)?
-        && affected_tropo_epoch(observation_start(ms)?)
-    {
-        return Ok(Some(Value::Scalar(ScalarValue::Float64(1.0))));
-    }
-    if mode == crate::output::CalibrationOutputMode::Update && request.output_table.exists() {
-        let previous = crate::output_merge::open(&request.output_table)?;
-        return Ok(previous
-            .keywords()
-            .get(crate::antpos_vla::TROPO_KEYWORD)
-            .cloned());
-    }
-    Ok(None)
+pub(super) fn tropo_keyword(ms: &MeasurementSet) -> Result<Option<Value>, GencalError> {
+    let applies = crate::antpos_vla::only_vla_observations(ms).map_err(invalid)?
+        && affected_tropo_epoch(observation_start(ms)?);
+    Ok(applies.then_some(Value::Scalar(ScalarValue::Float64(1.0))))
 }
 
 fn load_antennas(ms: &MeasurementSet) -> Result<Vec<Antenna>, GencalError> {

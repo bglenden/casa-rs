@@ -42,7 +42,8 @@ pub use msv4::{
 };
 pub use namespace::{
     AntennaNamespace, NamespaceAntenna, NamespaceField, NamespaceRows, NamespaceWindow,
-    PersistedNamespace, antenna_namespace, calibration_subtables, persisted_namespace,
+    PersistedNamespace, antenna_namespace, calibration_subtables,
+    calibration_subtables_with_declared_telescopes, persisted_namespace,
 };
 #[cfg(unix)]
 pub use namespace::{CalibrationObservation, CalibrationPartition, with_calibration_observation};

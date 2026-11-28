@@ -27,7 +27,10 @@ use casa_core::{
     ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
 use casa_ms::MeasurementSet;
-use casa_ms::observation_io::{ObservationError, calibration_subtables, is_msv4_store};
+use casa_ms::observation_io::{
+    ObservationError, calibration_subtables, calibration_subtables_with_declared_telescopes,
+    is_msv4_store,
+};
 use casa_ms::schema::SubtableId;
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
@@ -390,11 +393,12 @@ fn generate_prior(
             source: Box::new(source),
         }
     };
-    let ms = if manual_offsets
-        || matches!(
-            request.caltype,
-            GencalType::Amp | GencalType::Ph | GencalType::Sbd | GencalType::Mbd | GencalType::Opac
-        ) {
+    let ms = if manual_offsets {
+        calibration_subtables_with_declared_telescopes(path).map_err(observation_error)?
+    } else if matches!(
+        request.caltype,
+        GencalType::Amp | GencalType::Ph | GencalType::Sbd | GencalType::Mbd | GencalType::Opac
+    ) {
         calibration_subtables(path).map_err(observation_error)?
     } else if request.caltype == GencalType::Antpos && is_msv4_store(path) {
         return Err(observation_error(ObservationError::Unsupported {
@@ -1086,7 +1090,7 @@ fn write_prior_caltable(
     );
 
     if matches!(request.caltype, GencalType::Antpos | GencalType::AntposVla)
-        && let Some(value) = antpos_evla::tropo_keyword(ms, request, mode)?
+        && let Some(value) = antpos_evla::tropo_keyword(ms)?
     {
         writer
             .table_mut()

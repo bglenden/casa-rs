@@ -204,6 +204,10 @@ def test_manual_antenna_offsets_create_and_add(antpos_stores, mode, initial, upd
         before = parameters(output, 0)
         np.testing.assert_allclose(before[:, 0], initial, rtol=1e-6)
         np.testing.assert_array_equal(before[:, 2], np.zeros(3))
+        prior = tools.table()
+        assert prior.open(output, nomodify=False)
+        assert prior.putkeyword("VLATrDelCorr", 2.0)
+        assert prior.close()
         assert tasks.gencal(
             vis=vis, caltable=output, caltype=mode, antenna="0", parameter=[0.01, 0.02, 0.03],
         ) is None
@@ -248,6 +252,56 @@ def test_msv4_antenna_offsets_refuse_unrepresented_metadata(store, mode, options
                      parameter=[0.01, 0.02, 0.03], **options)
     assert failure.value.completion.parameter == "vis"
     assert not Path("offsets.cal").exists()
+
+
+@pytest.mark.parametrize(("case", "reason"), [
+    ("declared-evla", "stated OBSERVATION.TIME_RANGE"),
+    ("constituent-vla", None),
+    ("missing", "declared overall_telescope_name"),
+    ("conflicting", "consistent declared overall_telescope_name"),
+])
+def test_msv4_antenna_offsets_require_the_declared_telescope(antpos_stores, case, reason):
+    _, vis = antpos_stores
+    headers = sorted(Path(vis).glob("*/antenna_xds/zarr.json"))
+    assert len(headers) == 2
+    for index, header in enumerate(headers):
+        metadata = json.loads(header.read_text())
+        attributes = metadata["attributes"]
+        assert attributes["overall_telescope_name"] == "ALMA"
+        if case == "missing":
+            del attributes["overall_telescope_name"]
+        elif case == "declared-evla" or (case == "conflicting" and index == 1):
+            attributes["overall_telescope_name"] = "EVLA"
+        header.write_text(json.dumps(metadata))
+        if case == "constituent-vla":
+            coordinate = header.parent / "telescope_name"
+            array_header = coordinate / "zarr.json"
+            array = json.loads(array_header.read_text())
+            assert array["shape"] == array["chunk_grid"]["configuration"]["chunk_shape"]
+            array["data_type"]["configuration"]["length_bytes"] = 16
+            array["codecs"] = array["codecs"][:1]
+            array_header.write_text(json.dumps(array))
+            names = np.full(array["shape"], "ALMA", dtype="<U4")
+            names[0] = "VLA"
+            (coordinate / "c/0").write_bytes(names.tobytes())
+
+    request = dict(vis=vis, caltable="offsets.cal", caltype="antpos",
+                   antenna="0", parameter=[0.1, 0.2, 0.3])
+    if reason:
+        with pytest.raises(tasks.TaskParameterError, match=reason) as failure:
+            tasks.gencal(**request)
+        assert failure.value.completion.parameter == "vis"
+        assert not Path("offsets.cal").exists()
+    else:
+        assert tasks.gencal(**request) is None
+        table = tools.table()
+        assert table.open("offsets.cal/OBSERVATION")
+        np.testing.assert_array_equal(table.getcol("TELESCOPE_NAME"), ["ALMA"])
+        assert table.close()
+        assert table.open("offsets.cal")
+        assert "VLATrDelCorr" not in table.keywordnames()
+        np.testing.assert_allclose(table.getcell("FPARAM", 0)[:, 0], [0.1, 0.2, 0.3])
+        assert table.close()
 
 
 def test_unreadable_msv2_manual_antenna_offsets_preserve_diagnostic(tmp_path):

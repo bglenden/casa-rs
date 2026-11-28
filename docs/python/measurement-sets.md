@@ -115,7 +115,8 @@ For manual antenna offsets, supply `caltype="antpos"`, an explicit `antenna`
 selection, and three offset coordinates per selected antenna in `parameter`.
 `caltype="antposvla"` rotates offsets from VLA coordinates into ITRF. Both
 modes add offsets to an existing, physically compatible calibration table.
-MSv4 accepts manual offsets when the observation does not require the VLA
+MSv4 uses the declared `overall_telescope_name` of each observing session.
+Manual offsets are available when those telescopes do not require the VLA
 tropospheric correction check. For observations consisting entirely of VLA
 or EVLA sessions, the task requires the stated `OBSERVATION.TIME_RANGE` that
 determines CASA's `VLATrDelCorr` keyword. MSv4 lacks that field and the task

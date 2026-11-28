@@ -352,6 +352,26 @@ fn validate_calibration_scan_numbers(catalogue: &Catalogue) -> Result<(), Observ
 /// CASA subtables, an MSv4 field moves with an ephemeris, or opening an
 /// MSv4 catalogue exceeds its memory grant.
 pub fn calibration_subtables(source: &Path) -> Result<MeasurementSet, ObservationError> {
+    calibration_subtables_with(source, false)
+}
+
+/// Open calibration subtables when a prescription depends on the stated
+/// telescope of each observation. MSv2 uses its own OBSERVATION subtable.
+/// In MSv4, each antenna dataset's `overall_telescope_name` supplies that
+/// identity, distinct from its constituent antennas' telescope coordinates.
+/// # Errors
+/// As [`calibration_subtables`], and when an MSv4 telescope declaration is
+/// missing or conflicting within one observing session.
+pub fn calibration_subtables_with_declared_telescopes(
+    source: &Path,
+) -> Result<MeasurementSet, ObservationError> {
+    calibration_subtables_with(source, true)
+}
+
+fn calibration_subtables_with(
+    source: &Path,
+    require_declared_telescopes: bool,
+) -> Result<MeasurementSet, ObservationError> {
     if !super::is_msv4_store(source) {
         return MeasurementSet::open(source).map_err(storage);
     }
@@ -371,17 +391,33 @@ pub fn calibration_subtables(source: &Path) -> Result<MeasurementSet, Observatio
         };
         let observation =
             super::Msv4Observation::open_granted(source, &OpenOptions::default(), &mut grant)?;
-        grant(
-            observation
-                .held_bytes()
-                .saturating_add(super::creation::subtables_bytes(observation.catalogue())),
-        )?;
-        super::creation::prescribed_calibration_subtables(&observation)
+        let held = observation
+            .held_bytes()
+            .saturating_add(super::creation::subtables_bytes(observation.catalogue()));
+        grant(held)?;
+        let declared = require_declared_telescopes
+            .then(|| {
+                observation.declared_telescopes(&mut |bytes| grant(held.saturating_add(bytes)))
+            })
+            .transpose()?;
+        let mut subtables = super::creation::prescribed_calibration_subtables(&observation)?;
+        if let Some(telescopes) = declared {
+            let mut observation = subtables.observation_mut().map_err(storage)?;
+            for (row, name) in telescopes.into_iter().enumerate() {
+                observation
+                    .set_string(row, "TELESCOPE_NAME", name)
+                    .map_err(storage)?;
+            }
+        }
+        Ok(subtables)
     }
     #[cfg(not(all(feature = "msv4", unix)))]
-    Err(ObservationError::Unsupported {
-        what: "an MSv4 calibration namespace without casa-ms's msv4 feature",
-    })
+    {
+        let _ = require_declared_telescopes;
+        Err(ObservationError::Unsupported {
+            what: "an MSv4 calibration namespace without casa-ms's msv4 feature",
+        })
+    }
 }
 
 /// The namespace of the store at `source` as [`super::open`] opens it with

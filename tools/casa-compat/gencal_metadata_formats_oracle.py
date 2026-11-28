@@ -54,6 +54,11 @@ def tropo_keyword(caltable):
         return tool.getkeyword("VLATrDelCorr") if "VLATrDelCorr" in tool.keywordnames() else None
 
 
+def seed_tropo_keyword(caltable):
+    with open_table(caltable, write=True) as tool:
+        assert tool.putkeyword("VLATrDelCorr", 2.0)
+
+
 def check_antenna_offsets(root, native, msv2_only):
     source = root / "MSv2" / "offsets.ms"
     source.parent.mkdir()
@@ -70,6 +75,11 @@ def check_antenna_offsets(root, native, msv2_only):
         candidates = {name: root / f"{mode}-{name}.cal" for name in sources}
         cross = root / f"{mode}-CASA-create-MSv4-update.cal"
         for phase, options in zip(("create", "update"), stages, strict=True):
+            if phase == "update":
+                for caltable in (expected, *candidates.values()):
+                    seed_tropo_keyword(caltable)
+                if not msv2_only:
+                    seed_tropo_keyword(cross)
             generate(casa, source, expected, [(mode, options)])
             _, rows, _ = product(expected)
             np.testing.assert_array_equal(rows["ANTENNA1"], np.arange(5))
@@ -86,6 +96,7 @@ def check_antenna_offsets(root, native, msv2_only):
                     generate(casa, source, cross, [(mode, options)])
                 else:
                     generate(native, sources["MSv4"], cross, [(mode, options)])
+                    assert tropo_keyword(cross) is None
                     metrics["CASA-create-MSv4-update"] = compare_tables(cross, expected)
             results[f"{mode}-{phase}"] = metrics
     if not msv2_only:
@@ -117,6 +128,13 @@ def check_vla_epoch_refusal(root, native):
         caltable = case / "CASA.cal"
         assert casa.gencal(vis=str(vis), caltable=str(caltable), **options) is None
         keywords.append(tropo_keyword(caltable))
+        rust_ms_v2 = case / "native-MSv2.cal"
+        assert native.gencal(vis=str(vis), caltable=str(rust_ms_v2), **options) is None
+        for engine, product_path in ((casa, caltable), (native, rust_ms_v2)):
+            seed_tropo_keyword(product_path)
+            assert engine.gencal(vis=str(vis), caltable=str(product_path), **options) is None
+            assert tropo_keyword(product_path) == keywords[-1]
+        assert compare_tables(rust_ms_v2, caltable) == 0
         processing_set = case / "source.ps.zarr"
         result = native.msconvert(vis=str(vis), outputvis=str(processing_set),
                                   outformat="msv4", withpointing=False)
