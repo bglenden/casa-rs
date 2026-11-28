@@ -25,6 +25,8 @@ use crate::tasks::{TaskTableWrite, completion, decode_plot_documents};
 
 #[cfg(all(unix, feature = "flagdata-test-hooks"))]
 use crate::native_flagdata_test_hooks as flagdata_test_hooks;
+#[cfg(all(unix, feature = "imstat-test-hooks"))]
+use crate::native_imstat_test_hooks as imstat_test_hooks;
 #[cfg(all(unix, feature = "transform-test-hooks"))]
 use crate::native_transform_test_hooks as transform_test_hooks;
 
@@ -131,7 +133,11 @@ pub(crate) enum WorkerMessage {
     Log(String),
     #[cfg(all(
         unix,
-        any(feature = "transform-test-hooks", feature = "flagdata-test-hooks")
+        any(
+            feature = "transform-test-hooks",
+            feature = "flagdata-test-hooks",
+            feature = "imstat-test-hooks"
+        )
     ))]
     TestInterrupt(Sender<()>),
     Finished,
@@ -139,7 +145,11 @@ pub(crate) enum WorkerMessage {
 
 #[cfg(all(
     unix,
-    any(feature = "transform-test-hooks", feature = "flagdata-test-hooks")
+    any(
+        feature = "transform-test-hooks",
+        feature = "flagdata-test-hooks",
+        feature = "imstat-test-hooks"
+    )
 ))]
 pub(crate) fn signal_test_worker(sender: &Sender<WorkerMessage>) {
     // Only call from a test checkpoint with no shared table write lock.
@@ -256,6 +266,8 @@ pub(crate) fn run_native_task(
     let cancel = execution.cancel.clone();
     #[cfg(all(unix, feature = "flagdata-test-hooks"))]
     let flagdata_test = flagdata_test_hooks::take(&surface);
+    #[cfg(all(unix, feature = "imstat-test-hooks"))]
+    let imstat_test = imstat_test_hooks::take(&surface);
     #[cfg(all(unix, feature = "transform-test-hooks"))]
     let transform_test = transform_test_hooks::take(&surface);
     let worker = std::thread::Builder::new()
@@ -277,6 +289,8 @@ pub(crate) fn run_native_task(
             let run = || transform_test_hooks::run(transform_test, &sender, run);
             #[cfg(all(unix, feature = "flagdata-test-hooks"))]
             let run = || flagdata_test_hooks::run(flagdata_test, &sender, run);
+            #[cfg(all(unix, feature = "imstat-test-hooks"))]
+            let run = || imstat_test_hooks::run(imstat_test, &sender, run);
             let (reply, lines) = tracing::subscriber::with_default(subscriber, run);
             for line in lines {
                 if sender.send(WorkerMessage::Log(line + "\n")).is_err() {
@@ -331,7 +345,11 @@ fn collect_logs(
             }
             #[cfg(all(
                 unix,
-                any(feature = "transform-test-hooks", feature = "flagdata-test-hooks")
+                any(
+                    feature = "transform-test-hooks",
+                    feature = "flagdata-test-hooks",
+                    feature = "imstat-test-hooks"
+                )
             ))]
             Ok(WorkerMessage::TestInterrupt(resume)) => {
                 // SAFETY: a standard process signal handled by Python. This
