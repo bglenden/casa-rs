@@ -59,25 +59,59 @@ impl SelectedData {
         ms: &MeasurementSet,
         rows: impl Iterator<Item = &'a SelectedSolveRow>,
     ) -> Result<Self, GainSolveError> {
-        let mut antennas = BTreeSet::new();
-        let mut fields = BTreeSet::new();
-        let mut observations = BTreeSet::new();
-        let mut scans = BTreeSet::new();
-        let mut spectral_windows = BTreeSet::new();
+        let mut selected = SelectedDataBuilder::default();
         for row in rows {
-            antennas.extend([row.antenna1, row.antenna2]);
-            fields.insert(row.field_id);
-            observations.insert(row.observation_id);
-            scans.insert(row.scan_number);
-            spectral_windows.insert(row.data_spw_id);
+            selected.add(
+                [row.antenna1, row.antenna2],
+                row.field_id,
+                row.observation_id,
+                row.scan_number,
+                row.data_spw_id,
+            );
         }
-        Ok(Self {
-            antennas: antennas.into_iter().collect(),
-            fields: fields.into_iter().collect(),
+        selected.finish(ms)
+    }
+}
+
+/// The distinct identities of selected rows, accumulated without retaining rows.
+#[derive(Default)]
+pub(crate) struct SelectedDataBuilder {
+    antennas: BTreeSet<i32>,
+    fields: BTreeSet<i32>,
+    observations: BTreeSet<i32>,
+    scans: BTreeSet<i32>,
+    windows: BTreeSet<i32>,
+}
+
+impl SelectedDataBuilder {
+    pub(crate) fn add(
+        &mut self,
+        antennas: [i32; 2],
+        field: i32,
+        observation: i32,
+        scan: i32,
+        window: i32,
+    ) {
+        self.antennas.extend(antennas);
+        self.fields.insert(field);
+        self.observations.insert(observation);
+        self.scans.insert(scan);
+        self.windows.insert(window);
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.antennas.is_empty()
+    }
+
+    pub(crate) fn finish(self, ms: &MeasurementSet) -> Result<SelectedData, GainSolveError> {
+        Ok(SelectedData {
+            antennas: self.antennas.into_iter().collect(),
+            fields: self.fields.into_iter().collect(),
             intents: intents(ms)?,
-            observations: observations.into_iter().collect(),
-            scans: scans.into_iter().collect(),
-            spectral_windows: spectral_windows.into_iter().collect(),
+            observations: self.observations.into_iter().collect(),
+            scans: self.scans.into_iter().collect(),
+            spectral_windows: self.windows.into_iter().collect(),
         })
     }
 }

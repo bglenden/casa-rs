@@ -701,10 +701,10 @@ fn written(
 }
 
 /// An in-memory MeasurementSet holding no rows and the subtables an MSv2
-/// converted from `observation` would hold, and the `SPECTRAL_WINDOW` row
-/// of each partition: the namespace a calibration table solved on a store
-/// without one (MSv4) persists. Antennas, fields and sessions keep their
-/// catalogue order.
+/// converted from `observation` would hold, and the `SPECTRAL_WINDOW` and
+/// `DATA_DESCRIPTION` rows of each partition: the namespace a calibration
+/// table solved on an MSv4 store persists. Antennas, fields and sessions
+/// keep their catalogue order.
 ///
 /// # Errors
 ///
@@ -712,7 +712,7 @@ fn written(
 #[cfg(feature = "msv4")]
 pub(crate) fn catalogue_subtables(
     observation: &dyn casa_observation::Observation,
-) -> Result<(MeasurementSet, Vec<i32>), ObservationError> {
+) -> Result<(MeasurementSet, Vec<(i32, i32)>), ObservationError> {
     let catalogue = observation.catalogue();
     refuse_unwritable(catalogue)?;
     let spans = match catalogue
@@ -731,5 +731,12 @@ pub(crate) fn catalogue_subtables(
         MeasurementSet::create_memory(msv2_tables::builder(catalogue, &[])).map_err(storage)?;
     let intents = super::msv2_identity::intent_partitions(catalogue);
     let (layout, _) = msv2_tables::populate(&mut ms, catalogue, &spans, &intents)?;
-    Ok((ms, layout.spectral_window))
+    Ok((
+        ms,
+        layout
+            .spectral_window
+            .into_iter()
+            .zip(layout.data_description)
+            .collect(),
+    ))
 }

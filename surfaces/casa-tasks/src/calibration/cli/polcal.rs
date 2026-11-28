@@ -15,6 +15,13 @@ use crate::calibration::managed_output::{
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let vis = task.input_path("vis")?;
+    if task.surface() == "gaincal" && casa_ms::observation_io::is_msv4_store(&vis) {
+        let gain = task.required_text("gaintype")?;
+        return Err(TaskFailure::validation(format!(
+            "gaincal {gain} is unavailable for MSv4 MeasurementSets (#1055)"
+        ))
+        .at("vis"));
+    }
     let request = super::casa_read::leakage_request(task, &vis)?;
     if casa_calibration::paths::overlap(&vis, &request.output)
         .map_err(|error| TaskFailure::validation(error.to_string()).at("caltable"))?

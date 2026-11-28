@@ -9,6 +9,8 @@ pub(crate) mod polynomial;
 mod samples;
 mod spectra;
 mod time;
+#[cfg(unix)]
+pub(super) use time::{time_bin, time_bin_origin};
 mod visibility_models;
 mod weights;
 
@@ -813,9 +815,7 @@ impl SolveAccumulator {
 
     /// Accumulate one sample's `channels` (every channel for a channelized
     /// solve): the arithmetic of [`Self::observe`] on arrays from any source.
-    /// The MSv2/MSv4 trial (`solve::batch_trial`) feeds it
-    /// from `casa_observation::VisibilityBatch` views without copying them.
-    #[cfg(test)]
+    /// An observation solve feeds it from borrowed visibility batch views.
     pub(crate) fn observe_samples(
         &mut self,
         row: &SolveSampleRow,

@@ -1319,6 +1319,16 @@ impl Observation for Msv4Observation {
 }
 
 impl Msv4Observation {
+    #[cfg(unix)]
+    pub(in crate::observation_io) fn calibration_fields_and_scans(
+        &self,
+        id: PartitionId,
+    ) -> Option<(&[FieldId], &[ScanId])> {
+        let (dataset, partition) = self.dataset(id).ok()?;
+        let (group, _) = partition.data_group("base")?;
+        Some((&dataset.groups[group].fields, dataset.scans.as_deref()?))
+    }
+
     /// What `request` costs ([`Observation::estimate`]), from the chunk
     /// grids alone.
     ///

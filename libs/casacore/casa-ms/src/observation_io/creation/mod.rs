@@ -54,6 +54,8 @@ mod writing;
 use std::fmt;
 use std::path::PathBuf;
 
+#[cfg(feature = "msv4")]
+pub(super) use memory::subtables_bytes;
 pub use memory::{MemoryCharges, default_memory_bytes};
 pub use plan::CreationPlan;
 #[cfg(feature = "msv4")]

@@ -44,6 +44,8 @@ pub use namespace::{
     AntennaNamespace, NamespaceAntenna, NamespaceField, NamespaceRows, NamespaceWindow,
     PersistedNamespace, antenna_namespace, persisted_namespace,
 };
+#[cfg(unix)]
+pub use namespace::{CalibrationObservation, CalibrationPartition, with_calibration_observation};
 pub use update::UpdateSession;
 #[cfg(unix)]
 pub use update::open_update;

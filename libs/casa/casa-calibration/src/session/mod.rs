@@ -198,6 +198,34 @@ pub(crate) fn solve_calibration_with_activity(
     }
     match dataset {
         CalibrationDataset::Path(path) => {
+            if matches!(request, CalibrationSolveRequest::GainSpline { .. })
+                && casa_ms::observation_io::is_msv4_store(&path)
+            {
+                return Err(GainSolveError::from(
+                    casa_observation::ObservationError::Unsupported {
+                        what: "GSPLINE gaincal on an MSv4 MeasurementSet (#1055)",
+                    },
+                )
+                .into());
+            }
+            #[cfg(unix)]
+            if let CalibrationSolveRequest::Gain(gain) = &request
+                && activity.is_none()
+                && options.tf.is_none()
+                && !options.legacy_iterator
+                && !options.invalid_mode
+            {
+                if crate::solve::observation_gain::supports(gain) {
+                    if let Some(report) = crate::solve::observation_gain::solve(&path, gain, mode)?
+                    {
+                        return Ok(CalibrationSolveResult::Gain(report));
+                    }
+                } else if casa_ms::observation_io::is_msv4_store(&path) {
+                    return Err(GainSolveError::from(casa_observation::ObservationError::Unsupported {
+                        what: "an MSv4 gain solve outside the time-binned G amplitude-and-phase point-source mode (#1055)",
+                    }).into());
+                }
+            }
             let open_phase = crate::timing::Phase::start("open_ms");
             let measurement_set = MeasurementSet::open(&path).map_err(|source| {
                 CalibrationError::OpenMeasurementSet {

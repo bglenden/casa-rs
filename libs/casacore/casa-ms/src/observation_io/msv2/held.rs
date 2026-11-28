@@ -90,6 +90,15 @@ pub(crate) fn read_bytes(ms: &MeasurementSet) -> usize {
         + nested
 }
 
+/// Warm the admitted catalogue tables with one row read per table. Readers
+/// still check their individual cells so an unreadable unused column does
+/// not become a requirement for opening the catalogue.
+pub(in crate::observation_io) fn prefetch_catalogue_rows(ms: &MeasurementSet) {
+    for table in READ.iter().filter_map(|id| ms.subtable(*id)) {
+        let _ = table.rows();
+    }
+}
+
 /// Call `each` with every table directory at most `depth` levels below
 /// `directory`, itself included.
 fn visit(directory: &Path, depth: usize, each: &mut impl FnMut(&Path)) {
