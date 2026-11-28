@@ -5,6 +5,8 @@ mod basis;
 mod diagnostics;
 mod writer;
 
+use super::control::SolveControl;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::TAU;
 
@@ -15,7 +17,7 @@ use num_complex::Complex64;
 use self::basis::SampleBasis;
 use super::grouping::{
     PriorCalibrationMode, SelectedSolveRow, SolveAccumulator, SolveGroupOptions,
-    build_solve_groups, selected_channels,
+    build_solve_groups_with_control, selected_channels,
 };
 use super::normal::{NormalBand, Term};
 use super::{
@@ -38,6 +40,7 @@ pub(crate) fn solve(
     controls: GainSplineControls,
     mode: CalibrationOutputMode,
     tool: Option<ToolOptions<'_>>,
+    control: SolveControl<'_>,
 ) -> Result<GainSolveReport, GainSolveError> {
     let tool_mode = tool.map(|settings| settings.mode);
     let all_fields = tool.is_some_and(|settings| settings.all_fields);
@@ -80,12 +83,13 @@ pub(crate) fn solve(
         channelized: false,
         polynomial_bandpass: false,
     };
-    let groups = build_solve_groups(
+    let groups = build_solve_groups_with_control(
         ms,
         &context.rows,
         context.preapplied_rows.as_ref(),
         &BTreeMap::new(),
         selection,
+        control,
     )?;
     if groups.is_empty() {
         return Err(GainSolveError::EmptySelection);
@@ -125,7 +129,7 @@ pub(crate) fn solve(
         .max()
         .unwrap_or(1)
         .clamp(1, 2);
-    let (times, series) = time_series(groups.values(), &correlations, hands);
+    let (times, series) = time_series(groups.values(), &correlations, hands, control)?;
     drop(input);
     let fit_phase = crate::timing::Phase::start("gspline_fit");
     let fit_amplitude = tool_mode.map_or(request.solve_mode != GainSolveMode::Phase, |mode| {
@@ -158,7 +162,9 @@ pub(crate) fn solve(
             phase_wrap_radians: controls.phasewrap.to_radians(),
             reference_antenna: context.refant_id.max(0) as usize,
         },
+        control,
     );
+    control.check()?;
     drop(fit_phase);
     let output = crate::timing::Phase::start("gspline_write");
     let solution_row_count = if let Some(coefficients) = &coefficients {
@@ -172,7 +178,7 @@ pub(crate) fn solve(
             ms,
             request,
             coefficients,
-            (mode, all_fields),
+            (mode, all_fields, control),
             &fields,
             (context.refant_id, &solved_antennas, frequency),
             poly_mode,
@@ -301,7 +307,8 @@ fn time_series<'a>(
     groups: impl Iterator<Item = &'a SolveAccumulator>,
     correlations: &BTreeMap<i32, usize>,
     hands: usize,
-) -> (Vec<f64>, Vec<BaselineSeries>) {
+    control: SolveControl<'_>,
+) -> Result<(Vec<f64>, Vec<BaselineSeries>), GainSolveError> {
     let mut timestamps = BTreeMap::<i64, (usize, f64)>::new();
     let mut baselines = BTreeMap::<[usize; 2], BTreeMap<i64, [WeightedVisibility; 2]>>::new();
     for (chunk, group) in groups.enumerate() {
@@ -309,6 +316,7 @@ fn time_series<'a>(
             .delay_spectra()
             .filter(|spectrum| spectrum.parallel_hand && spectrum.antennas.0 != spectrum.antennas.1)
         {
+            control.check()?;
             let Some((sum, weight)) = spectrum.channels().next() else {
                 continue;
             };
@@ -359,7 +367,7 @@ fn time_series<'a>(
             BaselineSeries { antennas, samples }
         })
         .collect();
-    (times, series)
+    Ok((times, series))
 }
 
 #[derive(Clone, Copy, Default)]
@@ -406,6 +414,7 @@ pub(super) fn fit(
     baselines: &[BaselineSeries],
     antenna_count: usize,
     options: &SplineKernelOptions,
+    control: SolveControl<'_>,
 ) -> Option<SplineCoefficients> {
     if baselines.iter().any(|baseline| {
         baseline.samples.len() != times.len()
@@ -426,12 +435,16 @@ pub(super) fn fit(
     let log_amplitude = if !options.amplitude {
         None
     } else {
-        Some(fit_component(&basis, baselines, size, options, false)?)
+        Some(fit_component(
+            &basis, baselines, size, options, false, control,
+        )?)
     };
     let phase = if !options.phase {
         None
     } else {
-        Some(fit_component(&basis, baselines, size, options, true)?)
+        Some(fit_component(
+            &basis, baselines, size, options, true, control,
+        )?)
     };
     Some(SplineCoefficients {
         knots,
@@ -446,6 +459,7 @@ fn fit_component(
     (antenna_count, controls): (usize, usize),
     options: &SplineKernelOptions,
     phase: bool,
+    control: SolveControl<'_>,
 ) -> Option<[Vec<Vec<f64>>; 2]> {
     let fit_hand = |hand: usize| {
         let active = antenna_indices(
@@ -460,6 +474,9 @@ fn fit_component(
         let mut values = vec![0.; basis.len()];
         let mut phases = Vec::new();
         for (index, baseline) in baselines.iter().enumerate() {
+            if control.is_cancelled() {
+                return None;
+            }
             let [first, second] = baseline.antennas;
             if active[first].is_none() && active[second].is_none() {
                 continue;
@@ -495,6 +512,9 @@ fn fit_component(
         // residuals, so baselines displaced by whole turns constrain the same
         // antenna phases. The weighted design matrix stays fixed.
         for _ in 1..100 {
+            if control.is_cancelled() {
+                return None;
+            }
             if !phase
                 || !refine_phase(&mut normal, &mut solved, &phases, |index, time| {
                     let baseline = &baselines[index];

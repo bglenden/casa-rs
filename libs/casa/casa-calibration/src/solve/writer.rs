@@ -18,8 +18,8 @@ use crate::constants::{
     COL_INTERVAL, COL_OBSERVATION_ID, COL_PARAMERR, COL_SCAN_NUMBER, COL_SNR,
     COL_SPECTRAL_WINDOW_ID, COL_TIME, COL_TIME_EXTRA_PREC, COL_WEIGHT,
 };
-use crate::solve::SolvedGains;
 use crate::solve::grouping::{SelectedSolveRow, selected_channels};
+use crate::solve::{SolvedGains, control::SolveControl};
 use crate::writer::{CalibrationTableDescriptor, CalibrationTableWriter};
 
 pub(crate) fn write_gain_caltable(
@@ -27,17 +27,19 @@ pub(crate) fn write_gain_caltable(
     request: &GainSolveRequest,
     solved: &SolvedGains,
     mode: crate::output::CalibrationOutputMode,
+    control: SolveControl<'_>,
 ) -> Result<GainSolveReport, GainSolveError> {
     let name = ms
         .path()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "<in-memory>".to_string());
-    write_gain_caltable_named(ms, name, request, solved, mode)
+    write_gain_caltable_named_with_control(ms, name, request, solved, mode, control)
 }
 
 /// [`write_gain_caltable`], recording `measurement_set_name` as the table's
 /// `MSName`: the store the subtables of `ms` describe, when `ms` holds
 /// them in memory.
+#[cfg(test)]
 pub(crate) fn write_gain_caltable_named(
     ms: &MeasurementSet,
     measurement_set_name: String,
@@ -45,12 +47,30 @@ pub(crate) fn write_gain_caltable_named(
     solved: &SolvedGains,
     mode: crate::output::CalibrationOutputMode,
 ) -> Result<GainSolveReport, GainSolveError> {
-    write_gain_table(
+    write_gain_caltable_named_with_control(
         ms,
         measurement_set_name,
         request,
         solved,
         mode,
+        SolveControl::default(),
+    )
+}
+
+pub(crate) fn write_gain_caltable_named_with_control(
+    ms: &MeasurementSet,
+    measurement_set_name: String,
+    request: &GainSolveRequest,
+    solved: &SolvedGains,
+    mode: crate::output::CalibrationOutputMode,
+    control: SolveControl<'_>,
+) -> Result<GainSolveReport, GainSolveError> {
+    write_gain_table(
+        ms,
+        measurement_set_name,
+        request,
+        solved,
+        (mode, control),
         request.gain_type.vis_cal(),
         GainTableSpectrum::Collapsed,
     )
@@ -72,7 +92,7 @@ pub(super) fn write_new_style_gain_caltable(
         name,
         request,
         solved,
-        mode,
+        (mode, SolveControl::default()),
         subtype,
         GainTableSpectrum::Collapsed,
     )
@@ -99,7 +119,7 @@ pub(super) fn write_tf_caltable(
         name,
         request,
         solved,
-        mode,
+        (mode, SolveControl::default()),
         "Tf Jones",
         GainTableSpectrum::Channelized(channels),
     )
@@ -128,7 +148,7 @@ pub(super) fn write_additive_polynomial_caltable(
         name,
         request,
         solved,
-        mode,
+        (mode, SolveControl::default()),
         "A Mueller",
         GainTableSpectrum::AdditivePolynomial(grid),
     )
@@ -152,7 +172,15 @@ pub(super) fn write_baseline_caltable(
     } else {
         channels.map_or(GainTableSpectrum::Collapsed, GainTableSpectrum::Channelized)
     };
-    write_gain_table(ms, name, request, solved, mode, subtype, spectrum)
+    write_gain_table(
+        ms,
+        name,
+        request,
+        solved,
+        (mode, SolveControl::default()),
+        subtype,
+        spectrum,
+    )
 }
 
 fn write_gain_table(
@@ -160,11 +188,12 @@ fn write_gain_table(
     measurement_set_name: String,
     request: &GainSolveRequest,
     solved: &SolvedGains,
-    mode: crate::output::CalibrationOutputMode,
+    (mode, control): (crate::output::CalibrationOutputMode, SolveControl<'_>),
     subtype: &'static str,
     spectrum: GainTableSpectrum<'_>,
 ) -> Result<GainSolveReport, GainSolveError> {
     let _write_phase = crate::timing::Phase::start("gain_write");
+    control.check()?;
     let rows = &solved.rows;
     if rows.is_empty() {
         return Ok(gain_report(request, solved));
@@ -225,7 +254,10 @@ fn write_gain_table(
         mode,
     )?;
 
-    for row in rows {
+    for (index, row) in rows.iter().enumerate() {
+        if index.is_multiple_of(256) {
+            control.check()?;
+        }
         let receptors = match (polynomial, &channels) {
             (Some(grid), _) => grid.windows[&row.spw_id].correlations,
             (None, Some(_)) => request.gain_type.polarizations(),
@@ -361,7 +393,7 @@ fn write_gain_table(
             write_additive_domains(writer.output_path(), grid)?;
         }
     }
-    writer.save_main()?;
+    writer.save_main_with_control(control)?;
 
     Ok(gain_report(request, solved))
 }

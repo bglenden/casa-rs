@@ -17,6 +17,7 @@ use casa_observation::{
 };
 use ndarray::{ArrayView2, s};
 
+use super::control::SolveControl;
 use super::grouping::{
     SolveAccumulator, SolveGroupOptions, SolveSampleRow, SolveSamples, all_antenna_ids,
     resolve_refants, time_bin, time_bin_origin,
@@ -63,11 +64,13 @@ pub(crate) fn solve(
     path: &Path,
     request: &GainSolveRequest,
     mode: CalibrationOutputMode,
+    control: SolveControl<'_>,
 ) -> Result<Option<GainSolveReport>, GainSolveError> {
     let is_msv4 = is_msv4_store(path);
     let opening = crate::timing::Phase::start("gain_observation_open");
     let result = with_calibration_observation(path, admit_msv2, |input| {
         drop(opening);
+        control.check()?;
         if let Some(what) = unrepresented_layout(
             input.observation.catalogue(),
             input.partitions,
@@ -81,14 +84,21 @@ pub(crate) fn solve(
         }
         let gather = crate::timing::Phase::start("gain_observation_gather");
         let legacy_receptors = legacy_gain_receptors(request, mode)?;
-        let solved = read_solutions(&input, request, input.available_bytes, legacy_receptors)?;
+        let solved = read_solutions(
+            &input,
+            request,
+            input.available_bytes,
+            legacy_receptors,
+            control,
+        )?;
         drop(gather);
-        super::writer::write_gain_caltable_named(
+        super::writer::write_gain_caltable_named_with_control(
             input.subtables,
             path.display().to_string(),
             request,
             &solved,
             mode,
+            control,
         )
         .map(Some)
     });
@@ -181,6 +191,7 @@ fn unrepresented_layout(
 
 struct GainAccumulator<'a> {
     request: &'a GainSolveRequest,
+    control: SolveControl<'a>,
     groups: BTreeMap<GroupKey, ScanAccumulator>,
     width_s: f64,
     legacy_receptors: bool,
@@ -205,6 +216,7 @@ fn read_solutions(
     request: &GainSolveRequest,
     batch_bytes: usize,
     legacy_receptors: bool,
+    control: SolveControl<'_>,
 ) -> Result<SolvedGains, GainSolveError> {
     let GainSolveInterval::Seconds(width_s) = request.solve_interval else {
         return Err(GainSolveError::UnsupportedSolveInterval {
@@ -216,6 +228,7 @@ fn read_solutions(
     let available_antennas = all_antenna_ids(input.subtables)?;
     let mut state = GainAccumulator {
         request,
+        control,
         groups: BTreeMap::new(),
         width_s,
         legacy_receptors,
@@ -236,6 +249,7 @@ fn read_solutions(
         read_partition(input, id, batch_bytes, &mut state)?;
     }
 
+    control.check()?;
     if preferred >= 0 {
         let strict = matches!(
             request.refant,
@@ -280,6 +294,17 @@ fn read_partition(
     let partition = input.observation.catalogue().partition(id);
     let persisted = &input.partitions[id.0 as usize];
     let request = partition_access(input, id, budget);
+    #[cfg(feature = "solve-test-hooks")]
+    let request = if crate::solve_test_hooks::small_batches() {
+        let mut request = request;
+        let estimate = input.observation.estimate(&request)?;
+        request.batch_bytes = request
+            .batch_bytes
+            .min(estimate.partitions[0].held_bytes_per_time());
+        request
+    } else {
+        request
+    };
     let mut traversal = input.observation.bind_read(&request)?;
     let mut buffers = BatchBuffers::default();
     let channels: Vec<_> = request.channels.clone().collect();
@@ -288,11 +313,23 @@ fn read_partition(
         .iter()
         .map(|code| code.casacore_code())
         .collect();
-    while let Some(event) = traversal.next(&mut buffers)? {
+    #[cfg(feature = "solve-test-hooks")]
+    let mut batch_index = 0;
+    loop {
+        state.control.check()?;
+        let Some(event) = traversal.next(&mut buffers)? else {
+            break;
+        };
+
         match event {
-            ReadEvent::GroupEnd(key) => state.finish_group(key),
+            ReadEvent::GroupEnd(key) => state.finish_group(key)?,
             ReadEvent::Batch(batch) => {
+                #[cfg(feature = "solve-test-hooks")]
+                state.control.observe(
+                    crate::solve_test_hooks::Checkpoint::ObservationBatchStarted(batch_index),
+                );
                 for fragment in batch.fragments {
+                    state.control.check()?;
                     state.observe(
                         &batch,
                         fragment,
@@ -305,8 +342,15 @@ fn read_partition(
                         ),
                     )?;
                     if fragment.position.closes() {
-                        state.finish_group(fragment.key);
+                        state.finish_group(fragment.key)?;
                     }
+                }
+                #[cfg(feature = "solve-test-hooks")]
+                {
+                    state.control.observe(
+                        crate::solve_test_hooks::Checkpoint::ObservationBatchFinished(batch_index),
+                    );
+                    batch_index += 1;
                 }
             }
         }
@@ -389,7 +433,10 @@ impl GainAccumulator<'_> {
             robust_seed: false,
             correlation_dependent_flags: false,
         };
-        for sample in fragment.samples.clone() {
+        for (index, sample) in fragment.samples.clone().enumerate() {
+            if index.is_multiple_of(256) {
+                self.control.check()?;
+            }
             let coordinates = batch.sample(sample);
             let weights = weights.slice(s![sample, .., ..]).reversed_axes();
             if coordinates.baseline.is_auto() || weights.iter().all(|weight| weight.is_nan()) {
@@ -407,7 +454,7 @@ impl GainAccumulator<'_> {
             self.selection
                 .add([antenna1, antenna2], field, observation, scan, spw);
             let time = batch.time.seconds_since(sample / per_time, zero);
-            self.advance_group(fragment.key, time, (field, spw, observation));
+            self.advance_group(fragment.key, time, (field, spw, observation))?;
             let flags_from = (sample - fragment.samples.start) * cell;
             let flags = ArrayView2::from_shape(
                 (channels.len(), codes.len()),
@@ -444,7 +491,12 @@ impl GainAccumulator<'_> {
         Ok(())
     }
 
-    fn advance_group(&mut self, key: GroupKey, time: f64, (field, spw, obs): (i32, i32, i32)) {
+    fn advance_group(
+        &mut self,
+        key: GroupKey,
+        time: f64,
+        (field, spw, obs): (i32, i32, i32),
+    ) -> Result<(), GainSolveError> {
         let group = self.groups.entry(key).or_insert_with(|| {
             let origin = time_bin_origin(time);
             ScanAccumulator {
@@ -458,22 +510,25 @@ impl GainAccumulator<'_> {
             group.bin = bin;
             let previous =
                 std::mem::replace(&mut group.interval, SolveAccumulator::new(field, spw, obs));
-            self.finish_interval(previous);
+            self.finish_interval(previous)?;
         }
+        Ok(())
     }
 
-    fn finish_group(&mut self, key: GroupKey) {
+    fn finish_group(&mut self, key: GroupKey) -> Result<(), GainSolveError> {
         if let Some(group) = self.groups.remove(&key) {
-            self.finish_interval(group.interval);
+            self.finish_interval(group.interval)?;
         }
+        Ok(())
     }
 
-    fn finish_interval(&mut self, mut group: SolveAccumulator) {
+    fn finish_interval(&mut self, mut group: SolveAccumulator) -> Result<(), GainSolveError> {
+        self.control.check()?;
         if group.attempted {
             self.attempted_spws.insert(group.spw_id);
         }
         record_legacy_refant_slots(&mut self.legacy_refant_slots, &group);
-        group.finalize_for_solve(self.request.solve_mode, false);
+        group.finalize(self.request.solve_mode, false, false, self.control)?;
         if let Some(rows) = solve_group_with_stats(
             group,
             &self.available_antennas,
@@ -481,9 +536,11 @@ impl GainAccumulator<'_> {
             self.preferred,
             false,
             &mut self.stats,
-        ) {
+            self.control,
+        )? {
             self.rows.extend(rows);
         }
+        Ok(())
     }
 }
 
@@ -573,8 +630,17 @@ mod tests {
                 GainSolveMode::Amplitude,
             ] {
                 request.solve_mode = mode;
-                let whole = read_solutions(&input, &request, input.available_bytes, false).unwrap();
-                let fragmented = read_solutions(&input, &request, one_time_limit, false).unwrap();
+                let whole = read_solutions(
+                    &input,
+                    &request,
+                    input.available_bytes,
+                    false,
+                    Default::default(),
+                )
+                .unwrap();
+                let fragmented =
+                    read_solutions(&input, &request, one_time_limit, false, Default::default())
+                        .unwrap();
                 assert_eq!(whole.selected_data, fragmented.selected_data, "{mode:?}");
                 assert_eq!(whole.solve_stats, fragmented.solve_stats, "{mode:?}");
                 assert_eq!(whole.rows.len(), 10, "{mode:?}");

@@ -91,7 +91,9 @@ fn solved_antennas(group: &SolveAccumulator, cuts: BandpassSolveCuts) -> BTreeSe
         &request,
         GainSolveMode::AmplitudePhase,
         (false, false),
-    );
+        Default::default(),
+    )
+    .unwrap();
     rows.iter()
         .filter(|row| !row.flags[0])
         .map(|row| row.antenna_id)
@@ -124,6 +126,7 @@ fn channel_solves_apply_casas_baseline_and_snr_cuts() {
             correlation_dependent_flags: false,
             defer_reference: false,
             robustness: None,
+            control: Default::default(),
         },
         SolveStart::Guess,
     )

@@ -2,6 +2,10 @@
 #![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 
+#[cfg(feature = "solve-test-hooks")]
+#[doc(hidden)]
+pub mod solve_test_hooks;
+
 mod accumulate;
 mod antpos_vla;
 pub mod appendantab;

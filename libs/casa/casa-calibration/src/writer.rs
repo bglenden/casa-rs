@@ -19,6 +19,7 @@ use crate::constants::{
     STANDARD_SUBTABLE_KEYWORDS, TABLE_INFO_TYPE,
 };
 use crate::output::CalibrationOutput;
+use crate::solve::control::SolveControl;
 use crate::{output::CalibrationOutputMode, output_merge};
 
 /// Common on-disk identity for one calibration-table family.
@@ -39,6 +40,9 @@ pub(crate) struct CalibrationTableDescriptor<'a> {
 /// Common calibration-table writer failure.
 #[derive(Debug, Error)]
 pub enum CalibrationTableWriteError {
+    /// Cancellation was observed before publishing the staged table.
+    #[error("calibration table publication interrupted")]
+    Interrupted,
     #[error("failed to prepare output path {path}: {reason}")]
     /// Could not prepare a calibration output path.
     Prepare {
@@ -228,7 +232,17 @@ impl<'a> CalibrationTableWriter<'a> {
         Ok(())
     }
 
-    pub(crate) fn save_main(mut self) -> Result<(), CalibrationTableWriteError> {
+    pub(crate) fn save_main(self) -> Result<(), CalibrationTableWriteError> {
+        self.save_main_with_control(SolveControl::default())
+    }
+
+    pub(crate) fn save_main_with_control(
+        mut self,
+        control: SolveControl<'_>,
+    ) -> Result<(), CalibrationTableWriteError> {
+        if control.is_cancelled() {
+            return Err(CalibrationTableWriteError::Interrupted);
+        }
         if self.mode == CalibrationOutputMode::Append && self.output.destination.exists() {
             if matches!(
                 self.table.info().sub_type.as_str(),
@@ -254,6 +268,9 @@ impl<'a> CalibrationTableWriter<'a> {
                 self.table = old;
             }
         }
+        if control.is_cancelled() {
+            return Err(CalibrationTableWriteError::Interrupted);
+        }
         if self.sort_for_casa {
             output_merge::save_sorted(&mut self.table, &self.output.staging)?;
         } else {
@@ -267,6 +284,14 @@ impl<'a> CalibrationTableWriter<'a> {
                     source: Box::new(source),
                 })?;
         }
+        #[cfg(feature = "solve-test-hooks")]
+        control.observe(crate::solve_test_hooks::Checkpoint::BeforePublication);
+        // Once accepted, finish the existing rename or rollback sequence.
+        if control.is_cancelled() {
+            return Err(CalibrationTableWriteError::Interrupted);
+        }
+        #[cfg(feature = "solve-test-hooks")]
+        control.observe(crate::solve_test_hooks::Checkpoint::PublicationAccepted);
         self.output.commit()
     }
 }

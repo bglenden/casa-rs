@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Persist CASA's legacy GSPLINE coefficient, knot, and reference arrays.
 
+use crate::solve::control::SolveControl;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_core::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
@@ -27,7 +29,7 @@ pub(super) fn write(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
     coefficients: &SplineCoefficients,
-    (mode, refresh_existing): (CalibrationOutputMode, bool),
+    (mode, refresh_existing, control): (CalibrationOutputMode, bool, SolveControl<'_>),
     fields: &BTreeSet<i32>,
     (reference, antennas, frequency): (i32, &BTreeSet<usize>, f64),
     poly_mode: &str,
@@ -96,6 +98,7 @@ pub(super) fn write(
         write_phase: poly_mode.contains("PHAS") || poly_mode.contains("A&P"),
     };
     for &field in fields {
+        control.check()?;
         for &antenna in antennas {
             writer.append(row.values(field, antenna))?;
         }
@@ -117,7 +120,7 @@ pub(super) fn write(
         path: history.display().to_string(),
         source: Box::new(source),
     })?;
-    writer.save_main()?;
+    writer.save_main_with_control(control)?;
     Ok(fields.len() * antennas.len())
 }
 

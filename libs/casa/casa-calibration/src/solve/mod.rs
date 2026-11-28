@@ -18,8 +18,10 @@ pub(crate) mod additive_polynomial;
 pub(crate) mod baseline;
 #[cfg(test)]
 mod batch_trial;
+pub(crate) mod control;
 mod delay;
 pub(crate) mod fringe;
+mod gain_group;
 pub mod grouping;
 pub(crate) mod gspline;
 pub(crate) mod kernel;
@@ -35,7 +37,7 @@ pub use crate::selected_data::SelectedData;
 pub use crate::session::resolve_casa_calibration_selection;
 pub use crate::session::{
     CalibrationDataset, CalibrationError, CalibrationSolveRequest, CalibrationSolveResult,
-    solve_calibration, solve_calibration_with_output_mode,
+    solve_calibration, solve_calibration_with_cancellation, solve_calibration_with_output_mode,
 };
 pub use crate::solve_stats::{AntennaSolveStats, SolveCounts, SolveStats, WindowSolveStats};
 pub use fringe::{FringeControls, FringeCorrelation};
@@ -54,14 +56,17 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::session::prepare_calibration_solve;
-use crate::solve_stats::{AntennaSolution, IntervalStages, SolveStatsBuilder, ToolSolveActivity};
+use crate::solve_stats::{SolveStatsBuilder, ToolSolveActivity};
 use crate::{
     apply::{ApplyExecutionError, ApplyPlanError},
     bandpass::BandpassFrequencyInterval,
     output::CalibrationOutputMode,
 };
-use grouping::{SolveGroupOptions, build_solve_groups};
-use kernel::solve_group;
+use control::SolveControl;
+use gain_group::solve_group_with_stats;
+#[cfg(test)]
+use gain_group::{solve_closed_group, solve_gain};
+use grouping::{SolveGroupOptions, build_solve_groups_with_control};
 use writer::write_gain_caltable;
 
 /// Supported first-wave gain solve families.
@@ -368,6 +373,9 @@ pub struct GainSolveReport {
 /// Errors returned by the limited `gaincal` solver.
 #[derive(Debug, Error)]
 pub enum GainSolveError {
+    /// Cancellation was observed while the result was still private.
+    #[error("calibration solve interrupted")]
+    Interrupted,
     /// Opening or traversing the shared observation boundary failed.
     #[error(transparent)]
     Observation(#[from] casa_observation::ObservationError),
@@ -571,23 +579,31 @@ pub enum GainSolveError {
 }
 
 /// Solve a limited `gaincal` request from an already-open MeasurementSet.
-pub(crate) fn solve_gain(
+pub(crate) fn solve_gain_with_control(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
     mode: crate::output::CalibrationOutputMode,
     activity: Option<&mut ToolSolveActivity>,
     legacy_iterator: bool,
+    control: SolveControl<'_>,
 ) -> Result<GainSolveReport, GainSolveError> {
     if request.gain_type == GainType::GSpline {
-        return gspline::solve(ms, request, GainSplineControls::default(), mode, None);
+        return gspline::solve(
+            ms,
+            request,
+            GainSplineControls::default(),
+            mode,
+            None,
+            control,
+        );
     }
     let solved =
         if legacy_iterator && matches!(request.gain_type, GainType::KMbd | GainType::KAntPos) {
-            delay::solve(ms, request, activity, true)?
+            delay::solve(ms, request, activity, true, control)?
         } else {
-            solve_gain_rows(ms, request, activity, mode)?
+            solve_gain_rows_with_control(ms, request, activity, mode, control)?
         };
-    write_gain_caltable(ms, request, &solved, mode)
+    write_gain_caltable(ms, request, &solved, mode, control)
 }
 
 #[derive(Clone, Copy)]
@@ -602,8 +618,15 @@ pub(crate) fn solve_tf(
     mode: crate::output::CalibrationOutputMode,
     activity: Option<&mut ToolSolveActivity>,
 ) -> Result<GainSolveReport, GainSolveError> {
-    let (solved, spectrum) =
-        solve_gain_rows_with_settings(ms, request, activity, Some(settings), None, false)?;
+    let (solved, spectrum) = solve_gain_rows_with_settings(
+        ms,
+        request,
+        activity,
+        Some(settings),
+        None,
+        false,
+        SolveControl::default(),
+    )?;
     let spectrum = spectrum.expect("Tf prepared its spectral grid");
     writer::write_tf_caltable(
         ms,
@@ -663,18 +686,37 @@ pub(crate) struct SolvedGains {
 
 /// The solutions of [`solve_gain`], the resolved reference antenna and the
 /// windows a solve reached, before the caltable is written.
+#[cfg(test)]
 pub(crate) fn solve_gain_rows(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
     activity: Option<&mut ToolSolveActivity>,
     mode: CalibrationOutputMode,
 ) -> Result<SolvedGains, GainSolveError> {
+    solve_gain_rows_with_control(ms, request, activity, mode, SolveControl::default())
+}
+
+pub(crate) fn solve_gain_rows_with_control(
+    ms: &MeasurementSet,
+    request: &GainSolveRequest,
+    activity: Option<&mut ToolSolveActivity>,
+    mode: CalibrationOutputMode,
+    control: SolveControl<'_>,
+) -> Result<SolvedGains, GainSolveError> {
     if request.gain_type.is_delay() {
-        return delay::solve(ms, request, activity, false);
+        return delay::solve(ms, request, activity, false, control);
     }
     let legacy_g_receptors = legacy_gain_receptors(request, mode)?;
-    solve_gain_rows_with_settings(ms, request, activity, None, None, legacy_g_receptors)
-        .map(|(solved, _)| solved)
+    solve_gain_rows_with_settings(
+        ms,
+        request,
+        activity,
+        None,
+        None,
+        legacy_g_receptors,
+        control,
+    )
+    .map(|(solved, _)| solved)
 }
 
 fn legacy_gain_receptors(
@@ -714,8 +756,16 @@ pub(crate) fn gather_only_tool_solve(
     activity: &mut ToolSolveActivity,
     settings: GatherOnlySolveSettings,
 ) -> Result<SolveStats, GainSolveError> {
-    solve_gain_rows_with_settings(ms, request, Some(activity), None, Some(settings), false)
-        .map(|(solved, _)| solved.solve_stats)
+    solve_gain_rows_with_settings(
+        ms,
+        request,
+        Some(activity),
+        None,
+        Some(settings),
+        false,
+        SolveControl::default(),
+    )
+    .map(|(solved, _)| solved.solve_stats)
 }
 
 fn solve_point_stokes(
@@ -746,6 +796,7 @@ fn solve_gain_rows_with_settings(
     tf: Option<TfSolveSettings>,
     gather_only: Option<GatherOnlySolveSettings>,
     legacy_g_receptors: bool,
+    control: SolveControl<'_>,
 ) -> Result<(SolvedGains, Option<TfSpectrum>), GainSolveError> {
     let point_stokes = solve_point_stokes(ms, request)?;
     validate_solve_interval(request.solve_interval)?;
@@ -810,7 +861,7 @@ fn solve_gain_rows_with_settings(
         || (context.preapplied_rows.is_some()
             && gather_only.is_none()
             && matches!(request.gain_type, GainType::G | GainType::T));
-    let groups = build_solve_groups(
+    let groups = build_solve_groups_with_control(
         ms,
         &context.rows,
         context.preapplied_rows.as_ref(),
@@ -840,6 +891,7 @@ fn solve_gain_rows_with_settings(
             channelized: false,
             polynomial_bandpass: false,
         },
+        control,
     )?;
 
     if groups.is_empty() {
@@ -860,6 +912,7 @@ fn solve_gain_rows_with_settings(
         &context.available_antennas,
     );
     for ((base_key, bucket_key), mut group) in groups {
+        control.check()?;
         if (group.attempted || group.gather_attempted())
             && (multi_bin_windows.contains(&group.spw_id)
                 || (request.combine.spectral_windows && !multi_bin_windows.is_empty()))
@@ -873,7 +926,12 @@ fn solve_gain_rows_with_settings(
             attempted_spw_ids.insert(group.spw_id);
         }
         record_legacy_refant_slots(&mut legacy_refant_slots, &group);
-        group.finalize_for_solve(request.solve_mode, request.robustness.enabled());
+        group.finalize(
+            request.solve_mode,
+            request.robustness.enabled(),
+            false,
+            control,
+        )?;
         trace::trace_group(&base_key, &bucket_key, &group, request);
         let Some(group_rows) = solve_group_with_stats(
             group,
@@ -882,7 +940,9 @@ fn solve_gain_rows_with_settings(
             context.refant_id,
             correlation_dependent_flags,
             &mut solve_stats,
-        ) else {
+            control,
+        )?
+        else {
             continue;
         };
         trace::trace_solution_rows(
@@ -894,6 +954,7 @@ fn solve_gain_rows_with_settings(
         );
         solution_rows.extend(group_rows);
     }
+    control.check()?;
     apply_requested_reference(
         ms,
         &mut solution_rows,
@@ -1031,61 +1092,6 @@ fn tally_references(rows: &[kernel::SolutionRow], stats: &mut SolveStatsBuilder)
 /// ([`grouping::SolveAccumulator::finalize_for_solve`]). An interval CASA
 /// cannot solve gets no rows (`Calibrater::genericGatherAndSolve` keeps a
 /// solution only after one succeeds).
-pub(crate) fn solve_closed_group(
-    group: grouping::SolveAccumulator,
-    available_antennas: &BTreeSet<i32>,
-    request: &GainSolveRequest,
-    refant_id: i32,
-    correlation_dependent_flags: bool,
-) -> Option<Vec<kernel::SolutionRow>> {
-    solve_group(
-        group,
-        available_antennas,
-        request.gain_type,
-        request.solve_mode,
-        request.min_snr,
-        kernel::SolveGraphOptions {
-            refant_id,
-            min_baselines_per_antenna: request.min_baselines_per_antenna,
-            group_seed: None,
-            correlation_dependent_flags,
-            defer_reference: true,
-            robustness: request.robustness.enabled().then_some(&request.robustness),
-        },
-    )
-}
-
-fn solve_group_with_stats(
-    group: grouping::SolveAccumulator,
-    available_antennas: &BTreeSet<i32>,
-    request: &GainSolveRequest,
-    refant_id: i32,
-    correlation_dependent_flags: bool,
-    stats: &mut SolveStatsBuilder,
-) -> Option<Vec<kernel::SolutionRow>> {
-    stats.interval(&IntervalStages::of(
-        &group,
-        request.min_baselines_per_antenna,
-    ));
-    let spw_id = group.spw_id;
-    let rows = solve_closed_group(
-        group,
-        available_antennas,
-        request,
-        refant_id,
-        correlation_dependent_flags,
-    )?;
-    stats.record_success(spw_id, true);
-    stats.solutions(
-        spw_id,
-        rows.iter().map(|row| AntennaSolution {
-            antenna_id: row.antenna_id,
-            passed: row.flags.iter().map(|flagged| !flagged).collect(),
-        }),
-    );
-    Some(rows)
-}
-
 /// The antennas other than `refant_id`, nearest it first: the alternates
 /// `SolvableVisJones::applyRefAnt` tries when the reference antenna is flagged.
 pub(crate) fn refant_distance_order(

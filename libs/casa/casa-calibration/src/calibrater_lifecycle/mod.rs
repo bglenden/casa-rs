@@ -1151,6 +1151,7 @@ impl CalibraterLifecycle {
                 legacy_iterator: self.legacy_iterator,
                 invalid_mode,
                 tf,
+                ..Default::default()
             },
         )?)
     }

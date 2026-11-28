@@ -501,13 +501,14 @@ pub enum CalibrationTaskRequest {
 impl CalibrationTaskRequest {
     /// Execute the request and return the canonical task result envelope.
     pub fn execute(&self) -> Result<CalibrationTaskResult, String> {
-        self.execute_with_output_mode(None)
+        self.execute_with_output_mode(None, None)
             .map_err(|failure| failure.message)
     }
 
     pub(crate) fn execute_with_output_mode(
         &self,
         mode: Option<casa_calibration::output::CalibrationOutputMode>,
+        cancellation: Option<&casa_core::cancellation::Cancellation>,
     ) -> Result<CalibrationTaskResult, TaskFailure> {
         use casa_calibration::output::CalibrationOutputMode::{Append, Create, Replace, Update};
         match self {
@@ -607,10 +608,11 @@ impl CalibrationTaskRequest {
                     }
                     _ => CalibrationSolveRequest::Gain(gain),
                 };
-                casa_calibration::solve::solve_calibration_with_output_mode(
+                casa_calibration::solve::solve_calibration_with_cancellation(
                     CalibrationDataset::path(&request.measurement_set),
                     solve,
                     mode.unwrap_or(if request.append { Append } else { Replace }),
+                    cancellation,
                 )
                 .map(|result| match result {
                     CalibrationSolveResult::Gain(report) => report,
@@ -620,7 +622,7 @@ impl CalibrationTaskRequest {
                 .map_err(gain_failure)
             }
             Self::SolveBandpass(request) => {
-                casa_calibration::solve::solve_calibration_with_output_mode(
+                casa_calibration::solve::solve_calibration_with_cancellation(
                     CalibrationDataset::path(&request.measurement_set),
                     CalibrationSolveRequest::Bandpass(BandpassSolveRequest {
                         selection: request.selection.clone(),
@@ -641,13 +643,19 @@ impl CalibrationTaskRequest {
                         cuts: request.cuts,
                     }),
                     mode.unwrap_or(if request.append { Append } else { Replace }),
+                    cancellation,
                 )
                 .map(|result| match result {
                     CalibrationSolveResult::Bandpass(report) => report,
                     _ => unreachable!("bandpass request result"),
                 })
                 .map(CalibrationTaskResult::SolveBandpass)
-                .map_err(|error| TaskFailure::execution(error.to_string()))
+                .map_err(|error| match error {
+                    CalibrationError::Interrupted => {
+                        TaskFailure::interrupted("bandpass interrupted")
+                    }
+                    error => TaskFailure::execution(error.to_string()),
+                })
             }
             Self::FluxScale(request) => casa_calibration::fluxscale::fluxscale_with_output_mode(
                 request,
@@ -664,6 +672,9 @@ impl CalibrationTaskRequest {
 }
 
 fn gain_failure(error: CalibrationError) -> TaskFailure {
+    if matches!(error, CalibrationError::Interrupted) {
+        return TaskFailure::interrupted("gaincal interrupted");
+    }
     if matches!(
         &error,
         CalibrationError::Gain(source)
