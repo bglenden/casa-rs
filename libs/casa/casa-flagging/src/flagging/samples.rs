@@ -311,31 +311,7 @@ pub(super) fn load_samples(
         None
     };
     check_cancelled(cancellation)?;
-    let flag_cells = table
-        .column_accessor(FLAG_COLUMN)
-        .and_then(|column| column.array_cells_owned(selected_rows))
-        .map_err(|source| FlaggingError::MutateFlags {
-            path: path.clone(),
-            reason: format!("read selected FLAG rows: {source}"),
-        })?
-        .into_iter()
-        .zip(selected_rows)
-        .map(|(cell, row)| match cell {
-            Some(ArrayValue::Bool(flags)) if flags.ndim() == 2 => Ok(flags),
-            Some(ArrayValue::Bool(_)) => Err(FlaggingError::MutateFlags {
-                path: path.clone(),
-                reason: format!("FLAG row {row} is not rank-2"),
-            }),
-            Some(other) => Err(FlaggingError::MutateFlags {
-                path: path.clone(),
-                reason: format!("FLAG row {row} must be bool array, found {other:?}"),
-            }),
-            None => Err(FlaggingError::MutateFlags {
-                path: path.clone(),
-                reason: format!("FLAG row {row} is undefined"),
-            }),
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let flag_cells = load_sample_flags(table, selected_rows, &path)?;
     let row_window = if calibration {
         "SPECTRAL_WINDOW_ID"
     } else {
@@ -499,6 +475,32 @@ pub(super) struct SampleLoadOptions<'a> {
     pub(super) retain_channel_overlaps: bool,
     pub(super) widths: Option<&'a [u32]>,
     pub(super) cancellation: Option<&'a Cancellation>,
+}
+
+fn load_sample_flags(
+    table: &Table,
+    selected_rows: &[usize],
+    path: &str,
+) -> Result<Vec<ArrayD<bool>>, FlaggingError> {
+    let fail = |reason| FlaggingError::MutateFlags {
+        path: path.to_owned(),
+        reason,
+    };
+    table
+        .column_accessor(FLAG_COLUMN)
+        .and_then(|column| column.array_cells_owned(selected_rows))
+        .map_err(|source| fail(format!("read selected FLAG rows: {source}")))?
+        .into_iter()
+        .zip(selected_rows)
+        .map(|(cell, row)| match cell {
+            Some(ArrayValue::Bool(flags)) if flags.ndim() == 2 => Ok(flags),
+            Some(ArrayValue::Bool(_)) => Err(fail(format!("FLAG row {row} is not rank-2"))),
+            Some(other) => Err(fail(format!(
+                "FLAG row {row} must be bool array, found {other:?}"
+            ))),
+            None => Err(fail(format!("FLAG row {row} is undefined"))),
+        })
+        .collect()
 }
 
 pub(super) fn checked_row_data<'a>(

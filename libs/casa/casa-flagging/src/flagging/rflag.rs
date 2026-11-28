@@ -139,16 +139,14 @@ pub(super) fn apply_rflag_flags(
         RflagFitOutcome::default()
     };
     if request.extendflags && view.is_none() {
-        let fit_flags = loaded
-            .axes
-            .flags_by_bin
-            .as_ref()
-            .unwrap_or(&loaded.flags_by_row);
         if casa_rflag && channel_selections.is_some() && loaded.axes.channels_by_row.is_empty() {
-            for (_, group) in &groups {
-                request.check_cancelled()?;
-                extend_tfcrop_selected_channels(group, fit_flags, &mut modified);
-            }
+            extend_rflag_selected_channels(
+                &groups,
+                &loaded.axes,
+                &loaded.flags_by_row,
+                &mut modified,
+                request,
+            )?;
         } else {
             extend_autoflag_grouped(
                 groups.iter().map(|(_, samples)| samples.as_slice()),
@@ -213,6 +211,21 @@ pub(super) fn apply_rflag_flags(
         })
     });
     Ok(changes)
+}
+
+fn extend_rflag_selected_channels(
+    groups: &[(AutoflagChunk, Vec<Sample>)],
+    axes: &AveragedSampleAxes,
+    flags_by_row: &BTreeMap<usize, ArrayD<bool>>,
+    modified: &mut [bool],
+    request: &FlagDataRequest,
+) -> Result<(), FlaggingError> {
+    let fit_flags = axes.flags_by_bin.as_ref().unwrap_or(flags_by_row);
+    for (_, group) in groups {
+        request.check_cancelled()?;
+        extend_tfcrop_selected_channels(group, fit_flags, modified);
+    }
+    Ok(())
 }
 
 pub(super) struct AutomaticSampleSource<'a> {
