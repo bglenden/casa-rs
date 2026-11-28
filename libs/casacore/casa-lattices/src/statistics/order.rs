@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Exact order statistics for the casacore statistics framework.
 
+use casa_core::cancellation::Cancellation;
+
+use super::progress::{BATCH_SIZE, StatisticsInterrupted, batches, check};
+#[cfg(feature = "statistics-test-hooks")]
+use crate::statistics_test_hooks::{Checkpoint, observe};
+
 #[derive(Clone, Copy)]
 pub(crate) struct OrderStatsSummary {
     pub(crate) median: f64,
@@ -22,35 +28,50 @@ impl OrderStatsSummary {
     }
 }
 
-pub(crate) fn framework_order_summary(values: &mut [f64]) -> OrderStatsSummary {
+pub(crate) fn framework_order_summary(
+    values: &mut [f64],
+    cancellation: Option<&Cancellation>,
+) -> Result<OrderStatsSummary, StatisticsInterrupted> {
     if values.is_empty() {
-        return OrderStatsSummary::nan();
+        return Ok(OrderStatsSummary::nan());
     }
-    let [q1, median, q3] = quartiles_and_median(values);
-    for value in values.iter_mut() {
-        *value = (*value - median).abs();
+    let [q1, median, q3] = quartiles_and_median(values, cancellation)?;
+    for batch in values.chunks_mut(BATCH_SIZE) {
+        check(cancellation)?;
+        #[cfg(feature = "statistics-test-hooks")]
+        observe(Checkpoint::DeviationBatchStarted);
+        for value in batch {
+            *value = (*value - median).abs();
+        }
+        #[cfg(feature = "statistics-test-hooks")]
+        observe(Checkpoint::DeviationBatchFinished);
     }
-    OrderStatsSummary {
+    Ok(OrderStatsSummary {
         median,
         q1,
         q3,
         quartile: q3 - q1,
-        mad: selection_median(values),
-    }
+        mad: selection_median(values, cancellation)?,
+    })
 }
 
 /// Casacore takes the fractile at ceil(q * n) - 1 and averages the middle
 /// pair for an even median. Partition around the median once so both
 /// quartiles can be selected within their respective halves.
-pub(crate) fn quartiles_and_median(values: &mut [f64]) -> [f64; 3] {
+pub(crate) fn quartiles_and_median(
+    values: &mut [f64],
+    cancellation: Option<&Cancellation>,
+) -> Result<[f64; 3], StatisticsInterrupted> {
+    check(cancellation)?;
     let len = values.len();
     if len < 2 {
-        return [values.first().copied().unwrap_or(f64::NAN); 3];
+        return Ok([values.first().copied().unwrap_or(f64::NAN); 3]);
     }
 
     let middle = len / 2;
     let (lower, upper_middle, upper) = values.select_nth_unstable_by(middle, f64::total_cmp);
-    let median = center_from_partition(lower, *upper_middle, len);
+    let median = center_from_partition(lower, *upper_middle, len, cancellation)?;
+    check(cancellation)?;
     let q1 = *lower
         .select_nth_unstable_by(len.div_ceil(4) - 1, f64::total_cmp)
         .1;
@@ -58,28 +79,44 @@ pub(crate) fn quartiles_and_median(values: &mut [f64]) -> [f64; 3] {
     let q3 = if q3_rank == middle {
         *upper_middle
     } else {
+        check(cancellation)?;
         *upper
             .select_nth_unstable_by(q3_rank - middle - 1, f64::total_cmp)
             .1
     };
-    [q1, median, q3]
+    Ok([q1, median, q3])
 }
 
-pub(crate) fn selection_median(values: &mut [f64]) -> f64 {
+pub(crate) fn selection_median(
+    values: &mut [f64],
+    cancellation: Option<&Cancellation>,
+) -> Result<f64, StatisticsInterrupted> {
+    check(cancellation)?;
     let len = values.len();
     if len == 0 {
-        return f64::NAN;
+        return Ok(f64::NAN);
     }
     let (lower, upper_middle, _) = values.select_nth_unstable_by(len / 2, f64::total_cmp);
-    center_from_partition(lower, *upper_middle, len)
+    center_from_partition(lower, *upper_middle, len, cancellation)
 }
 
-fn center_from_partition(lower: &[f64], upper_middle: f64, len: usize) -> f64 {
+fn center_from_partition(
+    lower: &[f64],
+    upper_middle: f64,
+    len: usize,
+    cancellation: Option<&Cancellation>,
+) -> Result<f64, StatisticsInterrupted> {
     if len.is_multiple_of(2) {
-        let lower_middle = lower.iter().copied().max_by(f64::total_cmp).unwrap();
-        (lower_middle + upper_middle) / 2.0
+        let mut lower_middle = lower[0];
+        for batch in batches(lower, cancellation) {
+            let candidate = batch?.iter().copied().max_by(f64::total_cmp).unwrap();
+            if candidate.total_cmp(&lower_middle).is_gt() {
+                lower_middle = candidate;
+            }
+        }
+        Ok((lower_middle + upper_middle) / 2.0)
     } else {
-        upper_middle
+        Ok(upper_middle)
     }
 }
 
@@ -108,7 +145,7 @@ mod tests {
                 sorted.iter().map(|value| (value - median).abs()).collect();
             deviations.sort_by(f64::total_cmp);
             let expected = [q1, median, q3, q3 - q1, sorted_median(&deviations)];
-            let summary = framework_order_summary(&mut data[..len].to_vec());
+            let summary = framework_order_summary(&mut data[..len].to_vec(), None).unwrap();
             let actual = [
                 summary.q1,
                 summary.median,

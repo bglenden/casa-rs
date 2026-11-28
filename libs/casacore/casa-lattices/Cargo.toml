@@ -18,6 +18,9 @@ targets = ["x86_64-unknown-linux-gnu"]
 [lints]
 workspace = true
 
+[features]
+statistics-test-hooks = []
+
 [dependencies]
 casa-tables.workspace = true
 casa-core.workspace = true

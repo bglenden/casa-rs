@@ -16,6 +16,9 @@
 //! its name, the reciprocal of the probit at 3/4, the factor that makes
 //! the median absolute deviation estimate a Gaussian sigma.
 
+use casa_core::cancellation::Cancellation;
+
+use crate::statistics::progress::{BATCH_SIZE, StatisticsInterrupted, batches, check};
 use crate::statistics::{
     OrderStatsSummary, RunningStats, Statistic, framework_order_summary, quartiles_and_median,
     selection_median,
@@ -180,6 +183,10 @@ pub enum RobustStats {
 /// Why a robust computation cannot proceed, with CASA's wording.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum RobustStatsError {
+    /// The caller requested cancellation of the algorithm.
+    #[error("statistics interrupted")]
+    Interrupted,
+
     /// The biweight needs at least two points.
     #[error(
         "npts is {npts}. There must be at least two points to compute the biweight location and scale"
@@ -191,6 +198,12 @@ pub enum RobustStatsError {
     /// `fit-half`'s center excluded every point.
     #[error("No data included using current configuration, cannot compute min and max")]
     FitHalfEmpty,
+}
+
+impl From<StatisticsInterrupted> for RobustStatsError {
+    fn from(_: StatisticsInterrupted) -> Self {
+        Self::Interrupted
+    }
 }
 
 /// Parse CASA's `algorithm` argument: minimum match, in any case, of
@@ -265,30 +278,44 @@ pub fn compute_robust_stats(
     sample: &[SamplePoint],
     algorithm: &StatisticsAlgorithm,
 ) -> Result<RobustStats, RobustStatsError> {
+    compute_robust_stats_with_cancellation(sample, algorithm, None)
+}
+
+/// Compute sample statistics with cooperative checks between batches of
+/// samples and before order-statistic selection. The sample and arithmetic
+/// order are preserved. Cancellation returns [RobustStatsError::Interrupted].
+pub fn compute_robust_stats_with_cancellation(
+    sample: &[SamplePoint],
+    algorithm: &StatisticsAlgorithm,
+    cancellation: Option<&Cancellation>,
+) -> Result<RobustStats, RobustStatsError> {
+    check(cancellation)?;
     match algorithm {
-        StatisticsAlgorithm::Classic => Ok(RobustStats::Sample(classical_stats(sample))),
+        StatisticsAlgorithm::Classic => {
+            Ok(RobustStats::Sample(classical_stats(sample, cancellation)?))
+        }
         StatisticsAlgorithm::HingesFences { fence } => {
             if *fence < 0.0 {
-                return Ok(RobustStats::Sample(classical_stats(sample)));
+                return Ok(RobustStats::Sample(classical_stats(sample, cancellation)?));
             }
-            let mut values: Vec<f64> = sample.iter().map(|point| point.value).collect();
-            let [q1, _, q3] = quartiles_and_median(&mut values);
+            let mut values = sample_values(sample, cancellation)?;
+            let [q1, _, q3] = quartiles_and_median(&mut values, cancellation)?;
             let span = q3 - q1;
             let (low, high) = (q1 - fence * span, q3 + fence * span);
-            let kept: Vec<SamplePoint> = sample
-                .iter()
-                .copied()
-                .filter(|point| low <= point.value && point.value <= high)
-                .collect();
-            Ok(RobustStats::Sample(classical_stats(&kept)))
+            let mut kept = Vec::new();
+            extend_range(&mut kept, sample, low, high, cancellation)?;
+            Ok(RobustStats::Sample(classical_stats(&kept, cancellation)?))
         }
         StatisticsAlgorithm::Chauvenet { zscore, maxiter } => {
             let max_iterations = if *maxiter < 0 { 1000 } else { *maxiter };
-            let mut kept: Vec<SamplePoint> = sample.to_vec();
+            let mut kept = Vec::with_capacity(sample.len());
+            for batch in batches(sample, cancellation) {
+                kept.extend_from_slice(batch?);
+            }
             let mut previous_npts: Option<f64> = None;
             let mut reductions = 0;
             for iteration in 0..=max_iterations {
-                let stats = classical_stats(&kept);
+                let stats = classical_stats(&kept, cancellation)?;
                 if iteration > 0 && previous_npts == Some(stats.npts) {
                     break;
                 }
@@ -303,37 +330,32 @@ pub fn compute_robust_stats(
                 // Casacore replaces the range on the original data at each
                 // iteration. An empty previous range has mean and sigma zero.
                 kept.clear();
-                kept.extend(
-                    sample
-                        .iter()
-                        .copied()
-                        .filter(|point| low <= point.value && point.value <= high),
-                );
+                extend_range(&mut kept, sample, low, high, cancellation)?;
                 if kept.len() < stats.npts as usize {
                     reductions += 1;
                 }
                 previous_npts = Some(stats.npts);
             }
-            let mut stats = classical_stats(&kept);
+            let mut stats = classical_stats(&kept, cancellation)?;
             stats.chauvenet_iterations = Some(reductions.min(max_iterations as usize));
             Ok(RobustStats::Sample(stats))
         }
         StatisticsAlgorithm::FitToHalf { center, upper } => {
             let center_value = match center {
-                FitHalfCenter::Mean => sample_mean(sample),
-                FitHalfCenter::Median => sample_median(sample),
+                FitHalfCenter::Mean => sample_mean(sample, cancellation)?,
+                FitHalfCenter::Median => sample_median(sample, cancellation)?,
                 FitHalfCenter::Zero => 0.0,
             };
-            let reals: Vec<&SamplePoint> = sample
-                .iter()
-                .filter(|point| {
+            let mut reals: Vec<&SamplePoint> = Vec::new();
+            for batch in batches(sample, cancellation) {
+                reals.extend(batch?.iter().filter(|point| {
                     if *upper {
                         point.value >= center_value
                     } else {
                         point.value <= center_value
                     }
-                })
-                .collect();
+                }));
+            }
             if reals.is_empty() {
                 return Err(RobustStatsError::FitHalfEmpty);
             }
@@ -341,85 +363,131 @@ pub fn compute_robust_stats(
             // reflections about the center; only the real extremum has a
             // position, and the median is the center itself.
             let mut values: Vec<f64> = Vec::with_capacity(2 * reals.len());
-            for point in &reals {
-                values.push(point.value);
-                values.push(2.0 * center_value - point.value);
+            for batch in batches(&reals, cancellation) {
+                for point in batch? {
+                    values.push(point.value);
+                    values.push(2.0 * center_value - point.value);
+                }
             }
-            let mut stats = classical_stats_of_values(&values);
+            let mut stats = classical_stats_of_values(&values, cancellation)?;
             stats.median = center_value;
+            let extremum = real_extremum(&reals, *upper, cancellation)?;
             if *upper {
-                let real_max = reals
-                    .iter()
-                    .copied()
-                    .max_by(|left, right| {
-                        left.value
-                            .total_cmp(&right.value)
-                            .then(right.position.cmp(&left.position))
-                    })
-                    .expect("the kept sample is non-empty");
-                stats.max = real_max.value;
-                stats.maxpos = Some(real_max.position);
-                stats.min = 2.0 * center_value - real_max.value;
+                stats.max = extremum.value;
+                stats.maxpos = Some(extremum.position);
+                stats.min = 2.0 * center_value - extremum.value;
             } else {
-                let real_min = reals
-                    .iter()
-                    .copied()
-                    .min_by(|left, right| {
-                        left.value
-                            .total_cmp(&right.value)
-                            .then(left.position.cmp(&right.position))
-                    })
-                    .expect("the kept sample is non-empty");
-                stats.min = real_min.value;
-                stats.minpos = Some(real_min.position);
-                stats.max = 2.0 * center_value - real_min.value;
+                stats.min = extremum.value;
+                stats.minpos = Some(extremum.position);
+                stats.max = 2.0 * center_value - extremum.value;
             }
             Ok(RobustStats::Sample(stats))
         }
         StatisticsAlgorithm::Biweight { niter } => {
-            let values: Vec<f64> = sample.iter().map(|point| point.value).collect();
-            let (location, scale) = biweight_location_scale(&values, BIWEIGHT_C, *niter)?;
+            let values = sample_values(sample, cancellation)?;
+            let (location, scale) =
+                biweight_location_scale(&values, BIWEIGHT_C, *niter, cancellation)?;
             Ok(RobustStats::Biweight { location, scale })
         }
     }
 }
 
+fn real_extremum(
+    reals: &[&SamplePoint],
+    upper: bool,
+    cancellation: Option<&Cancellation>,
+) -> Result<SamplePoint, StatisticsInterrupted> {
+    let mut best = *reals[0];
+    for batch in batches(reals, cancellation) {
+        for &point in batch? {
+            let order = point.value.total_cmp(&best.value);
+            let better = if upper { order.is_gt() } else { order.is_lt() };
+            if better || (order.is_eq() && point.position < best.position) {
+                best = *point;
+            }
+        }
+    }
+    Ok(best)
+}
+
+fn extend_range(
+    kept: &mut Vec<SamplePoint>,
+    sample: &[SamplePoint],
+    low: f64,
+    high: f64,
+    cancellation: Option<&Cancellation>,
+) -> Result<(), StatisticsInterrupted> {
+    for batch in batches(sample, cancellation) {
+        kept.extend(
+            batch?
+                .iter()
+                .copied()
+                .filter(|point| low <= point.value && point.value <= high),
+        );
+    }
+    Ok(())
+}
+
+fn sample_values(
+    sample: &[SamplePoint],
+    cancellation: Option<&Cancellation>,
+) -> Result<Vec<f64>, StatisticsInterrupted> {
+    let mut values = Vec::with_capacity(sample.len());
+    for batch in batches(sample, cancellation) {
+        values.extend(batch?.iter().map(|point| point.value));
+    }
+    Ok(values)
+}
+
 /// The classical statistics of a sample: the framework's moments and
 /// order statistics, with the extremum positions of the first extremum
 /// in sample order.
-fn classical_stats(sample: &[SamplePoint]) -> RobustSampleStats {
-    let mut stats =
-        classical_stats_of_values(&sample.iter().map(|point| point.value).collect::<Vec<_>>());
+fn classical_stats(
+    sample: &[SamplePoint],
+    cancellation: Option<&Cancellation>,
+) -> Result<RobustSampleStats, StatisticsInterrupted> {
+    let values = sample_values(sample, cancellation)?;
+    let mut stats = classical_stats_of_values(&values, cancellation)?;
     let mut minpos = None;
     let mut maxpos = None;
-    for point in sample {
-        if minpos.is_none() || point.value < stats.min {
-            stats.min = point.value;
-            minpos = Some(point.position);
-        }
-        if maxpos.is_none() || point.value > stats.max {
-            stats.max = point.value;
-            maxpos = Some(point.position);
+    for batch in batches(sample, cancellation) {
+        for point in batch? {
+            if minpos.is_none() || point.value < stats.min {
+                stats.min = point.value;
+                minpos = Some(point.position);
+            }
+            if maxpos.is_none() || point.value > stats.max {
+                stats.max = point.value;
+                maxpos = Some(point.position);
+            }
         }
     }
     stats.minpos = minpos;
     stats.maxpos = maxpos;
-    stats
+    Ok(stats)
 }
 
 /// The classical statistics of a bare value sample, without positions.
-fn classical_stats_of_values(values: &[f64]) -> RobustSampleStats {
+fn classical_stats_of_values(
+    values: &[f64],
+    cancellation: Option<&Cancellation>,
+) -> Result<RobustSampleStats, StatisticsInterrupted> {
     let npts = values.len();
     let mut moments = RunningStats::default();
     let first = values.first().copied().unwrap_or(f64::NAN);
     let (mut min, mut max) = (first, first);
-    for &value in values {
-        moments.push(value);
-        if value.total_cmp(&min).is_lt() {
-            min = value;
-        }
-        if value.total_cmp(&max).is_gt() {
-            max = value;
+    let mut workspace = Vec::with_capacity(npts);
+    for batch in batches(values, cancellation) {
+        let batch = batch?;
+        workspace.extend_from_slice(batch);
+        for &value in batch {
+            moments.push(value);
+            if value.total_cmp(&min).is_lt() {
+                min = value;
+            }
+            if value.total_cmp(&max).is_gt() {
+                max = value;
+            }
         }
     }
     let [sum, sumsq, mean, rms, sigma] = if npts == 0 {
@@ -440,8 +508,8 @@ fn classical_stats_of_values(values: &[f64]) -> RobustSampleStats {
         q3,
         quartile,
         mad: medabsdevmed,
-    } = framework_order_summary(&mut values.to_vec());
-    RobustSampleStats {
+    } = framework_order_summary(&mut workspace, cancellation)?;
+    Ok(RobustSampleStats {
         npts: npts as f64,
         min,
         max,
@@ -458,19 +526,30 @@ fn classical_stats_of_values(values: &[f64]) -> RobustSampleStats {
         minpos: None,
         maxpos: None,
         chauvenet_iterations: None,
-    }
+    })
 }
 
-fn sample_median(sample: &[SamplePoint]) -> f64 {
-    let mut values: Vec<f64> = sample.iter().map(|point| point.value).collect();
-    selection_median(&mut values)
+fn sample_median(
+    sample: &[SamplePoint],
+    cancellation: Option<&Cancellation>,
+) -> Result<f64, StatisticsInterrupted> {
+    selection_median(&mut sample_values(sample, cancellation)?, cancellation)
 }
 
-fn sample_mean(sample: &[SamplePoint]) -> f64 {
+fn sample_mean(
+    sample: &[SamplePoint],
+    cancellation: Option<&Cancellation>,
+) -> Result<f64, StatisticsInterrupted> {
     if sample.is_empty() {
-        return f64::NAN;
+        return Ok(f64::NAN);
     }
-    sample.iter().map(|point| point.value).sum::<f64>() / sample.len() as f64
+    let mut sum = -0.0; // Keep f64::sum's identity for signed zero.
+    for batch in batches(sample, cancellation) {
+        for point in batch? {
+            sum += point.value;
+        }
+    }
+    Ok(sum / sample.len() as f64)
 }
 
 /// The biweight location and scale, as casacore's
@@ -487,56 +566,71 @@ fn biweight_location_scale(
     values: &[f64],
     c: f64,
     max_niter: i64,
+    cancellation: Option<&Cancellation>,
 ) -> Result<(f64, f64), RobustStatsError> {
     let npts = values.len() as u64;
     if npts <= 1 {
         return Err(RobustStatsError::BiweightNeedsTwoPoints { npts });
     }
-    let mut workspace = values.to_vec();
-    let mut location = selection_median(&mut workspace);
-    for (deviation, value) in workspace.iter_mut().zip(values) {
-        *deviation = (value - location).abs();
+    let mut workspace = Vec::with_capacity(values.len());
+    for batch in batches(values, cancellation) {
+        workspace.extend_from_slice(batch?);
     }
-    let mut scale = PROBIT_3_4 * selection_median(&mut workspace);
+    let mut location = selection_median(&mut workspace, cancellation)?;
+    for (deviations, batch) in workspace
+        .chunks_mut(BATCH_SIZE)
+        .zip(batches(values, cancellation))
+    {
+        for (deviation, value) in deviations.iter_mut().zip(batch?) {
+            *deviation = (value - location).abs();
+        }
+    }
+    let mut scale = PROBIT_3_4 * selection_median(&mut workspace, cancellation)?;
     drop(workspace);
 
     let mut spread = c * scale;
     let (mut low, mut high) = (location - spread, location + spread);
-    let location_sums = |location: f64, scale: f64, low: f64, high: f64| -> f64 {
-        let (mut sxw2, mut sw2) = (0.0, 0.0);
-        for &value in values {
-            if low < value && value < high {
-                let u = (value - location) / (c * scale);
-                let w = 1.0 - u * u;
-                sxw2 += value * w * w;
-                sw2 += w * w;
+    let location_sums =
+        |location: f64, scale: f64, low: f64, high: f64| -> Result<f64, StatisticsInterrupted> {
+            let (mut sxw2, mut sw2) = (0.0, 0.0);
+            for batch in batches(values, cancellation) {
+                for &value in batch? {
+                    if low < value && value < high {
+                        let u = (value - location) / (c * scale);
+                        let w = 1.0 - u * u;
+                        sxw2 += value * w * w;
+                        sw2 += w * w;
+                    }
+                }
             }
-        }
-        sxw2 / sw2
-    };
-    let scale_sums = |location: f64, scale: f64, low: f64, high: f64| -> f64 {
-        let (mut sx_m2w4, mut ww_4u2) = (0.0, 0.0);
-        for &value in values {
-            if low < value && value < high {
-                let u = (value - location) / (c * scale);
-                let w = 1.0 - u * u;
-                sx_m2w4 += (value - location) * (value - location) * w * w * w * w;
-                ww_4u2 += w * (5.0 * w - 4.0);
+            Ok(sxw2 / sw2)
+        };
+    let scale_sums =
+        |location: f64, scale: f64, low: f64, high: f64| -> Result<f64, StatisticsInterrupted> {
+            let (mut sx_m2w4, mut ww_4u2) = (0.0, 0.0);
+            for batch in batches(values, cancellation) {
+                for &value in batch? {
+                    if low < value && value < high {
+                        let u = (value - location) / (c * scale);
+                        let w = 1.0 - u * u;
+                        sx_m2w4 += (value - location) * (value - location) * w * w * w * w;
+                        ww_4u2 += w * (5.0 * w - 4.0);
+                    }
+                }
             }
-        }
-        let p = ww_4u2.abs();
-        (npts as f64 * sx_m2w4 / (p * (p - 1.0).max(1.0))).sqrt()
-    };
+            let p = ww_4u2.abs();
+            Ok((npts as f64 * sx_m2w4 / (p * (p - 1.0).max(1.0))).sqrt())
+        };
 
     if max_niter >= 0 {
-        scale = scale_sums(location, scale, low, high);
+        scale = scale_sums(location, scale, low, high)?;
         let epsilon = 0.03 / std::f64::consts::SQRT_2 / (npts as f64 - 1.0).sqrt();
         for iteration in 1..=max_niter {
             let previous = scale;
-            location = location_sums(location, scale, low, high);
+            location = location_sums(location, scale, low, high)?;
             low = location - spread;
             high = location + spread;
-            scale = scale_sums(location, scale, low, high);
+            scale = scale_sums(location, scale, low, high)?;
             if (1.0 - scale / previous).abs() < epsilon || iteration == max_niter {
                 break;
             }
@@ -546,8 +640,8 @@ fn biweight_location_scale(
         }
     } else {
         let initial_location = location;
-        location = location_sums(initial_location, scale, low, high);
-        scale = scale_sums(initial_location, scale, low, high);
+        location = location_sums(initial_location, scale, low, high)?;
+        scale = scale_sums(initial_location, scale, low, high)?;
     }
     Ok((location, scale))
 }
@@ -745,10 +839,11 @@ mod tests {
 
     #[test]
     fn framework_quantiles_and_median() {
-        let stats = classical_stats_of_values(&[7.0, 0.0, 2.0, 1.0, 6.0, 4.0, 5.0, 3.0]);
+        let stats =
+            classical_stats_of_values(&[7.0, 0.0, 2.0, 1.0, 6.0, 4.0, 5.0, 3.0], None).unwrap();
         assert_eq!([stats.q1, stats.median, stats.q3], [1.0, 3.5, 5.0]);
         assert_eq!(
-            sample_median(&sample(&[6.0, 4.0, 0.0, 2.0, 3.0, 5.0, 1.0])),
+            sample_median(&sample(&[6.0, 4.0, 0.0, 2.0, 3.0, 5.0, 1.0]), None).unwrap(),
             3.0
         );
     }
