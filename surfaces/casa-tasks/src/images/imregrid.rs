@@ -7,7 +7,9 @@ use casa_contracts::{
     CasaValue, ParameterValue, casacore_value_to_casa, parameter_value_to_casacore,
 };
 use casa_core::Value;
-use casa_imageanalysis::{ImregridOutcome, ImregridRequest, ImregridTemplate, imregrid};
+use casa_imageanalysis::{
+    ImregridOutcome, ImregridRequest, ImregridTemplate, imregrid_with_cancellation,
+};
 use casa_images::ImageError;
 
 use super::front_end::{image_task_front_end, image_task_returning};
@@ -74,12 +76,16 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         replicate: task.flag("replicate")?,
         overwrite: task.flag("overwrite")?,
     };
-    let outcome = imregrid(&request).and_then(|item| match item {
+    let cancellation = task.native_options().map(|options| &options.cancel);
+    let outcome = imregrid_with_cancellation(&request, cancellation).and_then(|item| match item {
         ImregridOutcome::Product(product) => Ok(ImregridTaskOutcome::Product(product)),
         ImregridOutcome::Template(value) => casacore_value_to_casa(&value)
             .map(ImregridTaskOutcome::Template)
             .map_err(|error| ImageError::InvalidMetadata(error.into())),
     });
+    if matches!(outcome, Err(ImageError::Interrupted)) {
+        return Err(TaskFailure::interrupted("imregrid interrupted"));
+    }
     let value = match &outcome {
         Ok(ImregridTaskOutcome::Template(value)) => value.clone(),
         _ => CasaValue::None,

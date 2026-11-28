@@ -210,6 +210,7 @@ pub fn regrid_image<T: RegridPixel>(
             decimate: options.decimate.max(0),
             replicate: options.replicate,
             method: RegridMethod::from_image_tool(options.method)?,
+            cancellation: None,
             image_tool: Some(ImageToolSampling {
                 force: options.force,
                 convert_reference: options.convert_reference,

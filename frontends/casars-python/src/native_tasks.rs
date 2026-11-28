@@ -27,6 +27,8 @@ use crate::tasks::{TaskTableWrite, completion, decode_plot_documents};
 use crate::native_flagdata_test_hooks as flagdata_test_hooks;
 #[cfg(all(unix, feature = "immoments-test-hooks"))]
 use crate::native_immoments_test_hooks as immoments_test_hooks;
+#[cfg(all(unix, feature = "imregrid-test-hooks"))]
+use crate::native_imregrid_test_hooks as imregrid_test_hooks;
 #[cfg(all(unix, feature = "imstat-test-hooks"))]
 use crate::native_imstat_test_hooks as imstat_test_hooks;
 #[cfg(all(unix, feature = "solve-test-hooks"))]
@@ -142,7 +144,8 @@ pub(crate) enum WorkerMessage {
             feature = "flagdata-test-hooks",
             feature = "imstat-test-hooks",
             feature = "immoments-test-hooks",
-            feature = "solve-test-hooks"
+            feature = "solve-test-hooks",
+            feature = "imregrid-test-hooks"
         )
     ))]
     TestInterrupt(Sender<()>),
@@ -156,7 +159,8 @@ pub(crate) enum WorkerMessage {
         feature = "flagdata-test-hooks",
         feature = "imstat-test-hooks",
         feature = "immoments-test-hooks",
-        feature = "solve-test-hooks"
+        feature = "solve-test-hooks",
+        feature = "imregrid-test-hooks"
     )
 ))]
 pub(crate) fn signal_test_worker(sender: &Sender<WorkerMessage>) {
@@ -278,6 +282,8 @@ pub(crate) fn run_native_task(
     let flagdata_test = flagdata_test_hooks::take(&surface);
     #[cfg(all(unix, feature = "immoments-test-hooks"))]
     let immoments_test = immoments_test_hooks::take(&surface);
+    #[cfg(all(unix, feature = "imregrid-test-hooks"))]
+    let imregrid_test = imregrid_test_hooks::take(&surface);
     #[cfg(all(unix, feature = "imstat-test-hooks"))]
     let imstat_test = imstat_test_hooks::take(&surface);
     #[cfg(all(unix, feature = "transform-test-hooks"))]
@@ -305,6 +311,8 @@ pub(crate) fn run_native_task(
             let run = || flagdata_test_hooks::run(flagdata_test, &sender, run);
             #[cfg(all(unix, feature = "immoments-test-hooks"))]
             let run = || immoments_test_hooks::run(immoments_test, &sender, run);
+            #[cfg(all(unix, feature = "imregrid-test-hooks"))]
+            let run = || imregrid_test_hooks::run(imregrid_test, &sender, run);
             #[cfg(all(unix, feature = "imstat-test-hooks"))]
             let run = || imstat_test_hooks::run(imstat_test, &sender, run);
             let (reply, lines) = tracing::subscriber::with_default(subscriber, run);
@@ -366,7 +374,8 @@ fn collect_logs(
                     feature = "flagdata-test-hooks",
                     feature = "imstat-test-hooks",
                     feature = "immoments-test-hooks",
-                    feature = "solve-test-hooks"
+                    feature = "solve-test-hooks",
+                    feature = "imregrid-test-hooks"
                 )
             ))]
             Ok(WorkerMessage::TestInterrupt(resume)) => {
