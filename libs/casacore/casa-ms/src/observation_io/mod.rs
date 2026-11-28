@@ -16,6 +16,8 @@
 #[cfg(unix)]
 pub mod creation;
 mod field_namespace;
+#[cfg(unix)]
+mod geometry;
 mod grouping;
 mod heap;
 mod msv2;
@@ -33,6 +35,8 @@ pub use casa_observation::ObservationError;
 pub use field_namespace::{
     FieldNamespace, Msv2FieldSelection, Msv4FieldSelection, with_field_namespace,
 };
+#[cfg(unix)]
+pub use geometry::visit_stored_uvw;
 pub use msv2::catalogue::{Feeds, read_feeds};
 pub use msv2::{MainRowKeys, Msv2Cursor, Msv2Observation};
 #[cfg(feature = "msv4")]
@@ -150,36 +154,6 @@ pub fn open(
         });
     }
     Ok(Box::new(Msv2Observation::open_with(path, options)?))
-}
-
-/// Open either format with an admission callback before its catalogue and
-/// index allocations. The callback receives cumulative bytes, including the
-/// retained store if it needs more than the opening's latest grant.
-///
-/// # Errors
-/// As [open], or any refusal from the grant.
-#[cfg(unix)]
-pub fn open_granted(
-    path: impl AsRef<Path>,
-    options: &OpenOptions,
-    grant: &mut dyn FnMut(usize) -> Result<(), ObservationError>,
-) -> Result<Box<dyn Observation>, ObservationError> {
-    let path = path.as_ref();
-    if is_msv4_store(path) {
-        #[cfg(feature = "msv4")]
-        {
-            let observation = Msv4Observation::open_granted(path, options, grant)?;
-            grant(observation.held_bytes())?;
-            return Ok(Box::new(observation));
-        }
-        #[cfg(not(feature = "msv4"))]
-        return Err(ObservationError::Unsupported {
-            what: "an MSv4 store without casa-ms's msv4 feature",
-        });
-    }
-    let observation = Msv2Observation::open_granted(path, options, grant)?;
-    grant(observation.retained_bytes())?;
-    Ok(Box::new(observation))
 }
 
 /// The distinct `values`, sorted: a partition's fields or scans from its

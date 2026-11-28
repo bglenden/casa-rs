@@ -48,11 +48,14 @@ const READ: [SubtableId; 10] = [
 /// those nested in them: a field's ephemerides).
 pub(crate) fn opening_bytes(path: &Path) -> usize {
     let mut bytes = 0;
-    visit(path, 2, &mut |table| {
-        let description = fs::metadata(table.join("table.dat")).map_or(0, |meta| meta.len());
-        bytes += TABLE_BYTES + DESCRIPTION_FACTOR * description as usize;
-    });
+    visit(path, 2, &mut |table| bytes += table_opening_bytes(table));
     bytes
+}
+
+/// Bytes for a table's own description and managers without its subtables.
+pub(in crate::observation_io) fn table_opening_bytes(path: &Path) -> usize {
+    let description = fs::metadata(path.join("table.dat")).map_or(0, |meta| meta.len());
+    TABLE_BYTES.saturating_add(DESCRIPTION_FACTOR.saturating_mul(description as usize))
 }
 
 /// What `table` holds once its rows are loaded: a record of each row's
