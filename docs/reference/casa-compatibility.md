@@ -43,7 +43,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | immoments | immoments | yes | 12 | 12 | 0 | 0 | 1 | 0 |
 | impbcor | impbcor | yes | 12 | 12 | 0 | 0 | 0 | 0 |
 | importfits | importfits | yes | 9 | 9 | 0 | 0 | 0 | 0 |
-| importvla | importvla | yes | 12 | 12 | 0 | 0 | 0 | 0 |
+| importvla | importvla | yes | 12 | 12 | 0 | 0 | 1 | 0 |
 | impv | impv | yes | 16 | 16 | 0 | 0 | 0 | 0 |
 | imregrid | imregrid | yes | 10 | 10 | 0 | 0 | 0 | 0 |
 | imstat | imstat | yes | 20 | 20 | 0 | 0 | 0 | 0 |
@@ -1415,7 +1415,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `RuntimeError`: *** Error importing [] to : Need valid visibility file name (bad name or already exists)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- casa-rs parameters CASA lacks: none
+- casa-rs parameters CASA lacks: `outformat`
 - Shared parameters: 12, in CASA's order: yes
 - Defaults that differ: none
 
