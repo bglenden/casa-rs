@@ -1,5 +1,6 @@
 // AipsIO storage manager fixtures: scalar_primitives, fixed_array, keywords, records.
 #include "casacore_cpp_common.h"
+#include <algorithm>
 #include <casacore/tables/DataMan/StManAipsIO.h>
 #include <casacore/tables/Tables/ScaRecordColDesc.h>
 #include <casacore/tables/Tables/ScaRecordColData.h>
@@ -1011,6 +1012,8 @@ void write_aipsio_typed_arrays_impl(const std::string& path) {
     td.addColumn(casacore::ArrayColumnDesc<casacore::Float>("arr_f32",
         casacore::IPosition(1, 3), casacore::ColumnDesc::Direct | casacore::ColumnDesc::FixedShape));
 
+    td.addColumn(casacore::ArrayColumnDesc<casacore::Double>("arr_optional", 1));
+
     casacore::SetupNewTable setup(path, td, casacore::Table::New);
     casacore::StManAipsIO stman;
     setup.bindAll(stman);
@@ -1063,6 +1066,10 @@ void write_aipsio_typed_arrays_impl(const std::string& path) {
         colF32.put(2, f);
     }
 
+    // Row 1 has no array extent in the variable-shape column.
+    casacore::ArrayColumn<casacore::Double> colOptional(table, "arr_optional");
+    colOptional.put(0, casacore::Vector<casacore::Double>(1, 12.5));
+    colOptional.put(2, casacore::Vector<casacore::Double>(2, -7.25));
     table.flush();
 }
 
@@ -1075,16 +1082,38 @@ void verify_aipsio_typed_arrays_impl(const std::string& path) {
     casacore::ArrayColumn<casacore::Double> colF64(table, "arr_f64");
     casacore::ArrayColumn<casacore::Float> colF32(table, "arr_f32");
 
+    // Verify every Double in the direct column, including the all-zero row.
+    const double expected[][4] = {
+        {1.1, 2.2, 3.3, 4.4}, {5.5, 6.6, 7.7, 8.8}, {0.0, 0.0, 0.0, 0.0},
+    };
+    const casacore::IPosition direct_shape(2, 2, 2);
+    for (casacore::rownr_t row = 0; row < table.nrow(); ++row) {
+        if (!colF64.isDefined(row)) {
+            throw std::runtime_error("undefined direct arr_f64 at row " + std::to_string(row));
+        }
+        const auto values = colF64(row);
+        if (!values.shape().isEqual(direct_shape) ||
+            !std::equal(values.cbegin(), values.cend(), expected[row])) {
+            throw std::runtime_error("arr_f64 shape or values differ at row " + std::to_string(row));
+        }
+    }
+
+    casacore::ArrayColumn<casacore::Double> colOptional(table, "arr_optional");
+    if (!colOptional.isDefined(0) || colOptional.isDefined(1) || !colOptional.isDefined(2)) {
+        throw std::runtime_error("arr_optional defined rows differ");
+    }
+    const casacore::Vector<casacore::Double> optional0(colOptional(0));
+    const casacore::Vector<casacore::Double> optional2(colOptional(2));
+    if (optional0.size() != 1 || optional0(0) != 12.5 ||
+        optional2.size() != 2 || optional2(0) != -7.25 || optional2(1) != -7.25) {
+        throw std::runtime_error("arr_optional shapes or values differ");
+    }
+
     // Row 0
     {
         casacore::Vector<casacore::Int> v(colI32(0));
         if (v(0) != 10 || v(1) != 20 || v(2) != 30 || v(3) != 40)
             throw std::runtime_error("row 0 arr_i32 mismatch");
-
-        casacore::Array<casacore::Double> a = colF64(0);
-        if (a(casacore::IPosition(2,0,0)) != 1.1 || a(casacore::IPosition(2,1,0)) != 2.2 ||
-            a(casacore::IPosition(2,0,1)) != 3.3 || a(casacore::IPosition(2,1,1)) != 4.4)
-            throw std::runtime_error("row 0 arr_f64 mismatch");
 
         casacore::Vector<casacore::Float> f(colF32(0));
         if (f(0) != 1.5f || f(1) != 2.5f || f(2) != 3.5f)
@@ -1096,11 +1125,6 @@ void verify_aipsio_typed_arrays_impl(const std::string& path) {
         if (v(0) != -1 || v(1) != -2 || v(2) != -3 || v(3) != -4)
             throw std::runtime_error("row 1 arr_i32 mismatch");
 
-        casacore::Array<casacore::Double> a = colF64(1);
-        if (a(casacore::IPosition(2,0,0)) != 5.5 || a(casacore::IPosition(2,1,0)) != 6.6 ||
-            a(casacore::IPosition(2,0,1)) != 7.7 || a(casacore::IPosition(2,1,1)) != 8.8)
-            throw std::runtime_error("row 1 arr_f64 mismatch");
-
         casacore::Vector<casacore::Float> f(colF32(1));
         if (f(0) != -1.5f || f(1) != -2.5f || f(2) != -3.5f)
             throw std::runtime_error("row 1 arr_f32 mismatch");
@@ -1110,10 +1134,6 @@ void verify_aipsio_typed_arrays_impl(const std::string& path) {
         casacore::Vector<casacore::Int> v(colI32(2));
         if (v(0) != 0 || v(1) != 0 || v(2) != 0 || v(3) != 0)
             throw std::runtime_error("row 2 arr_i32 mismatch");
-
-        casacore::Array<casacore::Double> a = colF64(2);
-        if (a(casacore::IPosition(2,0,0)) != 0.0 || a(casacore::IPosition(2,1,1)) != 0.0)
-            throw std::runtime_error("row 2 arr_f64 mismatch");
 
         casacore::Vector<casacore::Float> f(colF32(2));
         if (f(0) != 0.0f || f(1) != 0.0f || f(2) != 0.0f)
