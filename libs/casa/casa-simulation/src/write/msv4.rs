@@ -155,9 +155,10 @@ fn dataset_plans(planned: &[PlannedScan<'_>]) -> SimulatorResult<Vec<DatasetPlan
         if count == 0 {
             continue;
         }
+        let with_autocorrelations = rows.autocorrelation_weight > 0.0;
         let baselines = (0..rows.antenna_count)
             .flat_map(|a| {
-                let first = a + usize::from(rows.autocorrelation_weight <= 0.0);
+                let first = a + usize::from(!with_autocorrelations);
                 (first..rows.antenna_count).map(move |b| OrderedBaseline {
                     antenna1: AntennaId(a as u32),
                     antenna2: AntennaId(b as u32),

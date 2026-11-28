@@ -218,11 +218,19 @@ def configure(sm: simulator, *, autocorrelations: bool = True, telescope: str = 
 
 
 @needs_measures
-def test_explicit_msv4_session_reopens_as_msv4(tmp_path: Path, capfd) -> None:
+@pytest.mark.parametrize(
+    ("autocorrwt", "rows", "auto_rows"),
+    [(1.0, 20, 8), (0.0, 12, 0), (float("nan"), 12, 0)],
+    ids=["auto", "cross-only", "nonfinite-weight"],
+)
+def test_explicit_msv4_session_reopens_as_msv4(
+    tmp_path: Path, capfd, autocorrwt: float, rows: int, auto_rows: int
+) -> None:
     path = tmp_path / "explicit.ms"  # The format is independent of the suffix.
     sm = simulator()
     assert sm.open(str(path), outformat="msv4")
     configure(sm)
+    assert sm.setauto(autocorrwt)
     assert sm.observe("F", "L", starttime="0s", stoptime="20s")
     assert not path.exists()
     assert sm.close()
@@ -236,7 +244,9 @@ def test_explicit_msv4_session_reopens_as_msv4(tmp_path: Path, capfd) -> None:
     assert result.successful, result.describe()
     assert result.value["informat"] == "msv4"
     with closing(open_table(reopened)) as table:
-        assert table.nrows() == 20
+        assert table.nrows() == rows
+        baseline = [read_column(table, key) for key in ("ANTENNA1", "ANTENNA2")]
+        assert np.count_nonzero(np.equal(*baseline)) == auto_rows
         np.testing.assert_array_equal(np.unique(read_column(table, "TIME")),
                                       58849.0 * 86400.0 + np.array([5.0, 15.0]))
 
