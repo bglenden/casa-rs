@@ -22,10 +22,11 @@ use super::grouping::{
     resolve_refants, time_bin, time_bin_origin,
 };
 use super::{
-    GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
-    GainSolveReport, GainSolveRequest, GainType, RefAntSelector, SolvedGains,
-    apply_reference_antenna, legacy_gain_receptors, preaverage_span, refant_distance_order,
-    solve_group_with_stats, spectral_window_ids, tally_references,
+    GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveModelSource, GainSolveReport,
+    GainSolveRequest, GainType, LegacyRefantSlots, RefAntSelector, SolvedGains,
+    apply_reference_antenna, finish_gain_amplitudes, legacy_gain_receptors, preaverage_span,
+    record_legacy_refant_slots, refant_distance_order, solve_group_with_stats, spectral_window_ids,
+    tally_references,
 };
 use crate::output::CalibrationOutputMode;
 use crate::selected_data::SelectedDataBuilder;
@@ -34,7 +35,6 @@ use crate::solve_stats::SolveStatsBuilder;
 pub(crate) fn supports(request: &GainSolveRequest) -> bool {
     matches!(request.solve_interval, GainSolveInterval::Seconds(seconds) if seconds.is_finite() && seconds > 0.0)
         && request.gain_type == GainType::G
-        && request.solve_mode == GainSolveMode::AmplitudePhase
         && request.combine == GainSolveCombine::default()
         && only_cross_correlations(&request.selection)
         && request.preaverage_seconds <= 0.0
@@ -184,6 +184,7 @@ struct GainAccumulator<'a> {
     groups: BTreeMap<GroupKey, ScanAccumulator>,
     width_s: f64,
     legacy_receptors: bool,
+    legacy_refant_slots: LegacyRefantSlots,
     rows: Vec<super::kernel::SolutionRow>,
     stats: SolveStatsBuilder,
     available_antennas: BTreeSet<i32>,
@@ -218,6 +219,7 @@ fn read_solutions(
         groups: BTreeMap::new(),
         width_s,
         legacy_receptors,
+        legacy_refant_slots: LegacyRefantSlots::new(),
         rows: Vec::new(),
         stats: SolveStatsBuilder::new(
             request.gain_type.polarizations(),
@@ -246,11 +248,18 @@ fn read_solutions(
             nearby.retain(|id| *id != preferred && !alternates.contains(id));
             alternates.extend(nearby);
         }
-        apply_reference_antenna(&mut state.rows, preferred, &alternates, strict);
+        apply_reference_antenna(
+            &mut state.rows,
+            preferred,
+            &alternates,
+            strict,
+            &state.legacy_refant_slots,
+        );
     }
     if state.selection.is_empty() {
         return Err(GainSolveError::EmptySelection);
     }
+    finish_gain_amplitudes(&mut state.rows, request);
     tally_references(&state.rows, &mut state.stats);
     Ok(SolvedGains {
         selected_data: state.selection.finish(input.subtables)?,
@@ -463,6 +472,7 @@ impl GainAccumulator<'_> {
         if group.attempted {
             self.attempted_spws.insert(group.spw_id);
         }
+        record_legacy_refant_slots(&mut self.legacy_refant_slots, &group);
         group.finalize_for_solve(self.request.solve_mode, false);
         if let Some(rows) = solve_group_with_stats(
             group,
@@ -480,6 +490,7 @@ impl GainAccumulator<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::solve::GainSolveMode;
 
     fn trial_ms() -> tempfile::TempDir {
         let root = tempfile::tempdir().unwrap();
@@ -538,7 +549,7 @@ mod tests {
     #[test]
     fn gaincal_keeps_time_bins_across_physical_batch_boundaries() {
         let root = trial_ms();
-        let request = super::super::batch_trial::gain_request(root.path().join("unused.cal"));
+        let mut request = super::super::batch_trial::gain_request(root.path().join("unused.cal"));
         with_calibration_observation(&root.path().join("ms_trial.ms"), admit_msv2, |input| {
             let id = PartitionId(0);
             let unlimited = partition_access(&input, id, input.available_bytes);
@@ -556,17 +567,24 @@ mod tests {
             }
             assert!(fragments > 2);
 
-            let whole = read_solutions(&input, &request, input.available_bytes, false).unwrap();
-            let fragmented = read_solutions(&input, &request, one_time_limit, false).unwrap();
-            assert_eq!(whole.selected_data, fragmented.selected_data);
-            assert_eq!(whole.solve_stats, fragmented.solve_stats);
-            assert_eq!(whole.rows.len(), 10);
-            assert_eq!(whole.rows.len(), fragmented.rows.len());
-            for (whole, split) in whole.rows.iter().zip(&fragmented.rows) {
-                assert_eq!(whole.time_seconds, split.time_seconds);
-                assert_eq!(whole.antenna_id, split.antenna_id);
-                assert_eq!(whole.flags, split.flags);
-                assert_eq!(whole.gains, split.gains);
+            for mode in [
+                GainSolveMode::AmplitudePhase,
+                GainSolveMode::Phase,
+                GainSolveMode::Amplitude,
+            ] {
+                request.solve_mode = mode;
+                let whole = read_solutions(&input, &request, input.available_bytes, false).unwrap();
+                let fragmented = read_solutions(&input, &request, one_time_limit, false).unwrap();
+                assert_eq!(whole.selected_data, fragmented.selected_data, "{mode:?}");
+                assert_eq!(whole.solve_stats, fragmented.solve_stats, "{mode:?}");
+                assert_eq!(whole.rows.len(), 10, "{mode:?}");
+                assert_eq!(whole.rows.len(), fragmented.rows.len(), "{mode:?}");
+                for (whole, split) in whole.rows.iter().zip(&fragmented.rows) {
+                    assert_eq!(whole.time_seconds, split.time_seconds, "{mode:?}");
+                    assert_eq!(whole.antenna_id, split.antenna_id, "{mode:?}");
+                    assert_eq!(whole.flags, split.flags, "{mode:?}");
+                    assert_eq!(whole.gains, split.gains, "{mode:?}");
+                }
             }
         })
         .unwrap();

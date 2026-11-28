@@ -393,6 +393,7 @@ pub struct PreparedRowAppender<'a> {
 #[derive(Debug)]
 pub struct TableWritePlan<'a> {
     pub(crate) table: &'a mut Table,
+    pub(crate) write_lock: Option<&'a crate::TableWriteLock>,
 }
 
 /// Read-only column accessor for a [`Table`].

@@ -12,11 +12,14 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use casa_test_support::table_sync::{persisted_table_shape, published_table_sync};
-use casa_test_support::{CppTableFixture, TableOracle, casacore_oracle_available};
+use casa_test_support::{
+    CppTableFixture, HeldCppTableReader, TableOracle, casacore_oracle_available,
+};
 
 use casa_core::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use casa_tables::{
@@ -464,6 +467,242 @@ fn cell(table: &Table, column: &str) -> ScalarValue {
         .and_then(|cell| cell.scalar())
         .expect("row 0 cell")
         .clone()
+}
+
+#[test]
+fn failed_full_save_leaves_the_previous_table_readable() {
+    if !casacore_oracle_available() {
+        eprintln!("skipping full-save readback: C++ casacore not available");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let path = published_id_table(dir.path(), false);
+    let mut writer = Table::open(TableOptions::new(&path)).expect("open initial table");
+    set_id(&mut writer, 2);
+
+    // The full writer can build this descriptor, but the tiled
+    // serializer rejects the read-only TiledDataStMan format.
+    let failed =
+        writer.save(TableOptions::new(&path).with_data_manager(DataManagerKind::TiledDataStMan));
+    assert!(failed.is_err(), "invalid tiled save succeeded");
+    let rust = Table::open(TableOptions::new(&path)).map(|table| cell(&table, "id"));
+    let cpp = HeldCppTableReader::open(&path).and_then(|mut table| table.read_id());
+    assert!(
+        matches!(rust, Ok(ScalarValue::Int32(1))) && matches!(cpp, Ok(1)),
+        "the old table must survive a mid-save failure ({failed:?}): Rust {rust:?}, C++ {cpp:?}"
+    );
+
+    writer.save(TableOptions::new(&path)).expect("retry save");
+    let rust = Table::open(TableOptions::new(&path)).expect("reopen from Rust");
+    assert_eq!(cell(&rust, "id"), ScalarValue::Int32(2));
+    let mut cpp = HeldCppTableReader::open(&path).expect("reopen from C++");
+    assert_eq!(cpp.read_id().expect("read from C++"), 2);
+}
+
+#[test]
+fn full_save_refuses_rebinding_a_virtual_column_held_by_cpp() {
+    if !casacore_oracle_available() {
+        eprintln!("skipping held C++ reader test: C++ casacore not available");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a");
+    let b = dir.path().join("b");
+    let path = dir.path().join("forward");
+    let table_with_id = |id| {
+        let schema =
+            TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)]).unwrap();
+        let mut table = Table::with_schema(schema);
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "id",
+                Value::Scalar(ScalarValue::Int32(id)),
+            )]))
+            .unwrap();
+        table
+    };
+    for (target, id) in [(&a, 11), (&b, 22)] {
+        table_with_id(id).save(TableOptions::new(target)).unwrap();
+    }
+    let mut original = table_with_id(0);
+    original.bind_forward_column("id", &a).unwrap();
+    let options = TableOptions::new(&path);
+    original.save(options.clone()).unwrap();
+    original.save(options.clone()).unwrap();
+    let before = published_counter(&path);
+    let mut held = HeldCppReaderProcess::open(&path);
+    assert_eq!(held.read_id(), 11);
+
+    let mut changed = table_with_id(0);
+    changed.bind_forward_column("id", &b).unwrap();
+    let saved = changed.save(options.clone());
+    let held_id = held.read_id();
+    let fresh_id = HeldCppReaderProcess::open(&path).read_id();
+    assert!(
+        saved
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("layout of an open table"))
+            && held_id == 11
+            && fresh_id == 11
+            && published_counter(&path) == before,
+        "forwarding save returned {saved:?}, held C++ reader {held_id}, fresh C++ reader {fresh_id}"
+    );
+    assert_eq!(
+        cell(&Table::open(options.clone()).unwrap(), "id"),
+        ScalarValue::Int32(11)
+    );
+
+    drop(held);
+    changed.save(options.clone()).unwrap();
+    assert_eq!(published_counter(&path), before + 1);
+    assert_eq!(HeldCppReaderProcess::open(&path).read_id(), 22);
+    assert_eq!(
+        cell(&Table::open(options).unwrap(), "id"),
+        ScalarValue::Int32(22)
+    );
+}
+
+#[test]
+fn full_save_refuses_read_only_descriptor_without_changing_table() {
+    if !casacore_oracle_available() {
+        eprintln!("skipping full-save readback: C++ casacore not available");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let path = published_id_table(dir.path(), false);
+    let options = TableOptions::new(&path);
+    let mut writer = Table::open(options.clone()).expect("open initial table");
+    set_id(&mut writer, 2);
+    let control = path.join("table.dat");
+    let metadata = control.metadata().expect("descriptor metadata");
+    std::fs::set_permissions(&control, std::fs::Permissions::from_mode(0o444))
+        .expect("make descriptor read only");
+    match std::fs::OpenOptions::new().write(true).open(&control) {
+        Ok(_) => {
+            eprintln!("skipping permission assertion: process can write a mode 0444 file");
+            return;
+        }
+        Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied),
+    }
+
+    let mut reader = HeldCppReaderProcess::open(&path);
+    assert_eq!(reader.read_id(), 1);
+    let before = published_counter(&path);
+    let saved = writer.save(options.clone());
+    assert!(saved.is_err(), "read-only table.dat accepted a full save");
+    assert_eq!(published_counter(&path), before);
+    assert_eq!(control.metadata().unwrap().ino(), metadata.ino());
+    let rust = Table::open(options.clone()).expect("reopen from Rust");
+    assert_eq!(cell(&rust, "id"), ScalarValue::Int32(1));
+    assert_eq!(reader.read_id(), 1);
+    let mut fresh = HeldCppReaderProcess::open(&path);
+    assert_eq!(fresh.read_id(), 1);
+
+    std::fs::set_permissions(&control, metadata.permissions()).expect("restore permissions");
+    writer.save(options).expect("retry full save");
+    assert_eq!(reader.read_id(), 2);
+    assert_eq!(fresh.read_id(), 2);
+}
+
+#[test]
+fn full_save_keeps_live_lock_and_manager_files_for_relocking_readers() {
+    if !casacore_oracle_available() {
+        eprintln!("skipping held C++ reader test: C++ casacore not available");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let path = dir.path().join("mixed");
+    let options = TableOptions::new(&path).with_data_manager(DataManagerKind::StandardStMan);
+    let bindings = HashMap::from([(
+        "name".to_string(),
+        ColumnBinding {
+            data_manager: DataManagerKind::StManAipsIO,
+            tile_shape: None,
+        },
+    )]);
+    build_lock_test_table()
+        .save_with_bindings(options.clone(), &bindings)
+        .unwrap();
+    std::fs::write(path.join("table.f90"), b"auxiliary").unwrap();
+    std::fs::write(path.join("table.flagversions"), b"auxiliary").unwrap();
+    let identity = || {
+        [
+            ".",
+            "table.lock",
+            "table.f0",
+            "table.f1",
+            "table.f90",
+            "table.flagversions",
+        ]
+        .map(|name| path.join(name).metadata().unwrap().ino())
+    };
+    let original = identity();
+    let mut cpp = HeldCppReaderProcess::open(&path);
+    assert_eq!(cpp.read_id(), 42);
+    let mut rust =
+        Table::open_with_lock(options.clone(), LockOptions::new(LockMode::UserLocking)).unwrap();
+    assert!(rust.lock(LockType::Read, 1).unwrap());
+    assert_eq!(cell(&rust, "id"), ScalarValue::Int32(42));
+    rust.unlock().unwrap();
+
+    let mut save = Table::open(options.clone()).unwrap();
+    set_id(&mut save, 52);
+    save.row_accessor_mut()
+        .set_cell(
+            0,
+            "name",
+            Value::Scalar(ScalarValue::String("after save".into())),
+        )
+        .unwrap();
+    let competing_writer = TableWriteLock::acquire(&path, 1).unwrap();
+    assert!(matches!(
+        save.save_with_bindings(options.clone(), &bindings),
+        Err(casa_tables::TableError::LockFailed { .. })
+    ));
+    competing_writer.release().unwrap();
+    assert_eq!(cpp.read_id(), 42);
+
+    let refused = save.save(TableOptions::new(&path)).unwrap_err();
+    assert!(
+        refused.to_string().contains("layout of an open table"),
+        "{refused}"
+    );
+    assert_eq!(cpp.read_id(), 42);
+
+    save.save_with_bindings(options.clone(), &bindings).unwrap();
+    assert_eq!(identity(), original);
+    assert_eq!(
+        cpp.read_id(),
+        52,
+        "the original C++ bucket file must see the saved row"
+    );
+    assert!(rust.lock(LockType::Read, 1).unwrap());
+    assert_eq!(cell(&rust, "id"), ScalarValue::Int32(52));
+    assert_eq!(
+        cell(&rust, "name"),
+        ScalarValue::String("after save".into())
+    );
+    rust.unlock().unwrap();
+    let inspection = Table::open(options).unwrap();
+    assert_eq!(inspection.data_manager_info().len(), 2);
+    assert_eq!(std::fs::read(path.join("table.f90")).unwrap(), b"auxiliary");
+    assert_eq!(
+        std::fs::read(path.join("table.flagversions")).unwrap(),
+        b"auxiliary"
+    );
+
+    drop(cpp);
+    drop(rust);
+    save.save(TableOptions::new(&path))
+        .expect("retry migration after closing reader");
+    let mut cpp = HeldCppReaderProcess::open(&path);
+    assert_eq!(cpp.read_id(), 52);
+    assert_eq!(
+        path.join("table.lock").metadata().unwrap().ino(),
+        original[1]
+    );
+    assert!(!path.join("table.f1").exists());
+    assert_eq!(std::fs::read(path.join("table.f90")).unwrap(), b"auxiliary");
 }
 
 #[test]

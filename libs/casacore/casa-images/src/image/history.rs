@@ -178,7 +178,7 @@ impl<T: ImagePixel> PagedImage<T> {
     ) -> Result<(), ImageError> {
         let path = Self::logtable_path(self.path.as_ref().ok_or(ImageError::NotPersistent)?);
         self.ensure_logtable()?;
-        let mut lock = TableWriteLock::acquire_to_reread(&path, 0)?;
+        let lock = TableWriteLock::acquire_to_reread(&path, 0)?;
         let mut log = Table::open(TableOptions::new(&path))?;
         let time = ImageHistoryEntry::current_time()?;
         Self::add_logtable_entries(
@@ -191,9 +191,10 @@ impl<T: ImagePixel> PagedImage<T> {
         if let Some(info) = info {
             self.set_image_info_record(info.clone())?;
         }
-        let publish = self
-            .save()
-            .and_then(|()| log.save(TableOptions::new(&path)).map_err(ImageError::from));
+        let publish = self.save().and_then(|()| {
+            log.save_with_write_lock(TableOptions::new(&path), Some(&lock))
+                .map_err(ImageError::from)
+        });
         if let Err(error) = publish {
             if info.is_some() {
                 let keywords = self.table.keywords_mut();
@@ -210,7 +211,6 @@ impl<T: ImagePixel> PagedImage<T> {
             }
             return Err(error);
         }
-        lock.record_write();
         lock.release()?;
         Ok(())
     }
@@ -336,11 +336,10 @@ impl<T: ImagePixel> PagedImage<T> {
         // casacore takes a reopened table's row count from the sync data in
         // `table.lock`, which this lock publishes: a save alone leaves a
         // `logtable` CASA wrote unreadable to it.
-        let mut lock = TableWriteLock::acquire(path, 1)?;
+        let lock = TableWriteLock::acquire(path, 1)?;
         let mut table = Table::open(TableOptions::new(path))?;
         Self::add_logtable_entries(&mut table, entries)?;
-        table.save(TableOptions::new(path))?;
-        lock.record_write();
+        table.save_with_write_lock(TableOptions::new(path), Some(&lock))?;
         lock.release()?;
         Ok(())
     }

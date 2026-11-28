@@ -622,7 +622,7 @@ impl TableWriteLock {
     }
 
     #[cfg(unix)]
-    fn sync_file(&self) -> Result<&LockFile, TableError> {
+    pub(crate) fn sync_file(&self) -> Result<&LockFile, TableError> {
         self.lock_file
             .as_ref()
             .filter(|file| matches_table_identity(&self.path, self.directory_key, file))

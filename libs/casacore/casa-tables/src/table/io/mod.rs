@@ -6,6 +6,7 @@ use crate::storage::StorageProfiler;
 use crate::storage::table_control::StagedTableDat;
 use casa_core::{ArrayValue, ScalarValue};
 
+mod full_save;
 mod persist_rows;
 
 type SparseArrayColumns<T> = Vec<Option<Vec<(usize, Option<T>)>>>;
@@ -32,7 +33,10 @@ impl Table {
     /// let _ = &mut plan;
     /// ```
     pub fn prepare_write(&mut self) -> TableWritePlan<'_> {
-        TableWritePlan { table: self }
+        TableWritePlan {
+            table: self,
+            write_lock: None,
+        }
     }
 
     /// Opens an existing table from disk.
@@ -224,37 +228,48 @@ impl Table {
     /// `options.data_manager()`. The directory need not exist beforehand;
     /// the storage layer creates it.
     ///
-    /// Returns [`TableError::Storage`] on I/O failure.
+    /// On Unix the save holds the destination's casacore write lock during
+    /// publication. Existing manager files are updated in place so open
+    /// readers can resynchronize when they take their next lock.
+    /// User locking requires this handle's write lock for a save to its own
+    /// table. Automatic locking refuses a snapshot when its handle's
+    /// observed generation is stale.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the schema is invalid, a write lock cannot be
+    /// obtained, or the table cannot be written. A layout change that
+    /// would invalidate another process's open manager requires closing
+    /// that table first. Materialize table views at a different path.
     pub fn save(&self, options: TableOptions) -> Result<(), TableError> {
-        self.require_full_save_destination(&options.path)?;
-        self.validate()?;
-        self.persist_all(options)
+        self.save_with_write_lock(options, None)
     }
 
-    /// Saves the table to disk without re-validating every row against the schema.
-    ///
-    /// This is intended for advanced callers that already know the in-memory
-    /// table is schema-valid because all mutations went through validating APIs
-    /// such as [`add_row`](crate::Table::add_row), [`add_column`](crate::Table::add_column),
-    /// [`cell_accessor_mut`](crate::Table::cell_accessor_mut), and
-    /// [`column_accessor_mut`](crate::Table::column_accessor_mut). It preserves the exact same
-    /// on-disk format as [`save`](Table::save), but skips the extra full-table
-    /// validation pass before serialization.
-    ///
-    /// Callers that are unsure whether the table state is valid should keep
-    /// using [`save`](Table::save).
-    pub(crate) fn persist_all(&self, options: TableOptions) -> Result<(), TableError> {
+    /// Save using the supplied guard if the caller already locked the destination.
+    #[doc(hidden)]
+    pub fn save_with_write_lock(
+        &self,
+        options: TableOptions,
+        lock: Option<&crate::TableWriteLock>,
+    ) -> Result<(), TableError> {
+        self.persist_all(options, lock, true)
+    }
+
+    /// The detached concatenation path already supplies validated rows.
+    fn persist_all(
+        &self,
+        options: TableOptions,
+        lock: Option<&crate::TableWriteLock>,
+        validate: bool,
+    ) -> Result<(), TableError> {
         self.require_full_save_destination(&options.path)?;
         tracing::info!(
             path = %options.path.display(),
             rows = self.inner.row_count(),
             "saving CASA table"
         );
-        let control = StagedTableDat::for_full_save(&options.path)?;
-        self.note_persisted_write(&options.path);
-        let storage = CompositeStorage;
-        storage
-            .save_borrowed(
+        self.write_full_table(&options.path, lock, validate, |control| {
+            CompositeStorage.save_borrowed(
                 control,
                 self.inner.rows()?,
                 self.inner.undefined_cells()?,
@@ -270,24 +285,44 @@ impl Table {
                 options.preserve_ssm_group_name,
                 options.endian_format.is_big_endian(),
                 options.tile_shape.as_deref(),
-            )
-            .map_err(|error| {
-                tracing::error!(
-                    casa.priority = "SEVERE",
-                    path = %options.path.display(),
-                    error = %error,
-                    "failed to save CASA table"
-                );
-                error
-            })?;
+            )?;
+            Ok(())
+        })
+        .map_err(|error| {
+            tracing::error!(
+                casa.priority = "SEVERE",
+                path = %options.path.display(),
+                error = %error,
+                "failed to save CASA table"
+            );
+            error
+        })?;
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
-        self.note_full_save(&options.path)?;
+        self.note_full_save(&options.path);
         tracing::info!(
             path = %options.path.display(),
             rows = self.inner.row_count(),
             "saved CASA table"
         );
         Ok(())
+    }
+
+    pub(crate) fn save_materialized_snapshot(
+        snapshot: StorageSnapshot,
+        options: TableOptions,
+    ) -> Result<(), TableError> {
+        let mut table = Self::new();
+        table.inner = TableImpl::with_rows_keywords_and_schema(
+            snapshot.rows,
+            snapshot.undefined_cells,
+            snapshot.keywords,
+            snapshot.column_keywords,
+            snapshot.schema,
+        );
+        table.table_info = snapshot.table_info;
+        table.virtual_columns = snapshot.virtual_columns;
+        table.virtual_bindings = snapshot.virtual_bindings;
+        table.persist_all(options, None, false)
     }
 
     fn require_full_save_destination(&self, target: &Path) -> Result<(), TableError> {
@@ -298,24 +333,7 @@ impl Table {
         {
             return Ok(());
         }
-        let control = target.join(crate::storage::TABLE_CONTROL_FILE);
-        let mut persisted_asdm = false;
-        if control.is_file()
-            && let crate::storage::TableDatResult::Plain(table) =
-                crate::storage::read_table_dat_dispatch(&control)?
-        {
-            if table.uses_multifile() {
-                return Err(TableError::Storage(
-                    "rewriting a MultiFile table in place would replace its storage layout".into(),
-                ));
-            }
-            persisted_asdm = table
-                .column_set
-                .data_managers
-                .iter()
-                .any(|manager| manager.type_name == crate::storage::asdm_stman::TYPE);
-        }
-        if persisted_asdm || self.has_asdm_manager() {
+        if self.has_asdm_manager() {
             return Err(TableError::Storage(
                 "AsdmStMan is read-only. Materialize the table at a new path.".into(),
             ));
@@ -412,27 +430,23 @@ impl Table {
         options: TableOptions,
         bindings: &std::collections::HashMap<String, ColumnBinding>,
     ) -> Result<(), TableError> {
-        self.require_full_save_destination(&options.path)?;
-        self.validate()?;
-        self.persist_with_bindings(options, bindings)
+        self.save_bindings_with_write_lock(options, bindings, None)
     }
 
-    /// Save the table with per-column data manager bindings without re-validating rows.
-    ///
-    /// This is the bindings-aware counterpart to [`persist_all`](Self::persist_all).
-    /// It preserves the same on-disk layout as [`save_with_bindings`](Self::save_with_bindings),
-    /// but skips the extra full-table validation pass and avoids cloning the entire row set
-    /// before serialization.
-    ///
-    /// This entrypoint is intended for high-volume writers that already know
-    /// their table contents satisfy the schema through validated construction.
-    /// On large tables it avoids a measurable amount of redundant work while
-    /// still using the same bindings-driven storage-manager layout as
-    /// [`save_with_bindings`](Self::save_with_bindings).
-    pub(crate) fn persist_with_bindings(
+    fn save_bindings_with_write_lock(
         &self,
         options: TableOptions,
         bindings: &std::collections::HashMap<String, ColumnBinding>,
+        lock: Option<&crate::TableWriteLock>,
+    ) -> Result<(), TableError> {
+        self.persist_with_bindings(options, bindings, lock)
+    }
+
+    fn persist_with_bindings(
+        &self,
+        options: TableOptions,
+        bindings: &std::collections::HashMap<String, ColumnBinding>,
+        lock: Option<&crate::TableWriteLock>,
     ) -> Result<(), TableError> {
         self.require_full_save_destination(&options.path)?;
         let mut profiler = StorageProfiler::start(format!(
@@ -449,11 +463,8 @@ impl Table {
                 )),
             );
         }
-        let control = StagedTableDat::for_full_save(&options.path)?;
-        self.note_persisted_write(&options.path);
-        let storage = CompositeStorage;
-        storage
-            .save_with_bindings_borrowed(
+        self.write_full_table(&options.path, lock, true, |control| {
+            CompositeStorage.save_with_bindings_borrowed(
                 control,
                 self.inner.rows()?,
                 self.inner.undefined_cells()?,
@@ -468,22 +479,24 @@ impl Table {
                 options.endian_format.is_big_endian(),
                 options.tile_shape.as_deref(),
                 bindings,
-            )
-            .map_err(|error| {
-                tracing::error!(
-                    casa.priority = "SEVERE",
-                    path = %options.path.display(),
-                    bindings = bindings.len(),
-                    error = %error,
-                    "failed to save CASA table with bindings"
-                );
-                error
-            })?;
+            )?;
+            Ok(())
+        })
+        .map_err(|error| {
+            tracing::error!(
+                casa.priority = "SEVERE",
+                path = %options.path.display(),
+                bindings = bindings.len(),
+                error = %error,
+                "failed to save CASA table with bindings"
+            );
+            error
+        })?;
         if let Some(profiler) = profiler.as_mut() {
             profiler.mark("storage_save");
         }
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
-        self.note_full_save(&options.path)?;
+        self.note_full_save(&options.path);
         tracing::info!(
             path = %options.path.display(),
             rows = self.inner.row_count(),
@@ -508,6 +521,7 @@ impl Table {
         options: TableOptions,
         bindings: &std::collections::HashMap<String, ColumnBinding>,
         column_overrides: &ColumnOverrides,
+        lock: Option<&crate::TableWriteLock>,
     ) -> Result<(), TableError> {
         let row_count = column_overrides.effective_row_count(self.inner.row_count())?;
         if let Some(schema) = self.inner.schema() {
@@ -535,11 +549,8 @@ impl Table {
                 )),
             );
         }
-        let control = StagedTableDat::for_full_save(&options.path)?;
-        self.note_persisted_write(&options.path);
-        let storage = CompositeStorage;
-        storage
-            .save_with_bindings_and_column_overrides_borrowed(
+        self.write_full_table(&options.path, lock, false, |control| {
+            CompositeStorage.save_with_bindings_and_column_overrides_borrowed(
                 control,
                 self.inner.rows()?,
                 self.inner.undefined_cells()?,
@@ -555,23 +566,25 @@ impl Table {
                 options.tile_shape.as_deref(),
                 bindings,
                 column_overrides,
-            )
-            .map_err(|error| {
-                tracing::error!(
-                    casa.priority = "SEVERE",
-                    path = %options.path.display(),
-                    bindings = bindings.len(),
-                    overrides = column_overrides.len(),
-                    error = %error,
-                    "failed to save CASA table with column overrides"
-                );
-                error
-            })?;
+            )?;
+            Ok(())
+        })
+        .map_err(|error| {
+            tracing::error!(
+                casa.priority = "SEVERE",
+                path = %options.path.display(),
+                bindings = bindings.len(),
+                overrides = column_overrides.len(),
+                error = %error,
+                "failed to save CASA table with column overrides"
+            );
+            error
+        })?;
         if let Some(profiler) = profiler.as_mut() {
             profiler.mark("storage_save");
         }
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
-        self.note_full_save(&options.path)?;
+        self.note_full_save(&options.path);
         tracing::info!(
             path = %options.path.display(),
             rows = row_count,
@@ -1069,27 +1082,26 @@ impl Table {
     /// `TableCopy::makeEmptyTable(name, ..., noRows=True)`.
     pub fn shallow_copy(&self, opts: TableOptions) -> Result<(), TableError> {
         self.require_full_save_destination(&opts.path)?;
-        self.validate()?;
-        let control = StagedTableDat::for_full_save(&opts.path)?;
-        self.note_persisted_write(&opts.path);
-        let storage = CompositeStorage;
-        storage.save_borrowed(
-            control,
-            &[],
-            &[],
-            self.inner.keywords(),
-            self.inner.all_column_keywords(),
-            self.inner.schema(),
-            &self.table_info,
-            &std::collections::HashSet::new(),
-            &[],
-            opts.data_manager,
-            opts.data_manager_group.as_deref(),
-            opts.casacore_default_ssm,
-            opts.preserve_ssm_group_name,
-            opts.endian_format.is_big_endian(),
-            opts.tile_shape.as_deref(),
-        )?;
+        self.write_full_table(&opts.path, None, true, |control| {
+            CompositeStorage.save_borrowed(
+                control,
+                &[],
+                &[],
+                self.inner.keywords(),
+                self.inner.all_column_keywords(),
+                self.inner.schema(),
+                &self.table_info,
+                &std::collections::HashSet::new(),
+                &[],
+                opts.data_manager,
+                opts.data_manager_group.as_deref(),
+                opts.casacore_default_ssm,
+                opts.preserve_ssm_group_name,
+                opts.endian_format.is_big_endian(),
+                opts.tile_shape.as_deref(),
+            )?;
+            Ok(())
+        })?;
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&opts.path);
         Ok(())
     }

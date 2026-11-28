@@ -180,8 +180,8 @@ impl SyncData {
 
     /// Returns `true` if the table needs to be reloaded because
     /// another process modified it (different `modify_counter`).
-    pub fn needs_reload(&self, other: &SyncData) -> bool {
-        self.modify_counter != other.modify_counter
+    pub fn needs_reload(&self, observed: u32) -> bool {
+        self.modify_counter != observed
     }
 
     /// Encode `data_man_change_counters` as a C++ `Block<uInt>`:
@@ -311,12 +311,12 @@ mod tests {
             modify_counter: 5,
             ..SyncData::new()
         };
-        assert!(!a.needs_reload(&b));
+        assert!(!b.needs_reload(a.modify_counter));
 
         let c = SyncData {
             modify_counter: 6,
             ..SyncData::new()
         };
-        assert!(a.needs_reload(&c));
+        assert!(c.needs_reload(a.modify_counter));
     }
 }

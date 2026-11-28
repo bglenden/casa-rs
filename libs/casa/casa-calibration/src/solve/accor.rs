@@ -140,7 +140,13 @@ pub(crate) fn solve(
         if invalid_mode && !solved.rows.is_empty() {
             return Err(GainSolveError::AccorInvalidSolveMode);
         }
-        super::apply_requested_reference(ms, &mut solved.rows, &request.refant, &context)?;
+        super::apply_requested_reference(
+            ms,
+            &mut solved.rows,
+            &request.refant,
+            &context,
+            &super::LegacyRefantSlots::new(),
+        )?;
         if solve_mode != GainSolveMode::AmplitudePhase {
             for row in &mut solved.rows {
                 for (gain, &flagged) in row.gains.iter_mut().zip(&row.flags) {
