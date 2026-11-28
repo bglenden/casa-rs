@@ -54,7 +54,9 @@ impl Msv2Observation {
         // A scan block holds at most the table's rows.
         let rows = SCAN_ROWS.min(catalog.source_rows_scanned()).max(1);
         // The series holds a time, an interval, an origin and two
-        // coefficients a term for each retained row, at most the catalog.
+        // coefficients a term per retained row. An AW query may additionally
+        // hold the table row, coverage half-interval and nonpositive index.
+        // The admitted catalog footprint covers those values.
         let bytes = catalog
             .construction_peak_bytes()
             .saturating_add(rows.saturating_mul(scan_bytes_per_row))
@@ -68,6 +70,7 @@ impl Msv2Observation {
     pub(super) fn read_pointing(
         &self,
         request: &PointingRequest,
+        aw_coverage: bool,
     ) -> Result<PointingSeries, ObservationError> {
         self.partition(request.partition)?;
         let (start, end) = (*request.times.start(), *request.times.end());
@@ -111,7 +114,8 @@ impl Msv2Observation {
             scan_rows(request.budget_bytes)
         };
         let plan = PointingReadPlan::new(scan, POLYNOMIAL_TERMS, request.budget_bytes.max(1))
-            .map_err(storage)?;
+            .map_err(storage)?
+            .with_aw_coverage(aw_coverage);
         self.ms
             .prepare_selected_pointing_catalog(column, &domain, plan)
             .map_err(|error| match error {
@@ -128,7 +132,7 @@ impl Msv2Observation {
                     reason: format!("POINTING: {error}"),
                 },
             })?
-            .series()
+            .series(aw_coverage)
             .map(|series| PointingSeries {
                 store_has_pointing,
                 ..series
@@ -192,6 +196,129 @@ mod tests {
         }
         ms.save().expect("save");
         request.output_ms
+    }
+
+    /// The covered cases come from CASA 6.7.6.14's VisBufferUtil AW
+    /// lookup, with RA encoding the selected physical row. Each query has
+    /// its own selection span, including zero-interval rows whose defining
+    /// neighbour lies outside it. AW lookup is independent of query order.
+    #[test]
+    fn aw_covering_uses_casa_table_order_and_inferred_intervals() {
+        use crate::SubtableId;
+        use casa_core::{RecordField, RecordValue, ScalarValue, Value};
+
+        let root = tempfile::tempdir().expect("root");
+        let path = fixture(root.path());
+        let mut ms = MeasurementSet::open(&path).expect("MS");
+        let original_time = ms.pointing().unwrap().f64(0, "TIME").unwrap();
+        let pointing = ms.subtable_mut(SubtableId::Pointing).unwrap();
+        let old_rows: Vec<_> = (0..pointing.row_count()).collect();
+        pointing
+            .remove_rows(&old_rows)
+            .expect("clear pointing fixture");
+        let rows = [
+            (0, 20.0, 30.0),
+            (1, 100.0, -1.0),
+            (0, 10.0, 30.0),
+            (2, 30.0, 0.0),
+            (1, 200.0, -1.0),
+            (2, 0.0, 0.0),
+            (2, 10.0, 0.0),
+            (1, 160.0, 20.0),
+        ];
+        let ra = |row: usize| 0.5 + row as f64 / 100.0;
+        for (row, (antenna, offset, interval)) in rows.into_iter().enumerate() {
+            let time = original_time + offset;
+            let direction = || {
+                Value::Array(ArrayValue::Float64(
+                    ndarray::arr2(&[[ra(row)], [0.0]]).into_dyn(),
+                ))
+            };
+            let record = RecordValue::new(vec![
+                RecordField::new("ANTENNA_ID", Value::Scalar(ScalarValue::Int32(antenna))),
+                RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time))),
+                RecordField::new("TIME_ORIGIN", Value::Scalar(ScalarValue::Float64(time))),
+                RecordField::new("INTERVAL", Value::Scalar(ScalarValue::Float64(interval))),
+                RecordField::new("NUM_POLY", Value::Scalar(ScalarValue::Int32(0))),
+                RecordField::new("NAME", Value::Scalar(ScalarValue::String("test".into()))),
+                RecordField::new("TRACKING", Value::Scalar(ScalarValue::Bool(true))),
+                RecordField::new("DIRECTION", direction()),
+                RecordField::new("TARGET", direction()),
+            ]);
+            pointing.add_row(record).expect("add pointing row");
+        }
+        ms.save().expect("save");
+        let observation = open(&path, &OpenOptions::default()).expect("open");
+        for (antenna, offset, covering, before, after) in [
+            (0, 11.0, Some(0), Some(2), Some(0)),
+            (1, 195.0, Some(4), Some(7), Some(4)),
+            (2, 18.0, Some(6), Some(6), Some(3)),
+            (2, 5.0, Some(5), Some(5), Some(6)),
+            (1, 155.0, Some(7), Some(1), Some(7)),
+            (2, 80.0, None, Some(3), None),
+            (0, 11.0, Some(0), Some(2), Some(0)),
+        ] {
+            let time = original_time + offset;
+            let antenna = AntennaId(antenna);
+            let series = observation
+                .aw_pointing(&PointingRequest {
+                    partition: PartitionId(0),
+                    direction: PointingDirection::Beam,
+                    antennas: vec![antenna],
+                    times: time..=time,
+                    budget_bytes: observation.pointing_bytes().expect("pointing bound"),
+                })
+                .expect("aw pointing");
+            let bracket = series.bracket(antenna, time).expect("bracket");
+            let actual = [bracket.covering, bracket.before, bracket.after]
+                .map(|candidate| candidate.map(|candidate| candidate.direction_rad[0]));
+            assert_eq!(
+                actual,
+                [covering, before, after].map(|row| row.map(ra)),
+                "{antenna:?} at {offset}"
+            );
+        }
+    }
+
+    /// A lone zero or negative interval is usable at an arbitrary epoch.
+    #[test]
+    fn aw_lone_nonpositive_pointing_covers_the_entire_span() {
+        let root = tempfile::tempdir().expect("root");
+        let path = fixture(root.path());
+        let mut ms = MeasurementSet::open(&path).expect("MS");
+        let original_time = ms.pointing().unwrap().f64(0, "TIME").unwrap();
+        let rows = (0..ms.pointing().unwrap().row_count())
+            .filter(|&row| row > 0)
+            .collect::<Vec<_>>();
+        ms.subtable_mut(crate::SubtableId::Pointing)
+            .unwrap()
+            .remove_rows(&rows)
+            .unwrap();
+        let antenna_id = ms.pointing().unwrap().i32(0, "ANTENNA_ID").unwrap() as u32;
+        let antenna = AntennaId(antenna_id);
+        for interval in [0.0, -1.0] {
+            ms.pointing_mut()
+                .unwrap()
+                .set_f64(0, "INTERVAL", interval)
+                .unwrap();
+            ms.save().unwrap();
+            let observation = open(&path, &OpenOptions::default()).unwrap();
+            let start = original_time - 1000.0;
+            let end = original_time + 1000.0;
+            let series = observation
+                .aw_pointing(&PointingRequest {
+                    partition: PartitionId(0),
+                    direction: PointingDirection::Beam,
+                    antennas: vec![antenna],
+                    times: start..=end,
+                    budget_bytes: observation.pointing_bytes().unwrap(),
+                })
+                .unwrap();
+            for time in [start, end] {
+                let covering = series.bracket(antenna, time).unwrap().covering.unwrap();
+                assert_eq!(covering.time_s, original_time);
+            }
+        }
     }
 
     /// One `POINTING` row as the table states it.

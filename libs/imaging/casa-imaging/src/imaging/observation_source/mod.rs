@@ -578,6 +578,7 @@ impl<'a> ObservationSource<'a> {
         self.pointing[key.store].hold(
             store.observation(),
             store.pointing_budget,
+            store.plan.reads_aw_pointing(),
             (
                 pointing_direction(self.packer.problem),
                 store.selection.partitions[key.partition].id,

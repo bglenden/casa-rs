@@ -80,6 +80,51 @@ pub struct AntennaPointing {
     coefficients: Vec<f64>,
     /// Half the longest interval: the furthest a covering sample can be.
     reach_s: f64,
+    aw_coverage: Option<Box<AwCoverage>>,
+}
+
+/// AW coverage over the time-sorted samples, with their original row order.
+#[derive(Clone, Debug, PartialEq)]
+struct AwCoverage {
+    rows: Vec<(usize, f64)>,
+    reach_s: f64,
+    nonpositive: Vec<usize>,
+}
+
+impl AwCoverage {
+    fn covering(&self, times: &[f64], time: f64) -> Option<usize> {
+        let near = times.partition_point(|sample| *sample < time - self.reach_s)
+            ..times.partition_point(|sample| *sample <= time + self.reach_s);
+        let first = near
+            .filter(|&sample| {
+                let half = self.rows[sample].1;
+                times[sample] >= time - half && times[sample] <= time + half
+            })
+            .min_by_key(|&sample| self.rows[sample].0)?;
+        // VisBufferUtil prefers the nearest nonpositive row if it is as
+        // close as the first covering row. An uncovered query still has no
+        // covering sample, so the consumer's fallback law can run.
+        let split = self
+            .nonpositive
+            .partition_point(|&sample| times[sample] < time);
+        let before = split.checked_sub(1).map(|last| {
+            let epoch = times[self.nonpositive[last]];
+            self.nonpositive
+                [self.nonpositive[..split].partition_point(|&sample| times[sample] < epoch)]
+        });
+        let after = self.nonpositive.get(split).copied();
+        let distance = |sample: usize| (times[sample] - time).abs();
+        let closest = [before, after].into_iter().flatten().min_by(|&a, &b| {
+            distance(a)
+                .total_cmp(&distance(b))
+                .then_with(|| self.rows[a].0.cmp(&self.rows[b].0))
+        });
+        Some(
+            closest
+                .filter(|&sample| distance(sample) <= distance(first))
+                .unwrap_or(first),
+        )
+    }
 }
 
 impl AntennaPointing {
@@ -142,7 +187,43 @@ impl AntennaPointing {
             terms,
             coefficients,
             reach_s,
+            aw_coverage: None,
         })
+    }
+
+    /// Set the A/W coverage of the MSv2 rows read for this series. Each
+    /// entry is its physical table row and nonnegative half-interval, with
+    /// positive infinity for a nonpositive-interval row without another
+    /// epoch for its antenna. Entries follow the series' time order.
+    ///
+    /// # Errors
+    ///
+    /// [`ObservationError::InvalidStore`] for missing intervals, a wrong
+    /// number of entries, negative half-intervals, or NaNs.
+    pub fn with_aw_coverage(mut self, rows: Vec<(usize, f64)>) -> Result<Self, ObservationError> {
+        let Some(intervals) = self.intervals_s.as_ref().filter(|intervals| {
+            rows.len() == intervals.len() && rows.iter().all(|(_, half)| *half >= 0.0)
+        }) else {
+            return Err(ObservationError::InvalidStore {
+                reason: "MSv2 AW coverage needs a valid table row and half-interval per sample"
+                    .into(),
+            });
+        };
+        let nonpositive_rows = intervals
+            .iter()
+            .enumerate()
+            .filter(|(_, interval)| **interval <= 0.0);
+        let mut nonpositive = Vec::with_capacity(nonpositive_rows.clone().count());
+        nonpositive.extend(nonpositive_rows.map(|(sample, _)| sample));
+        let reach_s = rows
+            .iter()
+            .fold(0.0_f64, |reach, (_, half)| reach.max(*half));
+        self.aw_coverage = Some(Box::new(AwCoverage {
+            rows,
+            reach_s,
+            nonpositive,
+        }));
+        Ok(self)
     }
 
     /// The sample times, ascending.
@@ -207,9 +288,10 @@ pub struct PointingCandidate {
 /// The samples around one (antenna, time) query.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PointingBracket {
-    /// The sample whose interval holds the time (nearest the time, then
-    /// first in the series); `None` without one, and always when the store
-    /// states no intervals.
+    /// The sample chosen under the store's interval coverage. Ordinarily
+    /// this is the nearest covering row, then the first in the series.
+    /// For an MSv2 AW request it follows CASA's physical row precedence
+    /// and nonpositive intervals. `None` when no interval covers.
     pub covering: Option<PointingCandidate>,
     /// The first of the samples at the latest time at or before the query.
     pub before: Option<PointingCandidate>,
@@ -252,20 +334,24 @@ impl PointingSeries {
             .checked_sub(1)
             .map(|last| times[..first_after].partition_point(|time| *time < times[last]));
         let after = (first_at_or_after < times.len()).then_some(first_at_or_after);
-        let covering = series.intervals_s.as_ref().and_then(|intervals| {
-            let near = times.partition_point(|time| *time < time_s - series.reach_s)
-                ..times.partition_point(|time| *time <= time_s + series.reach_s);
-            near.filter(|sample| {
-                intervals[*sample] > 0.0
-                    && (times[*sample] - time_s).abs() <= 0.5 * intervals[*sample]
+        let covering = if let Some(coverage) = &series.aw_coverage {
+            coverage.covering(times, time_s)
+        } else {
+            series.intervals_s.as_ref().and_then(|intervals| {
+                let near = times.partition_point(|time| *time < time_s - series.reach_s)
+                    ..times.partition_point(|time| *time <= time_s + series.reach_s);
+                near.filter(|sample| {
+                    intervals[*sample] > 0.0
+                        && (times[*sample] - time_s).abs() <= 0.5 * intervals[*sample]
+                })
+                .min_by(|left, right| {
+                    (times[*left] - time_s)
+                        .abs()
+                        .total_cmp(&(times[*right] - time_s).abs())
+                        .then(left.cmp(right))
+                })
             })
-            .min_by(|left, right| {
-                (times[*left] - time_s)
-                    .abs()
-                    .total_cmp(&(times[*right] - time_s).abs())
-                    .then(left.cmp(right))
-            })
-        });
+        };
         let candidate = |sample: Option<usize>| {
             sample
                 .map(|sample| Self::evaluate(antenna, series, sample, time_s))
@@ -320,6 +406,11 @@ impl PointingSeries {
                     + series.origins_s.capacity()
                     + series.coefficients.capacity())
                     * size_of::<f64>()
+                    + series.aw_coverage.as_ref().map_or(0, |coverage| {
+                        size_of::<AwCoverage>()
+                            + coverage.rows.capacity() * size_of::<(usize, f64)>()
+                            + coverage.nonpositive.capacity() * size_of::<usize>()
+                    })
             })
             .sum();
         samples + (self.antennas.len() / 5 + 1) * node

@@ -109,6 +109,17 @@ pub trait Observation: Sync {
     /// an MSv2 row of more polynomial terms than its reader takes.
     fn pointing(&self, request: &PointingRequest) -> Result<PointingSeries, ObservationError>;
 
+    /// Pointing samples for A/W projection at the visibility time. MSv2
+    /// defines coverage using the order and intervals of its POINTING rows.
+    /// Stores without that information use their ordinary pointing samples.
+    ///
+    /// # Errors
+    ///
+    /// The same read and budget errors as [`Self::pointing`].
+    fn aw_pointing(&self, request: &PointingRequest) -> Result<PointingSeries, ObservationError> {
+        self.pointing(request)
+    }
+
     /// The most bytes one pointing query ([`Self::pointing`]) reads and
     /// holds, whatever its partition, antennas and times: a
     /// [`PointingRequest::budget_bytes`] no query is refused for. Zero for

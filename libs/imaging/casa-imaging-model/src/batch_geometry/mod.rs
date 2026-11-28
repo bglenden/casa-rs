@@ -560,6 +560,12 @@ impl GeometryPlan {
         matches!(self.pointing, PointingCentreLaw::Observation(_))
     }
 
+    /// Whether [`Self::apply`] uses A/W projection's pointing coverage.
+    #[must_use]
+    pub const fn reads_aw_pointing(&self) -> bool {
+        self.aw.is_some()
+    }
+
     /// Whether [`Self::apply`] needs the batch's time centroids: the
     /// pointing law samples each row's pointing at its time centroid.
     #[must_use]
