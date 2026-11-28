@@ -19,6 +19,8 @@ use regex::bytes::{Regex, RegexBuilder};
 // User-supplied lookahead uses a VM with a bounded program and the
 // engine's default backtracking limit. Ordinary selectors keep the existing engine.
 const FIELD_LOOKAHEAD_INSTRUCTIONS: usize = 1 << 16;
+const REGEX_NFA_BYTES: usize = 10 * (1 << 20);
+const REGEX_DFA_CACHE_BYTES: usize = 2 * (1 << 20);
 
 /// A compiled casacore regex that answers `String::matches`: whether the
 /// whole of a string matches.
@@ -40,6 +42,8 @@ impl FullMatch {
     fn compile_body(casacore_regex: &str, body: &str) -> Result<Self, String> {
         RegexBuilder::new(&format!(r"\A(?:{body})\z"))
             .unicode(false)
+            .size_limit(REGEX_NFA_BYTES)
+            .dfa_size_limit(REGEX_DFA_CACHE_BYTES)
             .build()
             .map(Self)
             .map_err(|error| format!("Error in regex {casacore_regex}: {error}"))
@@ -65,6 +69,24 @@ pub(in crate::selection) enum FieldRegex {
 }
 
 impl FieldRegex {
+    pub(in crate::selection) fn workspace_bytes(term: &str, slash_regex: bool) -> usize {
+        // A matcher may build both forward and reverse NFAs and a lazy DFA
+        // cache. Its translated text and parser state grow with the term.
+        let program = 2 * REGEX_NFA_BYTES + REGEX_DFA_CACHE_BYTES;
+        let text = term.len().saturating_mul(128);
+        if slash_regex && term.contains('(') && term.contains('?') && term.contains(['=', '!']) {
+            // The VM can delegate multiple subexpressions to the regex
+            // engine. Reserve per source byte, covering its distinct
+            // delegates, plus the bounded VM's instructions and stack.
+            program
+                .saturating_mul(term.len())
+                .saturating_add(FIELD_LOOKAHEAD_INSTRUCTIONS * 128)
+                .saturating_add(text)
+        } else {
+            program.saturating_add(text)
+        }
+    }
+
     pub(in crate::selection) fn compile(pattern: &str, slash_regex: bool) -> Result<Self, String> {
         if !slash_regex {
             return FullMatch::compile_pattern(pattern).map(Self::Regular);
@@ -79,7 +101,7 @@ impl FieldRegex {
             .bytes_mode(fancy_regex::BytesMode::Ascii)
             .unicode_mode(false)
             .max_prog_size(FIELD_LOOKAHEAD_INSTRUCTIONS)
-            .delegate_size_limit(10 * 1024 * 1024)
+            .delegate_size_limit(REGEX_NFA_BYTES)
             .build()
             .map(Self::Lookahead)
             .map_err(|error| format!("Error in regex {pattern}: {error}"))

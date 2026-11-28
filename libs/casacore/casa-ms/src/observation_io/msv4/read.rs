@@ -1323,10 +1323,14 @@ impl Msv4Observation {
     pub(in crate::observation_io) fn calibration_fields_and_scans(
         &self,
         id: PartitionId,
-    ) -> Option<(&[FieldId], &[ScanId])> {
-        let (dataset, partition) = self.dataset(id).ok()?;
-        let (group, _) = partition.data_group("base")?;
-        Some((&dataset.groups[group].fields, dataset.scans.as_deref()?))
+    ) -> (Option<&[FieldId]>, Option<&[ScanId]>) {
+        let Ok((dataset, partition)) = self.dataset(id) else {
+            return (None, None);
+        };
+        let fields = partition
+            .data_group("base")
+            .map(|(group, _)| dataset.groups[group].fields.as_slice());
+        (fields, dataset.scans.as_deref())
     }
 
     /// What `request` costs ([`Observation::estimate`]), from the chunk

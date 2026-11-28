@@ -372,6 +372,15 @@ pub enum GainSolveError {
     #[error(transparent)]
     Observation(#[from] casa_observation::ObservationError),
 
+    /// A selector could not be resolved against an observation's identities.
+    #[error("invalid {parameter} selector: {reason}")]
+    ObservationSelector {
+        /// The public selector parameter.
+        parameter: &'static str,
+        /// The selector parser's diagnostic.
+        reason: String,
+    },
+
     /// A real opacity solve reached the unavailable fitting stage.
     #[error("The configured opacity type cannot solve a calibration table.")]
     OpacityCannotFit,

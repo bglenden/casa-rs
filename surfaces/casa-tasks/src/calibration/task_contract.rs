@@ -664,17 +664,19 @@ impl CalibrationTaskRequest {
 }
 
 fn gain_failure(error: CalibrationError) -> TaskFailure {
-    if matches!(
-        &error,
-        CalibrationError::Gain(source)
-            if matches!(
-                source.as_ref(),
-                GainSolveError::Observation(casa_observation::ObservationError::Unsupported { .. })
-            )
-    ) {
-        TaskFailure::validation(error.to_string()).at("vis")
-    } else {
-        TaskFailure::execution(error.to_string())
+    let parameter = match &error {
+        CalibrationError::Gain(source) => match source.as_ref() {
+            GainSolveError::Observation(casa_observation::ObservationError::Unsupported {
+                ..
+            }) => Some("vis"),
+            GainSolveError::ObservationSelector { parameter, .. } => Some(*parameter),
+            _ => None,
+        },
+        _ => None,
+    };
+    match parameter {
+        Some(parameter) => TaskFailure::validation(error.to_string()).at(parameter),
+        None => TaskFailure::execution(error.to_string()),
     }
 }
 

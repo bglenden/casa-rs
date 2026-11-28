@@ -159,9 +159,11 @@ pub struct CalibrationPartition<'a> {
     /// The partition's common MSv2 `ARRAY_ID`, or zero for MSv4. `None`
     /// means more than one array occurs in the partition.
     pub array: Option<i32>,
-    /// Field and scan IDs by time for the base data group, when it has scans.
-    /// The slices have the same length and represent only pairs in the grid.
-    pub fields_and_scans: Option<(&'a [FieldId], &'a [ScanId])>,
+    /// Field IDs by time for the base data group, if present.
+    pub base_fields: Option<&'a [FieldId]>,
+    /// Scan IDs by time, when available. If the base group is present,
+    /// zipping its fields with these scans gives the pairs in its grid.
+    pub scans: Option<&'a [ScanId]>,
 }
 
 /// The single observation opening used by a calibration solve and the
@@ -223,12 +225,16 @@ pub fn with_calibration_observation<T>(
             let partitions = indices
                 .into_iter()
                 .enumerate()
-                .map(|(index, (window, data_description))| CalibrationPartition {
-                    window: window as u32,
-                    data_description: data_description as u32,
-                    array: Some(0),
-                    fields_and_scans: observation
-                        .calibration_fields_and_scans(PartitionId(index as u32)),
+                .map(|(index, (window, data_description))| {
+                    let (base_fields, scans) =
+                        observation.calibration_fields_and_scans(PartitionId(index as u32));
+                    CalibrationPartition {
+                        window: window as u32,
+                        data_description: data_description as u32,
+                        array: Some(0),
+                        base_fields,
+                        scans,
+                    }
                 })
                 .collect::<Vec<_>>();
             return Ok(query(CalibrationObservation {
@@ -259,11 +265,15 @@ pub fn with_calibration_observation<T>(
         .catalogue()
         .partition_ids()
         .into_iter()
-        .map(|partition| CalibrationPartition {
-            window: observation.spectral_window_id(partition),
-            data_description: observation.data_description_id(partition),
-            array: observation.array_id(partition),
-            fields_and_scans: Some(observation.calibration_fields_and_scans(partition)),
+        .map(|partition| {
+            let (fields, scans) = observation.calibration_fields_and_scans(partition);
+            CalibrationPartition {
+                window: observation.spectral_window_id(partition),
+                data_description: observation.data_description_id(partition),
+                array: observation.array_id(partition),
+                base_fields: Some(fields),
+                scans: Some(scans),
+            }
         })
         .collect::<Vec<_>>();
     Ok(query(CalibrationObservation {
