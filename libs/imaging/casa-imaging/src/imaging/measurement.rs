@@ -5,7 +5,7 @@
 use casa_core::Correlation;
 use casa_imaging_model::{
     AntennaResponseClass, CompiledImageDomain, CompiledProblem, DensityCells, FrequencyFrame,
-    InstrumentModel, ReconstructionBasis, SpectralKernel, SpectralWcs,
+    InstrumentModel, NativeSpacingSelection, ReconstructionBasis, SpectralKernel, SpectralWcs,
 };
 use casa_imaging_operator::{
     AiryDish, AwCatalog, Awp2Sampling, Basis, CacheBound, CacheCharge, ConvolutionFunctionSet,
@@ -635,8 +635,17 @@ fn mosaic_windows(
                     lowest_topocentric_hz: selected.iter().copied().fold(f64::INFINITY, f64::min)
                         * (topo / factor),
                 };
+                let mut selection_centres = None;
+                if super::uses_tracked_widths(problem)
+                    && let Some(NativeSpacingSelection::Pair(pair)) = window.native_spacing()
+                {
+                    selection_centres =
+                        Some(pair.map(|index| {
+                            catalog.channel_frequencies_hz()[index as usize] * factor
+                        }));
+                }
                 (
-                    resampler.mosaic_buffer_frequencies(selected),
+                    resampler.mosaic_buffer_frequencies(selected, selection_centres),
                     Some(native_band),
                 )
             } else {
@@ -730,7 +739,7 @@ fn resampler(problem: &CompiledProblem, basis: Basis) -> Result<SpectralResample
             axis = axis.with_exact_width_from_below();
         }
     }
-    if spectral.output_frame() == FrequencyFrame::Rest {
+    if super::uses_tracked_widths(problem) {
         axis = axis.with_integral_width_at_coordinate_precision();
     }
     Ok(SpectralResampler::channel_local(axis, kernel)

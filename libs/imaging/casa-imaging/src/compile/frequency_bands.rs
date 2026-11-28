@@ -49,7 +49,7 @@ use std::collections::BTreeMap;
 use casa_core::measures::PreparedFrequencyConversion;
 use casa_core::measures::direction::MDirection;
 use casa_core::measures::frequency::FrequencyRef;
-use casa_imaging_model::{FrequencyBands, LinearSpacingSelection};
+use casa_imaging_model::{FrequencyBands, NativeSpacingSelection};
 use casa_ms::{CubeSpectralSetup, derived::engine::MsCalEngine};
 use casa_observation::Catalogue;
 
@@ -285,12 +285,17 @@ impl EpochSelection {
 /// native pair reached by a fine sample between a centre and its edge.
 /// Two neighbours on either side also cover the four-point stencil when
 /// the other side reaches the end of the selected channels.
-pub(super) fn extend_cubic_read_support(
+pub(super) fn cubic_read_support(
     retained: &mut Vec<usize>,
     frequencies: &[f64],
     [lower, upper]: [f64; 2],
-    selected: impl Fn(usize) -> bool,
-) {
+    epochs: Option<&EpochSelection>,
+    explicit: Option<&[usize]>,
+) -> Option<NativeSpacingSelection> {
+    let selected = |channel| match epochs {
+        Some(epochs) => epochs.ever(channel),
+        None => explicit.is_none_or(|indices| indices.contains(&channel)),
+    };
     let channels = 0..frequencies.len();
     let mut previous: Option<usize> = None;
     let mut support: Option<(usize, usize)> = None;
@@ -303,9 +308,7 @@ pub(super) fn extend_cubic_read_support(
         }
         previous = Some(right);
     }
-    let Some((first, last)) = support else {
-        return;
-    };
+    let (first, last) = support?;
     let first = (0..first)
         .rev()
         .filter(|&index| selected(index))
@@ -317,14 +320,25 @@ pub(super) fn extend_cubic_read_support(
         .take(2)
         .last()
         .unwrap_or(last);
-    let retained_first = retained[0];
-    let retained_last = *retained.last().expect("nonempty retained support");
-    retained.extend(
-        (first..retained_first)
-            .chain(retained_last + 1..=last)
-            .filter(|&index| selected(index)),
-    );
-    retained.sort_unstable();
+    if let Some((&retained_first, &retained_last)) = retained.first().zip(retained.last()) {
+        retained.extend(
+            (first..retained_first)
+                .chain(retained_last + 1..=last)
+                .filter(|&index| selected(index)),
+        );
+        retained.sort_unstable();
+    } else {
+        retained.extend((first..=last).filter(|&index| selected(index)));
+    }
+    // Cubesource selects in the stored frame, so the leading pair is
+    // the same at every epoch (its converted centres still move).
+    let mut physical = channels.filter(|&index| selected(index));
+    let pair = [physical.next()?, physical.next()?];
+    (!retained.starts_with(&pair)).then(|| {
+        NativeSpacingSelection::Pair(
+            pair.map(|index| u32::try_from(index).expect("a CHAN_FREQ index fits u32")),
+        )
+    })
 }
 
 /// Match the physical selection at the edges of cube support. The numeric
@@ -337,7 +351,7 @@ pub(super) fn linear_read_support(
     (retained, (lower, upper)): (&mut Vec<usize>, (usize, usize)),
     explicit: Option<&[usize]>,
     by_band: Option<(&EpochSelection, &FrequencyBands)>,
-) -> Option<LinearSpacingSelection> {
+) -> Option<NativeSpacingSelection> {
     let ever = |channel: usize| match by_band {
         Some((epochs, _)) => epochs.ever(channel),
         None => explicit.is_none_or(|channels| channels.contains(&channel)),
@@ -367,7 +381,7 @@ pub(super) fn linear_read_support(
     let pair = [possible.next()?, possible.next()?];
     if by_band.is_none_or(|(epochs, _)| pair.iter().all(|&channel| epochs.always(channel))) {
         return (!retained.starts_with(&pair)).then(|| {
-            LinearSpacingSelection::Pair(
+            NativeSpacingSelection::Pair(
                 pair.map(|channel| u32::try_from(channel).expect("a CHAN_FREQ index fits u32")),
             )
         });
@@ -376,7 +390,7 @@ pub(super) fn linear_read_support(
     let mut always = 0;
     for channel in pair.into_iter().chain(possible) {
         if retained.binary_search(&channel).is_err() {
-            return Some(LinearSpacingSelection::Bands(bands.clone()));
+            return Some(NativeSpacingSelection::Bands(bands.clone()));
         }
         always += usize::from(epochs.always(channel));
         if always == 2 {

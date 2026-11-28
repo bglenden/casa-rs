@@ -931,15 +931,17 @@ with about 0.0357 residual NRMS and 204 primary-beam mask differences.
 These measurements use the same visibility data and fixed three-sample
 width for both CASA outputs.
 
-For tracked REST-frame interpolation, casa-rs uses the corresponding
-integer count when the channel-centre precision cannot resolve the
-width from that many native intervals. Gridding, mosaic beam-cell
-selection and model prediction use that count. Widths resolved between
-integers retain the floor rule. The
+When a tracking ephemeris supplies a Doppler conversion into REST,
+casa-rs uses the corresponding integer count if channel-centre precision
+cannot distinguish the width from that many native intervals. Gridding,
+mosaic beam selection and prediction use the first full-selected pair
+for both its width and its precision, even when a wave reads other
+channels. Resolved noninteger widths and fixed REST-tagged data cubes
+retain the floor rule. The
 `source_frame_bin_count_is_stable_at_channel_coordinate_precision`
 law pins the integer and both neighbouring controls. The tracked cubic
 read plan preserves selected channels whose stencils reach the image
-band. On the Venus mosaic, removing native channel 0 from CASA's
+band over the selected epochs. On the Venus mosaic, removing native channel 0 from CASA's
 selection dropped one integration from the leading plane. The
 `a_tracked_cubic_cube_reads_its_selected_guard_channel` test distinguishes
 that needed guard from a channel the user excludes.

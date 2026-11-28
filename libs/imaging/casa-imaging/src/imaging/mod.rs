@@ -33,10 +33,23 @@ pub(crate) use visibility_write::VisibilityWriteTarget;
 use casa_imaging_deconvolution::{
     MajorCycleError, MaskError, ModelLifecycleError, NormalStateError,
 };
-use casa_imaging_model::{CompiledProblem, FrequencyFrame};
+use casa_imaging_model::{CompiledProblem, FrequencyFrame, PhaseCentreLaw};
 use casa_imaging_operator::OperatorError;
 use casa_imaging_runtime::pass::PassError;
 use casa_imaging_runtime::{Admission, Cancelled, MinorCycleRunError};
+
+/// Integer widths need coordinate precision only when the compiled
+/// geometry Doppler-shifts a tracked source into its rest frame.
+fn uses_tracked_widths(problem: &CompiledProblem) -> bool {
+    let geometry = problem.geometry();
+    let spectral = geometry.spectral();
+    spectral.output_frame() == FrequencyFrame::Rest
+        && spectral.source_frame() != FrequencyFrame::Rest
+        && matches!(
+            geometry.centres().phase_tracking(),
+            PhaseCentreLaw::Ephemeris(_)
+        )
+}
 
 /// CASA's REST AW channel map uses source-shifted frequencies, while
 /// AWProjectFT::setupVBStore supplies the native wavelengths to the gridder.

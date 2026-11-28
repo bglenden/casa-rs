@@ -249,7 +249,7 @@ pub(crate) fn resolve_partitions(
             spectral_window: window,
             channels,
             frequency_bands: window_selection.frequency_bands().cloned(),
-            linear_spacing: window_selection.linear_spacing().cloned(),
+            native_spacing: window_selection.native_spacing().cloned(),
             density_only: window_selection.density_only(),
             density_channels: window_selection.density_channels().map(<[u32]>::to_vec),
             density_bands: window_selection.density_bands().cloned(),

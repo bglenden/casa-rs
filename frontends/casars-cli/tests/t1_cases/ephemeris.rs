@@ -196,6 +196,183 @@ fn a_tracked_cubic_cube_reads_its_selected_guard_channel() {
     assert!(excluded.get(".sumwt").channel_values()[0] > 0.0);
 }
 
+/// A source drifting in velocity reaches a selected cubic guard only
+/// in a late integration. A wider image provides an independent read
+/// window on the same output planes. Separating the selected guard from
+/// the other channels also checks the sparse SPW selection.
+#[test]
+fn tracked_cubic_reads_the_late_guard_of_a_sparse_selection() {
+    use casa_core::Complex32;
+    use casa_core::measures::{PreparedFrequencyConversion, frequency::FrequencyRef};
+    use casa_ms::{EphemerisBudget, PhaseCentreEphemeris, derived::engine::MsCalEngine};
+    const CHANNELS: usize = 96;
+    const GUARD: usize = 3;
+    const LEADING_PLANES: usize = 13;
+    let mut setup = super::fixture::Setup::vla_q_band(CHANNELS);
+    setup.antennas.truncate(8);
+    setup.spectral_windows[0].start_frequency_hz = 100e9;
+    setup.spectral_windows[0].channel_width_hz = 10e3;
+    let observation = Observation::synthesise_setup(setup, &[("point", POINT)]);
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    ms.spectral_window_mut()
+        .unwrap()
+        .set_i32(0, "MEAS_FREQ_REF", FrequencyRef::TOPO.casacore_code())
+        .unwrap();
+    let rows = ms.main_table().row_count();
+    let time = |row| match ms
+        .main_table()
+        .cell_accessor(row, "TIME")
+        .unwrap()
+        .scalar()
+        .unwrap()
+    {
+        ScalarValue::Float64(value) => *value,
+        _ => panic!("TIME is double"),
+    };
+    let [early, late] = [time(0), time(rows - 1)];
+    let late_start = (0..rows)
+        .rev()
+        .take_while(|&row| time(row) == late)
+        .last()
+        .unwrap();
+    let empty = ndarray::Array2::<Complex32>::zeros((2, CHANNELS));
+    let mut signal = empty.clone();
+    for pol in 0..2 {
+        signal[[pol, GUARD]] = Complex32::new(1.0, 0.0);
+    }
+    for (range, data) in [
+        (casa_tables::RowRange::new(0, late_start), empty),
+        (casa_tables::RowRange::new(late_start, rows), signal),
+    ] {
+        ms.main_table_mut()
+            .fill_column_range(
+                "DATA",
+                range,
+                Value::Array(ArrayValue::Complex32(data.into_dyn())),
+            )
+            .unwrap();
+    }
+    ms.save().unwrap();
+
+    let table = observation.scratch("velocity-drift.tab");
+    let [ra, dec] = PHASE_CENTER_RAD.map(f64::to_degrees);
+    const SECONDS_PER_DAY: f64 = 86_400.0;
+    const KILOMETRE_PER_SECOND_IN_AU_PER_DAY: f64 = 1000.0 * SECONDS_PER_DAY / 149_597_870_700.0;
+    let ephemeris_rows = [-1.0, 0.0, 1.0, 2.0].map(|offset| {
+        [
+            (early + offset * (late - early)) / SECONDS_PER_DAY,
+            ra,
+            dec,
+            30.0,
+            offset * KILOMETRE_PER_SECOND_IN_AU_PER_DAY,
+        ]
+    });
+    write_ephemeris_table(&table, "T1DRIFT", &ephemeris_rows);
+    let ephemeris = PhaseCentreEphemeris::external(&table, EphemerisBudget::new(1 << 20)).unwrap();
+    let engine = MsCalEngine::new(&ms).unwrap();
+    let convert = |time| {
+        let frame = engine
+            .spectral_frame_observatory(time, 0)
+            .unwrap()
+            .with_radial_velocity(
+                engine
+                    .ephemeris_radial_velocity(time, 0, &ephemeris)
+                    .unwrap(),
+            );
+        PreparedFrequencyConversion::new(
+            FrequencyRef::TOPO,
+            FrequencyRef::REST,
+            Some(&frame),
+            Some(&frame),
+        )
+        .unwrap()
+    };
+    let centres = observation.channel_frequencies_hz();
+    let early_hz = convert(early).convert_hz(centres[GUARD]);
+    let late_converter = convert(late);
+    let late_hz = late_converter.convert_hz(centres[GUARD]);
+    let spacing = late_converter.convert_hz(centres[GUARD + 1]) - late_hz;
+    assert!(
+        late_hz - early_hz > 25.0 * spacing,
+        "guard travels more than 25 channels"
+    );
+    drop(ms);
+
+    let start = late_hz + 2.2 * spacing;
+    let width = (start + 3.0 * spacing) - start;
+    let mut request = json!({
+        "phasecenter": path_text(&table), "specmode": "cubesource", "outframe": "REST",
+        "restfreq": "100GHz", "start": format!("{start:.17}Hz"), "width": format!("{width:.17}Hz"),
+        "nchan": 3, "interpolation": "cubic", "niter": 0, "spw": "0:0~11;64~95",
+    });
+    let (_, selected) = observation.image("late-cubic-guard", request.clone());
+    let mut wide = request.clone();
+    wide["start"] = json!(format!("{:.17}Hz", start - LEADING_PLANES as f64 * width));
+    wide["nchan"] = json!(40);
+    let (_, full) = observation.image("late-cubic-wide-reference", wide);
+    request["spw"] = json!("0:0~2;4~11;64~95");
+    let (_, excluded) = observation.image("late-cubic-guard-excluded", request);
+    assert_eq!(
+        selected.get(".sumwt").channel_values()[0],
+        full.get(".sumwt").channel_values()[LEADING_PLANES],
+    );
+    assert!(excluded.get(".sumwt").channel_values()[0] > 0.0);
+    let selected = selected.get(".residual");
+    let full = full.get(".residual");
+    assert!(
+        (selected.channel_frequency_hz(0) - full.channel_frequency_hz(LEADING_PLANES)).abs()
+            < spacing * 1e-6,
+    );
+    let selected = selected.plane(0);
+    let full = full.plane(LEADING_PLANES);
+    let peak = full.iter().map(|value| value.abs()).fold(0.0_f32, f32::max);
+    let error = selected
+        .iter()
+        .zip(&full)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(peak > 1e-6, "late guard signal {peak}");
+    assert!(
+        error < peak * 1e-4,
+        "late guard versus wide reference: {error} / {peak}"
+    );
+    assert!(
+        excluded
+            .get(".residual")
+            .plane(0)
+            .iter()
+            .all(|value| *value == 0.0)
+    );
+}
+
+/// A REST-tagged data cube has no tracked Doppler conversion. The same
+/// near-integer width takes the ordinary floor rather than the tracked rule.
+#[test]
+fn a_rest_tagged_data_cube_keeps_the_floor_width_rule() {
+    use casa_core::measures::frequency::FrequencyRef;
+    let mut setup = super::fixture::Setup::vla_q_band(70);
+    setup.antennas.truncate(8);
+    setup.spectral_windows[0].start_frequency_hz = 1_081_741_824.0;
+    setup.spectral_windows[0].channel_width_hz = 1.0e6;
+    let observation = Observation::synthesise_setup(setup, &[("point", POINT)]);
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    ms.spectral_window_mut()
+        .unwrap()
+        .set_i32(0, "MEAS_FREQ_REF", FrequencyRef::REST.casacore_code())
+        .unwrap();
+    ms.save().unwrap();
+    drop(ms);
+    let (_, products) = observation.image("fixed-rest-width-floor", json!({
+        "specmode": "cubedata", "outframe": "REST", "restfreq": "1.1GHz", "nchan": 4,
+        "start": "1105741824Hz", "width": "2999999.9999985695Hz", "interpolation": "linear", "niter": 0,
+    }));
+    let weights = products.get(".sumwt").channel_values();
+    assert_eq!(
+        weights,
+        [2.0 * observation.stokes_i_samples_per_channel() as f32; 4]
+    );
+}
+
 /// An AW request on a moving field with a native TOPO window.
 fn moving_aw_cube(channels: usize) -> (Observation, serde_json::Value) {
     let mut setup = super::aw_projection::setup();

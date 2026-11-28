@@ -86,7 +86,7 @@ fn the_first_lsrk_fine_point_must_be_in_the_native_span() {
     for (edge, expected) in [(first, &[0, 1][..]), (first.next_up(), &[1][..])] {
         let frequencies = [edge, 1_499_983_125.580_886_1, 1_999_977_500.774_515];
         let row = NativeRow {
-            selection_spacing_hz: None,
+            selection_centres_hz: None,
             uvw_m: [10.0, 10.0, 0.0],
             phase_shift_m: 0.0,
             pointing_offset_rad: [0.0; 2],

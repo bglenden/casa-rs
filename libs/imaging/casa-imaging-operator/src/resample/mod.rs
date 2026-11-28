@@ -58,11 +58,11 @@ pub struct NativeRow<'a> {
     pub pointing_offset_rad: [f64; 2],
     /// Native channel centres in Hz in the interpolation frame.
     pub frequencies_hz: &'a [f64],
-    /// Signed spacing of the first two channels of the complete selection
-    /// at this row's epoch, in the interpolation frame. Required when a
-    /// wave's restricted channels omit that pair. `None` lets an intact
-    /// row use its own first pair.
-    pub selection_spacing_hz: Option<f64>,
+    /// The interpolation-frame centres of the first two channels of the
+    /// complete selection at this row's epoch. The pair preserves both
+    /// spacing and coordinate precision if a wave omits those channels.
+    /// `None` lets an intact row use its own first pair.
+    pub selection_centres_hz: Option<[f64; 2]>,
     /// Visibilities.
     pub values: &'a [Complex32],
     /// Input weights (`WEIGHT_SPECTRUM` or `WEIGHT` repeated per channel).
@@ -1370,7 +1370,7 @@ impl SpectralResampler {
             Sampling::Interpolated(axis, order) => {
                 let output = self.gridding_axis(axis);
                 let Some(mut grid) =
-                    FineGrid::compile(&output, native, *order, row.selection_spacing_hz)
+                    FineGrid::compile(&output, native, *order, row.selection_centres_hz)
                 else {
                     return;
                 };

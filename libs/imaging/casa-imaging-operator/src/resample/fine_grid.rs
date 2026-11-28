@@ -35,7 +35,7 @@ impl SpectralAxis {
         &self,
         width: f64,
         native_step: f64,
-        native: &[f64],
+        native_pair: [f64; 2],
     ) -> usize {
         let whole = width.floor();
         match self.integral_widths {
@@ -47,7 +47,8 @@ impl SpectralAxis {
                 if integer > whole && integer > 1.0 {
                     // One representable step at each of the two native and
                     // two output centres. Compare in native-width units.
-                    let native_precision = coordinate_ulp(native[0]) + coordinate_ulp(native[1]);
+                    let native_precision =
+                        coordinate_ulp(native_pair[0]) + coordinate_ulp(native_pair[1]);
                     let output_precision = coordinate_ulp(self.first_hz)
                         + coordinate_ulp(self.first_hz + self.increment_hz);
                     let nominal_step = self.increment_hz.abs() / integer;
@@ -86,9 +87,10 @@ impl<'a> FineGrid<'a> {
         output: &'a SpectralAxis,
         native: &[f64],
         order: Order,
-        selection_spacing_hz: Option<f64>,
+        selection_centres_hz: Option<[f64; 2]>,
     ) -> Option<Self> {
-        let native_increment_hz = selection_spacing_hz.unwrap_or_else(|| native[1] - native[0]);
+        let pair = selection_centres_hz.unwrap_or_else(|| [native[0], native[1]]);
+        let native_increment_hz = pair[1] - pair[0];
         let output_increment_hz = output.increment_hz;
         if native_increment_hz == 0.0 || !native_increment_hz.is_finite() {
             return None;
@@ -110,7 +112,7 @@ impl<'a> FineGrid<'a> {
                 tabular_fine: None,
             });
         }
-        let per_output = output.fine_samples_per_plane(width, native_increment_hz, native);
+        let per_output = output.fine_samples_per_plane(width, native_increment_hz, pair);
         let fine_abs = output_increment_hz.abs() / per_output as f64;
         if output.tabular.is_some() {
             let step = fine_abs.copysign(native_increment_hz);
@@ -244,9 +246,14 @@ impl SpectralResampler {
     /// `FTMachine::interpolateFrequencyTogrid`. This includes the padding
     /// on a fine grid even though those frequencies never reach an image
     /// plane. `native` already holds the buffer channels in the gridding
-    /// frame, including the Doppler shift for a tracked cube.
+    /// frame, including the Doppler shift for a tracked cube. Pass the
+    /// converted first selected pair if its centres lie outside the read.
     #[must_use]
-    pub fn mosaic_buffer_frequencies(&self, native: Vec<f64>) -> Vec<f64> {
+    pub fn mosaic_buffer_frequencies(
+        &self,
+        native: Vec<f64>,
+        selection_centres_hz: Option<[f64; 2]>,
+    ) -> Vec<f64> {
         let Sampling::Interpolated(output, order) = &self.sampling else {
             return native;
         };
@@ -258,12 +265,13 @@ impl SpectralResampler {
             .map(|channel| output.centre_hz(channel))
             .collect();
         let output_step = output.increment_hz().abs();
-        let native_step = native[1] - native[0];
+        let pair = selection_centres_hz.unwrap_or_else(|| [native[0], native[1]]);
+        let native_step = pair[1] - pair[0];
         let width = output_step / native_step.abs();
         if width <= 1.0 || native_step == 0.0 {
             return centres;
         }
-        let count = output.fine_samples_per_plane(width, native_step, &native);
+        let count = output.fine_samples_per_plane(width, native_step, pair);
         let step = (output_step / count as f64).copysign(native_step);
         let Some(fine) = ClippedFineGrid::compile(&output, &native, step, *order) else {
             return centres;
@@ -297,11 +305,9 @@ impl SpectralAxis {
         let width = self.increment_hz.abs();
         let ratio = width / spectrum.first_spacing_hz;
         let per_output = if self.integral_widths == IntegralWidths::AtCoordinatePrecision {
-            // A contributing row's native span reaches the image. Its
-            // centres are at most one width and a row span beyond an edge.
-            let highest = self.first_hz.abs().max(self.last_hz().abs());
-            let native_bound = highest + width + spectrum.span_hz;
-            self.fine_samples_per_plane(ratio, spectrum.first_spacing_hz, &[native_bound; 2]) as f64
+            // A carried pair can lie outside the read span. Charge its
+            // possible integer count without assuming its coordinate precision.
+            ratio.ceil().max(1.0)
         } else {
             ratio.floor().max(1.0)
         };
@@ -317,12 +323,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_restricted_wave_uses_the_precision_of_the_selected_pair() {
+        let axis = SpectralAxis::new(1_065_741_824.0, 2_999_999.999_998_569_5, 16)
+            .unwrap()
+            .with_integral_width_at_coordinate_precision();
+        let full = [1_041_741_824.0, 1_042_741_824.0];
+        let wave = [1_081_741_824.0, 1_082_741_824.0];
+        for order in [Order::Linear, Order::Cubic] {
+            let grid = |native, pair| {
+                FineGrid::compile(&axis, native, order, pair)
+                    .unwrap()
+                    .per_output
+            };
+            assert_eq!(grid(&full, None), 2);
+            assert_eq!(grid(&wave, Some(full)), 2);
+            assert_eq!(grid(&wave, None), 3);
+        }
+    }
+
+    #[test]
     fn mosaic_beam_frequencies_follow_the_buffer_and_interpolation_grid() {
         let native = vec![100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0];
         let axis = SpectralAxis::new(102.0, 2.0, 2).unwrap();
         let buffers = |kernel| {
             SpectralResampler::channel_local(axis.clone(), kernel)
-                .mosaic_buffer_frequencies(native.clone())
+                .mosaic_buffer_frequencies(native.clone(), None)
         };
         // FTMachine bypasses interpolation for nearest and, for wider
         // interpolated planes, includes the linear or cubic guard channels.
@@ -338,19 +363,19 @@ mod tests {
         let narrower = SpectralAxis::new(102.25, 0.5, 3).unwrap();
         assert_eq!(
             SpectralResampler::channel_local(narrower, SpectralKernel::Linear)
-                .mosaic_buffer_frequencies(native.clone()),
+                .mosaic_buffer_frequencies(native.clone(), None),
             [102.25, 102.75, 103.25],
         );
         let one_plane = SpectralAxis::new(102.0, 2.0, 1).unwrap();
         assert_eq!(
             SpectralResampler::channel_local(one_plane, SpectralKernel::Cubic)
-                .mosaic_buffer_frequencies(native.clone()),
+                .mosaic_buffer_frequencies(native.clone(), None),
             native,
         );
         let descending = native.into_iter().rev().collect();
         assert_eq!(
             SpectralResampler::channel_local(axis, SpectralKernel::Linear)
-                .mosaic_buffer_frequencies(descending),
+                .mosaic_buffer_frequencies(descending, None),
             [105.5, 104.5, 103.5, 102.5, 101.5, 100.5],
         );
     }

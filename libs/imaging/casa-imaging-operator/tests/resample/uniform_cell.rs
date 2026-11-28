@@ -88,7 +88,7 @@ fn a_declared_uniform_cell_places_as_the_per_sample_route() {
             .collect::<Vec<_>>();
         let flags = (0..cells).map(|_| rng.unit() < 0.1).collect::<Vec<_>>();
         let row = NativeRow {
-            selection_spacing_hz: None,
+            selection_centres_hz: None,
             uvw_m: [
                 rng.signed() * 400.0,
                 rng.signed() * 400.0,

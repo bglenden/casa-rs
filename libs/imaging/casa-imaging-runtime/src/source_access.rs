@@ -2,7 +2,7 @@
 //! The block layout of the selected observation's rows, and the budget
 //! that bounds what the source holds before the problem quotes its own.
 
-use casa_imaging_model::{CompiledProblem, LinearSpacingSelection, SpectralWindowSelection};
+use casa_imaging_model::{CompiledProblem, NativeSpacingSelection, SpectralWindowSelection};
 use casa_imaging_operator::RowSpectrum;
 
 use crate::pass::BlockShape;
@@ -53,14 +53,14 @@ fn row_spectrum<'a>(windows: impl Iterator<Item = &'a SpectralWindowSelection>) 
     let mut spectrum = RowSpectrum::evenly_spaced(0);
     let mut known = true;
     for window in windows {
-        if let Some(selection) = window.linear_spacing() {
+        if let Some(selection) = window.native_spacing() {
             if let Some(catalog) = window.coordinate_catalog() {
                 match selection {
-                    LinearSpacingSelection::Pair([first, second]) => {
+                    NativeSpacingSelection::Pair([first, second]) => {
                         let hz = catalog.channel_frequencies_hz();
                         include_spacing(&mut spectrum, hz[*first as usize], hz[*second as usize]);
                     }
-                    LinearSpacingSelection::Bands(_) => {
+                    NativeSpacingSelection::Bands(_) => {
                         for pair in catalog.channel_frequencies_hz().windows(2) {
                             include_spacing(&mut spectrum, pair[0], pair[1]);
                         }
@@ -149,7 +149,7 @@ mod tests {
         .unwrap();
         let window = SpectralWindowSelection::new(0, vec![2, 3, 4])
             .with_coordinate_catalog(catalogue)
-            .with_linear_spacing(LinearSpacingSelection::Pair([0, 1]));
+            .with_native_spacing(NativeSpacingSelection::Pair([0, 1]));
         let spectrum = row_spectrum(std::iter::once(&window));
         assert_eq!(spectrum.channels, 3);
         assert_eq!(spectrum.first_spacing_hz, 990_000.0);

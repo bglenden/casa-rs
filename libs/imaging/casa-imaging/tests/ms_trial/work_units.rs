@@ -183,7 +183,7 @@ impl Unit {
             let row_weights = routed.map(|c| weights[[sample, 0, c]]);
             let row_flags = routed.map(|c| validity.excluded(sample, 0, c));
             let row = NativeRow {
-                selection_spacing_hz: None,
+                selection_centres_hz: None,
                 uvw_m: uvw.metres_at(sample),
                 phase_shift_m: 0.0,
                 pointing_offset_rad: [0.0; 2],
