@@ -29,11 +29,13 @@ use casa_observation::{Catalogue, ObservationError, PartitionId};
 use casa_observation::{FieldId, Observation, ScanId};
 use casa_tables::{Table, TableOptions};
 
+use super::field_namespace::{fixed_direction, same_direction};
 use super::msv2::catalogue::{measure_reference, phase_frames, require_units};
 use super::update::storage;
 use super::{Msv2Observation, OpenOptions};
 use crate::columns::direction_columns::DirectionColumn;
 use crate::selection::antenna_expr::StoredAntennaRow;
+use crate::subtables::MsField;
 use crate::{MeasurementSet, MsError, SubtableId};
 
 /// One `ANTENNA` row, as content.
@@ -507,12 +509,60 @@ impl NamespaceRows {
         antennas(&table)
     }
 
-    /// Read physical identities in the row order of an open SPECTRAL_WINDOW table.
-    ///
+    /// Read one physical `ANTENNA` identity by its stored row number.
     /// # Errors
-    /// When the table's frequency metadata cannot be read or is invalid.
-    pub fn spectral_windows(table: &Table) -> Result<Vec<NamespaceWindow>, ObservationError> {
-        windows(table)
+    /// When the row cannot be read or its position is outside the ITRF profile.
+    pub fn antenna_at(table: &Table, row: usize) -> Result<NamespaceAntenna, ObservationError> {
+        validate_position_column(table)?;
+        antenna_row(table, row)
+    }
+
+    /// Whether the same row in two `FIELD` tables has the same fixed identity.
+    /// The first table may use the XRADIO converter's suffix for the row.
+    /// # Errors
+    /// When a row is unreadable or uses an ephemeris or polynomial direction.
+    pub fn same_fixed_field(
+        observation: &Table,
+        calibration: &Table,
+        row: usize,
+    ) -> Result<bool, ObservationError> {
+        let read = |table| {
+            require_units(table, "PHASE_DIR", "rad")?;
+            let field = MsField::new(table);
+            let name = field.name(row).map_err(storage)?;
+            let direction =
+                fixed_direction(table, &field, row)?.ok_or(ObservationError::Unsupported {
+                    what: "matching a moving or polynomial FIELD by its fixed direction",
+                })?;
+            Ok::<_, ObservationError>((name, direction))
+        };
+        let (name, direction) = read(observation)?;
+        let (persisted, reference) = read(calibration)?;
+        Ok((name == persisted || name == format!("{persisted}_{row}"))
+            && same_direction(&direction, &reference))
+    }
+
+    /// Prepare a reader for physical `SPECTRAL_WINDOW` identities by stored
+    /// row number. It reads only the requested rows and shares the table's
+    /// frequency measure descriptors across them.
+    /// # Errors
+    /// Construction refuses invalid units. The reader reports bad frequency
+    /// metadata in the requested row.
+    pub fn spectral_window_reader(
+        table: &Table,
+    ) -> Result<impl Fn(usize) -> Result<NamespaceWindow, ObservationError> + '_, ObservationError>
+    {
+        require_units(table, "CHAN_FREQ", "Hz")?;
+        require_units(table, "CHAN_WIDTH", "Hz")?;
+        let frequency_refs = crate::columns::frequency_columns::ChanFreqColumn::new(table);
+        Ok(move |row| {
+            Ok(NamespaceWindow {
+                name: string(table, row, "NAME")?,
+                frame: frequency_refs.frequency_reference(row).map_err(storage)?,
+                frequencies_hz: floats(table, row, "CHAN_FREQ")?,
+                widths_hz: floats(table, row, "CHAN_WIDTH")?,
+            })
+        })
     }
 
     /// Read the physical spectral window identities of a persisted
@@ -601,27 +651,31 @@ fn floats(table: &Table, row: usize, column: &str) -> Result<Vec<f64>, Observati
 }
 
 fn antennas(table: &Table) -> Result<Vec<NamespaceAntenna>, ObservationError> {
+    validate_position_column(table)?;
+    (0..table.row_count())
+        .map(|row| antenna_row(table, row))
+        .collect()
+}
+
+fn validate_position_column(table: &Table) -> Result<(), ObservationError> {
     require_units(table, "POSITION", "m")?;
     match measure_reference(table, "POSITION")?.as_deref() {
-        None | Some("ITRF") => {}
-        Some(_) => {
-            return Err(ObservationError::Unsupported {
-                what: "antenna positions in other than ITRF",
-            });
-        }
+        None | Some("ITRF") => Ok(()),
+        Some(_) => Err(ObservationError::Unsupported {
+            what: "antenna positions in other than ITRF",
+        }),
     }
-    (0..table.row_count())
-        .map(|row| {
-            let position = floats(table, row, "POSITION")?;
-            let position_m = <[f64; 3]>::try_from(position.as_slice())
-                .map_err(|_| invalid("an ANTENNA POSITION is not three values"))?;
-            Ok(NamespaceAntenna {
-                name: string(table, row, "NAME")?,
-                station: string(table, row, "STATION")?,
-                position_m,
-            })
-        })
-        .collect()
+}
+
+fn antenna_row(table: &Table, row: usize) -> Result<NamespaceAntenna, ObservationError> {
+    let position = floats(table, row, "POSITION")?;
+    let position_m = <[f64; 3]>::try_from(position.as_slice())
+        .map_err(|_| invalid("an ANTENNA POSITION is not three values"))?;
+    Ok(NamespaceAntenna {
+        name: string(table, row, "NAME")?,
+        station: string(table, row, "STATION")?,
+        position_m,
+    })
 }
 
 fn fields(table: &Table) -> Result<Vec<NamespaceField>, ObservationError> {
@@ -639,17 +693,7 @@ fn fields(table: &Table) -> Result<Vec<NamespaceField>, ObservationError> {
 }
 
 fn windows(table: &Table) -> Result<Vec<NamespaceWindow>, ObservationError> {
-    require_units(table, "CHAN_FREQ", "Hz")?;
-    require_units(table, "CHAN_WIDTH", "Hz")?;
-    let frequency_refs = crate::columns::frequency_columns::ChanFreqColumn::new(table);
     (0..table.row_count())
-        .map(|row| {
-            Ok(NamespaceWindow {
-                name: string(table, row, "NAME")?,
-                frame: frequency_refs.frequency_reference(row).map_err(storage)?,
-                frequencies_hz: floats(table, row, "CHAN_FREQ")?,
-                widths_hz: floats(table, row, "CHAN_WIDTH")?,
-            })
-        })
+        .map(NamespaceRows::spectral_window_reader(table)?)
         .collect()
 }

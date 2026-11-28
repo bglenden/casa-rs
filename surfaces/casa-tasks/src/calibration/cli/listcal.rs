@@ -20,11 +20,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     // CASA's Python bridge passes a long to Calibrater's signed Int.
     let page_rows = task.integer("pagerows")? as i32;
     let listfile = task.text("listfile")?.filter(|path| !path.is_empty());
-    let metadata_file = listfile.is_some()
-        && page_rows == 0
-        && field.is_empty()
-        && antenna.is_empty()
-        && matches!(spw.as_str(), "" | "*");
+    let metadata_file = listfile.is_some() && page_rows == 0;
     let listing = if metadata_file {
         let ms = calibration_subtables(&vis).map_err(|error| match error {
             ObservationError::Unsupported { .. } => {
@@ -37,7 +33,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         })?;
         list_calibration_named(&ms, Some(&vis), &path, &field, &antenna, &spw, page_rows).map_err(
             |error| match error {
-                CalibrationListingError::WindowIdentity(_) => {
+                CalibrationListingError::Identity { .. } => {
                     TaskFailure::validation(error.to_string()).at("vis")
                 }
                 _ => TaskFailure::execution(error.to_string()),
@@ -46,7 +42,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     } else {
         if is_msv4_store(&vis) {
             return Err(TaskFailure::validation(
-                "MSv4 listcal requires default selectors, pagerows=0 and a listing file",
+                "MSv4 listcal requires pagerows=0 and a listing file",
             )
             .at("vis"));
         }
