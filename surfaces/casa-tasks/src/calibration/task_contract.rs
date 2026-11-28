@@ -302,6 +302,16 @@ impl ExecuteApplyTaskRequest {
         casa_calibration::apply::ApplyExecutionReport,
         Box<casa_calibration::apply::ApplyExecutionError>,
     > {
+        self.execute_apply_controlled(None)
+    }
+
+    pub(super) fn execute_apply_controlled(
+        &self,
+        cancellation: Option<&casa_core::cancellation::Cancellation>,
+    ) -> Result<
+        casa_calibration::apply::ApplyExecutionReport,
+        Box<casa_calibration::apply::ApplyExecutionError>,
+    > {
         let error = self
             .callibrary_error
             .as_deref()
@@ -310,19 +320,30 @@ impl ExecuteApplyTaskRequest {
                 .argument_error
                 .as_ref()
                 .map(casa_calibration::apply::ApplyPreparationError::Argument));
-        casa_calibration::apply::execute_apply_with_preparation_error(
-            &self.measurement_set,
-            &ApplyPlanRequest {
-                selection: self.selection.clone(),
-                apply_mode: self.apply_mode,
-                parang: self.parang,
-                calibration_tables: self.calibration_tables.clone(),
-            },
-            ApplyExecutionOptions {
-                flag_backup: self.flagbackup,
-            },
-            error,
-        )
+        let request = ApplyPlanRequest {
+            selection: self.selection.clone(),
+            apply_mode: self.apply_mode,
+            parang: self.parang,
+            calibration_tables: self.calibration_tables.clone(),
+        };
+        let options = ApplyExecutionOptions {
+            flag_backup: self.flagbackup,
+        };
+        match cancellation {
+            Some(cancellation) => casa_calibration::apply::execute_apply_cancellable(
+                &self.measurement_set,
+                &request,
+                options,
+                error,
+                cancellation,
+            ),
+            None => casa_calibration::apply::execute_apply_with_preparation_error(
+                &self.measurement_set,
+                &request,
+                options,
+                error,
+            ),
+        }
         .map_err(Box::new)
     }
 }

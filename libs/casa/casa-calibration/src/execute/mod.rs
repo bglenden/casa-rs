@@ -30,8 +30,11 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Instant;
 
+use casa_core::cancellation::Cancellation;
 use casa_core::{ArrayValue, Complex32, ScalarValue, Value};
-use casa_flagging::{FlaggingError, save_next_flag_backup};
+use casa_flagging::{
+    FlaggingError, save_next_flag_backup, save_next_flag_backup_without_replacing,
+};
 use casa_ms::MeasurementSet;
 use casa_ms::build_table_schema;
 use casa_ms::derived::engine::MsCalEngine;
@@ -75,6 +78,7 @@ mod gain_arrays;
 mod gain_validity;
 mod initialization;
 mod ordered_gain;
+mod staging;
 use gain_validity::correcting_gain;
 pub(crate) mod additive;
 mod additive_polynomial;
@@ -166,7 +170,6 @@ pub(crate) use table_load::load_simulator_table;
 use table_load::*;
 pub(crate) use workflow::ToolActivityInput;
 pub(crate) use workflow::ToolCorrection;
-pub use workflow::execute_apply;
 pub use workflow::execute_apply_from_path;
 pub use workflow::execute_apply_from_path_with_options;
 pub use workflow::execute_apply_with_preparation_error;
@@ -174,6 +177,7 @@ pub use workflow::execute_single_dish_apply;
 pub(crate) use workflow::execute_tool_apply;
 pub(crate) use workflow::has_usable_apply_rows;
 use workflow::*;
+pub use workflow::{execute_apply, execute_apply_cancellable};
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -514,9 +518,13 @@ enum PreviewWeightSource {
 /// Errors returned while executing an apply plan.
 #[derive(Debug, Error)]
 pub enum ApplyExecutionError {
-    /// Cancellation interrupted a read-only calibration preview.
-    #[error("calibration preview interrupted")]
+    /// Cancellation interrupted calibration application before publication.
+    #[error("calibration application interrupted")]
     Interrupted,
+
+    /// Private storage for the calculated selected rows failed.
+    #[error("stage selected applycal rows: {0}")]
+    StageSelectedRows(#[source] std::io::Error),
     /// Planning failed before any mutation occurred.
     #[error(transparent)]
     Plan(Box<ApplyPlanError>),

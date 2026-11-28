@@ -6,6 +6,18 @@ use std::cell::RefCell;
 /// A completed or starting unit of work, or a publication boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Checkpoint {
+    /// Begin a selected applycal row batch, identified by mutation and batch index.
+    ApplyBatchStarted(usize, usize),
+    /// Finish staging a selected applycal row batch.
+    ApplyBatchFinished(usize, usize),
+    /// Begin reading one trial batch.
+    ApplyTrialBatchStarted(usize),
+    /// Finish processing one trial batch.
+    ApplyTrialBatchFinished(usize),
+    /// Applycal has staged its changes and is about to acquire MAIN for publication.
+    ApplyBeforeCommit,
+    /// Applycal has published MAIN and is about to record HISTORY.
+    ApplyMainCommitted,
     /// One visibility batch has been read and is about to be consumed.
     ObservationBatchStarted(usize),
     /// One visibility batch has been accumulated.

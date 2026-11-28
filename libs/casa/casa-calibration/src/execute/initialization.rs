@@ -6,9 +6,11 @@ use super::*;
 pub(super) fn corrected_data(
     ms: &mut MeasurementSet,
     observed: &str,
+    lock: Option<&mut TableWriteLock>,
 ) -> Result<(), ApplyExecutionError> {
     let path = display_ms_path(ms);
-    if !ensure_corrected_data_column(ms, observed)
+    let mut lock = lock;
+    if !ensure_corrected_data_column_holding(ms, observed, lock.as_deref_mut())
         .map_err(|source| ApplyExecutionError::CreateCorrectedData {
             path: path.clone(),
             source,
@@ -55,9 +57,6 @@ pub(super) fn corrected_data(
         MeasurementSetWriteResources::from_system_memory(2).map_err(write_error)?,
     )
     .map_err(write_error)?;
-    MeasurementSetWriteSession::start_selected_row_mutation(ms, plan)
-        .map_err(write_error)?
-        .finish_mutation()
-        .map_err(write_error)?;
+    MeasurementSetWriteSession::mutate_selected_rows(ms, plan, lock, write_error, |_, _| Ok(()))?;
     Ok(())
 }
