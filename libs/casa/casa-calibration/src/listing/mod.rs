@@ -8,9 +8,10 @@ use std::io::Write;
 use std::path::Path;
 
 use casa_core::{ArrayValue, ScalarValue, Value};
-use casa_ms::MeasurementSet;
+use casa_ms::observation_io::NamespaceRows;
 use casa_ms::selection::ChannelRange;
 use casa_ms::subtables::{MsAntenna, MsField, MsSpectralWindow};
+use casa_ms::{MeasurementSet, SubtableId};
 use casa_tables::{Table, TableOptions, add_directory};
 use serde::Serialize;
 use tempfile::NamedTempFile;
@@ -19,6 +20,8 @@ use crate::constants::{
     COL_ANTENNA1, COL_CPARAM, COL_FIELD_ID, COL_FLAG, COL_FPARAM, COL_SPECTRAL_WINDOW_ID, COL_TIME,
     TABLE_INFO_TYPE,
 };
+
+use crate::rerefant::{names_agree, same_antenna};
 
 use format::{Line, Listing, Window};
 
@@ -101,6 +104,45 @@ pub fn list_calibration(
     spw: &str,
     page_rows: i32,
 ) -> Result<CalibrationListing, String> {
+    list_calibration_named(ms, ms.path(), input, field, antenna, spw, page_rows).map_err(display)
+}
+
+/// Failure to render a calibration listing from an observation namespace.
+#[derive(Debug, thiserror::Error)]
+pub enum CalibrationListingError {
+    /// The existing selector, calibration table or its solutions could not be read.
+    #[error("{0}")]
+    Listing(String),
+    /// An MSv4 entity's ordinal cannot be used as a calibration subtable row.
+    #[error("incompatible MSv4 calibration {axis} identity: {reason}")]
+    Identity {
+        /// The entity axis being bound to the calibration table.
+        axis: &'static str,
+        /// Why the selected physical identity cannot be bound.
+        reason: String,
+    },
+}
+
+impl From<String> for CalibrationListingError {
+    fn from(message: String) -> Self {
+        Self::Listing(message)
+    }
+}
+
+/// List calibration solutions using an explicit observation path for a
+/// metadata namespace that is held in memory.
+///
+/// # Errors
+/// The same selector and calibration table errors as [`list_calibration`].
+pub fn list_calibration_named(
+    ms: &MeasurementSet,
+    observed_path: Option<&Path>,
+    input: &Path,
+    field: &str,
+    antenna: &str,
+    spw: &str,
+    page_rows: i32,
+) -> Result<CalibrationListing, CalibrationListingError> {
     let options = TableOptions::new(input);
     #[cfg(unix)]
     let table = Table::open_with_lock(
@@ -111,11 +153,10 @@ pub fn list_calibration(
     let table = Table::open(options);
     let table = table.map_err(display)?;
     if table.info().table_type != TABLE_INFO_TYPE {
-        return Err(format!("{} is not a calibration table", input.display()));
+        return Err(format!("{} is not a calibration table", input.display()).into());
     }
     let subtype = listing_subtype(&table.info().sub_type)?;
-    let ms_name = ms
-        .path()
+    let ms_name = observed_path
         .map(std::path::absolute)
         .transpose()
         .map_err(display)?;
@@ -124,14 +165,28 @@ pub fn list_calibration(
     let windows = ms
         .resolve_spw_selector(if spw.is_empty() { "*" } else { spw })
         .map_err(display)?;
-    let names = names(&table, input)?;
+    let verify_namespace = ms.path().is_none() && observed_path.is_some();
+    let (names, spectral) = open_subtables(
+        &table,
+        input,
+        verify_namespace.then_some(SelectedRows {
+            observation: ms,
+            fields: &fields,
+            antennas: &antennas,
+        }),
+    )?;
+    let legacy_channels = (!verify_namespace)
+        .then(|| legacy_window_counts(&spectral))
+        .transpose()?;
     let antennas = if antennas.is_empty() {
         (0..names.antennas.len()).collect()
     } else {
         antennas
     };
     if antennas.iter().any(|&id| id >= names.antennas.len()) {
-        return Err("selected antenna is absent from the calibration table".into());
+        return Err("selected antenna is absent from the calibration table"
+            .to_string()
+            .into());
     }
     let mut ranges = BTreeMap::new();
     for range in windows.channel_list() {
@@ -149,7 +204,24 @@ pub fn list_calibration(
             },
         );
     }
-    let headers = row_headers(&table, &ranges)?;
+    let default_windows = matches!(spw.trim(), "" | "*");
+    let headers = row_headers(
+        &table,
+        (!(verify_namespace && default_windows)).then_some(&ranges),
+    )?;
+    let channels = if let Some(legacy) = legacy_channels {
+        WindowChannels::Legacy(legacy)
+    } else {
+        // The wildcard must check even solutions whose IDs are absent in the
+        // observation. Explicit selections bind the requested windows only.
+        let required = headers
+            .keys()
+            .filter(|_| default_windows)
+            .chain(ranges.keys().filter(|_| !default_windows))
+            .copied();
+        WindowChannels::Validated(validate_window_ids(ms, &spectral, required, &ranges)?)
+    };
+    drop(spectral);
     let complex = table
         .schema()
         .is_some_and(|schema| schema.column(COL_CPARAM).is_some());
@@ -162,12 +234,149 @@ pub fn list_calibration(
         fields: &fields,
         antennas: &antennas,
         names: &names,
+        channels: &channels,
     };
     let mut listing = Listing::new(page_rows);
     let result = headers
         .into_iter()
         .try_for_each(|(spw, rows)| source.window(&mut listing, spw, &rows, &ranges[&spw]));
     Ok(listing.finish(result.err()))
+}
+
+enum WindowChannels {
+    Legacy(Vec<usize>),
+    Validated(BTreeMap<usize, usize>),
+}
+
+impl WindowChannels {
+    fn get(&self, id: usize) -> Option<usize> {
+        match self {
+            Self::Legacy(counts) => counts.get(id).copied(),
+            Self::Validated(counts) => counts.get(&id).copied(),
+        }
+    }
+}
+
+fn validate_window_ids(
+    ms: &MeasurementSet,
+    calibration: &Table,
+    required: impl Iterator<Item = usize>,
+    ranges: &BTreeMap<usize, ChannelRange>,
+) -> Result<BTreeMap<usize, usize>, CalibrationListingError> {
+    const AXIS: &str = "spectral-window";
+
+    let observation = ms
+        .subtable(SubtableId::SpectralWindow)
+        .ok_or_else(|| invalid_identity(AXIS, "the observation has no spectral-window table"))?;
+    let mut required = required.peekable();
+    if required.peek().is_none() {
+        return Ok(BTreeMap::new());
+    }
+    let reader = |table| {
+        NamespaceRows::spectral_window_reader(table).map_err(|error| invalid_identity(AXIS, error))
+    };
+    let observed_window = reader(observation)?;
+    let calibration_window = reader(calibration)?;
+    let spectral = MsSpectralWindow::new(calibration);
+    required
+        .map(|id| {
+            if id >= observation.row_count() || id >= calibration.row_count() {
+                return Err(invalid_identity(
+                    AXIS,
+                    format!("window {id} required for the listing is absent in one input"),
+                ));
+            }
+            let row_error = |error| invalid_identity(AXIS, format!("window {id}: {error}"));
+            let window = observed_window(id).map_err(row_error)?;
+            let solved = calibration_window(id).map_err(row_error)?;
+            let count = spectral
+                .num_chan(id)
+                .map_err(|error| invalid_identity(AXIS, format!("window {id}: {error}")))?;
+            let channels = usize::try_from(count).map_err(|_| {
+                invalid_identity(AXIS, format!("window {id} has invalid NUM_CHAN {count}"))
+            })?;
+            if !ranges.contains_key(&id)
+                || channels != solved.frequencies_hz.len()
+                || !window.matches_persisted_name(&solved, id)
+                || !window.describes_solution_axis(&solved)
+            {
+                return Err(invalid_identity(
+                    AXIS,
+                    format!(
+                        "window {id} ({}) does not describe calibration window {}",
+                        window.name, solved.name
+                    ),
+                ));
+            }
+            Ok((id, channels))
+        })
+        .collect()
+}
+
+fn invalid_identity(axis: &'static str, reason: impl std::fmt::Display) -> CalibrationListingError {
+    CalibrationListingError::Identity {
+        axis,
+        reason: reason.to_string(),
+    }
+}
+
+struct SelectedRows<'a> {
+    observation: &'a MeasurementSet,
+    fields: &'a [i32],
+    antennas: &'a [usize],
+}
+
+impl SelectedRows<'_> {
+    fn validate(&self, antenna: &Table, field: &Table) -> Result<(), CalibrationListingError> {
+        if !self.antennas.is_empty() {
+            const AXIS: &str = "antenna";
+            let observed = self.subtable(SubtableId::Antenna, AXIS)?;
+            for &id in self.antennas {
+                let physical = |table| {
+                    NamespaceRows::antenna_at(table, id)
+                        .map_err(|error| invalid_identity(AXIS, error))
+                };
+                let expected = physical(observed)?;
+                let actual = physical(antenna)?;
+                if !same_antenna(&expected, &actual, 0.0) || !names_agree(&expected, &actual) {
+                    return Err(invalid_identity(
+                        AXIS,
+                        format!(
+                            "selected antenna {id} ({}) does not describe calibration antenna {}",
+                            expected.name, actual.name,
+                        ),
+                    ));
+                }
+            }
+        }
+        if !self.fields.is_empty() {
+            const AXIS: &str = "field";
+            let observed = self.subtable(SubtableId::Field, AXIS)?;
+            for &id in self.fields {
+                if !NamespaceRows::same_fixed_field(observed, field, id as usize)
+                    .map_err(|error| invalid_identity(AXIS, error))?
+                {
+                    return Err(invalid_identity(
+                        AXIS,
+                        format!(
+                            "selected field {id} does not describe the calibration field in that row",
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn subtable(
+        &self,
+        id: SubtableId,
+        axis: &'static str,
+    ) -> Result<&Table, CalibrationListingError> {
+        self.observation
+            .subtable(id)
+            .ok_or_else(|| invalid_identity(axis, format!("the observation has no {id:?} table")))
+    }
 }
 
 struct ListingSource<'a> {
@@ -179,6 +388,7 @@ struct ListingSource<'a> {
     fields: &'a [i32],
     antennas: &'a [usize],
     names: &'a TableNames,
+    channels: &'a WindowChannels,
 }
 
 impl ListingSource<'_> {
@@ -190,10 +400,9 @@ impl ListingSource<'_> {
         range: &ChannelRange,
     ) -> Result<(), String> {
         let names = self.names;
-        let channels = names
+        let channels = self
             .channels
             .get(spw)
-            .copied()
             .ok_or("missing calibration spectral window")?;
         let selected = channels_in_table(range, channels)?;
         let params = self
@@ -358,10 +567,13 @@ fn validate_integrations(rows: &[Header], antennas: usize) -> Result<(), String>
 struct TableNames {
     antennas: Vec<String>,
     fields: Vec<String>,
-    channels: Vec<usize>,
 }
 
-fn names(table: &Table, path: &Path) -> Result<TableNames, String> {
+fn open_subtables(
+    table: &Table,
+    path: &Path,
+    selected: Option<SelectedRows<'_>>,
+) -> Result<(TableNames, Table), CalibrationListingError> {
     let subtable = |name: &str| {
         let source = table
             .keywords()
@@ -371,11 +583,13 @@ fn names(table: &Table, path: &Path) -> Result<TableNames, String> {
         Table::open(TableOptions::new(source)).map_err(display)
     };
     let antenna = subtable("ANTENNA")?;
-    let antenna = MsAntenna::new(&antenna);
     let field = subtable("FIELD")?;
+    if let Some(selected) = &selected {
+        selected.validate(&antenna, &field)?;
+    }
+    let antenna = MsAntenna::new(&antenna);
     let field = MsField::new(&field);
     let spectral = subtable("SPECTRAL_WINDOW")?;
-    let spectral = MsSpectralWindow::new(&spectral);
     let antennas = (0..antenna.row_count())
         .map(|row| antenna.name(row))
         .collect::<Result<_, _>>()
@@ -384,14 +598,14 @@ fn names(table: &Table, path: &Path) -> Result<TableNames, String> {
         .map(|row| field.name(row))
         .collect::<Result<_, _>>()
         .map_err(display)?;
-    let channels = (0..spectral.row_count())
+    Ok((TableNames { antennas, fields }, spectral))
+}
+
+fn legacy_window_counts(table: &Table) -> Result<Vec<usize>, String> {
+    let spectral = MsSpectralWindow::new(table);
+    (0..spectral.row_count())
         .map(|row| usize::try_from(spectral.num_chan(row).map_err(display)?).map_err(display))
-        .collect::<Result<_, _>>()?;
-    Ok(TableNames {
-        antennas,
-        fields,
-        channels,
-    })
+        .collect()
 }
 
 fn channels_in_table(range: &ChannelRange, channels: usize) -> Result<Vec<usize>, String> {
@@ -418,7 +632,7 @@ struct Header {
 
 fn row_headers(
     table: &Table,
-    selected: &BTreeMap<usize, ChannelRange>,
+    selected: Option<&BTreeMap<usize, ChannelRange>>,
 ) -> Result<BTreeMap<usize, Vec<Header>>, String> {
     let mut windows = BTreeMap::<usize, Vec<Header>>::new();
     let access = table.row_accessor();
@@ -428,7 +642,7 @@ fn row_headers(
     };
     for row in 0..table.row_count() {
         let window = usize::try_from(integer(row, COL_SPECTRAL_WINDOW_ID)?).map_err(display)?;
-        if !selected.contains_key(&window) {
+        if selected.is_some_and(|ranges| !ranges.contains_key(&window)) {
             continue;
         }
         let ScalarValue::Float64(time) = access.scalar_cell(row, COL_TIME).map_err(display)? else {

@@ -53,6 +53,7 @@
 use std::cell::RefCell;
 use std::cmp::Ordering;
 
+use casa_core::cancellation::Cancellation;
 use ndarray::{ArrayD, Dimension, IxDyn};
 
 use crate::execution::{
@@ -66,11 +67,14 @@ use crate::{
 
 mod cache;
 mod order;
+pub(crate) mod progress;
 
 use cache::{BasicStatsCache, OrderStatsCache};
+use order::absolute_deviations;
 pub(crate) use order::{
     OrderStatsSummary, framework_order_summary, quartiles_and_median, selection_median,
 };
+use progress::{batches, check};
 
 /// Marker trait for lattice element types that support numerical statistics.
 ///
@@ -263,6 +267,7 @@ pub struct LatticeStatistics<'a, T> {
     execution_policy: ExecutionPolicy,
     execution_resources: ExecutionResources,
     cache_storage: TempStoragePolicy,
+    cancellation: Option<&'a Cancellation>,
     basic_cache: RefCell<Option<BasicStatsCache>>,
     order_cache: RefCell<Option<OrderStatsCache>>,
 }
@@ -279,6 +284,7 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
             execution_policy: ExecutionPolicy::Auto,
             execution_resources: ExecutionResources::default(),
             cache_storage: TempStoragePolicy::Memory,
+            cancellation: None,
             basic_cache: RefCell::new(None),
             order_cache: RefCell::new(None),
         }
@@ -331,6 +337,14 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
     pub fn clear_pixel_mask(&mut self) {
         self.mask = None;
         self.invalidate_caches();
+    }
+
+    /// Set the cooperative token for future traversals and order statistics.
+    ///
+    /// An interrupted computation leaves its cache unpopulated. Previously
+    /// cached values remain available. Supply a fresh token to retry.
+    pub fn set_cancellation(&mut self, cancellation: Option<&'a Cancellation>) {
+        self.cancellation = cancellation;
     }
 
     /// Set the execution policy used for future cache builds.
@@ -456,6 +470,7 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
     }
 
     fn build_basic_cache(&self) -> Result<BasicStatsCache, LatticeError> {
+        check(self.cancellation)?;
         match &self.axes {
             None => self.build_global_basic_cache(),
             Some(axes) => match self.axis_layout(axes)? {
@@ -466,6 +481,7 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
     }
 
     fn build_order_cache(&self) -> Result<OrderStatsCache, LatticeError> {
+        check(self.cancellation)?;
         match &self.axes {
             None => self.build_global_order_cache(),
             Some(axes) => match self.axis_layout(axes)? {
@@ -476,6 +492,7 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
     }
 
     fn build_global_basic_cache(&self) -> Result<BasicStatsCache, LatticeError> {
+        let cancellation = self.cancellation;
         let mask_strides = self.mask.as_ref().and_then(|mask| {
             mask.as_slice_memory_order()
                 .map(|_| c_order_strides(self.lattice.shape()))
@@ -488,13 +505,17 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
             self.traversal_spec_for_strategy(strategy),
             strategy,
             GlobalBasicPartial::default,
-            |partial, chunk| accumulate_global_basic_chunk(partial, &chunk, &filters),
+            |partial, chunk| {
+                check(cancellation)?;
+                accumulate_global_basic_chunk(partial, &chunk, &filters)
+            },
             |partial, other| {
                 partial.merge(other);
                 Ok(())
             },
         )?;
 
+        check(self.cancellation)?;
         if partial.accum.npts == 0 {
             return BasicStatsCache::from_accumulators(&[0], &[], None, None, &self.cache_storage);
         }
@@ -509,6 +530,7 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
     }
 
     fn build_axis_basic_cache(&self, layout: &AxisLayout) -> Result<BasicStatsCache, LatticeError> {
+        let cancellation = self.cancellation;
         let mask_strides = self.mask.as_ref().and_then(|mask| {
             mask.as_slice_memory_order()
                 .map(|_| c_order_strides(self.lattice.shape()))
@@ -524,6 +546,7 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
             strategy,
             || vec![RunningStats::default(); layout.n_out],
             |accumulators, chunk| {
+                check(cancellation)?;
                 accumulate_axis_basic_chunk(accumulators, layout, &chunk, &filters)
             },
             |accumulators, other| {
@@ -532,6 +555,7 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
             },
         )?;
 
+        check(cancellation)?;
         BasicStatsCache::from_accumulators(
             &layout.out_shape,
             &accumulators,
@@ -542,6 +566,7 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
     }
 
     fn build_global_order_cache(&self) -> Result<OrderStatsCache, LatticeError> {
+        let cancellation = self.cancellation;
         let mask_strides = self.mask.as_ref().and_then(|mask| {
             mask.as_slice_memory_order()
                 .map(|_| c_order_strides(self.lattice.shape()))
@@ -560,22 +585,24 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
             self.traversal_spec_for_strategy(strategy),
             strategy,
             || Vec::with_capacity(reserve),
-            |values, chunk| accumulate_global_order_chunk(values, &chunk, &filters),
-            |values, other| {
-                values.extend(other);
-                Ok(())
+            |values, chunk| {
+                check(cancellation)?;
+                accumulate_global_order_chunk(values, &chunk, &filters)
             },
+            |values, other| merge_order_values(values, other, cancellation),
         )?;
 
+        check(cancellation)?;
         if values.is_empty() {
             return OrderStatsCache::from_summaries(&[0], &[], &self.cache_storage);
         }
 
-        let summary = compute_order_summary(&mut values);
+        let summary = compute_order_summary(&mut values, cancellation)?;
         OrderStatsCache::from_summaries(&[1], &[summary], &self.cache_storage)
     }
 
     fn build_axis_order_cache(&self, layout: &AxisLayout) -> Result<OrderStatsCache, LatticeError> {
+        let cancellation = self.cancellation;
         let mask_strides = self.mask.as_ref().and_then(|mask| {
             mask.as_slice_memory_order()
                 .map(|_| c_order_strides(self.lattice.shape()))
@@ -603,19 +630,20 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
                     .map(|_| Vec::with_capacity(reserve_per_bucket))
                     .collect::<Vec<_>>()
             },
-            |buckets, chunk| accumulate_axis_order_chunk(buckets, layout, &chunk, &filters),
-            |buckets, other| {
-                merge_order_buckets(buckets, other);
-                Ok(())
+            |buckets, chunk| {
+                check(cancellation)?;
+                accumulate_axis_order_chunk(buckets, layout, &chunk, &filters)
             },
+            |buckets, other| merge_order_buckets(buckets, other, cancellation),
         )?;
 
         let mut summaries = Vec::with_capacity(layout.n_out);
         for mut values in buckets {
+            check(cancellation)?;
             if values.is_empty() {
                 summaries.push(OrderStatsSummary::nan());
             } else {
-                summaries.push(compute_order_summary(&mut values));
+                summaries.push(compute_order_summary(&mut values, cancellation)?);
             }
         }
 
@@ -1094,10 +1122,31 @@ fn merge_running_stats(accumulators: &mut [RunningStats], other: Vec<RunningStat
     }
 }
 
-fn merge_order_buckets(buckets: &mut [Vec<f64>], other: Vec<Vec<f64>>) {
+fn merge_order_buckets(
+    buckets: &mut [Vec<f64>],
+    other: Vec<Vec<f64>>,
+    cancellation: Option<&Cancellation>,
+) -> Result<(), LatticeError> {
     for (lhs, rhs) in buckets.iter_mut().zip(other) {
-        lhs.extend(rhs);
+        merge_order_values(lhs, rhs, cancellation)?;
     }
+    Ok(())
+}
+
+fn merge_order_values(
+    values: &mut Vec<f64>,
+    other: Vec<f64>,
+    cancellation: Option<&Cancellation>,
+) -> Result<(), LatticeError> {
+    if cancellation.is_none() {
+        values.extend(other);
+    } else {
+        check(cancellation)?;
+        for batch in batches(&other, cancellation) {
+            values.extend_from_slice(batch?);
+        }
+    }
+    Ok(())
 }
 
 fn advance_position_in_axis_order(
@@ -1171,7 +1220,8 @@ pub(crate) fn compute_statistic(values: &[f64], stat: Statistic) -> f64 {
     debug_assert!(!values.is_empty());
 
     if stat.is_order_stat() {
-        let summary = compute_order_summary(&mut values.to_vec());
+        let summary = compute_order_summary(&mut values.to_vec(), None)
+            .expect("no cancellation token supplied");
         return match stat {
             Statistic::Median => summary.median,
             Statistic::Q1 => summary.q1,
@@ -1198,30 +1248,53 @@ impl Statistic {
     }
 }
 
-fn compute_order_summary(values: &mut [f64]) -> OrderStatsSummary {
-    if values.iter().any(|value| value.is_nan()) {
-        return legacy_order_summary(values);
+fn compute_order_summary(
+    values: &mut [f64],
+    cancellation: Option<&Cancellation>,
+) -> Result<OrderStatsSummary, LatticeError> {
+    let mut has_nan = false;
+    for batch in batches(values, cancellation) {
+        if batch?.iter().any(|value| value.is_nan()) {
+            has_nan = true;
+            break;
+        }
     }
-    framework_order_summary(values)
+    if has_nan {
+        return legacy_order_summary(values, cancellation);
+    }
+    Ok(framework_order_summary(values, cancellation)?)
 }
 
-fn legacy_order_summary(values: &[f64]) -> OrderStatsSummary {
+fn legacy_order_summary(
+    values: &mut [f64],
+    cancellation: Option<&Cancellation>,
+) -> Result<OrderStatsSummary, LatticeError> {
+    check(cancellation)?;
     let median = casacore_median(values);
+    check(cancellation)?;
     let q1 = casacore_fractile(values, 0.25);
+    check(cancellation)?;
     let q3 = casacore_fractile(values, 0.75);
-    OrderStatsSummary {
+    absolute_deviations(values, median, cancellation)?;
+    check(cancellation)?;
+    values.sort_by(nan_safe_cmp);
+    Ok(OrderStatsSummary {
         median,
         q1,
         q3,
         quartile: q3 - q1,
-        mad: casacore_madfm(values),
-    }
+        mad: median_from_sorted(values),
+    })
 }
 
 /// Median matching C++ `casacore::median(arr, takeEvenMean=true)`.
 pub(crate) fn casacore_median(values: &[f64]) -> f64 {
     let mut sorted = values.to_vec();
     sorted.sort_by(nan_safe_cmp);
+    median_from_sorted(&sorted)
+}
+
+fn median_from_sorted(sorted: &[f64]) -> f64 {
     let n = sorted.len();
     let n2 = (n - 1) / 2;
     if n.is_multiple_of(2) {
@@ -1245,13 +1318,7 @@ pub(crate) fn casacore_madfm(values: &[f64]) -> f64 {
     let med = casacore_median(values);
     let mut devs: Vec<f64> = values.iter().map(|value| (value - med).abs()).collect();
     devs.sort_by(nan_safe_cmp);
-    let n = devs.len();
-    let n2 = (n - 1) / 2;
-    if n.is_multiple_of(2) {
-        (devs[n2] + devs[n2 + 1]) / 2.0
-    } else {
-        devs[n2]
-    }
+    median_from_sorted(&devs)
 }
 
 /// NaN-safe comparator for f64 sorting (NaNs sort to the end).

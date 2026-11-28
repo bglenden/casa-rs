@@ -1298,6 +1298,8 @@ def _call_listcal(values: dict[str, Any], arguments: Mapping[str, Any]) -> None:
     try:
         completion = run("listcal", **values)
     except (TypeError, ValueError) as error:
+        if isinstance(error, TaskParameterError) and error.completion.parameter == "vis":
+            raise
         raise AssertionError(str(error)) from error
     _present_listcal(completion._details)
 

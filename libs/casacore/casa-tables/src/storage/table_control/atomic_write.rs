@@ -22,6 +22,7 @@ pub(crate) fn is_staged_table_dat(name: &str) -> bool {
 pub(crate) struct StagedTableDat<'a> {
     table: &'a Path,
     keyword_table: &'a Path,
+    previous_table: Option<&'a TableDatContents>,
     destination: PathBuf,
     staged: tempfile::NamedTempFile,
     previous: Option<AccessMetadata>,
@@ -39,9 +40,14 @@ impl<'a> StagedTableDat<'a> {
 
     /// Encode a full save in private storage, with links relative to its
     /// eventual table directory.
-    pub(crate) fn for_save_stage(stage: &'a Path, table: &'a Path) -> Result<Self, StorageError> {
+    pub(crate) fn for_save_stage(
+        stage: &'a Path,
+        table: &'a Path,
+        previous: Option<&'a TableDatContents>,
+    ) -> Result<Self, StorageError> {
         let mut control = Self::in_table_directory(stage)?;
         control.keyword_table = table;
+        control.previous_table = previous;
         Ok(control)
     }
 
@@ -76,6 +82,7 @@ impl<'a> StagedTableDat<'a> {
         Ok(Self {
             table,
             keyword_table: table,
+            previous_table: None,
             destination,
             staged,
             previous,
@@ -88,6 +95,27 @@ impl<'a> StagedTableDat<'a> {
 
     pub(crate) fn keyword_table_path(&self) -> &'a Path {
         self.keyword_table
+    }
+
+    /// The persisted name of a StandardStMan group recreated in place.
+    pub(crate) fn existing_ssm_name(&self, sequence: u32, group: &str) -> Option<String> {
+        let current = self.previous_table?;
+        let manager =
+            current.column_set.data_managers.iter().find(|manager| {
+                manager.seq_nr == sequence && manager.type_name == "StandardStMan"
+            })?;
+        if current
+            .table_desc
+            .columns
+            .iter()
+            .zip(&current.column_set.columns)
+            .any(|(column, binding)| {
+                binding.dm_seq_nr == sequence && column.data_manager_group != group
+            })
+        {
+            return None;
+        }
+        crate::storage::standard_stman::dm_name_from_blob(&manager.data)
     }
 
     pub(crate) fn publish(self, contents: &TableDatContents) -> Result<(), StorageError> {

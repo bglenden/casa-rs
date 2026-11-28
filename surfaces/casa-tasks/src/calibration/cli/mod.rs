@@ -222,43 +222,7 @@ pub(crate) fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFai
         request
             .generate(mode.unwrap_or(CalibrationOutputMode::Update))
             .map(CalibrationTaskResult::Gencal)
-            .map_err(|error| match error {
-                GencalError::PositionInput(error) => position_input_failure(error),
-                GencalError::EopFile { path, source } => {
-                    let parameter = match source.kind() {
-                        std::io::ErrorKind::NotFound => "infile.missing",
-                        std::io::ErrorKind::PermissionDenied => "infile.permission",
-                        std::io::ErrorKind::IsADirectory => "infile.directory",
-                        _ => "infile.io",
-                    };
-                    let message = source.to_string();
-                    let message = if let Some(errno) = source.raw_os_error() {
-                        let reason = message
-                            .split_once(" (os error ")
-                            .map_or(message.as_str(), |(reason, _)| reason);
-                        let path =
-                            casa_contracts::ParameterValue::String(path.display().to_string());
-                        format!(
-                            "[Errno {errno}] {reason}: {}",
-                            casa_contracts::python_repr(&path)
-                        )
-                    } else {
-                        format!("{message}: {}", path.display())
-                    };
-                    TaskFailure::execution(message).at(parameter)
-                }
-                GencalError::AutomaticPositionInput(reason) => {
-                    TaskFailure::validation(reason).at("antenna")
-                }
-                ref error @ GencalError::VlaArchive { ref source, .. } => {
-                    let parameter = match source.as_ref() {
-                        ureq::Error::StatusCode(code) => format!("antenna.archive.http.{code}"),
-                        _ => "antenna.archive.url".to_string(),
-                    };
-                    TaskFailure::execution(error.to_string()).at(parameter)
-                }
-                error => TaskFailure::execution(error.to_string()),
-            })?
+            .map_err(gencal_failure)?
     } else {
         request.execute_with_output_mode(mode)?
     };
@@ -324,6 +288,53 @@ fn report_success(
     };
     casa_calibration::timing::report_process_memory();
     Ok(TaskSuccess::new(value, result)?.with_text(text))
+}
+
+fn gencal_failure(error: GencalError) -> TaskFailure {
+    match error {
+        GencalError::Observation { ref source, .. }
+            if matches!(
+                source.as_ref(),
+                casa_observation::ObservationError::Unsupported { .. }
+            ) =>
+        {
+            TaskFailure::validation(error.to_string()).at("vis")
+        }
+        GencalError::PositionInput(error) => position_input_failure(error),
+        GencalError::EopFile { path, source } => {
+            let parameter = match source.kind() {
+                std::io::ErrorKind::NotFound => "infile.missing",
+                std::io::ErrorKind::PermissionDenied => "infile.permission",
+                std::io::ErrorKind::IsADirectory => "infile.directory",
+                _ => "infile.io",
+            };
+            let message = source.to_string();
+            let message = if let Some(errno) = source.raw_os_error() {
+                let reason = message
+                    .split_once(" (os error ")
+                    .map_or(message.as_str(), |(reason, _)| reason);
+                let path = casa_contracts::ParameterValue::String(path.display().to_string());
+                format!(
+                    "[Errno {errno}] {reason}: {}",
+                    casa_contracts::python_repr(&path)
+                )
+            } else {
+                format!("{message}: {}", path.display())
+            };
+            TaskFailure::execution(message).at(parameter)
+        }
+        GencalError::AutomaticPositionInput(reason) => {
+            TaskFailure::validation(reason).at("antenna")
+        }
+        ref error @ GencalError::VlaArchive { ref source, .. } => {
+            let parameter = match source.as_ref() {
+                ureq::Error::StatusCode(code) => format!("antenna.archive.http.{code}"),
+                _ => "antenna.archive.url".to_string(),
+            };
+            TaskFailure::execution(error.to_string()).at(parameter)
+        }
+        error => TaskFailure::execution(error.to_string()),
+    }
 }
 
 fn position_input_failure(error: casa_calibration::gencal::AntposInputError) -> TaskFailure {

@@ -18,6 +18,9 @@ targets = ["x86_64-unknown-linux-gnu"]
 [lints]
 workspace = true
 
+[features]
+imstat-test-hooks = ["casa-lattices/statistics-test-hooks"]
+
 [dependencies]
 casa-images.workspace = true
 casa-components.workspace = true

@@ -61,6 +61,9 @@ mod paged_array;
 mod region;
 pub mod robust_statistics;
 pub mod statistics;
+#[cfg(feature = "statistics-test-hooks")]
+#[doc(hidden)]
+pub mod statistics_test_hooks;
 mod sub_lattice;
 mod temp_lattice;
 mod tiled_shape;
@@ -87,8 +90,9 @@ pub use paged_array::PagedArray;
 pub use region::LCRegion;
 pub use robust_statistics::{
     FitHalfCenter, RobustSampleStats, RobustStats, RobustStatsError, SamplePoint,
-    StatisticsAlgorithm, StatisticsAlgorithmKind, compute_robust_stats, max_zscore,
-    parse_algorithm, parse_center, parse_clmethod,
+    StatisticsAlgorithm, StatisticsAlgorithmKind, compute_robust_stats,
+    compute_robust_stats_with_cancellation, max_zscore, parse_algorithm, parse_center,
+    parse_clmethod,
 };
 pub use statistics::{LatticeStatistics, Statistic, StatsElement};
 pub use sub_lattice::{SubLattice, SubLatticeMut};

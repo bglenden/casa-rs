@@ -7,11 +7,12 @@ use std::path::Path;
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, FitsHeader, StokesType,
 };
+use casa_core::cancellation::Cancellation;
 use casa_core::{ArrayD, RecordValue, ScalarValue, Value};
 use casa_lattices::{
     LatticeStatistics, RobustStats, SamplePoint, Statistic, StatisticsAlgorithm,
-    StatisticsAlgorithmKind, StatsElement, TiledShape, compute_robust_stats, parse_algorithm,
-    parse_center, parse_clmethod,
+    StatisticsAlgorithmKind, StatsElement, TiledShape, compute_robust_stats_with_cancellation,
+    parse_algorithm, parse_center, parse_clmethod,
 };
 use casa_tables::{Table, TableOptions};
 use fitsio::images::ImageType as FitsImageType;
@@ -215,6 +216,20 @@ pub fn parse_imstat_algorithm(request: &ImstatRequest) -> Result<StatisticsAlgor
 /// statistics over the whole selection, or one per display plane when
 /// the request collapses only some axes.
 pub fn imstat(request: &ImstatRequest) -> Result<ImstatOutcome, ImageError> {
+    imstat_with_cancellation(request, None)
+}
+
+/// Calculate image statistics with optional cooperative cancellation.
+///
+/// Checks the token at calculation boundaries, and during pixel bucketing
+/// and the statistics and report loops for display planes. Returns
+/// [`ImageError::Interrupted`] when cancellation is observed. The task
+/// adapter is responsible for publishing any requested logfile.
+pub fn imstat_with_cancellation(
+    request: &ImstatRequest,
+    cancellation: Option<&Cancellation>,
+) -> Result<ImstatOutcome, ImageError> {
+    check_imstat_cancelled(cancellation)?;
     // CASA's image tool opens FITS images directly, so imstat accepts a
     // FITS file as its image: converted here, then run as any image.
     let imported = import_fits_for_reading(&request.imagename)?;
@@ -224,13 +239,22 @@ pub fn imstat(request: &ImstatRequest) -> Result<ImstatOutcome, ImageError> {
     );
     let image = AnyPagedImage::open(open_path)?;
     let path = request.imagename.as_path();
-    match &image {
-        AnyPagedImage::Float32(image) => imstat_typed(path, image, request),
-        AnyPagedImage::Float64(image) => imstat_typed(path, image, request),
+    let outcome = match &image {
+        AnyPagedImage::Float32(image) => imstat_typed(path, image, request, cancellation),
+        AnyPagedImage::Float64(image) => imstat_typed(path, image, request, cancellation),
         AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => Err(
             ImageError::InvalidMetadata("imstat currently supports real-valued images".to_string()),
         ),
+    }?;
+    check_imstat_cancelled(cancellation)?;
+    Ok(outcome)
+}
+
+fn check_imstat_cancelled(cancellation: Option<&Cancellation>) -> Result<(), ImageError> {
+    if cancellation.is_some_and(Cancellation::is_cancelled) {
+        return Err(ImageError::Interrupted);
     }
+    Ok(())
 }
 
 /// A FITS image converted to a CASA image for reading, in a directory

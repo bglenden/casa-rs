@@ -5,6 +5,7 @@ use std::fmt::Write;
 
 use crate::ImstatPlanesSummary;
 use casa_coordinates::{CoordinateModel, CoordinateType};
+use casa_core::cancellation::Cancellation;
 use casa_images::{ImageError, ImageInterface, ImagePixel};
 
 pub(super) fn plane_table<T: ImagePixel>(
@@ -13,6 +14,7 @@ pub(super) fn plane_table<T: ImagePixel>(
     axes: &[usize],
     positions: &[Vec<usize>],
     iterations: &[Option<usize>],
+    cancellation: Option<&Cancellation>,
 ) -> Result<String, ImageError> {
     let coordinates = image.coordinates();
     let names = image.axis_names();
@@ -94,6 +96,7 @@ pub(super) fn plane_table<T: ImagePixel>(
         })
         .collect::<Vec<_>>();
     for row in 0..stats.npts.len() {
+        super::check_imstat_cancelled(cancellation)?;
         let mut remainder = row;
         let mut plane = 0;
         for &slot in columns.iter().rev() {

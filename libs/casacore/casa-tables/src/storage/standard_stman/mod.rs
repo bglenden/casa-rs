@@ -785,7 +785,8 @@ pub(crate) use fixed_arrays::read_fixed_2d_cells;
 ///
 /// The file uses little-endian byte order (SSM v3) matching modern machines.
 /// Returns the "SSM" AipsIO data blob to be stored in the DataManagerEntry.
-pub(crate) fn write_ssm_file(
+#[cfg(test)]
+fn write_ssm_file(
     file_path: &Path,
     col_descs: &[ColumnDescContents],
     rows: &[casa_core::RecordValue],

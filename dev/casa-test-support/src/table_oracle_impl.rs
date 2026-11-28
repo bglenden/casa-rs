@@ -860,6 +860,35 @@ pub(crate) fn cpp_keyword_table_name(
         .map_err(|error| error.to_string())
 }
 
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_column_manager_name(
+    path: &std::path::Path,
+    column: &str,
+) -> Result<String, OracleError> {
+    let path = CasacoreOracleRuntime::c_path("table path", path)?;
+    let column = CasacoreOracleRuntime::c_string("column name", column)?;
+    let mut buf = vec![0 as std::ffi::c_char; 4096];
+    let mut error = std::ptr::null_mut();
+    let status = unsafe {
+        cpp_table_column_manager_name(
+            path.as_ptr(),
+            column.as_ptr(),
+            buf.as_mut_ptr(),
+            buf.len() as i32,
+            &mut error,
+        )
+    };
+    unsafe {
+        CasacoreOracleRuntime::cpp_status(
+            "table.column_manager_name",
+            status,
+            error,
+            cpp_table_free_error,
+        )?;
+    }
+    CasacoreOracleRuntime::output_c_char_string("table.column_manager_name", &buf)
+}
+
 /// Read the Double array table keyword `keyword` of the table at `path` in
 /// C++ casacore: its shape, and its elements in casacore's storage order
 /// (the first axis fastest).

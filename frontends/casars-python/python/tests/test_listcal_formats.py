@@ -1,0 +1,236 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+
+from pathlib import Path
+import sys
+import tarfile
+
+import pytest
+
+from casars import tasks, tools
+
+
+TRIAL = (
+    Path(__file__).resolve().parents[4]
+    / "libs/casacore/casa-ms/tests/fixtures/ms_trial"
+)
+
+
+@pytest.fixture
+def paired_calibration(tmp_path, monkeypatch):
+    ms_v2 = "ms_trial_lines.ms"
+    ms_v4 = "ms_trial_lines.ps.zarr"
+    for store in (ms_v2, ms_v4):
+        with tarfile.open(TRIAL / f"{store}.tgz") as archive:
+            kwargs = {"filter": "data"} if sys.version_info >= (3, 12) else {}
+            archive.extractall(tmp_path, **kwargs)
+    monkeypatch.chdir(tmp_path)
+    assert tasks.gencal(vis=ms_v2, caltable="input.cal", caltype="amp", parameter=[2.0]) is None
+    return ms_v2, ms_v4
+
+
+@pytest.mark.parametrize("spw", ["", "*"])
+def test_default_file_listing_uses_both_msv4_windows(paired_calibration, spw):
+    ms_v2, ms_v4 = paired_calibration
+    for vis, output in ((ms_v2, "reference.txt"), (ms_v4, "candidate.txt")):
+        assert tasks.listcal(
+            vis=vis, caltable="input.cal", listfile=output, spw=spw, pagerows=0,
+        ) is None
+
+    expected = Path("reference.txt").read_text()
+    actual = Path("candidate.txt").read_text()
+    assert "SpwID = 0" in actual and "SpwID = 1" in actual
+    assert "Listed 8 antenna solutions." in actual
+    path_label = f"MS name = {Path(ms_v4).absolute()}"
+    assert actual.count(path_label) == 2
+    assert actual == expected.replace(
+        f"MS name = {Path(ms_v2).absolute()}", path_label,
+    )
+
+
+@pytest.mark.parametrize(("selectors_v2", "selectors_v4"), [
+    (("0", "1", "1:0"), ("0", "1", "1:0")),
+    (("ppdisk", "VLA02", "high:0"), ("ppdisk_0", "VLA02_N02", "high_1:0")),
+])
+def test_selected_file_listing_uses_the_same_physical_rows(
+    paired_calibration, selectors_v2, selectors_v4,
+):
+    ms_v2, ms_v4 = paired_calibration
+    table = tools.table()
+    assert table.open("input.cal", nomodify=False)
+    for row in range(table.nrows()):
+        assert table.putcell("FIELD_ID", row, 0)
+    assert table.close()
+
+    for vis, selectors, out in (
+        (ms_v2, selectors_v2, "reference.txt"), (ms_v4, selectors_v4, "candidate.txt"),
+    ):
+        field, antenna, spw = selectors
+        assert tasks.listcal(
+            vis=vis, caltable="input.cal", listfile=out,
+            field=field, antenna=antenna, spw=spw, pagerows=0,
+        ) is None
+    actual = Path("candidate.txt").read_text()
+    assert "SpwID = 0" not in actual and "SpwID = 1" in actual
+    assert "Ant = VLA02" in actual and "ppdisk" in actual
+    assert "Ant = VLA01" not in actual and "Ant = VLA03" not in actual
+    assert actual == Path("reference.txt").read_text().replace(
+        f"MS name = {Path(ms_v2).absolute()}", f"MS name = {Path(ms_v4).absolute()}",
+    )
+
+
+@pytest.mark.parametrize(("subtable", "column", "selector", "identity"), [
+    ("ANTENNA", "POSITION", {"antenna": "0"}, "antenna identity"),
+    ("FIELD", "PHASE_DIR", {"field": "0"}, "field identity"),
+    ("FIELD", "NUM_POLY", {"field": "0"}, "polynomial FIELD"),
+])
+def test_selected_msv4_listing_refuses_incompatible_calibration_identity(
+    paired_calibration, subtable, column, selector, identity,
+):
+    _, ms_v4 = paired_calibration
+    table = tools.table()
+    assert table.open(f"input.cal/{subtable}", nomodify=False)
+    before = table.getcell(column, 0)
+    assert table.putcell(column, 0, before + 1)
+    assert table.close()
+
+    with pytest.raises(tasks.TaskParameterError, match=identity) as failure:
+        tasks.listcal(vis=ms_v4, caltable="input.cal", listfile="out.txt", pagerows=0, **selector)
+    assert failure.value.completion.parameter == "vis"
+    assert not Path("out.txt").exists()
+
+
+@pytest.mark.parametrize(("column", "value", "reason"), [
+    ("NUM_CHAN", -1, "invalid NUM_CHAN -1"),
+    ("MEAS_FREQ_REF", 100, "invalid measure reference code 100"),
+])
+def test_msv4_validates_only_spectral_windows_needed_by_the_listing(
+    paired_calibration, column, value, reason,
+):
+    ms_v2, ms_v4 = paired_calibration
+
+    def list_window(vis, spw, output):
+        return tasks.listcal(vis=vis, caltable="input.cal", spw=spw, pagerows=0, listfile=output)
+
+    assert list_window(ms_v2, "0:0", "reference.txt") is None
+    reference = Path("reference.txt").read_text()
+    expected_v4 = reference.replace(
+        f"MS name = {Path(ms_v2).absolute()}", f"MS name = {Path(ms_v4).absolute()}",
+    )
+    table = tools.table()
+    assert table.open("input.cal/SPECTRAL_WINDOW", nomodify=False)
+    assert table.nrows() == 2
+    assert table.putcell(column, 1, value)
+    assert table.close()
+
+    assert list_window(ms_v4, "0:0", "explicit.txt") is None
+    assert Path("explicit.txt").read_text() == expected_v4
+    with pytest.raises(tasks.TaskParameterError, match=f"window 1.*{reason}") as failure:
+        list_window(ms_v4, "*", "wildcard.txt")
+    assert failure.value.completion.parameter == "vis"
+    assert not Path("wildcard.txt").exists()
+
+    if column == "NUM_CHAN":
+        with pytest.raises(tasks.TaskExecutionError, match="number too small to fit in target type"):
+            list_window(ms_v2, "0:0", "legacy.txt")
+        assert not Path("legacy.txt").exists()
+    else:
+        assert list_window(ms_v2, "0:0", "legacy.txt") is None
+        assert Path("legacy.txt").read_text() == reference
+
+    assert table.open("input.cal", nomodify=False)
+    remove = [row for row, window in enumerate(table.getcol("SPECTRAL_WINDOW_ID")) if window == 1]
+    assert remove and table.removerows(remove)
+    assert set(table.getcol("SPECTRAL_WINDOW_ID")) == {0}
+    assert table.close()
+    assert list_window(ms_v4, "*", "wildcard.txt") is None
+    assert Path("wildcard.txt").read_text() == expected_v4
+
+
+@pytest.mark.parametrize("pagerows", [1, 5])
+def test_paged_file_listing_uses_observation_metadata(paired_calibration, pagerows):
+    ms_v2, ms_v4 = paired_calibration
+    for vis, output in ((ms_v2, "reference.txt"), (ms_v4, "candidate.txt")):
+        assert tasks.listcal(
+            vis=vis, caltable="input.cal", antenna="1", spw="1:0",
+            listfile=output, pagerows=pagerows,
+        ) is None
+
+    actual = Path("candidate.txt").read_text()
+    assert "SpwID = 1" in actual and "Ant = VLA02" in actual
+    assert "RETURN to continue" not in actual
+    assert actual == Path("reference.txt").read_text().replace(
+        f"MS name = {Path(ms_v2).absolute()}", f"MS name = {Path(ms_v4).absolute()}",
+    )
+
+
+@pytest.mark.parametrize("pagerows", [-2, 0, 5])
+def test_terminal_listing_uses_observation_metadata(paired_calibration, pagerows, monkeypatch, capsys):
+    ms_v2, ms_v4 = paired_calibration
+
+    def answer(prompt):
+        print(prompt, end="")
+        return "a"
+
+    monkeypatch.setattr("builtins.input", answer)
+    results = []
+    for vis in (ms_v2, ms_v4):
+        assert tasks.listcal(
+            vis=vis, caltable="input.cal", antenna="1", spw="1:0", pagerows=pagerows,
+        ) is None
+        results.append(capsys.readouterr().out)
+
+    assert ("RETURN to continue" in results[1]) == (pagerows > 0)
+    assert "SpwID = 1" in results[1] and "Ant = VLA02" in results[1]
+    assert results[1] == results[0].replace(
+        f"MS name = {Path(ms_v2).absolute()}", f"MS name = {Path(ms_v4).absolute()}",
+    )
+
+
+@pytest.mark.parametrize("reply", ["q", None])
+def test_paged_terminal_preserves_partial_listing(paired_calibration, reply, monkeypatch, capsys):
+    ms_v2, ms_v4 = paired_calibration
+
+    def answer(prompt):
+        print(prompt, end="")
+        if reply is None:
+            raise EOFError
+        return reply
+
+    def list_two_windows(vis):
+        return tasks.listcal(
+            vis=vis, caltable="input.cal", antenna="0", spw="0:0,1:1", pagerows=1,
+        )
+
+    monkeypatch.setattr("builtins.input", answer)
+    results = []
+    for vis in (ms_v2, ms_v4):
+        if reply is None:
+            with pytest.raises(RuntimeError, match="none of the selected channels"):
+                list_two_windows(vis)
+        else:
+            assert list_two_windows(vis) is None
+        results.append(capsys.readouterr().out)
+
+    actual = results[1]
+    assert "SpwID = 0" in actual and "SpwID = 1" not in actual
+    assert "RETURN to continue" in actual
+    assert ("Listed 4 antenna solutions." in actual) == (reply == "q")
+    assert actual == results[0].replace(
+        f"MS name = {Path(ms_v2).absolute()}", f"MS name = {Path(ms_v4).absolute()}",
+    )
+
+
+def test_unreadable_msv2_listing_preserves_the_same_diagnostic(paired_calibration):
+    directory = Path("unreadable.ms")
+    directory.mkdir()
+    messages = []
+    for pagerows in (0, 1):
+        with pytest.raises(tasks.TaskExecutionError) as failure:
+            tasks.listcal(
+                vis=str(directory), caltable="input.cal", listfile="out.txt", pagerows=pagerows,
+            )
+        assert failure.value.completion.parameter == "vis"
+        messages.append(failure.value.completion.message)
+        assert not Path("out.txt").exists()
+    assert messages[0] == messages[1]
+    assert messages[0].startswith("storage error: table control file is missing")

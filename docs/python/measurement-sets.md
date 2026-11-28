@@ -13,11 +13,15 @@ in `.ps.zarr`.
 | `tasks.rerefant(vis=…)` | Read antenna metadata for re-referencing a calibration table | Yes | Yes | [Read and verify the output calibration table][rerefant-tests] |
 | `tasks.smoothcal(vis=…)` | Read field metadata for smoothing a calibration table | Yes | Yes | [Verify field-specific smoothing on both stores][smoothcal-tests] |
 | `tasks.gaincal(vis=…)` | Read visibilities for a time-binned per-receptor G gain solve | Yes | [Point-source mode below](#solve-time-binned-gains) | [Verify gains for both stores][gaincal-tests] |
+| `tasks.gencal(vis=…)` | Read metadata for explicit gain, phase, delay and opacity prescriptions | Yes | `amp`, `ph`, `sbd`, `mbd`, `opac` | [Create and accumulate priors on both stores][gencal-tests] |
+| `tasks.listcal(vis=…)` | Read metadata for a CASA calibration listing | Yes | Fixed fields, terminal and file output | [Verify file output on both stores][listcal-tests] |
 
 [format-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_msconvert_formats.py
 [rerefant-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_rerefant_formats.py
 [smoothcal-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_smoothcal_formats.py
 [gaincal-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_gaincal_formats.py
+[gencal-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_gencal_formats.py
+[listcal-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_listcal_formats.py
 
 ## Choose the output format
 
@@ -95,3 +99,30 @@ and each solution group must be contained in one observation partition.
 The task writes a CASA-format calibration table. MSv4 uses the processing
 set's stored weights. MSv2 uses weights derived from its stored sigmas,
 following CASA.
+
+## Prescribe calibration values
+
+`tasks.gencal` accepts MSv4 for explicit amplitude, phase, delay and opacity
+values. The task resolves antenna and spectral-window selectors in the
+input's namespace and writes a CASA-format calibration table. You can
+accumulate a phase prescription in an existing gain table as with MSv2.
+MSv4 inputs must have metadata that the CASA calibration subtables can
+represent. The task refuses moving MSv4 fields and updates whose existing
+antenna or spectral-window IDs refer to different physical entities.
+Textual scan names are accepted because these prescriptions do not name a scan.
+
+## Write a calibration listing
+
+`tasks.listcal` accepts fixed-field MSv4 observations for terminal display
+and file output. Supply `listfile` to write a report, or leave it empty to
+display the result. A positive `pagerows` sets the page size. The task resolves
+`field`, `antenna`, and `spw` against the supplied observation. Use the names
+in the MSv4 observation, which may have gained suffixes during conversion from
+MSv2. The listing retains the supplied observation path and describes the
+solutions in the CASA calibration table.
+
+The selected field and antenna IDs must agree with the physical identities at
+the same rows of that calibration table. Explicit spectral-window selections
+must agree at the selected windows and channel grids. With an empty or `"*"`
+`spw`, every window referenced by a calibration solution must agree. The task
+reports identity conflicts before printing or writing a listing.

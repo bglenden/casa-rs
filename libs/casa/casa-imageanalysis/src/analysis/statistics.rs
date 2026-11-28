@@ -2,14 +2,19 @@
 
 use super::*;
 
+#[cfg(feature = "imstat-test-hooks")]
+use crate::imstat_test_hooks::{Checkpoint, observe};
+
 pub(super) fn imstat_typed<T>(
     path: &Path,
     image: &PagedImage<T>,
     request: &ImstatRequest,
+    cancellation: Option<&Cancellation>,
 ) -> Result<ImstatOutcome, ImageError>
 where
     T: ImagePixel + ImageExprValue + PartialOrd + ExprValueConvert + StatsElement,
 {
+    check_imstat_cancelled(cancellation)?;
     let algorithm = parse_imstat_algorithm(request).map_err(ImageError::InvalidMetadata)?;
     let axes =
         parse_axes(request.axes.as_deref(), image.ndim()).map_err(ImageError::CasaSelection)?;
@@ -43,6 +48,7 @@ where
         request.chans.as_deref(),
         request.stokes.as_deref(),
     )?;
+    check_imstat_cancelled(cancellation)?;
     let pixel_mask = selection_pixel_mask(
         image,
         effective_region,
@@ -59,6 +65,7 @@ where
     let trc = trc_pixels(&selection.start, &selection.shape);
     let blcf = world_text(&blc)?;
     let trcf = world_text(&trc)?;
+    check_imstat_cancelled(cancellation)?;
 
     let display_axes: Vec<usize> = match &axes {
         AxisSelection::All => Vec::new(),
@@ -66,7 +73,7 @@ where
             .filter(|axis| !collapse.contains(axis))
             .collect(),
     };
-    if display_axes.is_empty() {
+    let outcome = if display_axes.is_empty() {
         let summary = imstat_global_summary(
             path,
             image,
@@ -79,8 +86,9 @@ where
             blcf,
             trcf,
             &world_text,
+            cancellation,
         )?;
-        Ok(ImstatOutcome::Global(summary))
+        ImstatOutcome::Global(summary)
     } else {
         let summary = imstat_planes_summary(
             path,
@@ -94,9 +102,11 @@ where
             trc,
             blcf,
             trcf,
+            cancellation,
         )?;
-        Ok(ImstatOutcome::Planes(summary))
-    }
+        ImstatOutcome::Planes(summary)
+    };
+    Ok(outcome)
 }
 
 /// The whole selection's statistics, as `imstat` reports them with every
@@ -114,6 +124,7 @@ pub(super) fn imstat_global_summary<T>(
     blcf: String,
     trcf: String,
     world_text: &dyn Fn(&[usize]) -> Result<String, ImageError>,
+    cancellation: Option<&Cancellation>,
 ) -> Result<ImageStatisticsSummary, ImageError>
 where
     T: ImagePixel + StatsElement,
@@ -128,6 +139,7 @@ where
             // statistics; a gapped Stokes set needs the sample route.
             let sub = image.sub_image(selection.start.clone(), selection.shape.clone())?;
             let mut stats = LatticeStatistics::new(&sub);
+            stats.set_cancellation(cancellation);
             if let Some([min, max]) = request.includepix {
                 stats.set_include_range(min, max);
             }
@@ -164,8 +176,9 @@ where
                 selection.stokes_axis,
                 selection.stokes_indices.as_deref(),
                 &selection.start,
-            );
-            match compute_robust_stats(&sample, robust)? {
+                cancellation,
+            )?;
+            match compute_robust_stats_with_cancellation(&sample, robust, cancellation)? {
                 RobustStats::Sample(stats) => ComputedStats {
                     npts: stats.npts,
                     sum: stats.sum,
@@ -197,8 +210,7 @@ where
                     // The biweight reports only its location and scale,
                     // with the sample's count and extrema.
                     let npts = sample.len() as f64;
-                    let min = sample.iter().map(|p| p.value).fold(f64::NAN, f64::min);
-                    let max = sample.iter().map(|p| p.value).fold(f64::NAN, f64::max);
+                    let (min, max) = sample_extrema(&sample, cancellation)?;
                     ComputedStats {
                         npts,
                         sum: f64::NAN,
@@ -279,6 +291,7 @@ pub(super) fn imstat_planes_summary<T>(
     trc: Vec<usize>,
     blcf: String,
     trcf: String,
+    cancellation: Option<&Cancellation>,
 ) -> Result<ImstatPlanesSummary, ImageError>
 where
     T: ImagePixel + StatsElement,
@@ -298,6 +311,7 @@ where
     // One pass over the selection's pixels, bucketed by display
     // position: each pixel's plane is its display coordinates' index.
     let pixels = image.get_slice(&selection.start, &selection.shape)?;
+    check_imstat_cancelled(cancellation)?;
     let mut buckets: Vec<Vec<SamplePoint>> = vec![Vec::new(); plane_count];
     let stokes_collapsed = selection
         .stokes_axis
@@ -308,7 +322,10 @@ where
         strides.push(stride);
         stride *= axis_length as u64;
     }
-    for (index, value) in pixels.indexed_iter() {
+    for (visited, (index, value)) in pixels.indexed_iter().enumerate() {
+        if visited.is_multiple_of(4096) {
+            check_imstat_cancelled(cancellation)?;
+        }
         if let Some(mask) = pixel_mask {
             let mask_index: &[usize] = index.slice();
             if !mask[mask_index] {
@@ -393,10 +410,12 @@ where
         biweight,
     };
     let mut iterations = Vec::new();
-    for bucket in &buckets {
-        let mut sample = bucket.clone();
+    for mut sample in buckets {
+        check_imstat_cancelled(cancellation)?;
+        #[cfg(feature = "imstat-test-hooks")]
+        observe(Checkpoint::PlaneStarted);
         sample.sort_by_key(|point| point.position);
-        match compute_robust_stats(&sample, algorithm)? {
+        match compute_robust_stats_with_cancellation(&sample, algorithm, cancellation)? {
             RobustStats::Sample(stats) => {
                 iterations.push(stats.chauvenet_iterations);
                 planes.npts.push(stats.npts);
@@ -426,8 +445,7 @@ where
             }
             RobustStats::Biweight { location, scale } => {
                 let count = sample.len() as f64;
-                let min = sample.iter().map(|p| p.value).fold(f64::NAN, f64::min);
-                let max = sample.iter().map(|p| p.value).fold(f64::NAN, f64::max);
+                let (min, max) = sample_extrema(&sample, cancellation)?;
                 planes.npts.push(count);
                 planes.min.push(min);
                 planes.max.push(max);
@@ -443,6 +461,8 @@ where
                 planes.quartile.push(f64::NAN);
             }
         }
+        #[cfg(feature = "imstat-test-hooks")]
+        observe(Checkpoint::PlaneFinished);
     }
     if biweight {
         planes.flux = None;
@@ -459,9 +479,25 @@ where
             display_axes,
             &display_positions,
             &iterations,
+            cancellation,
         )?;
     }
     Ok(planes)
+}
+
+fn sample_extrema(
+    sample: &[SamplePoint],
+    cancellation: Option<&Cancellation>,
+) -> Result<(f64, f64), ImageError> {
+    let (mut min, mut max) = (f64::NAN, f64::NAN);
+    for batch in sample.chunks(4096) {
+        check_imstat_cancelled(cancellation)?;
+        for point in batch {
+            min = min.min(point.value);
+            max = max.max(point.value);
+        }
+    }
+    Ok((min, max))
 }
 
 /// The statistics one `imstat` computation reports, before the record and

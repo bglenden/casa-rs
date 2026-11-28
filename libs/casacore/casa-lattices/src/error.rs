@@ -7,6 +7,10 @@
 /// shape mismatches, index out of bounds, and tile configuration problems.
 #[derive(Debug, thiserror::Error)]
 pub enum LatticeError {
+    /// The caller requested cancellation of a lattice computation.
+    #[error("lattice operation interrupted")]
+    Interrupted,
+
     /// An index was out of bounds for the lattice shape.
     ///
     /// C++ casacore throws `AipsError` with a message like

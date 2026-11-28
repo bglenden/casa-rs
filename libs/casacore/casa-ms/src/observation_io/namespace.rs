@@ -29,11 +29,13 @@ use casa_observation::{Catalogue, ObservationError, PartitionId};
 use casa_observation::{FieldId, Observation, ScanId};
 use casa_tables::{Table, TableOptions};
 
+use super::field_namespace::{fixed_direction, same_direction};
 use super::msv2::catalogue::{measure_reference, phase_frames, require_units};
 use super::update::storage;
 use super::{Msv2Observation, OpenOptions};
 use crate::columns::direction_columns::DirectionColumn;
 use crate::selection::antenna_expr::StoredAntennaRow;
+use crate::subtables::MsField;
 use crate::{MeasurementSet, MsError, SubtableId};
 
 /// One `ANTENNA` row, as content.
@@ -67,6 +69,48 @@ pub struct NamespaceWindow {
     pub frequencies_hz: Vec<f64>,
     /// `CHAN_WIDTH`, hertz.
     pub widths_hz: Vec<f64>,
+}
+
+impl NamespaceWindow {
+    /// Whether the persisted name is this window's name, including the
+    /// XRADIO converter's suffix for its source SPECTRAL_WINDOW row.
+    #[must_use]
+    pub fn matches_persisted_name(&self, persisted: &Self, row: usize) -> bool {
+        let base = match persisted.name.as_str() {
+            "" | "none" => "spw",
+            name => name,
+        };
+        self.name == persisted.name || self.name == format!("{base}_{row}")
+    }
+
+    /// Whether a calibration window holds this axis at the same frame:
+    /// the full channel grid, or one channel at its unweighted mean with
+    /// the sum of its widths. CASA can store decreasing-frequency channel
+    /// widths as positive. A relative tolerance of 1e-12 allows different
+    /// rounding when CASA sums the frequencies.
+    #[must_use]
+    pub fn describes_solution_axis(&self, calibration: &Self) -> bool {
+        if self.frame != calibration.frame {
+            return false;
+        }
+        let close = |a: f64, b: f64| (a - b).abs() <= 1e-12 * a.abs().max(b.abs());
+        let same = |a: &[f64], b: &[f64], value: fn(f64) -> f64| {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| close(value(*a), value(*b)))
+        };
+        if same(&self.frequencies_hz, &calibration.frequencies_hz, |hz| hz)
+            && same(&self.widths_hz, &calibration.widths_hz, f64::abs)
+        {
+            return true;
+        }
+        let channels = self.frequencies_hz.len();
+        if channels < 2 || calibration.frequencies_hz.len() != 1 || calibration.widths_hz.len() != 1
+        {
+            return false;
+        }
+        let mean = self.frequencies_hz.iter().sum::<f64>() / channels as f64;
+        let width = self.widths_hz.iter().map(|width| width.abs()).sum();
+        close(calibration.frequencies_hz[0], mean) && close(calibration.widths_hz[0].abs(), width)
+    }
 }
 
 /// The rows of a namespace's `ANTENNA`, `FIELD` and `SPECTRAL_WINDOW`
@@ -297,6 +341,49 @@ fn validate_calibration_scan_numbers(catalogue: &Catalogue) -> Result<(), Observ
     Ok(())
 }
 
+/// Open the subtables for a calibration that uses metadata alone.
+/// MSv2 retains its stored row numbers and columns. MSv4 supplies the
+/// CASA namespace its MSv2 conversion would persist. Neither route reads
+/// visibility values or requires the scan names to fit CASA scan numbers.
+///
+/// # Errors
+///
+/// When the store cannot be read, its namespace cannot be represented in
+/// CASA subtables, an MSv4 field moves with an ephemeris, or opening an
+/// MSv4 catalogue exceeds its memory grant.
+pub fn calibration_subtables(source: &Path) -> Result<MeasurementSet, ObservationError> {
+    if !super::is_msv4_store(source) {
+        return MeasurementSet::open(source).map_err(storage);
+    }
+    #[cfg(all(feature = "msv4", unix))]
+    {
+        let budget = super::creation::default_memory_bytes()?;
+        let mut grant = |required| {
+            if required > budget {
+                Err(ObservationError::OverBudget {
+                    what: "calibration subtables and their observation catalogue",
+                    required,
+                    budget,
+                })
+            } else {
+                Ok(())
+            }
+        };
+        let observation =
+            super::Msv4Observation::open_granted(source, &OpenOptions::default(), &mut grant)?;
+        grant(
+            observation
+                .held_bytes()
+                .saturating_add(super::creation::subtables_bytes(observation.catalogue())),
+        )?;
+        super::creation::prescribed_calibration_subtables(&observation)
+    }
+    #[cfg(not(all(feature = "msv4", unix)))]
+    Err(ObservationError::Unsupported {
+        what: "an MSv4 calibration namespace without casa-ms's msv4 feature",
+    })
+}
+
 /// The namespace of the store at `source` as [`super::open`] opens it with
 /// `options`, which decide its partitions: an MSv2's own subtables, its
 /// catalogue's antennas, fields and sessions being their rows and each
@@ -422,6 +509,76 @@ impl NamespaceRows {
         antennas(&table)
     }
 
+    /// Read one physical `ANTENNA` identity by its stored row number.
+    /// # Errors
+    /// When the row cannot be read or its position is outside the ITRF profile.
+    pub fn antenna_at(table: &Table, row: usize) -> Result<NamespaceAntenna, ObservationError> {
+        validate_position_column(table)?;
+        antenna_row(table, row)
+    }
+
+    /// Whether the same row in two `FIELD` tables has the same fixed identity.
+    /// The first table may use the XRADIO converter's suffix for the row.
+    /// # Errors
+    /// When a row is unreadable or uses an ephemeris or polynomial direction.
+    pub fn same_fixed_field(
+        observation: &Table,
+        calibration: &Table,
+        row: usize,
+    ) -> Result<bool, ObservationError> {
+        let read = |table| {
+            require_units(table, "PHASE_DIR", "rad")?;
+            let field = MsField::new(table);
+            let name = field.name(row).map_err(storage)?;
+            let direction =
+                fixed_direction(table, &field, row)?.ok_or(ObservationError::Unsupported {
+                    what: "matching a moving or polynomial FIELD by its fixed direction",
+                })?;
+            Ok::<_, ObservationError>((name, direction))
+        };
+        let (name, direction) = read(observation)?;
+        let (persisted, reference) = read(calibration)?;
+        Ok((name == persisted || name == format!("{persisted}_{row}"))
+            && same_direction(&direction, &reference))
+    }
+
+    /// Prepare a reader for physical `SPECTRAL_WINDOW` identities by stored
+    /// row number. It reads only the requested rows and shares the table's
+    /// frequency measure descriptors across them.
+    /// # Errors
+    /// Construction refuses invalid units. The reader reports bad frequency
+    /// metadata in the requested row.
+    pub fn spectral_window_reader(
+        table: &Table,
+    ) -> Result<impl Fn(usize) -> Result<NamespaceWindow, ObservationError> + '_, ObservationError>
+    {
+        require_units(table, "CHAN_FREQ", "Hz")?;
+        require_units(table, "CHAN_WIDTH", "Hz")?;
+        let frequency_refs = crate::columns::frequency_columns::ChanFreqColumn::new(table);
+        Ok(move |row| {
+            Ok(NamespaceWindow {
+                name: string(table, row, "NAME")?,
+                frame: frequency_refs.frequency_reference(row).map_err(storage)?,
+                frequencies_hz: floats(table, row, "CHAN_FREQ")?,
+                widths_hz: floats(table, row, "CHAN_WIDTH")?,
+            })
+        })
+    }
+
+    /// Read the physical spectral window identities of a persisted
+    /// calibration table in its row order.
+    ///
+    /// # Errors
+    /// When the SPECTRAL_WINDOW subtable is unreadable or its frequency metadata
+    /// is invalid.
+    pub fn read_spectral_windows(
+        directory: &Path,
+    ) -> Result<Vec<NamespaceWindow>, ObservationError> {
+        let table = Table::open(TableOptions::new(directory.join("SPECTRAL_WINDOW")))
+            .map_err(|error| storage(MsError::from(error)))?;
+        windows(&table)
+    }
+
     /// The rows of the `ANTENNA`, `FIELD` and `SPECTRAL_WINDOW` subtables
     /// of the table at `directory`: a calibration table, or a
     /// MeasurementSet.
@@ -494,27 +651,31 @@ fn floats(table: &Table, row: usize, column: &str) -> Result<Vec<f64>, Observati
 }
 
 fn antennas(table: &Table) -> Result<Vec<NamespaceAntenna>, ObservationError> {
+    validate_position_column(table)?;
+    (0..table.row_count())
+        .map(|row| antenna_row(table, row))
+        .collect()
+}
+
+fn validate_position_column(table: &Table) -> Result<(), ObservationError> {
     require_units(table, "POSITION", "m")?;
     match measure_reference(table, "POSITION")?.as_deref() {
-        None | Some("ITRF") => {}
-        Some(_) => {
-            return Err(ObservationError::Unsupported {
-                what: "antenna positions in other than ITRF",
-            });
-        }
+        None | Some("ITRF") => Ok(()),
+        Some(_) => Err(ObservationError::Unsupported {
+            what: "antenna positions in other than ITRF",
+        }),
     }
-    (0..table.row_count())
-        .map(|row| {
-            let position = floats(table, row, "POSITION")?;
-            let position_m = <[f64; 3]>::try_from(position.as_slice())
-                .map_err(|_| invalid("an ANTENNA POSITION is not three values"))?;
-            Ok(NamespaceAntenna {
-                name: string(table, row, "NAME")?,
-                station: string(table, row, "STATION")?,
-                position_m,
-            })
-        })
-        .collect()
+}
+
+fn antenna_row(table: &Table, row: usize) -> Result<NamespaceAntenna, ObservationError> {
+    let position = floats(table, row, "POSITION")?;
+    let position_m = <[f64; 3]>::try_from(position.as_slice())
+        .map_err(|_| invalid("an ANTENNA POSITION is not three values"))?;
+    Ok(NamespaceAntenna {
+        name: string(table, row, "NAME")?,
+        station: string(table, row, "STATION")?,
+        position_m,
+    })
 }
 
 fn fields(table: &Table) -> Result<Vec<NamespaceField>, ObservationError> {
@@ -532,17 +693,7 @@ fn fields(table: &Table) -> Result<Vec<NamespaceField>, ObservationError> {
 }
 
 fn windows(table: &Table) -> Result<Vec<NamespaceWindow>, ObservationError> {
-    require_units(table, "CHAN_FREQ", "Hz")?;
-    require_units(table, "CHAN_WIDTH", "Hz")?;
-    let frequency_refs = crate::columns::frequency_columns::ChanFreqColumn::new(table);
     (0..table.row_count())
-        .map(|row| {
-            Ok(NamespaceWindow {
-                name: string(table, row, "NAME")?,
-                frame: frequency_refs.frequency_reference(row).map_err(storage)?,
-                frequencies_hz: floats(table, row, "CHAN_FREQ")?,
-                widths_hz: floats(table, row, "CHAN_WIDTH")?,
-            })
-        })
+        .map(NamespaceRows::spectral_window_reader(table)?)
         .collect()
 }

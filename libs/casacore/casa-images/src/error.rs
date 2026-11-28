@@ -20,6 +20,10 @@ use casa_tables::TableError;
 /// casacore `Images` module.
 #[derive(Debug, thiserror::Error)]
 pub enum ImageError {
+    /// The caller cancelled an image operation before it could complete.
+    #[error("image operation interrupted")]
+    Interrupted,
+
     /// A table-layer error occurred (opening, saving, cell access, etc.).
     #[error("table error: {0}")]
     Table(String),
@@ -90,7 +94,10 @@ impl From<TableError> for ImageError {
 
 impl From<LatticeError> for ImageError {
     fn from(e: LatticeError) -> Self {
-        Self::Lattice(e.to_string())
+        match e {
+            LatticeError::Interrupted => Self::Interrupted,
+            other => Self::Lattice(other.to_string()),
+        }
     }
 }
 
@@ -102,7 +109,10 @@ impl From<CoordinateError> for ImageError {
 
 impl From<RobustStatsError> for ImageError {
     fn from(e: RobustStatsError) -> Self {
-        Self::RobustStats(e.to_string())
+        match e {
+            RobustStatsError::Interrupted => Self::Interrupted,
+            other => Self::RobustStats(other.to_string()),
+        }
     }
 }
 
