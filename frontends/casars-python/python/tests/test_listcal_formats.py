@@ -53,3 +53,19 @@ def test_selected_msv4_file_listing_returns_typed_refusal(paired_calibration):
         tasks.listcal(vis=ms_v4, caltable="input.cal", listfile="out.txt", field="0", pagerows=0)
     assert failure.value.completion.parameter == "vis"
     assert not Path("out.txt").exists()
+
+
+def test_unreadable_msv2_listing_preserves_the_same_diagnostic(paired_calibration):
+    directory = Path("unreadable.ms")
+    directory.mkdir()
+    messages = []
+    for pagerows in (0, 1):
+        with pytest.raises(tasks.TaskExecutionError) as failure:
+            tasks.listcal(
+                vis=str(directory), caltable="input.cal", listfile="out.txt", pagerows=pagerows,
+            )
+        assert failure.value.completion.parameter == "vis"
+        messages.append(failure.value.completion.message)
+        assert not Path("out.txt").exists()
+    assert messages[0] == messages[1]
+    assert messages[0].startswith("storage error: table control file is missing")

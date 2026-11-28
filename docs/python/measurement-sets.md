@@ -116,4 +116,6 @@ Textual scan names are accepted because these prescriptions do not name a scan.
 `tasks.listcal` accepts a fixed-field MSv4 observation with `listfile`,
 `pagerows=0`, and the default field and antenna selections. Leave `spw`
 empty or use `spw="*"`. The listing retains the supplied observation path
-and describes the solutions in the CASA calibration table.
+and describes the solutions in the CASA calibration table. Its spectral-window
+IDs must agree with the MSv4 window identities and channel grids. The task
+refuses incompatible or missing windows before writing the listing.
