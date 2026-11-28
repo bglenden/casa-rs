@@ -231,15 +231,11 @@ pub(super) fn estimate(
         baselines * (bytes_per_sample + scratch_bytes_per_sample) + bytes_per_time,
         times,
     )?;
-    let blocks: Vec<Range<usize>> = if times_per_batch == 0 {
-        Vec::new()
-    } else {
-        resolved.times.blocks(times_per_batch).collect()
-    };
-    let batches = blocks.len();
+    let mut batches = 0;
     let (mut decode_units, mut decoded, mut selected) = (0, 0, 0);
     let variables = requested(dataset, arrays, roles);
-    for rows in blocks {
+    for rows in resolved.times.blocks(times_per_batch) {
+        batches += 1;
         for &(array, extent, delivered) in &variables {
             let subset = subset(array, rows.clone(), &request.channels, extent);
             let (units, elements) = chunk_cost(array, &subset)?;

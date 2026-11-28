@@ -210,6 +210,74 @@ fn resolve_field_predicate(ms: &MeasurementSet, value: &str) -> MsResult<Option<
     resolve_field_predicate_rows(&borrow_field_rows(&rows), value).map(Some)
 }
 
+/// Scratch for resolving a nonempty FIELD selector. Numeric intervals,
+/// matched rows, and decimal aliases grow independently. A NAME/CODE or
+/// pattern term can match every row, but it merges into the same row mask.
+/// Only one pattern matcher is live at a time.
+#[must_use]
+pub fn field_selector_workspace_bytes(fields: usize, value: &str) -> usize {
+    let mut terms = 0usize;
+    let mut matcher = 0usize;
+    let list = value
+        .strip_prefix('(')
+        .and_then(|inside| inside.strip_suffix(')'))
+        .unwrap_or(value);
+    for raw in field_terms(list) {
+        terms += 1;
+        let term = raw.trim_matches([' ', '\t', '\n']);
+        if let Some(prefix) = term.chars().next() {
+            let pattern = matches!(prefix, '"' | '/')
+                || (!term.starts_with(['<', '>'])
+                    && !term.contains('~')
+                    && !term.bytes().all(|byte| byte.is_ascii_digit())
+                    && !raw.bytes().all(field_name_byte));
+            if pattern {
+                matcher = matcher.max(FieldRegex::workspace_bytes(term, prefix == '/'));
+            }
+        }
+    }
+    let ranges = terms
+        .saturating_mul(2)
+        .max(4)
+        .saturating_mul(size_of::<(i32, i32)>());
+    let rows = fields
+        .saturating_mul(size_of::<bool>() + size_of::<i32>())
+        .saturating_add(
+            fields
+                .saturating_mul(2)
+                .max(4)
+                .saturating_mul(size_of::<i32>()),
+        );
+    let aliases = casa_core::memory::btree_node_bytes::<i32, i32>(fields.saturating_mul(2));
+    ranges
+        .saturating_add(rows)
+        .saturating_add(aliases)
+        .saturating_add(matcher)
+}
+
+fn field_list(value: &str) -> MsResult<&str> {
+    // MSFieldGram permits a single pair of parentheses around the list.
+    if let Some(inside) = value.strip_prefix('(') {
+        inside
+            .strip_suffix(')')
+            .ok_or_else(|| MsError::InvalidInput(format!("unclosed FIELD list {value:?}")))
+    } else {
+        Ok(value)
+    }
+}
+
+fn field_terms(list: &str) -> impl Iterator<Item = &str> {
+    let mut delimiter = None;
+    list.split(move |character| {
+        match delimiter {
+            Some(close) if character == close => delimiter = None,
+            None if matches!(character, '"' | '/') => delimiter = Some(character),
+            _ => {}
+        }
+        character == ',' && delimiter.is_none()
+    })
+}
+
 /// The FIELD rows of `fields` that the nonempty selector `value` names,
 /// sorted and unique; possibly none.
 fn resolve_field_predicate_rows(
@@ -217,25 +285,8 @@ fn resolve_field_predicate_rows(
     value: &str,
 ) -> MsResult<Vec<i32>> {
     let mut ranges = Vec::new();
-    let mut ids = Vec::new();
-    // MSFieldGram permits a single pair of parentheses around the list.
-    let list = if let Some(inside) = value.strip_prefix('(') {
-        inside
-            .strip_suffix(')')
-            .ok_or_else(|| MsError::InvalidInput(format!("unclosed FIELD list {value:?}")))?
-    } else {
-        value
-    };
-    let mut delimiter = None;
-    let parts = list.split(|character| {
-        match delimiter {
-            Some(close) if character == close => delimiter = None,
-            None if matches!(character, '"' | '/') => delimiter = Some(character),
-            _ => {}
-        }
-        character == ',' && delimiter.is_none()
-    });
-    for raw_part in parts {
+    let mut selected = vec![false; fields.len()];
+    for raw_part in field_terms(field_list(value)?) {
         if raw_part.is_empty() {
             return Err(MsError::InvalidInput(format!(
                 "empty term in field selector {value:?}"
@@ -244,11 +295,13 @@ fn resolve_field_predicate_rows(
         let term = raw_part.trim_matches([' ', '\t', '\n']);
         if let Some(delimiter @ ('"' | '/')) = term.chars().next() {
             let pattern = field_delimited_pattern(raw_part, delimiter)?;
-            ids.extend(resolve_field_pattern(fields, &pattern, delimiter == '/')?);
+            for id in resolve_field_pattern(fields, &pattern, delimiter == '/')? {
+                selected[id as usize] = true;
+            }
             continue;
         }
         if term.starts_with(['<', '>']) {
-            append_field_comparison(fields, raw_part, &mut ids)?;
+            select_field_comparison(fields, raw_part, &mut selected)?;
             continue;
         }
         if let Some(range) = field_id_range(term)? {
@@ -267,7 +320,9 @@ fn resolve_field_predicate_rows(
                     "invalid bare FIELD term {raw_part:?}"
                 )));
             }
-            ids.extend(resolve_field_pattern(fields, name, false)?);
+            for id in resolve_field_pattern(fields, name, false)? {
+                selected[id as usize] = true;
+            }
             continue;
         }
         let matching = field_ids_by_name_or_code(
@@ -280,10 +335,19 @@ fn resolve_field_predicate_rows(
                 "field selector name {name:?} did not match any FIELD rows"
             )));
         }
-        ids.extend(matching);
+        for id in matching {
+            selected[id as usize] = true;
+        }
     }
-    append_numeric_fields(fields, ranges, &mut ids);
-    Ok(dedup_i32(ids))
+    select_numeric_fields(fields, ranges, &mut selected);
+    let mut ids = Vec::with_capacity(selected.iter().filter(|&&holds| holds).count());
+    ids.extend(
+        selected
+            .into_iter()
+            .enumerate()
+            .filter_map(|(id, holds)| holds.then_some(id as i32)),
+    );
+    Ok(ids)
 }
 
 /// MSFieldGram reads the full IDENTIFIER before SIDENTIFIER on a tie.
@@ -355,10 +419,10 @@ fn field_id_range(term: &str) -> MsResult<Option<(i32, i32)>> {
 }
 
 /// MSFieldGram accepts LT INT, GT INT and GT INT AMPERSAND LT INT.
-fn append_field_comparison(
+fn select_field_comparison(
     fields: &[FieldSelectorRow<'_>],
     text: &str,
-    ids: &mut Vec<i32>,
+    selected: &mut [bool],
 ) -> MsResult<()> {
     let integer = |digits: &str| {
         let digits = digits.trim_matches([' ', '\t', '\n']);
@@ -382,12 +446,15 @@ fn append_field_comparison(
     let (lower, upper) = bounds.ok_or_else(|| {
         MsError::InvalidInput(format!("invalid FIELD ID comparison {text:?} (#54)"))
     })?;
-    let start = ids.len();
-    ids.extend(fields.iter().enumerate().filter_map(|(row, field)| {
-        let row = i32::try_from(row).ok()?;
-        (!field.flagged && row > lower && upper.is_none_or(|upper| row < upper)).then_some(row)
-    }));
-    if ids.len() == start {
+    let mut matched = false;
+    for (index, field) in fields.iter().enumerate() {
+        let Ok(row) = i32::try_from(index) else { break };
+        if !field.flagged && row > lower && upper.is_none_or(|upper| row < upper) {
+            selected[index] = true;
+            matched = true;
+        }
+    }
+    if !matched {
         return Err(MsError::InvalidInput(format!(
             "FIELD ID comparison {text:?} did not match any unflagged FIELD rows"
         )));
@@ -399,10 +466,10 @@ fn append_field_comparison(
 /// unflagged decimal NAME, then the first unflagged decimal CODE. Search the
 /// stored labels in the requested intervals, so their numeric width does
 /// not control how much work the fallback does.
-fn append_numeric_fields(
+fn select_numeric_fields(
     fields: &[FieldSelectorRow<'_>],
     ranges: Vec<(i32, i32)>,
-    ids: &mut Vec<i32>,
+    selected: &mut [bool],
 ) {
     let Some(last) = fields.len().checked_sub(1) else {
         return;
@@ -410,7 +477,9 @@ fn append_numeric_fields(
     let last = i32::try_from(last).unwrap_or(i32::MAX);
     let ranges = canonical_numeric_ranges(ranges);
     for &(start, end) in &ranges {
-        ids.extend(start..=end.min(last));
+        if start <= last {
+            selected[start as usize..=end.min(last) as usize].fill(true);
+        }
     }
     if ranges.last().is_none_or(|&(_, end)| end <= last) {
         return;
@@ -442,7 +511,9 @@ fn append_numeric_fields(
             aliases.entry(number).or_insert(row as i32);
         }
     }
-    ids.extend(aliases.into_values());
+    for row in aliases.into_values() {
+        selected[row as usize] = true;
+    }
 }
 
 /// A FIELD pattern matches a complete trimmed NAME or, if none match,

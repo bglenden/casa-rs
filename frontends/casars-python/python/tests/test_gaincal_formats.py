@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from shutil import copytree
 import sys
 import tarfile
 
@@ -124,6 +125,67 @@ def test_gaincal_resolves_field_and_scan_through_the_store(tmp_path, monkeypatch
         np.testing.assert_array_equal(table.getcol("SCAN_NUMBER"), np.ones(10))
     finally:
         assert table.close()
+
+
+def test_gaincal_uses_only_fields_of_the_base_group(tmp_path, monkeypatch):
+    store = "ms_trial.ps.zarr"
+    prepare_store(tmp_path, monkeypatch, store)
+    options = dict(vis=store, field="0", solint="60s", refant="0", smodel=[1, 0, 0, 0])
+    tasks.gaincal(caltable="reference.cal", **options)
+
+    # A second partition has the selected field in its rephased group only.
+    # Its centroid representation would be unsupported if gaincal bound it.
+    copied = Path(store) / "ms_trial_1"
+    copytree(Path(store) / "ms_trial_0", copied)
+    base_fields = copied / "field_and_source_base_xds"
+    rephased_fields = copied / "field_and_source_rephased_xds"
+    copytree(base_fields, rephased_fields)
+    phases = base_fields / "FIELD_PHASE_CENTER_DIRECTION"
+    metadata = json.loads((phases / "zarr.json").read_text())
+    assert metadata["shape"] == [1, 2]
+    assert metadata["chunk_grid"]["configuration"]["chunk_shape"] == [1, 2]
+    metadata["codecs"] = metadata["codecs"][:1]
+    (phases / "zarr.json").write_text(json.dumps(metadata))
+    (phases / "c/0/0").write_bytes(np.array([[0.2, 0.1]], dtype="<f8").tobytes())
+    header = copied / "zarr.json"
+    metadata = json.loads(header.read_text())
+    groups = metadata["attributes"]["data_groups"]
+    groups["rephased"] = dict(groups["base"], field_and_source=rephased_fields.name)
+    header.write_text(json.dumps(metadata))
+    copytree(copied / "TIME_CENTROID", copied / "TIME_CENTROID_EXTRA_PRECISION")
+
+    reply = tasks.gaincal(caltable="field.cal", **options)
+    tasks.gaincal(caltable="field-and-scan.cal", scan="1", **options)
+    np.testing.assert_array_equal(reply["selectvis"]["field"], [0])
+
+    def read_columns(path):
+        table = tools.table()
+        assert table.open(path)
+        try:
+            assert table.nrows() == 10
+            return [table.getcol(col) for col in ("FIELD_ID", "SCAN_NUMBER", "CPARAM", "FLAG")]
+        finally:
+            assert table.close()
+
+    reference = read_columns("reference.cal")
+    for path in ("field.cal", "field-and-scan.cal"):
+        for actual, expected in zip(read_columns(path), reference):
+            np.testing.assert_array_equal(actual, expected)
+
+
+def test_gaincal_field_preserves_msv2_missing_flag_row_error(tmp_path, monkeypatch):
+    store = "ms_trial.ms"
+    prepare_store(tmp_path, monkeypatch, store)
+    table = tools.table()
+    assert table.open(f"{store}/FIELD", nomodify=False)
+    assert table.removecols("FLAG_ROW")
+    assert table.close()
+
+    with pytest.raises(tasks.TaskExecutionError, match="FLAG_ROW"):
+        tasks.gaincal(
+            vis=store, caltable="solved.cal", field="trial*", solint="60s", smodel=[1, 0, 0, 0],
+        )
+    assert not Path("solved.cal").exists()
 
 
 @pytest.mark.parametrize(("parameter", "value"), [("field", "missing-field*"), ("scan", "scan-A"), ("scan", "999")])

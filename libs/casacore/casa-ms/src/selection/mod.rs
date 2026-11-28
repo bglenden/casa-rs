@@ -58,7 +58,7 @@ pub use antenna_expr::{
     AntennaRow, BaselineSelection, resolve_antenna_lists, resolve_antenna_selector,
 };
 pub use edit::{MsSelectorEditContext, MsSelectorKind, validate_ms_selector_edit};
-pub use parser::{FieldSelectorRow, resolve_field_selector_rows};
+pub use parser::{FieldSelectorRow, field_selector_workspace_bytes, resolve_field_selector_rows};
 pub use spw_expr::{
     ChannelFrequencyRange, ChannelRange, DataDescriptionRow, SpectralWindowRow, SpwSelection,
     resolve_spw_selector,

@@ -10,7 +10,9 @@ use casa_ms::observation_io::{
     CalibrationObservation, CalibrationPartition, is_msv4_store, with_calibration_observation,
 };
 use casa_ms::selection::syntax::parse_numeric_row_id_ranges;
-use casa_ms::selection::{FieldSelectorRow, resolve_field_selector_rows};
+use casa_ms::selection::{
+    FieldSelectorRow, field_selector_workspace_bytes, resolve_field_selector_rows,
+};
 use casa_ms::{MeasurementSet, MsSelection};
 use casa_observation::{
     AccessRequest, BatchBuffers, Catalogue, CorrelationRequest, FieldId, FieldSelection, GroupKey,
@@ -143,17 +145,50 @@ impl GainObservationSelection {
         partition: &PartitionEntry,
         persisted: &CalibrationPartition<'_>,
     ) -> bool {
-        let fields = matches!(self.fields, FieldSelection::All);
-        let scans = self.scans.is_none();
-        (fields || partition.fields.iter().any(|&id| self.fields.holds(id)))
-            && (scans || partition.scans.iter().any(|&id| self.holds_scan(Some(id))))
-            && (fields
-                || scans
-                || persisted.fields_and_scans.is_none_or(|(fields, scans)| {
-                    fields.iter().zip(scans).any(|(&field, &scan)| {
+        let scans_are_selected = self.scans.is_some();
+        if scans_are_selected && !partition.scans.iter().any(|&id| self.holds_scan(Some(id))) {
+            return false;
+        }
+        matches!(self.fields, FieldSelection::All)
+            || persisted.base_fields.is_some_and(|base| {
+                match (scans_are_selected, persisted.scans) {
+                    (true, Some(scans)) => base.iter().zip(scans).any(|(&field, &scan)| {
                         self.fields.holds(field) && self.holds_scan(Some(scan))
-                    })
-                }))
+                    }),
+                    _ => base.iter().any(|&id| self.fields.holds(id)),
+                }
+            })
+    }
+
+    fn batch_budget(
+        &self,
+        persisted: &CalibrationPartition<'_>,
+        budget: usize,
+    ) -> Result<usize, ObservationError> {
+        if matches!(self.fields, FieldSelection::All) {
+            return Ok(budget);
+        }
+        let mut runs = 0usize;
+        let mut selected = false;
+        for &field in persisted.base_fields.unwrap_or_default() {
+            let holds = self.fields.holds(field);
+            runs += usize::from(holds && !selected);
+            selected = holds;
+        }
+        // The resolved TimeRuns grows by pushing one range per run. The
+        // cursor and the traversal's estimates each keep an exact clone.
+        let bytes = runs
+            .saturating_mul(2)
+            .max(4)
+            .saturating_add(runs.saturating_mul(2))
+            .saturating_mul(size_of::<std::ops::Range<usize>>());
+        budget
+            .checked_sub(bytes)
+            .ok_or(ObservationError::OverBudget {
+                what: "gaincal selected time ranges",
+                required: bytes,
+                budget,
+            })
     }
 
     fn retained_bytes(&self) -> usize {
@@ -179,11 +214,10 @@ fn selector_error(parameter: &'static str, reason: impl std::fmt::Display) -> Ga
 
 fn selector_bytes(catalogue: &Catalogue, field: Option<&str>, scan: Option<&str>) -> usize {
     let fields = field.map_or(0, |selector| {
-        // Each term can collect all FIELD rows before duplicates are removed.
-        let ids_per_row = selector.split(',').count().saturating_mul(2).max(4);
-        catalogue.fields.len().saturating_mul(
-            size_of::<FieldSelectorRow<'_>>() + ids_per_row.saturating_mul(size_of::<i32>()),
-        )
+        let fields = catalogue.fields.len();
+        let input_rows =
+            fields.saturating_mul(size_of::<FieldSelectorRow<'_>>() + size_of::<FieldId>());
+        input_rows.saturating_add(field_selector_workspace_bytes(fields, selector))
     });
     let scans = scan.map_or(0, |selector| {
         selector
@@ -213,6 +247,22 @@ pub(crate) fn solve(
     let opening = crate::timing::Phase::start("gain_observation_open");
     let result = with_calibration_observation(path, admit_msv2, |input| {
         drop(opening);
+        if !is_msv4
+            && request
+                .selection
+                .field
+                .as_deref()
+                .is_some_and(|text| !text.trim().is_empty())
+            && input
+                .observation
+                .catalogue()
+                .fields
+                .iter()
+                .any(|field| field.flagged.is_none())
+        {
+            // CASA's legacy MSv2 selector requires a defined FIELD.FLAG_ROW.
+            return Ok(None);
+        }
         let selection = match GainObservationSelection::resolve(&input, &request.selection) {
             Err(GainSolveError::ObservationSelector { .. }) if !is_msv4 => return Ok(None),
             result => result?,
@@ -309,7 +359,7 @@ fn unrepresented_layout(
                 "a calibration partition without a base visibility data group",
             ));
         }
-        let Some((fields, scans)) = persisted.fields_and_scans else {
+        let Some((fields, scans)) = persisted.base_fields.zip(persisted.scans) else {
             return Ok(Some(
                 "a calibration data group without per-time field and scan identities",
             ));
@@ -454,6 +504,7 @@ fn read_partition(
 ) -> Result<(), GainSolveError> {
     let partition = input.observation.catalogue().partition(id);
     let persisted = &input.partitions[id.0 as usize];
+    let budget = selection.batch_budget(persisted, budget)?;
     let request = partition_access(input, id, budget, selection.fields.clone());
     let mut traversal = input.observation.bind_read(&request)?;
     let mut buffers = BatchBuffers::default();
@@ -702,7 +753,8 @@ mod tests {
                 window: 0,
                 data_description: 0,
                 array: Some(0),
-                fields_and_scans: Some((&fields, scans)),
+                base_fields: Some(&fields),
+                scans: Some(scans),
             };
             let disjoint = [partition(&scans), partition(&disjoint_scans)];
             let all = GainObservationSelection::default();
@@ -732,6 +784,76 @@ mod tests {
             );
         })
         .unwrap();
+    }
+
+    #[test]
+    fn field_selector_admission_charges_many_terms_independently_of_field_count() {
+        let root = trial_ms();
+        with_calibration_observation(&root.path().join("ms_trial.ms"), admit_msv2, |mut input| {
+            let repeated = vec!["0"; 1_025].join(",");
+            input.available_bytes = 12 * 1_024;
+            let request = MsSelection {
+                field: Some(repeated),
+                ..MsSelection::default()
+            };
+            assert!(matches!(
+                GainObservationSelection::resolve(&input, &request),
+                Err(GainSolveError::Observation(ObservationError::OverBudget {
+                    what: "gaincal field and scan selectors",
+                    required,
+                    budget: 12_288,
+                })) if required >= 2_048 * size_of::<(i32, i32)>()
+            ));
+
+            let mut catalogue = Catalogue::clone(input.observation.catalogue());
+            catalogue.fields.resize(10_000, catalogue.fields[0].clone());
+            let many_ids = (0..10_000)
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            assert!(selector_bytes(&catalogue, Some(&many_ids), None) <= 2 * 1024 * 1024);
+            let fields = vec![
+                FieldSelectorRow {
+                    name: "example",
+                    code: None,
+                    flagged: false
+                };
+                catalogue.fields.len()
+            ];
+            assert_eq!(
+                resolve_field_selector_rows(&fields, &many_ids).unwrap(),
+                (0..10_000).collect::<Vec<_>>()
+            );
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn sparse_selected_runs_are_charged_before_binding() {
+        let fields: Vec<_> = (0..100_000).map(|time| FieldId(time % 2)).collect();
+        let mut persisted = CalibrationPartition {
+            window: 0,
+            data_description: 0,
+            array: Some(0),
+            base_fields: Some(&fields),
+            scans: None,
+        };
+        let selection = GainObservationSelection {
+            fields: FieldSelection::Only(vec![FieldId(0)]),
+            scans: None,
+        };
+        assert!(matches!(
+            selection.batch_budget(&persisted, 4_096),
+            Err(ObservationError::OverBudget {
+                what: "gaincal selected time ranges",
+                required,
+                budget: 4_096,
+            }) if required >= 3 * 50_000 * size_of::<std::ops::Range<usize>>()
+        ));
+        let contiguous = vec![FieldId(0); fields.len()];
+        persisted.base_fields = Some(&contiguous);
+        let budget = selection.batch_budget(&persisted, 4_096).unwrap();
+        assert!((4_000..4_096).contains(&budget));
     }
 
     #[test]
