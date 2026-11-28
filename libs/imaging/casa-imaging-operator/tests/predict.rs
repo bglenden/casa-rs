@@ -452,6 +452,53 @@ fn linear_prediction_preserves_the_selected_spacing_across_a_gap() {
     }
 }
 
+/// Both interpolation stencils retain the integer model samples under a
+/// one-ULP perturbation of the native pair that sets the fine-grid count.
+#[test]
+fn source_frame_prediction_uses_the_same_stable_integer_count() {
+    let first = 1.0e9_f64;
+    let axis = SpectralAxis::new(first, 3.0, 3).expect("axis");
+    let shifted = [
+        first - 1.0,
+        first.next_up(),
+        first + 1.0,
+        first + 2.0,
+        first + 3.0,
+        first + 4.0,
+        first + 5.0,
+        first + 6.0,
+    ];
+    let mut exact = shifted;
+    exact[1] = first;
+    for kernel in [SpectralKernel::Linear, SpectralKernel::Cubic] {
+        let resolved = SpectralResampler::channel_local(
+            axis.clone().with_integral_width_at_coordinate_precision(),
+            kernel,
+        );
+        let raw_floor = SpectralResampler::channel_local(axis.clone(), kernel);
+        let operator = operator(GridPrecision::F64, resolved.basis(), &XX_YY, &STOKES_I);
+        let model = point_model(&operator, &[1.0, 4.0, 10.0]);
+        let sample = |resampler, native: &[f64]| {
+            predict(
+                resampler,
+                &operator,
+                &model,
+                native,
+                &[false; 16],
+                false,
+                0.0,
+            )[4]
+        };
+        // The tested channel is unchanged. Only the represented spacing
+        // used to choose the interpolation grid has changed.
+        let resolved_shifted = sample(&resolved, &shifted);
+        let resolved_exact = sample(&resolved, &exact);
+        let unresolved = sample(&raw_floor, &shifted);
+        assert_eq!(resolved_shifted, resolved_exact, "{kernel:?}");
+        assert!((unresolved - resolved_exact).norm() > 0.1, "{kernel:?}");
+    }
+}
+
 /// CASA degrids the output channels `FTMachine::getInterpolateArrays` leaves
 /// unflagged: with `chanMap` −1 replaced by its maximum, from its minimum to
 /// its maximum, from channel 0 when a native lies in the halo (−2) or the

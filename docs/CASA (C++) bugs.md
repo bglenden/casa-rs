@@ -910,6 +910,35 @@ channels are adjacent. The fine gridding and prediction coordinates and
 prediction halo agree with the resident cube through gaps and uneven
 channel spacing.
 
+## Last-bit widths can switch the fine grid of a tracked cube
+
+CASA 6.7.6.14 uses the floor of the ratio of two channel-centre
+subtractions in `FTMachine::interpolateFrequencyTogrid` and
+`interpolateFrequencyFromgrid`. On the public 12-channel Venus
+`cubesource` observation, a width of three native channels has a
+reported spacing of about 732454.026 Hz. At the same REST origin,
+changing the width by 0.0001220703125 Hz (four coordinate ULPs)
+leaves WCS within the comparison tolerance and changes the standard
+linear cube's first three sums of weights from 37378.4766 to 56067.7148.
+Its worst residual plane changes by 0.318 NRMS. The mosaic comparison
+also differs in 1,359 primary-beam mask pixels. Nearest and the
+731 kHz and 734 kHz linear controls agree with casa-rs.
+
+The endpoint support can also change at a fixed width. Lowering the
+REST origin by 0.0023193359375 Hz at about 261.8 GHz changes CASA's
+last mosaic plane from 130727.0859 to 131578.3125 in sum of weights,
+with about 0.0357 residual NRMS and 204 primary-beam mask differences.
+These measurements use the same visibility data and fixed three-sample
+width for both CASA outputs.
+
+For tracked REST-frame interpolation, casa-rs uses the corresponding
+integer count when the channel-centre precision cannot resolve the
+width from that many native intervals. Gridding, mosaic beam-cell
+selection and model prediction use that count. Widths resolved between
+integers retain the floor rule. The
+`source_frame_bin_count_is_stable_at_channel_coordinate_precision`
+law pins the integer and both neighbouring controls.
+
 ## The cube Briggs weightor grids and looks up its density in different uvw frames
 
 - Date noted: 2026-10-15

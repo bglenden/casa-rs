@@ -730,6 +730,9 @@ fn resampler(problem: &CompiledProblem, basis: Basis) -> Result<SpectralResample
             axis = axis.with_exact_width_from_below();
         }
     }
+    if spectral.output_frame() == FrequencyFrame::Rest {
+        axis = axis.with_integral_width_at_coordinate_precision();
+    }
     Ok(SpectralResampler::channel_local(axis, kernel)
         .with_terminal_plane_outside(spectral.terminal_plane_outside()))
 }

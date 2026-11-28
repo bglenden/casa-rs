@@ -917,7 +917,7 @@ impl SpectralResampler {
         let per_channel = if legacy {
             1
         } else {
-            axis.fine_samples_per_plane(width)
+            axis.fine_samples_per_plane(width, native_width_hz, native)
         };
         let fine_increment = axis.increment_hz / per_channel as f64;
         let fine_start = if per_channel > 1 {

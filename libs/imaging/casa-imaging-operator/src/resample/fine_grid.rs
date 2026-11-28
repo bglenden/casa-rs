@@ -2,24 +2,71 @@
 
 use super::{Order, RowSpectrum, Sampling, SpectralAxis, SpectralResampler};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum IntegralWidths {
+    Floor,
+    FromBelow,
+    AtCoordinatePrecision,
+}
+
 impl SpectralAxis {
     /// At an exact integral width ratio above one, use the fine-grid count
     /// from below. This resolves CASA's TOPO round-trip width discontinuity
     /// for the LSRK source grid without changing interpolation bounds.
     #[must_use]
     pub const fn with_exact_width_from_below(mut self) -> Self {
-        self.exact_width_from_below = true;
+        self.integral_widths = IntegralWidths::FromBelow;
         self
     }
 
-    pub(super) fn fine_samples_per_plane(&self, width: f64) -> usize {
+    /// On a linear axis, use the corresponding integer fine-grid count
+    /// when represented channel centres cannot distinguish the requested
+    /// width from that many native intervals. Source-frame cubes use this
+    /// to avoid changing the count when shifted channel centres are rounded.
+    #[must_use]
+    pub const fn with_integral_width_at_coordinate_precision(mut self) -> Self {
+        if self.tabular.is_none() {
+            self.integral_widths = IntegralWidths::AtCoordinatePrecision;
+        }
+        self
+    }
+
+    pub(super) fn fine_samples_per_plane(
+        &self,
+        width: f64,
+        native_step: f64,
+        native: &[f64],
+    ) -> usize {
         let whole = width.floor();
-        if self.exact_width_from_below && width > 1.0 && width == whole {
-            (whole as usize).saturating_sub(1)
-        } else {
-            (whole as usize).max(1)
+        match self.integral_widths {
+            IntegralWidths::FromBelow if width > 1.0 && width == whole => {
+                (whole as usize).saturating_sub(1)
+            }
+            IntegralWidths::AtCoordinatePrecision => {
+                let integer = width.round();
+                if integer > whole && integer > 1.0 {
+                    // One representable step at each of the two native and
+                    // two output centres. Compare in native-width units.
+                    let native_precision = coordinate_ulp(native[0]) + coordinate_ulp(native[1]);
+                    let output_precision = coordinate_ulp(self.first_hz)
+                        + coordinate_ulp(self.first_hz + self.increment_hz);
+                    let nominal_step = self.increment_hz.abs() / integer;
+                    if (nominal_step - native_step.abs()).abs()
+                        <= native_precision + output_precision / integer
+                    {
+                        return integer as usize;
+                    }
+                }
+                (whole as usize).max(1)
+            }
+            _ => (whole as usize).max(1),
         }
     }
+}
+
+fn coordinate_ulp(hz: f64) -> f64 {
+    let magnitude = hz.abs();
+    magnitude.next_up() - magnitude
 }
 
 /// CASA's fine frequency grid for linear interpolation: the output centres
@@ -63,7 +110,7 @@ impl<'a> FineGrid<'a> {
                 tabular_fine: None,
             });
         }
-        let per_output = output.fine_samples_per_plane(width);
+        let per_output = output.fine_samples_per_plane(width, native_increment_hz, native);
         let fine_abs = output_increment_hz.abs() / per_output as f64;
         if output.tabular.is_some() {
             let step = fine_abs.copysign(native_increment_hz);
@@ -216,8 +263,8 @@ impl SpectralResampler {
         if width <= 1.0 || native_step == 0.0 {
             return centres;
         }
-        let step =
-            (output_step / output.fine_samples_per_plane(width) as f64).copysign(native_step);
+        let count = output.fine_samples_per_plane(width, native_step, &native);
+        let step = (output_step / count as f64).copysign(native_step);
         let Some(fine) = ClippedFineGrid::compile(&output, &native, step, *order) else {
             return centres;
         };
@@ -235,24 +282,33 @@ impl SpectralResampler {
 /// The most fine-grid points a row of `spectrum` visits against an output
 /// axis of `channels` channels `increment_hz` apart.
 ///
-/// [`FineGrid`] takes `p = max(1, floor(|width| / first spacing))` points
-/// per output channel at most, `|width| / p` apart. A row visits each point at
-/// most once and only within its span: at most `p · channels` points and
-/// `floor(span / spacing) + 1` of them, plus one for rounding. For evenly
-/// spaced channels that is about one per channel or per output plane. A
-/// one-channel axis or row maps like `nearest`, one sample per channel.
-pub(super) fn linear_samples(increment_hz: f64, channels: usize, spectrum: RowSpectrum) -> usize {
-    if channels <= 1 || spectrum.channels <= 1 {
-        return spectrum.channels;
+/// A row visits each fine point at most once and only within its span.
+impl SpectralAxis {
+    /// A bound of `p · channels` points for `p` fine samples per plane,
+    /// and `floor(span / spacing) + 1` points in the native span, plus one
+    /// for rounding. One-channel axes and rows map like nearest.
+    pub(super) fn linear_samples(&self, channels: usize, spectrum: RowSpectrum) -> usize {
+        if channels <= 1 || spectrum.channels <= 1 {
+            return spectrum.channels;
+        }
+        if spectrum.first_spacing_hz <= 0.0 {
+            return spectrum.channels.max(channels) + 1;
+        }
+        let width = self.increment_hz.abs();
+        let ratio = width / spectrum.first_spacing_hz;
+        let per_output = if self.integral_widths == IntegralWidths::AtCoordinatePrecision {
+            // A contributing row's native span reaches the image. Its
+            // centres are at most one width and a row span beyond an edge.
+            let highest = self.first_hz.abs().max(self.last_hz().abs());
+            let native_bound = highest + width + spectrum.span_hz;
+            self.fine_samples_per_plane(ratio, spectrum.first_spacing_hz, &[native_bound; 2]) as f64
+        } else {
+            ratio.floor().max(1.0)
+        };
+        let within = (spectrum.span_hz * per_output / width).floor() + 2.0;
+        // Saturating: a bound past the address space fails its allocation.
+        (per_output * channels as f64).min(within) as usize
     }
-    if spectrum.first_spacing_hz <= 0.0 {
-        return spectrum.channels.max(channels) + 1;
-    }
-    let width = increment_hz.abs();
-    let per_output = (width / spectrum.first_spacing_hz).floor().max(1.0);
-    let within = (spectrum.span_hz * per_output / width).floor() + 2.0;
-    // Saturating: a bound past the address space fails its allocation.
-    (per_output * channels as f64).min(within) as usize
 }
 
 #[cfg(test)]
@@ -297,5 +353,40 @@ mod tests {
                 .mosaic_buffer_frequencies(descending),
             [105.5, 104.5, 103.5, 102.5, 101.5, 100.5],
         );
+    }
+    #[test]
+    fn source_frame_bin_count_is_stable_at_channel_coordinate_precision() {
+        let first_hz = 261_766_258_984.723_08;
+        let bin_hz = 732_454.026_062_011_7;
+        let first = 261_765_770_681.928_28_f64;
+        let second = 261_766_014_833.270_3_f64;
+        let centres = [first, second];
+        let shifted = [first, second.next_up()];
+        let axis = SpectralAxis::new(first_hz, bin_hz, 4).unwrap();
+        let stable = axis.clone().with_integral_width_at_coordinate_precision();
+        let row = RowSpectrum {
+            channels: 12,
+            first_spacing_hz: shifted[1] - shifted[0],
+            span_hz: 11.0 * (shifted[1] - shifted[0]),
+        };
+        assert_eq!(axis.samples_per_row(row), 8);
+        assert_eq!(stable.samples_per_row(row), 12);
+        for pair in [centres, shifted] {
+            let counts = |target: &SpectralAxis, order| {
+                FineGrid::compile(target, &pair, order, None)
+                    .unwrap()
+                    .per_output
+            };
+            for order in [Order::Linear, Order::Cubic] {
+                assert_eq!(counts(&axis, order), if pair == centres { 3 } else { 2 });
+                assert_eq!(counts(&stable, order), 3);
+                for (width, expected) in [(731_000.0, 2), (734_000.0, 3)] {
+                    let control = SpectralAxis::new(first_hz, width, 4)
+                        .unwrap()
+                        .with_integral_width_at_coordinate_precision();
+                    assert_eq!(counts(&control, order), expected);
+                }
+            }
+        }
     }
 }

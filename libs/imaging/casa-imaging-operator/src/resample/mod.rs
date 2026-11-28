@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use casa_core::measures::PreparedFrequencyConversion;
 use num_complex::{Complex32, Complex64};
 
-use self::fine_grid::{FineGrid, linear_samples};
+use self::fine_grid::{FineGrid, IntegralWidths};
 pub use self::prediction::{PlacedRow, PredictionScratch};
 use self::tabular::TabularAxis;
 use crate::accumulator::PlaneRange;
@@ -135,7 +135,7 @@ pub struct SpectralAxis {
     channels: u32,
     reporting_axis: Option<ReportingAxis>,
     tabular: Option<TabularAxis>,
-    exact_width_from_below: bool,
+    integral_widths: IntegralWidths,
 }
 
 /// A retained LSRK axis's reported image coordinate and its conversion.
@@ -174,7 +174,7 @@ impl SpectralAxis {
             channels,
             reporting_axis: None,
             tabular: None,
-            exact_width_from_below: false,
+            integral_widths: IntegralWidths::Floor,
         })
     }
 
@@ -1223,7 +1223,7 @@ impl SpectralResampler {
         match (shape.rule, &self.sampling) {
             (DensityCellRule::Cube, Sampling::Interpolated(axis, _)) => {
                 axis.padded(shape.padding).map_or_else(
-                    |_| linear_samples(axis.increment_hz, shape.planes, spectrum),
+                    |_| axis.linear_samples(shape.planes, spectrum),
                     |padded| padded.samples_per_row(spectrum),
                 )
             }
