@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Compare unpaged listcal files from both formats with CASA."""
+"""Compare listcal files and terminal output from both formats with CASA."""
 
 import argparse
 import json
 from pathlib import Path
 import re
 import shutil
+import subprocess
+import sys
 import tarfile
 
 import casatasks as casa
@@ -23,9 +25,9 @@ TRIAL = (
 )
 
 
-def list_file(engine, vis, caltable, output, **selectors):
+def list_file(engine, vis, caltable, output, *, pagerows=0, **selectors):
     assert engine.listcal(
-        vis=str(vis), caltable=str(caltable), listfile=str(output), pagerows=0, **selectors,
+        vis=str(vis), caltable=str(caltable), listfile=str(output), pagerows=pagerows, **selectors,
     ) is None
     return output.read_bytes()
 
@@ -172,6 +174,66 @@ def check_field_selection(root, native):
     return "PHASE only"
 
 
+TERMINAL_LISTING = """
+import json
+import sys
+if sys.argv[1] == 'casa':
+    from casatasks import listcal
+else:
+    from casars.tasks import listcal
+assert listcal(vis=sys.argv[2], caltable=sys.argv[3], pagerows=int(sys.argv[4]),
+               **json.loads(sys.argv[5])) is None
+"""
+
+
+def terminal_triplet(ms_v2, ms_v4, table, page, selectors, response, *, success=True):
+    transcripts = []
+    for engine, source in (("casa", ms_v2), ("native", ms_v2), ("native", ms_v4)):
+        run = subprocess.run(
+            [sys.executable, "-c", TERMINAL_LISTING, engine, str(source), str(table),
+             str(page), json.dumps(selectors)],
+            input=response, text=True, capture_output=True, timeout=40,
+        )
+        assert (run.returncode == 0) == success, (engine, source, run.stderr)
+        transcripts.append(run.stdout)
+    same_text(transcripts[1], transcripts[0])
+    same_text(transcripts[2], transcripts[0].replace(f"MS name = {ms_v2}", f"MS name = {ms_v4}"))
+    return transcripts[0]
+
+
+def check_terminal_and_paged_files(root, ms_v2, ms_v4, gain, bandpass, native):
+    selected = dict(field="0", antenna="1", spw="0:0~2")
+    results = {}
+    for label, page, reply in (
+        ("zero", 0, ""), ("negative", -2, ""), ("all", 5, "a\n"),
+        ("continue-quit", 5, "\nq\n"), ("quit", 5, "q\n"), ("eof", 5, ""),
+    ):
+        text = terminal_triplet(ms_v2, ms_v4, bandpass, page, selected, reply)
+        assert ("RETURN to continue" in text) == (page > 0)
+        (root / f"terminal-{label}-casa.txt").write_text(text)
+        results[f"terminal-{label}"] = len(text)
+
+    partial = dict(antenna="0", spw="0:0,1:1")
+    for label, reply, success in (("quit", "q\n", True), ("eof", "", False)):
+        text = terminal_triplet(ms_v2, ms_v4, gain, 1, partial, reply, success=success)
+        assert "SpwID = 0" in text and "SpwID = 1" not in text
+        assert "RETURN to continue" in text
+        assert ("Listed 4 antenna solutions." in text) == success
+        results[f"partial-{label}"] = len(text)
+
+    for page in (1, 5):
+        expected = list_file(casa, ms_v2, bandpass, root / f"paged-{page}-casa.txt",
+                             pagerows=page, **selected)
+        old = list_file(native, ms_v2, bandpass, root / f"paged-{page}-msv2.txt",
+                        pagerows=page, **selected)
+        actual = list_file(native, ms_v4, bandpass, root / f"paged-{page}-msv4.txt",
+                           pagerows=page, **selected)
+        assert old == expected
+        assert actual == expected.replace(f"MS name = {ms_v2}".encode(), f"MS name = {ms_v4}".encode())
+        results[f"paged-{page}"] = len(actual)
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -205,6 +267,9 @@ def main():
         result["MSv4"] = len(actual)
         result.update(check_bandpass(root, ms_v2, ms_v4, native))
         result["two-fields"] = check_field_selection(root / "two-fields", native)
+        result.update(check_terminal_and_paged_files(
+            root, ms_v2, ms_v4, caltable, root / "bandpass.cal", native,
+        ))
 
     for subtable in ("SPECTRAL_WINDOW", "DATA_DESCRIPTION"):
         for rows in ((1,), (0, 1)):

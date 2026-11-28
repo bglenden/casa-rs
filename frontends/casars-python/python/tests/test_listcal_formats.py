@@ -146,12 +146,78 @@ def test_msv4_validates_only_spectral_windows_needed_by_the_listing(
     assert Path("wildcard.txt").read_text() == expected_v4
 
 
-def test_paged_msv4_file_listing_returns_typed_refusal(paired_calibration):
-    _, ms_v4 = paired_calibration
-    with pytest.raises(tasks.TaskParameterError, match="pagerows=0") as failure:
-        tasks.listcal(vis=ms_v4, caltable="input.cal", listfile="out.txt", field="0", pagerows=1)
-    assert failure.value.completion.parameter == "vis"
-    assert not Path("out.txt").exists()
+@pytest.mark.parametrize("pagerows", [1, 5])
+def test_paged_file_listing_uses_observation_metadata(paired_calibration, pagerows):
+    ms_v2, ms_v4 = paired_calibration
+    for vis, output in ((ms_v2, "reference.txt"), (ms_v4, "candidate.txt")):
+        assert tasks.listcal(
+            vis=vis, caltable="input.cal", antenna="1", spw="1:0",
+            listfile=output, pagerows=pagerows,
+        ) is None
+
+    actual = Path("candidate.txt").read_text()
+    assert "SpwID = 1" in actual and "Ant = VLA02" in actual
+    assert "RETURN to continue" not in actual
+    assert actual == Path("reference.txt").read_text().replace(
+        f"MS name = {Path(ms_v2).absolute()}", f"MS name = {Path(ms_v4).absolute()}",
+    )
+
+
+@pytest.mark.parametrize("pagerows", [-2, 0, 5])
+def test_terminal_listing_uses_observation_metadata(paired_calibration, pagerows, monkeypatch, capsys):
+    ms_v2, ms_v4 = paired_calibration
+
+    def answer(prompt):
+        print(prompt, end="")
+        return "a"
+
+    monkeypatch.setattr("builtins.input", answer)
+    results = []
+    for vis in (ms_v2, ms_v4):
+        assert tasks.listcal(
+            vis=vis, caltable="input.cal", antenna="1", spw="1:0", pagerows=pagerows,
+        ) is None
+        results.append(capsys.readouterr().out)
+
+    assert ("RETURN to continue" in results[1]) == (pagerows > 0)
+    assert "SpwID = 1" in results[1] and "Ant = VLA02" in results[1]
+    assert results[1] == results[0].replace(
+        f"MS name = {Path(ms_v2).absolute()}", f"MS name = {Path(ms_v4).absolute()}",
+    )
+
+
+@pytest.mark.parametrize("reply", ["q", None])
+def test_paged_terminal_preserves_partial_listing(paired_calibration, reply, monkeypatch, capsys):
+    ms_v2, ms_v4 = paired_calibration
+
+    def answer(prompt):
+        print(prompt, end="")
+        if reply is None:
+            raise EOFError
+        return reply
+
+    def list_two_windows(vis):
+        return tasks.listcal(
+            vis=vis, caltable="input.cal", antenna="0", spw="0:0,1:1", pagerows=1,
+        )
+
+    monkeypatch.setattr("builtins.input", answer)
+    results = []
+    for vis in (ms_v2, ms_v4):
+        if reply is None:
+            with pytest.raises(RuntimeError, match="none of the selected channels"):
+                list_two_windows(vis)
+        else:
+            assert list_two_windows(vis) is None
+        results.append(capsys.readouterr().out)
+
+    actual = results[1]
+    assert "SpwID = 0" in actual and "SpwID = 1" not in actual
+    assert "RETURN to continue" in actual
+    assert ("Listed 4 antenna solutions." in actual) == (reply == "q")
+    assert actual == results[0].replace(
+        f"MS name = {Path(ms_v2).absolute()}", f"MS name = {Path(ms_v4).absolute()}",
+    )
 
 
 def test_unreadable_msv2_listing_preserves_the_same_diagnostic(paired_calibration):
