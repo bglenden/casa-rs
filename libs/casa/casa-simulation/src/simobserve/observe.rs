@@ -128,14 +128,14 @@ fn publish_msv4(
                 destination.display()
             )));
         }
-        Some(Replacement::hold(destination).map_err(&error)?)
+        Some(Replacement::hold(destination).map_err(error)?)
     } else {
         None
     };
-    let stage = Stage::reserve(destination, "simobserve").map_err(&error)?;
+    let stage = Stage::reserve(destination, "simobserve").map_err(error)?;
     let result = create(stage.path()).and_then(|losses| {
         if let Some(replacement) = replacement {
-            if let Some(leftover) = replacement.publish(stage.path()).map_err(&error)? {
+            if let Some(leftover) = replacement.publish(stage.path()).map_err(error)? {
                 tracing::warn!(path = %leftover.display(), "the replaced processing set could not be removed");
             }
         } else {
