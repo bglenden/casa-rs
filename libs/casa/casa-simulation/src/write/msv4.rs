@@ -41,12 +41,19 @@ pub(crate) fn write_processing_set(session: &Simulator) -> SimulatorResult<Vec<L
             "single-dish spectra require the XRADIO spectrum layout",
         ));
     }
+    for scan in session.scans().iter().filter_map(|scan| scan.planned()) {
+        if scan.baseline_count() != 0 && (scan.feed_id != 0 || scan.feed_offset_rad != [0.0; 2]) {
+            return Err(unsupported(
+                "XRADIO simulation cannot persist multiple feed IDs or nonzero feed offsets",
+            ));
+        }
+    }
     let resources = &session.options().resources;
     let _metadata = admit_metadata(session, resources)?;
     let planned = PlannedScan::of_all(session.scans())
         .ok_or_else(|| unsupported("creation requires planned scans"))?;
     let plans = dataset_plans(&planned)?;
-    let catalogue = describe(session, &planned, &plans)?;
+    let (catalogue, mut report) = describe(session, &planned, &plans)?;
     let set = Msv4ProcessingSetWriter::create(session.path())
         .map_err(creation_error("prepare the processing set"))?;
     let stem = session
@@ -57,7 +64,7 @@ pub(crate) fn write_processing_set(session: &Simulator) -> SimulatorResult<Vec<L
     let stem = stem.strip_suffix(".ps.zarr").unwrap_or(stem);
     let digits = (plans.len() - 1).to_string().len();
     let date = casa_core::quanta::time::utc_now_iso8601();
-    let mut report = known_losses(session, &catalogue, &plans);
+    report.extend(known_losses(session, &catalogue, &plans));
     let mut flagged = false;
     for (index, plan) in plans.iter().enumerate() {
         let id = PartitionId(index as u32);
@@ -129,6 +136,42 @@ fn admit_metadata(
         + session.data_descriptions().len()
         + session.spectral_windows().len();
     let descriptor = (metadata_rows as u64).saturating_mul(2048);
+    let labels = session
+        .scans()
+        .iter()
+        .filter_map(|scan| {
+            let rows = scan.planned()?;
+            if rows.baseline_count() == 0 {
+                return None;
+            }
+            let field = &session.fields()[scan.field_id].name;
+            // catalogue_for_creation appends "_<field row>" to the field name.
+            let suffix = 1 + scan.field_id.to_string().len();
+            let scan_length = scan.scan_number.to_string().len();
+            Some(
+                Msv4Writer::string_coordinate_work_bytes(
+                    rows.integration_count,
+                    field.len().saturating_add(suffix),
+                    field.chars().count().saturating_add(suffix),
+                )
+                .saturating_add(Msv4Writer::string_coordinate_work_bytes(
+                    rows.integration_count,
+                    scan_length,
+                    scan_length,
+                )),
+            )
+        })
+        .max()
+        .unwrap_or(0);
+    let names = session.fields().iter().fold(0_u64, |total, field| {
+        // Descriptor rows, the catalogue and the formatted labels may all
+        // own copies of the same input names or codes during description.
+        total.saturating_add(
+            (field.name.len() as u64)
+                .saturating_add(field.code.len() as u64)
+                .saturating_mul(8),
+        )
+    });
     admit(
         resources.host(),
         resources.policy(),
@@ -137,6 +180,8 @@ fn admit_metadata(
             memory: bytes
                 .saturating_add(axes)
                 .saturating_add(descriptor)
+                .saturating_add(labels)
+                .saturating_add(names)
                 .saturating_add(256 << 10),
         },
     )
@@ -199,12 +244,14 @@ fn describe(
     session: &Simulator,
     planned: &[PlannedScan<'_>],
     plans: &[DatasetPlan],
-) -> SimulatorResult<Arc<Catalogue>> {
+) -> SimulatorResult<(Arc<Catalogue>, Vec<Loss>)> {
     let mut descriptor = MeasurementSet::create_memory(ms_builder()).map_err(|error| {
         SimulatorError::raised(format!("describe the simulated observation: {error}"))
     })?;
     subtables::write_subtables(&mut descriptor, session)?;
     subtables::populate_descriptions(&mut descriptor, session)?;
+    let losses = losses::msv4_subtable_losses(&descriptor)
+        .map_err(msv4_error("inventory the simulated MSv4 metadata"))?;
     let scans = scan_entries(session, planned);
     let specs = plans
         .iter()
@@ -248,7 +295,7 @@ fn describe(
     {
         return Err(unsupported("XRADIO requires distinct antenna names"));
     }
-    Ok(Arc::new(catalogue))
+    Ok((Arc::new(catalogue), losses))
 }
 
 fn scan_entries(session: &Simulator, planned: &[PlannedScan<'_>]) -> Vec<ScanEntry> {
@@ -301,10 +348,18 @@ fn known_losses(session: &Simulator, catalogue: &Catalogue, plans: &[DatasetPlan
     ] {
         report.push(Loss::Column(name.into()));
     }
-    if session.states().iter().any(|state| {
-        state.sig || state.reference || state.cal != 0. || state.load != 0. || state.sub_scan != 0
-    }) {
-        report.push(Loss::Column("STATE.SIG/REF/CAL/LOAD/SUB_SCAN".into()));
+    if session
+        .fields()
+        .iter()
+        .any(|field| field.rest_frequency_hz.is_some())
+    {
+        for name in [
+            "SOURCE.REST_FREQUENCY",
+            "SOURCE.TRANSITION",
+            "SOURCE.SYSVEL",
+        ] {
+            report.push(Loss::Column(name.into()));
+        }
     }
     if session.fields().iter().any(|field| !field.code.is_empty()) {
         report.push(Loss::Column("FIELD.CODE and SOURCE.CODE".into()));
@@ -496,6 +551,11 @@ impl BatchWriter for DatasetWriter<'_> {
         arrays.uvw.extend_from_slice(columns.uvw.as_flattened());
         for (row, flag) in columns.flag_row.iter().copied().enumerate() {
             let weight = columns.weight.get(row).copied().unwrap_or(1.);
+            if !weight.is_finite() {
+                return Err(unsupported(
+                    "nonfinite visibility weights would be read as padding",
+                ));
+            }
             self.flagged |= flag;
             arrays
                 .flags

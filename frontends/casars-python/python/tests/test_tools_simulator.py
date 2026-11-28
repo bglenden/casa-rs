@@ -300,6 +300,111 @@ def test_msv4_refuses_an_unadmitted_time_axis(tmp_path: Path) -> None:
 
 
 @needs_measures
+@pytest.mark.parametrize("field", ["short", "long" * 1024], ids=["short", "long"])
+def test_msv4_admits_the_label_width_at_fixed_grid_shape(tmp_path: Path, field: str) -> None:
+    path = tmp_path / "field.ps.zarr"
+    sm = simulator(memory_budget=32 << 20, workers=1, backend="cpu")
+    assert sm.open(str(path), outformat="msv4")
+    assert sm.setconfig(telescopename="VLA", x=X[:2], y=Y[:2], z=Z[:2],
+                        dishdiameter=[25.0], antname=["A1", "A2"], padname=["P1", "P2"])
+    assert sm.setspwindow(spwname="L", freq="1.4GHz", deltafreq="1MHz",
+                          freqresolution="1MHz", nchannels=1, stokes="RR")
+    assert sm.settimes(integrationtime="10s", usehourangle=False, referencetime=REFERENCE)
+    assert sm.setfield(sourcename=field, sourcedirection=DIRECTION)
+    assert sm.setauto(0)
+    assert sm.observe(field, "L", starttime="0s", stoptime="40960s")
+    if field == "short":
+        assert sm.close()
+        assert (path / "zarr.json").is_file()
+    else:
+        with pytest.raises(RuntimeError, match="MSv4 catalogue and grid coordinates"):
+            sm.close()
+        assert not list(tmp_path.iterdir())
+
+
+@needs_measures
+@pytest.mark.parametrize("weight", [float("inf"), 1e100], ids=["infinite", "f32-overflow"])
+def test_msv4_refuses_nonfinite_weights_without_losing_rows(tmp_path: Path, weight: float) -> None:
+    path = tmp_path / "nonfinite.ps.zarr"
+    sm = simulator(backend="cpu", workers=1)
+    assert sm.open(str(path), outformat="msv4")
+    configure(sm)
+    assert sm.setauto(weight)
+    assert sm.observe("F", "L", starttime="0s", stoptime="10s")
+    with pytest.raises(NotImplementedError, match="nonfinite visibility weights.*padding"):
+        sm.close()
+    assert not list(tmp_path.iterdir())
+
+    legacy = tmp_path / "legacy.ms"
+    assert sm.open(str(legacy))
+    configure(sm)
+    assert sm.setauto(weight)
+    assert sm.observe("F", "L", starttime="0s", stoptime="10s")
+    assert sm.close()
+    with closing(open_table(legacy)) as table:
+        assert table.nrows() == 10
+        autos = np.equal(read_column(table, "ANTENNA1"), read_column(table, "ANTENNA2"))
+        assert np.count_nonzero(autos) == 4
+        values = read_column(table, "WEIGHT")
+        assert np.isposinf(values[autos]).all()
+        assert np.isfinite(values[~autos]).all()
+
+
+@needs_measures
+@pytest.mark.parametrize("offset", [0.0, 2e-4], ids=["feed-identities", "beam-offset"])
+def test_msv4_refuses_unrepresentable_feed_layouts(tmp_path: Path, offset: float) -> None:
+    path = tmp_path / "feeds.ps.zarr"
+    sm = simulator(backend="cpu", workers=1)
+    assert sm.open(str(path), outformat="msv4")
+    configure(sm)
+    assert sm.setfeed(mode="list", x=[0., offset], y=[0., 0.], pol=["R", "R"])
+    assert sm.observe("F", "L", starttime="0s", stoptime="10s")
+    with pytest.raises(NotImplementedError, match="multiple feed IDs or nonzero feed offsets"):
+        sm.close()
+    assert not list(tmp_path.iterdir())
+
+    native = tmp_path / "feeds.ms"
+    assert sm.open(str(native))
+    configure(sm)
+    assert sm.setfeed(mode="list", x=[0., offset], y=[0., 0.], pol=["R", "R"])
+    assert sm.observe("F", "L", starttime="0s", stoptime="10s")
+    assert sm.close()
+    with closing(open_table(native)) as main:
+        assert read_column(main, "FEED1").tolist() == [0] * 10 + [1] * 10
+    with closing(open_table(native / "FEED")) as feed:
+        np.testing.assert_array_equal(read_column(feed, "BEAM_OFFSET")[1], [[offset] * 2, [0.] * 2])
+
+
+@needs_measures
+@pytest.mark.parametrize("signal", [True, False], ids=["ordinary-sig", "false-sig"])
+def test_msv4_reports_source_lines_and_nondefault_signal_state(
+    tmp_path: Path, capfd, signal: bool
+) -> None:
+    sm = simulator(backend="cpu", workers=1)
+    assert sm.open(str(tmp_path / "reported.ps.zarr"), outformat="msv4")
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="10s", state_sig=signal)
+    assert sm.close()
+    report = capfd.readouterr().err
+    state_losses = [line for line in report.splitlines() if line.startswith("simulator: MSv4: STATE")]
+    assert bool(state_losses) == (not signal)
+    for name in ("REST_FREQUENCY", "TRANSITION", "SYSVEL"):
+        assert f"SOURCE.{name} is not carried" in report
+
+    native = tmp_path / "metadata.ms"
+    assert sm.open(str(native))
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="10s", state_sig=signal)
+    assert sm.close()
+    with closing(open_table(native / "STATE")) as state:
+        assert bool(read_column(state, "SIG")[0]) == signal
+    with closing(open_table(native / "SOURCE")) as source:
+        np.testing.assert_array_equal(read_column(source, "REST_FREQUENCY")[0], [1.4e9])
+        np.testing.assert_array_equal(read_column(source, "TRANSITION")[0], ["X"])
+        np.testing.assert_array_equal(read_column(source, "SYSVEL")[0], [0.0])
+
+
+@needs_measures
 def test_an_sm_script_writes_the_measurement_set(tmp_path: Path) -> None:
     ms = tmp_path / "sm.ms"
     sm = simulator()

@@ -63,10 +63,12 @@ requires a fresh destination, at least one populated dataset, and distinct
 XRADIO antenna names for the antennas used. Both formats support different
 channel and correlation counts across spectral windows. MSv4 carries the
 field phase centres, scan intents, and sampled antenna beam pointings.
-Single-dish spectrum prediction requires MSv2.
+Single-dish spectrum prediction requires MSv2. MSv4 refuses nonzero feed
+offsets, multiple feed IDs, or generated nonfinite weights before publication.
 
 At close, MSv4 reports individual MSv2 columns it cannot carry, including
-`SIGMA`, the stated observation extent, and the pointing target and interval.
+`SIGMA`, the stated observation extent, source line metadata, and the pointing
+target and interval.
 It folds any row flags into the element flags. Use `outformat="msv2"` when the
 original row flag or those metadata are required.
 

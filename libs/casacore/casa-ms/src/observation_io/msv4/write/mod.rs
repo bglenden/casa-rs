@@ -847,6 +847,34 @@ impl Msv4Writer {
         )
     }
 
+    /// Upper bound for encoding a single fixed-length UTF-32 coordinate
+    /// chunk of `elements` labels. The caller supplies the largest UTF-8
+    /// length and Unicode scalar count across the labels in that chunk.
+    /// Includes owned label copies, padded character buffers and the raw,
+    /// byte-ordered and Zstd compression buffers. A caller that holds
+    /// several such coordinates must also account for their overlapping
+    /// lifetimes and the rest of its metadata.
+    #[must_use]
+    pub fn string_coordinate_work_bytes(
+        elements: usize,
+        utf8_bytes: usize,
+        characters: usize,
+    ) -> u64 {
+        let utf32 = (characters.max(1) as u64).saturating_mul(size_of::<char>() as u64);
+        let containers = (size_of::<String>() + size_of::<Vec<char>>()) as u64;
+        let padded_characters = utf32.max(16).saturating_mul(2);
+        // Character vectors can grow to twice their final length. For
+        // encoding, allow the flat native and reordered buffers and a
+        // compression destination above the input size.
+        let encoding = utf32.saturating_mul(4);
+        (elements as u64).saturating_mul(
+            containers
+                .saturating_add(utf8_bytes as u64)
+                .saturating_add(padded_characters)
+                .saturating_add(encoding),
+        )
+    }
+
     /// What the writer has done.
     #[must_use]
     pub fn counters(&self) -> Msv4WriteCounters {
