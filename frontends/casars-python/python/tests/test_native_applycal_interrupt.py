@@ -321,3 +321,35 @@ def test_applycal_refusal_preserves_casa_setup(apply_fixture, parang):
     np.testing.assert_array_equal(current["CORRECTED_DATA"], old["DATA"])
     assert messages(source / "HISTORY") == history
     assert_backup(source.with_suffix(".ms.flagversions"), "applycal_1", old)
+
+
+@needs_measures
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX table locks")
+def test_applycal_preserves_a_locked_backup_missing_from_the_list(apply_fixture):
+    source, gain = apply_fixture(False)
+    tasks.flagmanager(vis=source, mode="save", versionname="applycal_1")
+    store = source.with_suffix(".ms.flagversions")
+    orphan = store / "flags.applycal_1"
+    (store / "FLAG_VERSION_LIST").write_text("")
+    original = image_contents(orphan)
+
+    writer = tools.table()
+    assert writer.open(str(source), nomodify=False)
+    try:
+        flags = writer.getcol("FLAG")
+        flags[0, 0, 0] = False
+        assert writer.putcol("FLAG", flags)
+    finally:
+        assert writer.done()
+    working_flags = read_columns(source, ("FLAG", "FLAG_ROW"))
+
+    reader = tools.table()
+    assert reader.open(str(orphan), lockoptions={"option": "user"})
+    try:
+        assert reader.lock(write=False)
+        assert tasks.applycal(vis=source, gaintable=[gain], spw="0:1~2") is None
+    finally:
+        assert reader.done()
+    assert image_contents(orphan) == original
+    assert_backup(store, "applycal_2", working_flags)
+    assert (store / "FLAG_VERSION_LIST").read_text().split(" : ")[0] == "applycal_2"

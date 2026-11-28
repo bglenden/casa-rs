@@ -339,7 +339,7 @@ pub(super) fn execute(
                 || (options.flag_backup && mode.writes_flags())
             {
                 let mut lock = snapshot.accept(&path, cancellation)?;
-                save_apply_flag_backup(ms, mode, options)?;
+                save_apply_flag_backup(ms, mode, options, Some(&lock))?;
                 if stage.initialize_corrected_data_on_error {
                     initialization::corrected_data(ms, input.observed_column, Some(&mut lock))?;
                 }
@@ -350,7 +350,7 @@ pub(super) fn execute(
     let save_started_at = Instant::now();
     {
         let mut lock = snapshot.accept(&path, cancellation)?;
-        report.flag_backup_version = save_apply_flag_backup(ms, mode, options)?;
+        report.flag_backup_version = save_apply_flag_backup(ms, mode, options, Some(&lock))?;
         if report.created_corrected_data_column {
             ensure_corrected_data_column_holding(ms, input.observed_column, Some(&mut lock))
                 .map_err(|source| ApplyExecutionError::CreateCorrectedData {

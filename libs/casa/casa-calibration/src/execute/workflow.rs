@@ -98,7 +98,7 @@ pub(super) fn execute_apply_from_path_inner(
         let observed_column = apply_observed_column(&ms, prefer_float);
         let open_measurement_set_ns = open_started_at.elapsed().as_nanos() as u64;
         let flag_backup_version = if snapshot.is_none() {
-            save_apply_flag_backup(&ms, request.apply_mode, options)?
+            save_apply_flag_backup(&ms, request.apply_mode, options, None)?
         } else {
             None
         };
@@ -233,7 +233,7 @@ fn finish_rejected_request(
             return staging::check(Some(cancellation));
         }
         let lock = snapshot.accept(ms.path().expect("disk-backed MS"), cancellation)?;
-        save_apply_flag_backup(ms, mode, options)?;
+        save_apply_flag_backup(ms, mode, options, Some(&lock))?;
         Some(lock)
     } else {
         None
@@ -248,11 +248,17 @@ pub(super) fn save_apply_flag_backup(
     ms: &MeasurementSet,
     mode: ApplyMode,
     options: ApplyExecutionOptions,
+    main_lock: Option<&TableWriteLock>,
 ) -> Result<Option<String>, ApplyExecutionError> {
     if !options.flag_backup || !mode.writes_flags() {
         return Ok(None);
     }
-    save_next_flag_backup(ms, "applycal")
+    let result = if main_lock.is_some() {
+        save_next_flag_backup_without_replacing(ms, "applycal")
+    } else {
+        save_next_flag_backup(ms, "applycal")
+    };
+    result
         .map(Some)
         .map_err(|source| ApplyExecutionError::FlagBackup {
             path: display_ms_path(ms),
