@@ -249,6 +249,53 @@ impl EpochSelection {
     }
 }
 
+/// Keep the selected channels whose cubic stencils can reach the
+/// source-frame cube band. The coarse output centres alone can miss a
+/// native pair reached by a fine sample between a centre and its edge.
+/// Two neighbours on either side also cover the four-point stencil when
+/// the other side reaches the end of the selected channels.
+pub(super) fn extend_cubic_read_support(
+    retained: &mut Vec<usize>,
+    frequencies: &[f64],
+    [lower, upper]: [f64; 2],
+    selected: impl Fn(usize) -> bool,
+) {
+    let channels = 0..frequencies.len();
+    let mut previous: Option<usize> = None;
+    let mut support: Option<(usize, usize)> = None;
+    for right in channels.clone().filter(|&index| selected(index)) {
+        if let Some(left) = previous {
+            let [a, b] = [frequencies[left], frequencies[right]];
+            if a.min(b) <= upper && a.max(b) >= lower {
+                support = Some((support.map_or(left, |(first, _)| first), right));
+            }
+        }
+        previous = Some(right);
+    }
+    let Some((first, last)) = support else {
+        return;
+    };
+    let first = (0..first)
+        .rev()
+        .filter(|&index| selected(index))
+        .take(2)
+        .last()
+        .unwrap_or(first);
+    let last = (last + 1..channels.end)
+        .filter(|&index| selected(index))
+        .take(2)
+        .last()
+        .unwrap_or(last);
+    let retained_first = retained[0];
+    let retained_last = *retained.last().expect("nonempty retained support");
+    retained.extend(
+        (first..retained_first)
+            .chain(retained_last + 1..=last)
+            .filter(|&index| selected(index)),
+    );
+    retained.sort_unstable();
+}
+
 /// Match the physical selection at the edges of cube support. The numeric
 /// support brackets the image on the full catalogue, so when its outer
 /// channel is missing from a selection, retain the nearest selected

@@ -131,6 +131,71 @@ fn trackfield_images_mfs_and_a_rest_frame_cube() {
     );
 }
 
+/// A fine sample in the first wide cubic plane needs the selected native
+/// channel before its bracketing pair, even though that guard lies outside
+/// the image band. With no signal in the other channels, removing it from
+/// the selection must erase the signal and leave valid weights.
+#[test]
+fn a_tracked_cubic_cube_reads_its_selected_guard_channel() {
+    use casa_core::{Complex32, measures::frequency::FrequencyRef};
+
+    const CHANNELS: usize = 12;
+    let observation = following_body(Observation::synthesise_band(CHANNELS, &[("point", POINT)]));
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    ms.spectral_window_mut()
+        .unwrap()
+        .set_i32(0, "MEAS_FREQ_REF", FrequencyRef::TOPO.casacore_code())
+        .unwrap();
+    let row_count = ms.main_table().row_count();
+    let mut data = ndarray::Array2::zeros((2, CHANNELS));
+    for pol in 0..2 {
+        data[[pol, 0]] = Complex32::new(1.0, 0.0);
+    }
+    ms.main_table_mut()
+        .fill_column_range(
+            "DATA",
+            casa_tables::RowRange::new(0, row_count),
+            Value::Array(ArrayValue::Complex32(data.into_dyn())),
+        )
+        .unwrap();
+    ms.save().unwrap();
+    drop(ms);
+
+    let mut request = json!({
+        "phasecenter": "TRACKFIELD", "specmode": "cubesource", "outframe": "REST",
+        "restfreq": "45GHz", "nchan": 2, "interpolation": "nearest", "niter": 0,
+    });
+    let (_, anchor) = observation.image("tracked-guard-anchor", request.clone());
+    let anchor = anchor.get(".residual");
+    let first = anchor.channel_frequency_hz(0);
+    let spacing = anchor.channel_width_hz();
+    request["start"] = json!(format!("{}Hz", first + 2.2 * spacing));
+    request["width"] = json!(format!("{}Hz", 3.0 * spacing));
+    request["nchan"] = json!(3);
+    request["interpolation"] = json!("cubic");
+    let (_, selected) = observation.image("tracked-selected-cubic-guard", request.clone());
+    request["spw"] = json!("0:1~11");
+    let (_, excluded) = observation.image("tracked-excluded-cubic-guard", request);
+    let first_plane_peak = selected
+        .get(".residual")
+        .plane(0)
+        .iter()
+        .map(|value| value.abs())
+        .fold(0.0, f32::max);
+    assert!(
+        first_plane_peak > 1e-3,
+        "guard contribution {first_plane_peak}"
+    );
+    assert!(
+        excluded
+            .get(".residual")
+            .plane(0)
+            .iter()
+            .all(|value| *value == 0.0)
+    );
+    assert!(excluded.get(".sumwt").channel_values()[0] > 0.0);
+}
+
 /// An AW request on a moving field with a native TOPO window.
 fn moving_aw_cube(channels: usize) -> (Observation, serde_json::Value) {
     let mut setup = super::aw_projection::setup();

@@ -574,6 +574,7 @@ fn cube_store_reads(
             ((store.catalogue(), &store.engine), survey, field),
             setup,
             (image_band, tuned),
+            None,
         )?;
         if index == reference && !reads.reaches_axis {
             return Err(PrepareError::NoCommonCubeChannels);
@@ -620,6 +621,7 @@ fn store_reads(
     ((catalogue, engine), survey, field): ((&Catalogue, &MsCalEngine), &Survey, usize),
     setup: &CubeSpectralSetup,
     (image_band, tuned): (Option<[f64; 2]>, bool),
+    cubic_read_band: Option<[f64; 2]>,
 ) -> Result<StoreReads, PrepareError> {
     let bands = cube_bands(request, (catalogue, engine), survey, image_band)?;
     let keep_iterator_channels = tracked_aw_cube_density(
@@ -712,6 +714,17 @@ fn store_reads(
                         .or_default()
                         .linear_spacing = Some(spacing);
                 }
+            }
+            if let Some(band) = cubic_read_band {
+                frequency_bands::extend_cubic_read_support(
+                    &mut channels,
+                    &window.frequencies_hz,
+                    band,
+                    |channel| match &selection {
+                        Some(selection) => selection.ever(channel),
+                        None => explicit.is_none_or(|indices| indices.contains(&channel)),
+                    },
+                );
             }
             if let (Some(bands), Some(selection)) = (&bands, &selection)
                 && channels.iter().any(|channel| !selection.always(*channel))
@@ -1121,6 +1134,15 @@ fn source_frame_cube_law(
     let (mut setup, _) = cube_setup(request, (survey, &[survey]), frame, axis, factor)?;
     let output_channels = setup.output_channel_frequencies_hz.len();
     let (reference_frequency_hz, increment_hz) = first_and_increment(&setup, output_channels)?;
+    let cubic_read_band = (setup.interpolation == CubeInterpolation::Cubic && output_channels > 1)
+        .then(|| {
+            let last_hz = reference_frequency_hz + (output_channels - 1) as f64 * increment_hz;
+            let half_width = increment_hz.abs() / 2.0;
+            [
+                (reference_frequency_hz.min(last_hz) - half_width) / factor,
+                (reference_frequency_hz.max(last_hz) + half_width) / factor,
+            ]
+        });
     // The selection helper reads stored frequencies. Put its support
     // bounds in that same frame before choosing the source channels.
     for hz in setup
@@ -1135,6 +1157,7 @@ fn source_frame_cube_law(
         ((catalogue, &store.engine), survey, frame.field_id),
         &setup,
         (None, false),
+        cubic_read_band,
     )?;
     if !reads.reaches_axis {
         return Err(PrepareError::NoCommonCubeChannels);

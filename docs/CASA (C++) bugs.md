@@ -937,7 +937,12 @@ width from that many native intervals. Gridding, mosaic beam-cell
 selection and model prediction use that count. Widths resolved between
 integers retain the floor rule. The
 `source_frame_bin_count_is_stable_at_channel_coordinate_precision`
-law pins the integer and both neighbouring controls.
+law pins the integer and both neighbouring controls. The tracked cubic
+read plan preserves selected channels whose stencils reach the image
+band. On the Venus mosaic, removing native channel 0 from CASA's
+selection dropped one integration from the leading plane. The
+`a_tracked_cubic_cube_reads_its_selected_guard_channel` test distinguishes
+that needed guard from a channel the user excludes.
 
 ## The cube Briggs weightor grids and looks up its density in different uvw frames
 
