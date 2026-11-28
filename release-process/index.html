@@ -1,0 +1,950 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
+    
+    
+      
+        <title>Release process - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#release-process" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Release process
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/casa-compatibility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CASA Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/measurement-sets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MeasurementSet Formats
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../casars-calibrate-user-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#functionality-and-tickets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Functionality and tickets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#documentation-cleanup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation cleanup
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#release-scope-and-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Release scope and branch
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rehearse-and-qualify-the-candidate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rehearse and qualify the candidate
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Rehearse and qualify the candidate">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rc-acceptance-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RC acceptance checks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#publish-and-verify-the-final-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Publish and verify the final release
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#maintain-the-release-series" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Maintain the release series
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="release-process">Release process<a class="headerlink" href="#release-process" title="Permanent link">&para;</a></h1>
+<p>Truth class: normative
+Last reality check: 2026-11-27
+Verification: just docs-check</p>
+<h2 id="functionality-and-tickets">Functionality and tickets<a class="headerlink" href="#functionality-and-tickets" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Create a GitHub milestone named for the release version.</li>
+<li>Create an issue for each new piece of functionality required for the
+   release and assign it to the milestone. Give each issue a concrete done
+   condition.</li>
+<li>Review every open issue in the repository.</li>
+<li>Close issues that are no longer relevant. Record the reason in each issue
+     and link to any fix or replacement.</li>
+<li>Assign issues required for the release to its milestone.</li>
+<li>Leave other relevant issues open.</li>
+</ol>
+<h2 id="documentation-cleanup">Documentation cleanup<a class="headerlink" href="#documentation-cleanup" title="Permanent link">&para;</a></h2>
+<p>Remove material that is no longer relevant and could confuse humans or aliens.
+Review each document in the repository and decide what to do with it.</p>
+<ol>
+<li>Delete documents that mislead readers by describing outdated behavior or
+   abandoned work. Preserve useful historical rationale under step 2.</li>
+<li>Archive historical documents when they explain why the code works as it
+   does and that explanation is likely to be needed again. Remove them from
+   active documentation and save a commit-pinned link in the relevant issue or
+   pull request. If the explanation can be recovered by reading the code,
+   delete the document.</li>
+<li>Keep documents that constrain how new code or processes should be written,
+   including accepted architecture decision records (ADRs).</li>
+<li>Keep documents that describe or support ongoing work, such as the
+   <a href="../CASA%20%28C%2B%2B%29%20bugs/">CASA (C++) bugs record</a>.</li>
+<li>Read all retained documents. Update them to reflect current behavior and
+   accepted intentions, and repair affected links and navigation.</li>
+</ol>
+<p>Ask the repository owner about any document that fits none of these categories.
+Include its path and what is unclear before changing its disposition.</p>
+<p>Run <code>just docs-check</code> after the cleanup.</p>
+<h2 id="release-scope-and-branch">Release scope and branch<a class="headerlink" href="#release-scope-and-branch" title="Permanent link">&para;</a></h2>
+<p>Before feature freeze, record the release's public Python and CLI interfaces,
+supported platforms and Python versions, MSv2 and MSv4 behavior, and saved
+parameter profile compatibility. Decide which channels will receive the
+release, including whether it includes Rust crates on crates.io. State the
+compatibility commitment for each published public API.</p>
+<p>At feature freeze, cut <code>release/&lt;major&gt;.&lt;minor&gt;</code> from validated <code>main</code>. Use it
+for all candidates, the final release, and patches in that series. For 1.0,
+use <code>release/1.0</code> for <code>v1.0.0-rc1</code>, any subsequent RCs, <code>v1.0.0</code>, and patches
+starting with <code>v1.0.1</code>. Continue development for the next release on <code>main</code>.
+During the RC phase, limit changes on the release branch to release blockers
+and release preparation.</p>
+<h2 id="rehearse-and-qualify-the-candidate">Rehearse and qualify the candidate<a class="headerlink" href="#rehearse-and-qualify-the-candidate" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Prepare the first RC commit and local tag with the
+   <a href="../agent-reference/#release-and-installation">release command</a>.
+   Push the candidate commit to the release branch and manually run the Python
+   Release workflow there before pushing the tag. Verify the wheel and source
+   distribution smoke checks, suite and binary bundles on both supported
+   platforms, and packaging versions. Verify that the rehearsal skips
+   publication.</li>
+<li>Push the RC tag after the rehearsal passes. Verify the tag's release
+   checks and GitHub prerelease assets. Use the
+   <a href="https://github.com/bglenden/casa-rs/blob/main/TESTING.md#releases-and-waivers">release gates</a>
+   for required evidence, including C++ interoperability and CASA parity.</li>
+<li>Run the RC acceptance checks below using the published artifacts.</li>
+<li>Resolve any remaining release blockers before promoting the candidate.
+   If executable behavior or packaging changes, cut the next RC and rerun
+   its release gates and the affected acceptance workloads.</li>
+</ol>
+<h3 id="rc-acceptance-checks">RC acceptance checks<a class="headerlink" href="#rc-acceptance-checks" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Install and run.</strong> Use clean Linux x86_64 and macOS arm64 environments
+  with the oldest OS versions the release claims to support. Install and
+  import each shipped Python wheel. Run a CLI task and a Python task from
+  the downloaded suite, and smoke-test the standalone executable bundle.
+  Run these checks outside the source checkout.</li>
+<li><strong>Upgrade and roll back.</strong> Verify that a
+  <a href="../install/#install-a-release-candidate-side-by-side">side-by-side RC install</a>
+  preserves the active stable install. Activate the RC, switch back to
+  stable, and verify which CLI and Python package the user gets.</li>
+<li><strong>Check scientific results.</strong> Name a small set of existing cases for
+  MSv2/MSv4 conversion and round-trip, flagging and calibration, and imaging
+  on CPU and Metal. Run them through the published suite. Check required
+  outputs against the existing CASA or casacore reference and its
+  established tolerances, including persisted data where applicable.</li>
+<li><strong>Check macOS first launch.</strong> On a fresh Mac with default Gatekeeper
+  settings, try the documented terminal installer and the browser download
+  and extraction path. Run a CLI command and import the native Python
+  extension. For the first RC, record any warnings or blocks and decide how
+  Developer ID signing and notarization will be handled for the final release.</li>
+</ul>
+<p>Record the candidate tag, workflow run, platforms and Python versions tested,
+and results in the milestone issues or the release PR. Resolve failures in
+required checks before promotion.</p>
+<h2 id="publish-and-verify-the-final-release">Publish and verify the final release<a class="headerlink" href="#publish-and-verify-the-final-release" title="Permanent link">&para;</a></h2>
+<p>Prepare the final tag on the same branch from the accepted RC, with the final
+version metadata and release notes. Include supported workflows, known
+limitations, upgrade and rollback instructions, and links to documentation
+at the release tag.</p>
+<p>Verify the final tag's gates, published assets, and installation from the
+intended channels. Confirm that the suite manifest and installed Python
+package agree with the final version. Close the milestone once its required
+issues and release verification are complete. Treat published tags and
+assets as immutable. Publish corrections under a new version.</p>
+<h2 id="maintain-the-release-series">Maintain the release series<a class="headerlink" href="#maintain-the-release-series" title="Permanent link">&para;</a></h2>
+<p>Land fixes on <code>main</code> and backport the relevant commits through pull requests
+to the release branch. Keep patches compatible with the series and record
+user-visible changes in the release notes. Run the release gates for each
+patch, and use a patch RC when a change carries material scientific,
+data-integrity, or packaging risk.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": [], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

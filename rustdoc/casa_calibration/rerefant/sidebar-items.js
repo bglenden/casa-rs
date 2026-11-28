@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["rereference_calibration_table"]};
+window.SIDEBAR_ITEMS = {"enum":["RereferenceError"],"fn":["rereference_calibration_table"]};

@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `libs/casa/casa-imageanalysis/src/analysis/imregrid/tool.rs`."><title>tool.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="casa_imageanalysis" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../../static.files/src-script-813739b1.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_imageanalysis/analysis/imregrid/</div>tool.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `libs/casa/casa-imageanalysis/src/analysis/imregrid/tool.rs`."><title>tool.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="casa_imageanalysis" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.1 (20ddd0171 2026-11-25)" data-channel="1.100.1" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../../static.files/src-script-813739b1.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_imageanalysis/analysis/imregrid/</div>tool.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Selection and output metadata for the public image tool's regrid.
 <a href=#3 id=3 data-nosnippet>3</a>
 <a href=#4 id=4 data-nosnippet>4</a></span><span class="kw">use </span>std::f64::consts::{PI, TAU};
@@ -210,128 +210,129 @@
 <a href=#210 id=210 data-nosnippet>210</a>            decimate: options.decimate.max(<span class="number">0</span>),
 <a href=#211 id=211 data-nosnippet>211</a>            replicate: options.replicate,
 <a href=#212 id=212 data-nosnippet>212</a>            method: RegridMethod::from_image_tool(options.method)<span class="question-mark">?</span>,
-<a href=#213 id=213 data-nosnippet>213</a>            image_tool: <span class="prelude-val">Some</span>(ImageToolSampling {
-<a href=#214 id=214 data-nosnippet>214</a>                force: options.force,
-<a href=#215 id=215 data-nosnippet>215</a>                convert_reference: options.convert_reference,
-<a href=#216 id=216 data-nosnippet>216</a>                shape_specified,
-<a href=#217 id=217 data-nosnippet>217</a>                half_turn: <span class="macro">matches!</span>(options.target, ImageRegridTarget::Rotation(angle) <span class="kw">if </span>angle.rem_euclid(TAU) == PI),
-<a href=#218 id=218 data-nosnippet>218</a>            }),
-<a href=#219 id=219 data-nosnippet>219</a>        },
-<a href=#220 id=220 data-nosnippet>220</a>    )<span class="question-mark">?</span>;
-<a href=#221 id=221 data-nosnippet>221</a>    <span class="kw">let </span>calculated_record = regridded.coordinates.to_record();
-<a href=#222 id=222 data-nosnippet>222</a>    <span class="kw">let </span>coordinate_record = <span class="kw">if </span>calculated_record == source.coordinates().to_record() {
-<a href=#223 id=223 data-nosnippet>223</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(selection) = <span class="kw-2">&amp;</span>selection {
-<a href=#224 id=224 data-nosnippet>224</a>            selection
-<a href=#225 id=225 data-nosnippet>225</a>                .coordinate_record
-<a href=#226 id=226 data-nosnippet>226</a>                .clone()
-<a href=#227 id=227 data-nosnippet>227</a>                .unwrap_or(calculated_record)
-<a href=#228 id=228 data-nosnippet>228</a>        } <span class="kw">else </span>{
-<a href=#229 id=229 data-nosnippet>229</a>            native
-<a href=#230 id=230 data-nosnippet>230</a>        }
-<a href=#231 id=231 data-nosnippet>231</a>    } <span class="kw">else </span>{
-<a href=#232 id=232 data-nosnippet>232</a>        calculated_record
-<a href=#233 id=233 data-nosnippet>233</a>    };
-<a href=#234 id=234 data-nosnippet>234</a>    <span class="kw">let </span>(image_info, beam_planes) = output_beams(input, <span class="kw-2">&amp;</span>regridded, info, selection.as_ref())<span class="question-mark">?</span>;
-<a href=#235 id=235 data-nosnippet>235</a>    <span class="prelude-val">Ok</span>(ImageRegridProduct {
-<a href=#236 id=236 data-nosnippet>236</a>        regridded,
-<a href=#237 id=237 data-nosnippet>237</a>        coordinate_record,
-<a href=#238 id=238 data-nosnippet>238</a>        image_info,
-<a href=#239 id=239 data-nosnippet>239</a>        beam_planes,
-<a href=#240 id=240 data-nosnippet>240</a>    })
-<a href=#241 id=241 data-nosnippet>241</a>}
-<a href=#242 id=242 data-nosnippet>242</a>
-<a href=#243 id=243 data-nosnippet>243</a><span class="kw">fn </span>is_pv_grid(coordinates: <span class="kw-2">&amp;</span>CoordinateSystem) -&gt; bool {
-<a href=#244 id=244 data-nosnippet>244</a>    coordinates
-<a href=#245 id=245 data-nosnippet>245</a>        .find_coordinate(CoordinateType::Spectral)
-<a href=#246 id=246 data-nosnippet>246</a>        .and_then(|index| coordinates.coordinate_pixel_axes(index))
-<a href=#247 id=247 data-nosnippet>247</a>        .is_some_and(|axes| axes.into_iter().any(|axis| axis.is_some()))
-<a href=#248 id=248 data-nosnippet>248</a>        &amp;&amp; coordinates
-<a href=#249 id=249 data-nosnippet>249</a>            .find_coordinate(CoordinateType::Linear)
-<a href=#250 id=250 data-nosnippet>250</a>            .is_some_and(|index| {
-<a href=#251 id=251 data-nosnippet>251</a>                coordinates
-<a href=#252 id=252 data-nosnippet>252</a>                    .coordinate_pixel_axes(index)
-<a href=#253 id=253 data-nosnippet>253</a>                    .expect(<span class="string">"existing coordinate"</span>)
-<a href=#254 id=254 data-nosnippet>254</a>                    .into_iter()
-<a href=#255 id=255 data-nosnippet>255</a>                    .zip(coordinates.coordinate(index).axis_names())
-<a href=#256 id=256 data-nosnippet>256</a>                    .any(|(axis, name)| axis.is_some() &amp;&amp; name == <span class="string">"Offset"</span>)
-<a href=#257 id=257 data-nosnippet>257</a>            })
-<a href=#258 id=258 data-nosnippet>258</a>}
-<a href=#259 id=259 data-nosnippet>259</a>
-<a href=#260 id=260 data-nosnippet>260</a><span class="kw">fn </span>template_shape(
-<a href=#261 id=261 data-nosnippet>261</a>    input: <span class="kw-2">&amp;</span>CoordinateSystem,
-<a href=#262 id=262 data-nosnippet>262</a>    target: <span class="kw-2">&amp;</span>CoordinateSystem,
-<a href=#263 id=263 data-nosnippet>263</a>    shape: <span class="kw-2">&amp;</span>[usize],
-<a href=#264 id=264 data-nosnippet>264</a>) -&gt; Vec&lt;usize&gt; {
-<a href=#265 id=265 data-nosnippet>265</a>    <span class="kw">let </span><span class="kw-2">mut </span>target_shape = <span class="macro">vec!</span>[<span class="number">1</span>; target.n_pixel_axes()];
-<a href=#266 id=266 data-nosnippet>266</a>    <span class="kw">for </span>index <span class="kw">in </span><span class="number">0</span>..target.n_coordinates() {
-<a href=#267 id=267 data-nosnippet>267</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(input_index) = input.find_coordinate(target.coordinate(index).coordinate_type())
-<a href=#268 id=268 data-nosnippet>268</a>        <span class="kw">else </span>{
-<a href=#269 id=269 data-nosnippet>269</a>            <span class="kw">continue</span>;
-<a href=#270 id=270 data-nosnippet>270</a>        };
-<a href=#271 id=271 data-nosnippet>271</a>        <span class="kw">let </span>input_axes = input
-<a href=#272 id=272 data-nosnippet>272</a>            .coordinate_pixel_axes(input_index)
-<a href=#273 id=273 data-nosnippet>273</a>            .expect(<span class="string">"input coordinate exists"</span>);
-<a href=#274 id=274 data-nosnippet>274</a>        <span class="kw">let </span>target_axes = target
-<a href=#275 id=275 data-nosnippet>275</a>            .coordinate_pixel_axes(index)
-<a href=#276 id=276 data-nosnippet>276</a>            .expect(<span class="string">"target coordinate exists"</span>);
-<a href=#277 id=277 data-nosnippet>277</a>        <span class="kw">for </span>(from, to) <span class="kw">in </span>input_axes.into_iter().zip(target_axes) {
-<a href=#278 id=278 data-nosnippet>278</a>            <span class="kw">if let </span>(<span class="prelude-val">Some</span>(from), <span class="prelude-val">Some</span>(to)) = (from, to) {
-<a href=#279 id=279 data-nosnippet>279</a>                target_shape[to] = shape[from];
-<a href=#280 id=280 data-nosnippet>280</a>            }
-<a href=#281 id=281 data-nosnippet>281</a>        }
-<a href=#282 id=282 data-nosnippet>282</a>    }
-<a href=#283 id=283 data-nosnippet>283</a>    target_shape
-<a href=#284 id=284 data-nosnippet>284</a>}
-<a href=#285 id=285 data-nosnippet>285</a>
-<a href=#286 id=286 data-nosnippet>286</a><span class="kw">fn </span>output_beams&lt;T: RegridPixel&gt;(
-<a href=#287 id=287 data-nosnippet>287</a>    input: <span class="kw-2">&amp;</span><span class="kw">dyn </span>ImageInterface&lt;T&gt;,
-<a href=#288 id=288 data-nosnippet>288</a>    product: <span class="kw-2">&amp;</span>Regridded&lt;T&gt;,
-<a href=#289 id=289 data-nosnippet>289</a>    <span class="kw-2">mut </span>info: ImageInfo,
-<a href=#290 id=290 data-nosnippet>290</a>    selection: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>SubimagePlan&gt;,
-<a href=#291 id=291 data-nosnippet>291</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(ImageInfo, [Vec&lt;usize&gt;; <span class="number">2</span>]), ImageError&gt; {
-<a href=#292 id=292 data-nosnippet>292</a>    <span class="kw">let </span><span class="kw-2">mut </span>planes = <span class="kw">if let </span><span class="prelude-val">Some</span>(plan) = selection {
-<a href=#293 id=293 data-nosnippet>293</a>        <span class="kw">let </span>section = <span class="kw-2">&amp;</span>plan.selection;
-<a href=#294 id=294 data-nosnippet>294</a>        beam_section_indices(
-<a href=#295 id=295 data-nosnippet>295</a>            <span class="kw-2">&amp;</span>info.beam_set,
-<a href=#296 id=296 data-nosnippet>296</a>            input.coordinates(),
-<a href=#297 id=297 data-nosnippet>297</a>            input.ndim(),
-<a href=#298 id=298 data-nosnippet>298</a>            <span class="kw-2">&amp;</span>section.start,
-<a href=#299 id=299 data-nosnippet>299</a>            <span class="kw-2">&amp;</span>section.packed_shape(),
-<a href=#300 id=300 data-nosnippet>300</a>            section.stride.as_deref(),
-<a href=#301 id=301 data-nosnippet>301</a>        )
-<a href=#302 id=302 data-nosnippet>302</a>    } <span class="kw">else </span>{
-<a href=#303 id=303 data-nosnippet>303</a>        [
-<a href=#304 id=304 data-nosnippet>304</a>            (<span class="number">0</span>..info.beam_set.n_channels()).collect(),
-<a href=#305 id=305 data-nosnippet>305</a>            (<span class="number">0</span>..info.beam_set.n_stokes()).collect(),
-<a href=#306 id=306 data-nosnippet>306</a>        ]
-<a href=#307 id=307 data-nosnippet>307</a>    };
-<a href=#308 id=308 data-nosnippet>308</a>    <span class="kw">if </span>info.beam_set.is_multi() {
-<a href=#309 id=309 data-nosnippet>309</a>        <span class="kw">let </span>output_stokes = product
-<a href=#310 id=310 data-nosnippet>310</a>            .coordinates
-<a href=#311 id=311 data-nosnippet>311</a>            .find_coordinate(CoordinateType::Stokes)
-<a href=#312 id=312 data-nosnippet>312</a>            .and_then(|index| product.coordinates.coordinate_pixel_axes(index))
-<a href=#313 id=313 data-nosnippet>313</a>            .and_then(|axes| axes.into_iter().flatten().next());
-<a href=#314 id=314 data-nosnippet>314</a>        <span class="kw">if let </span>(<span class="prelude-val">Some</span>(input_axis), <span class="prelude-val">Some</span>(output_axis)) =
-<a href=#315 id=315 data-nosnippet>315</a>            (input.find_axis(CoordinateType::Stokes), output_stokes)
-<a href=#316 id=316 data-nosnippet>316</a>            &amp;&amp; info.beam_set.n_stokes() &gt; <span class="number">1
-<a href=#317 id=317 data-nosnippet>317</a>        </span>{
-<a href=#318 id=318 data-nosnippet>318</a>            <span class="kw">let </span>original = stokes_for_axis(input.coordinates(), input_axis)<span class="question-mark">?</span>;
-<a href=#319 id=319 data-nosnippet>319</a>            planes[<span class="number">1</span>] = stokes_for_axis(<span class="kw-2">&amp;</span>product.coordinates, output_axis)<span class="question-mark">?
-<a href=#320 id=320 data-nosnippet>320</a>                </span>.iter()
-<a href=#321 id=321 data-nosnippet>321</a>                .map(|pol| {
-<a href=#322 id=322 data-nosnippet>322</a>                    original
-<a href=#323 id=323 data-nosnippet>323</a>                        .iter()
-<a href=#324 id=324 data-nosnippet>324</a>                        .position(|value| value == pol)
-<a href=#325 id=325 data-nosnippet>325</a>                        .ok_or_else(|| invalid(<span class="string">"output polarization has no input restoring beam"</span>))
-<a href=#326 id=326 data-nosnippet>326</a>                })
-<a href=#327 id=327 data-nosnippet>327</a>                .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#328 id=328 data-nosnippet>328</a>        }
-<a href=#329 id=329 data-nosnippet>329</a>        info.beam_set = info.beam_set.subset(<span class="kw-2">&amp;</span>planes[<span class="number">0</span>], <span class="kw-2">&amp;</span>planes[<span class="number">1</span>])<span class="question-mark">?</span>;
-<a href=#330 id=330 data-nosnippet>330</a>    }
-<a href=#331 id=331 data-nosnippet>331</a>    <span class="prelude-val">Ok</span>((info, planes))
-<a href=#332 id=332 data-nosnippet>332</a>}
-<a href=#333 id=333 data-nosnippet>333</a>
-<a href=#334 id=334 data-nosnippet>334</a><span class="kw">fn </span>invalid(message: <span class="kw">impl </span>Into&lt;String&gt;) -&gt; ImageError {
-<a href=#335 id=335 data-nosnippet>335</a>    ImageError::CasaSelection(message.into())
-<a href=#336 id=336 data-nosnippet>336</a>}
+<a href=#213 id=213 data-nosnippet>213</a>            cancellation: <span class="prelude-val">None</span>,
+<a href=#214 id=214 data-nosnippet>214</a>            image_tool: <span class="prelude-val">Some</span>(ImageToolSampling {
+<a href=#215 id=215 data-nosnippet>215</a>                force: options.force,
+<a href=#216 id=216 data-nosnippet>216</a>                convert_reference: options.convert_reference,
+<a href=#217 id=217 data-nosnippet>217</a>                shape_specified,
+<a href=#218 id=218 data-nosnippet>218</a>                half_turn: <span class="macro">matches!</span>(options.target, ImageRegridTarget::Rotation(angle) <span class="kw">if </span>angle.rem_euclid(TAU) == PI),
+<a href=#219 id=219 data-nosnippet>219</a>            }),
+<a href=#220 id=220 data-nosnippet>220</a>        },
+<a href=#221 id=221 data-nosnippet>221</a>    )<span class="question-mark">?</span>;
+<a href=#222 id=222 data-nosnippet>222</a>    <span class="kw">let </span>calculated_record = regridded.coordinates.to_record();
+<a href=#223 id=223 data-nosnippet>223</a>    <span class="kw">let </span>coordinate_record = <span class="kw">if </span>calculated_record == source.coordinates().to_record() {
+<a href=#224 id=224 data-nosnippet>224</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(selection) = <span class="kw-2">&amp;</span>selection {
+<a href=#225 id=225 data-nosnippet>225</a>            selection
+<a href=#226 id=226 data-nosnippet>226</a>                .coordinate_record
+<a href=#227 id=227 data-nosnippet>227</a>                .clone()
+<a href=#228 id=228 data-nosnippet>228</a>                .unwrap_or(calculated_record)
+<a href=#229 id=229 data-nosnippet>229</a>        } <span class="kw">else </span>{
+<a href=#230 id=230 data-nosnippet>230</a>            native
+<a href=#231 id=231 data-nosnippet>231</a>        }
+<a href=#232 id=232 data-nosnippet>232</a>    } <span class="kw">else </span>{
+<a href=#233 id=233 data-nosnippet>233</a>        calculated_record
+<a href=#234 id=234 data-nosnippet>234</a>    };
+<a href=#235 id=235 data-nosnippet>235</a>    <span class="kw">let </span>(image_info, beam_planes) = output_beams(input, <span class="kw-2">&amp;</span>regridded, info, selection.as_ref())<span class="question-mark">?</span>;
+<a href=#236 id=236 data-nosnippet>236</a>    <span class="prelude-val">Ok</span>(ImageRegridProduct {
+<a href=#237 id=237 data-nosnippet>237</a>        regridded,
+<a href=#238 id=238 data-nosnippet>238</a>        coordinate_record,
+<a href=#239 id=239 data-nosnippet>239</a>        image_info,
+<a href=#240 id=240 data-nosnippet>240</a>        beam_planes,
+<a href=#241 id=241 data-nosnippet>241</a>    })
+<a href=#242 id=242 data-nosnippet>242</a>}
+<a href=#243 id=243 data-nosnippet>243</a>
+<a href=#244 id=244 data-nosnippet>244</a><span class="kw">fn </span>is_pv_grid(coordinates: <span class="kw-2">&amp;</span>CoordinateSystem) -&gt; bool {
+<a href=#245 id=245 data-nosnippet>245</a>    coordinates
+<a href=#246 id=246 data-nosnippet>246</a>        .find_coordinate(CoordinateType::Spectral)
+<a href=#247 id=247 data-nosnippet>247</a>        .and_then(|index| coordinates.coordinate_pixel_axes(index))
+<a href=#248 id=248 data-nosnippet>248</a>        .is_some_and(|axes| axes.into_iter().any(|axis| axis.is_some()))
+<a href=#249 id=249 data-nosnippet>249</a>        &amp;&amp; coordinates
+<a href=#250 id=250 data-nosnippet>250</a>            .find_coordinate(CoordinateType::Linear)
+<a href=#251 id=251 data-nosnippet>251</a>            .is_some_and(|index| {
+<a href=#252 id=252 data-nosnippet>252</a>                coordinates
+<a href=#253 id=253 data-nosnippet>253</a>                    .coordinate_pixel_axes(index)
+<a href=#254 id=254 data-nosnippet>254</a>                    .expect(<span class="string">"existing coordinate"</span>)
+<a href=#255 id=255 data-nosnippet>255</a>                    .into_iter()
+<a href=#256 id=256 data-nosnippet>256</a>                    .zip(coordinates.coordinate(index).axis_names())
+<a href=#257 id=257 data-nosnippet>257</a>                    .any(|(axis, name)| axis.is_some() &amp;&amp; name == <span class="string">"Offset"</span>)
+<a href=#258 id=258 data-nosnippet>258</a>            })
+<a href=#259 id=259 data-nosnippet>259</a>}
+<a href=#260 id=260 data-nosnippet>260</a>
+<a href=#261 id=261 data-nosnippet>261</a><span class="kw">fn </span>template_shape(
+<a href=#262 id=262 data-nosnippet>262</a>    input: <span class="kw-2">&amp;</span>CoordinateSystem,
+<a href=#263 id=263 data-nosnippet>263</a>    target: <span class="kw-2">&amp;</span>CoordinateSystem,
+<a href=#264 id=264 data-nosnippet>264</a>    shape: <span class="kw-2">&amp;</span>[usize],
+<a href=#265 id=265 data-nosnippet>265</a>) -&gt; Vec&lt;usize&gt; {
+<a href=#266 id=266 data-nosnippet>266</a>    <span class="kw">let </span><span class="kw-2">mut </span>target_shape = <span class="macro">vec!</span>[<span class="number">1</span>; target.n_pixel_axes()];
+<a href=#267 id=267 data-nosnippet>267</a>    <span class="kw">for </span>index <span class="kw">in </span><span class="number">0</span>..target.n_coordinates() {
+<a href=#268 id=268 data-nosnippet>268</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(input_index) = input.find_coordinate(target.coordinate(index).coordinate_type())
+<a href=#269 id=269 data-nosnippet>269</a>        <span class="kw">else </span>{
+<a href=#270 id=270 data-nosnippet>270</a>            <span class="kw">continue</span>;
+<a href=#271 id=271 data-nosnippet>271</a>        };
+<a href=#272 id=272 data-nosnippet>272</a>        <span class="kw">let </span>input_axes = input
+<a href=#273 id=273 data-nosnippet>273</a>            .coordinate_pixel_axes(input_index)
+<a href=#274 id=274 data-nosnippet>274</a>            .expect(<span class="string">"input coordinate exists"</span>);
+<a href=#275 id=275 data-nosnippet>275</a>        <span class="kw">let </span>target_axes = target
+<a href=#276 id=276 data-nosnippet>276</a>            .coordinate_pixel_axes(index)
+<a href=#277 id=277 data-nosnippet>277</a>            .expect(<span class="string">"target coordinate exists"</span>);
+<a href=#278 id=278 data-nosnippet>278</a>        <span class="kw">for </span>(from, to) <span class="kw">in </span>input_axes.into_iter().zip(target_axes) {
+<a href=#279 id=279 data-nosnippet>279</a>            <span class="kw">if let </span>(<span class="prelude-val">Some</span>(from), <span class="prelude-val">Some</span>(to)) = (from, to) {
+<a href=#280 id=280 data-nosnippet>280</a>                target_shape[to] = shape[from];
+<a href=#281 id=281 data-nosnippet>281</a>            }
+<a href=#282 id=282 data-nosnippet>282</a>        }
+<a href=#283 id=283 data-nosnippet>283</a>    }
+<a href=#284 id=284 data-nosnippet>284</a>    target_shape
+<a href=#285 id=285 data-nosnippet>285</a>}
+<a href=#286 id=286 data-nosnippet>286</a>
+<a href=#287 id=287 data-nosnippet>287</a><span class="kw">fn </span>output_beams&lt;T: RegridPixel&gt;(
+<a href=#288 id=288 data-nosnippet>288</a>    input: <span class="kw-2">&amp;</span><span class="kw">dyn </span>ImageInterface&lt;T&gt;,
+<a href=#289 id=289 data-nosnippet>289</a>    product: <span class="kw-2">&amp;</span>Regridded&lt;T&gt;,
+<a href=#290 id=290 data-nosnippet>290</a>    <span class="kw-2">mut </span>info: ImageInfo,
+<a href=#291 id=291 data-nosnippet>291</a>    selection: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>SubimagePlan&gt;,
+<a href=#292 id=292 data-nosnippet>292</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(ImageInfo, [Vec&lt;usize&gt;; <span class="number">2</span>]), ImageError&gt; {
+<a href=#293 id=293 data-nosnippet>293</a>    <span class="kw">let </span><span class="kw-2">mut </span>planes = <span class="kw">if let </span><span class="prelude-val">Some</span>(plan) = selection {
+<a href=#294 id=294 data-nosnippet>294</a>        <span class="kw">let </span>section = <span class="kw-2">&amp;</span>plan.selection;
+<a href=#295 id=295 data-nosnippet>295</a>        beam_section_indices(
+<a href=#296 id=296 data-nosnippet>296</a>            <span class="kw-2">&amp;</span>info.beam_set,
+<a href=#297 id=297 data-nosnippet>297</a>            input.coordinates(),
+<a href=#298 id=298 data-nosnippet>298</a>            input.ndim(),
+<a href=#299 id=299 data-nosnippet>299</a>            <span class="kw-2">&amp;</span>section.start,
+<a href=#300 id=300 data-nosnippet>300</a>            <span class="kw-2">&amp;</span>section.packed_shape(),
+<a href=#301 id=301 data-nosnippet>301</a>            section.stride.as_deref(),
+<a href=#302 id=302 data-nosnippet>302</a>        )
+<a href=#303 id=303 data-nosnippet>303</a>    } <span class="kw">else </span>{
+<a href=#304 id=304 data-nosnippet>304</a>        [
+<a href=#305 id=305 data-nosnippet>305</a>            (<span class="number">0</span>..info.beam_set.n_channels()).collect(),
+<a href=#306 id=306 data-nosnippet>306</a>            (<span class="number">0</span>..info.beam_set.n_stokes()).collect(),
+<a href=#307 id=307 data-nosnippet>307</a>        ]
+<a href=#308 id=308 data-nosnippet>308</a>    };
+<a href=#309 id=309 data-nosnippet>309</a>    <span class="kw">if </span>info.beam_set.is_multi() {
+<a href=#310 id=310 data-nosnippet>310</a>        <span class="kw">let </span>output_stokes = product
+<a href=#311 id=311 data-nosnippet>311</a>            .coordinates
+<a href=#312 id=312 data-nosnippet>312</a>            .find_coordinate(CoordinateType::Stokes)
+<a href=#313 id=313 data-nosnippet>313</a>            .and_then(|index| product.coordinates.coordinate_pixel_axes(index))
+<a href=#314 id=314 data-nosnippet>314</a>            .and_then(|axes| axes.into_iter().flatten().next());
+<a href=#315 id=315 data-nosnippet>315</a>        <span class="kw">if let </span>(<span class="prelude-val">Some</span>(input_axis), <span class="prelude-val">Some</span>(output_axis)) =
+<a href=#316 id=316 data-nosnippet>316</a>            (input.find_axis(CoordinateType::Stokes), output_stokes)
+<a href=#317 id=317 data-nosnippet>317</a>            &amp;&amp; info.beam_set.n_stokes() &gt; <span class="number">1
+<a href=#318 id=318 data-nosnippet>318</a>        </span>{
+<a href=#319 id=319 data-nosnippet>319</a>            <span class="kw">let </span>original = stokes_for_axis(input.coordinates(), input_axis)<span class="question-mark">?</span>;
+<a href=#320 id=320 data-nosnippet>320</a>            planes[<span class="number">1</span>] = stokes_for_axis(<span class="kw-2">&amp;</span>product.coordinates, output_axis)<span class="question-mark">?
+<a href=#321 id=321 data-nosnippet>321</a>                </span>.iter()
+<a href=#322 id=322 data-nosnippet>322</a>                .map(|pol| {
+<a href=#323 id=323 data-nosnippet>323</a>                    original
+<a href=#324 id=324 data-nosnippet>324</a>                        .iter()
+<a href=#325 id=325 data-nosnippet>325</a>                        .position(|value| value == pol)
+<a href=#326 id=326 data-nosnippet>326</a>                        .ok_or_else(|| invalid(<span class="string">"output polarization has no input restoring beam"</span>))
+<a href=#327 id=327 data-nosnippet>327</a>                })
+<a href=#328 id=328 data-nosnippet>328</a>                .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#329 id=329 data-nosnippet>329</a>        }
+<a href=#330 id=330 data-nosnippet>330</a>        info.beam_set = info.beam_set.subset(<span class="kw-2">&amp;</span>planes[<span class="number">0</span>], <span class="kw-2">&amp;</span>planes[<span class="number">1</span>])<span class="question-mark">?</span>;
+<a href=#331 id=331 data-nosnippet>331</a>    }
+<a href=#332 id=332 data-nosnippet>332</a>    <span class="prelude-val">Ok</span>((info, planes))
+<a href=#333 id=333 data-nosnippet>333</a>}
+<a href=#334 id=334 data-nosnippet>334</a>
+<a href=#335 id=335 data-nosnippet>335</a><span class="kw">fn </span>invalid(message: <span class="kw">impl </span>Into&lt;String&gt;) -&gt; ImageError {
+<a href=#336 id=336 data-nosnippet>336</a>    ImageError::CasaSelection(message.into())
+<a href=#337 id=337 data-nosnippet>337</a>}
 </code></pre></div></section></main></body></html>

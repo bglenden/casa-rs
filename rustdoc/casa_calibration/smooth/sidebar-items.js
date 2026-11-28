@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Smoother"],"fn":["smooth_calibration_table"]};
+window.SIDEBAR_ITEMS = {"enum":["SmoothError","Smoother"],"fn":["smooth_calibration_table"]};

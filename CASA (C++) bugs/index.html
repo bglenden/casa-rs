@@ -518,6 +518,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../python/measurement-sets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MeasurementSet Formats
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../python/tasks-calibrate/" class="md-nav__link">
         
   
@@ -1038,6 +1066,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#aw-pointing-lookup-differs-from-the-legacy-casacore-iterator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A/W POINTING lookup differs from the legacy casacore iterator
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#aw-pointing-can-reuse-the-origin-of-an-earlier-convolution-buffer" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1130,6 +1169,28 @@
     <span class="md-ellipsis">
       
         A mosaic cube restart grids at the saved alternate PSF direction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#retuning-a-cube-chunk-can-change-the-native-interpolation-width" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retuning a cube chunk can change the native interpolation width
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#last-bit-widths-can-switch-the-fine-grid-of-a-tracked-cube" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Last-bit widths can switch the fine grid of a tracked cube
       
     </span>
   </a>
@@ -9718,6 +9779,25 @@ products pass, including the weak odd Taylor weight check. A
 debugger run without the intervention reproduces all 19 stock
 products exactly. The three windows share a feed angle and usable
 integration times, so casa-rs uses one schedule for all three.</p>
+<h2 id="aw-pointing-lookup-differs-from-the-legacy-casacore-iterator">A/W POINTING lookup differs from the legacy casacore iterator<a class="headerlink" href="#aw-pointing-lookup-differs-from-the-legacy-casacore-iterator" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, <code>PointingOffsets</code> gets each antenna's direction through
+<code>VisBufferUtil::getPointingDir</code>. Its <code>pointingIndex</code> searches the original
+POINTING table from row zero at every visibility time. By contrast, legacy
+<code>VisBuffer::fillDirection1</code> and <code>fillDirection2</code> pass their last successful
+row to casacore <code>MSPointingColumns::pointingIndex</code>, which wraps from the end
+of the table and treats negative intervals as valid at every epoch.</p>
+<p>For <code>awproject(usepointing=True)</code> on MSv2, casa-rs follows the CASA A/W
+row selection for covered queries. It infers a nonpositive interval's
+half-width from the next different time for that antenna in table order,
+or the preceding different time if no later one exists. The first covering
+row wins unless a nonpositive-interval row is at least as close. For example,
+physical rows at 20 s and 10 s with positive intervals of 30 s cover 11 s;
+the A/W lookup selects the 20 s row regardless of a previous query.</p>
+<p>With only one distinct time for an antenna, a nonpositive sample covers all
+times. casa-rs handles this case directly. For an uncovered query, CASA's AW
+helper returns its nearest nonpositive row if one exists, or uses the FIELD
+phase centre. casa-rs gives uncovered queries to its existing pointing law,
+which uses the nearest samples and holds an endpoint under its A/W policy.</p>
 <h2 id="aw-pointing-can-reuse-the-origin-of-an-earlier-convolution-buffer">AW pointing can reuse the origin of an earlier convolution buffer<a class="headerlink" href="#aw-pointing-can-reuse-the-origin-of-an-earlier-convolution-buffer" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-12</li>
@@ -9901,6 +9981,54 @@ that direction in its WCS. The main products use the main image's
 geometry. The regression
 <code>reforming_a_mosaic_cube_psf_uses_the_requested_geometry</code> checks the
 PSF, beams, PB, weight, residual and sums on a cube restart.</p>
+<h2 id="retuning-a-cube-chunk-can-change-the-native-interpolation-width">Retuning a cube chunk can change the native interpolation width<a class="headerlink" href="#retuning-a-cube-chunk-can-change-the-native-interpolation-width" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 <code>FTMachine::interpolateFrequencyTogrid</code> and
+<code>interpolateFrequencyFromgrid</code> take the width from the separation of the
+first two VisBuffer channel centres in the interpolation frame.
+<code>matchChannel</code> uses the same separation for the prediction halo. VI2 can
+return several disjoint frequency slices, and <code>SynthesisImagerVi2::tuneChunk</code>
+restricts those slices for each chunk. With a selection such as <code>0:0~1;100</code>,
+a chunk might start with channels 1 and 100 while the complete selection
+starts with 0 and 1.</p>
+<p>For a linear cube, casa-rs preserves the first selected pair at each epoch
+before clipping the read support, and evaluates those centres in the
+interpolation frame. Each wave retains the selected channels that bracket
+it at any observed epoch, including when a Doppler shift changes which
+channels are adjacent. The fine gridding and prediction coordinates and
+prediction halo agree with the resident cube through gaps and uneven
+channel spacing.</p>
+<h2 id="last-bit-widths-can-switch-the-fine-grid-of-a-tracked-cube">Last-bit widths can switch the fine grid of a tracked cube<a class="headerlink" href="#last-bit-widths-can-switch-the-fine-grid-of-a-tracked-cube" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 uses the floor of the ratio of two channel-centre
+subtractions in <code>FTMachine::interpolateFrequencyTogrid</code> and
+<code>interpolateFrequencyFromgrid</code>. On the public 12-channel Venus
+<code>cubesource</code> observation, a width of three native channels has a
+reported spacing of about 732454.026 Hz. At the same REST origin,
+changing the width by 0.0001220703125 Hz (four coordinate ULPs)
+leaves WCS within the comparison tolerance and changes the standard
+linear cube's first three sums of weights from 37378.4766 to 56067.7148.
+Its worst residual plane changes by 0.318 NRMS. The mosaic comparison
+also differs in 1,359 primary-beam mask pixels. Nearest and the
+731 kHz and 734 kHz linear controls agree with casa-rs.</p>
+<p>The endpoint support can also change at a fixed width. Lowering the
+REST origin by 0.0023193359375 Hz at about 261.8 GHz changes CASA's
+last mosaic plane from 130727.0859 to 131578.3125 in sum of weights,
+with about 0.0357 residual NRMS and 204 primary-beam mask differences.
+These measurements use the same visibility data and fixed three-sample
+width for both CASA outputs.</p>
+<p>When a tracking ephemeris supplies a Doppler conversion into REST,
+casa-rs uses the corresponding integer count if channel-centre precision
+cannot distinguish the width from that many native intervals. Gridding,
+mosaic beam selection and prediction use the first full-selected pair
+for both its width and its precision, even when a wave reads other
+channels. Resolved noninteger widths and fixed REST-tagged data cubes
+retain the floor rule. The
+<code>source_frame_bin_count_is_stable_at_channel_coordinate_precision</code>
+law pins the integer and both neighbouring controls. The tracked cubic
+read plan preserves selected channels whose stencils reach the image
+band over the selected epochs. On the Venus mosaic, removing native channel 0 from CASA's
+selection dropped one integration from the leading plane. The
+<code>a_tracked_cubic_cube_reads_its_selected_guard_channel</code> test distinguishes
+that needed guard from a channel the user excludes.</p>
 <h2 id="the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames">The cube Briggs weightor grids and looks up its density in different uvw frames<a class="headerlink" href="#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-15</li>
@@ -15731,7 +15859,16 @@ pixel-boundary polygons retain CASA's exact support.</p>
 is −0.999999, stock CASA paints column zero at rows 6 through 10.
 Both native masks are empty and return stop code 7. The ordinary
 fractional, near-integer and partly clipped controls retain CASA's support.</p>
-<p><a href="https://github.com/bglenden/casa-rs/issues/823">Issue #823</a> and
+<p>The same truncation can include a pixel outside a polygon wholly inside
+the image. For <code>poly [[0.25pix,0.25pix],[2.25pix,0.25pix],[0.25pix,2.25pix]]</code>,
+the right crossing on row 2 is at x = 0.5, or −0.5 relative to the
+polygon's first candidate column at x = 1. CASA 6.7.6.14 admits pixel
+(1, 2) by truncating −0.5 to 0. On the transposed image fixture it reports
+20 samples, including ten across the Stokes and frequency planes at
+(1, 2). Native <code>imstat</code> selects the ten samples at (1, 1), the only
+direction pixel centre within the polygon.</p>
+<p><a href="https://github.com/bglenden/casa-rs/issues/823">Issue #823</a>,
+<a href="https://github.com/bglenden/casa-rs/issues/1021">Issue #1021</a>, and
 <a href="https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/lattices/LRegions/LCPolygon.cc#L198-L208">casacore's upper crossing bound</a>.</p>
 <h2 id="pco-pixel-to-world-returns-nan-on-the-central-meridian">PCO pixel to world returns NaN on the central meridian<a class="headerlink" href="#pco-pixel-to-world-returns-nan-on-the-central-meridian" title="Permanent link">&para;</a></h2>
 <ul>

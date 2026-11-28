@@ -1,0 +1,1153 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+        <link rel="prev" href="../data/">
+      
+      
+        <link rel="next" href="../tasks-calibrate/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
+    
+    
+      
+        <title>MeasurementSet Formats - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#measurementset-formats" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              MeasurementSet Formats
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/casa-compatibility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CASA Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MeasurementSet Formats
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MeasurementSet Formats
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#python-format-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python format support
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choose-the-output-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choose the output format
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conversion-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conversion limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#re-reference-a-calibration-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Re-reference a calibration table
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#smooth-calibration-tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Smooth calibration tables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#solve-time-binned-gains" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Solve time-binned gains
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prescribe-calibration-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prescribe calibration values
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#write-a-calibration-listing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Write a calibration listing
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../casars-calibrate-user-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#python-format-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python format support
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choose-the-output-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choose the output format
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conversion-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conversion limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#re-reference-a-calibration-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Re-reference a calibration table
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#smooth-calibration-tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Smooth calibration tables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#solve-time-binned-gains" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Solve time-binned gains
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prescribe-calibration-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prescribe calibration values
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#write-a-calibration-listing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Write a calibration listing
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="measurementset-formats">MeasurementSet formats<a class="headerlink" href="#measurementset-formats" title="Permanent link">&para;</a></h1>
+<p>MSv2 stores use casacore tables, usually in a directory ending in <code>.ms</code>.
+XRADIO MSv4 stores use schema 4.0.1 in a local Zarr v3 processing set ending
+in <code>.ps.zarr</code>.</p>
+<h2 id="python-format-support">Python format support<a class="headerlink" href="#python-format-support" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Public Python parameter</th>
+<th>Operation</th>
+<th>MSv2</th>
+<th>MSv4</th>
+<th>End-to-end tests</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tasks.msconvert(vis=…)</code></td>
+<td>Read an existing MeasurementSet</td>
+<td>Yes</td>
+<td>Yes</td>
+<td><a href="https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_msconvert_formats.py">All four input/output pairings</a></td>
+</tr>
+<tr>
+<td><code>tasks.msconvert(outputvis=…, outformat=…)</code></td>
+<td>Create a new MeasurementSet</td>
+<td><code>outformat="msv2"</code></td>
+<td><code>outformat="msv4"</code></td>
+<td><a href="https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_msconvert_formats.py">All four input/output pairings</a></td>
+</tr>
+<tr>
+<td><code>tasks.rerefant(vis=…)</code></td>
+<td>Read antenna metadata for re-referencing a calibration table</td>
+<td>Yes</td>
+<td>Yes</td>
+<td><a href="https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_rerefant_formats.py">Read and verify the output calibration table</a></td>
+</tr>
+<tr>
+<td><code>tasks.smoothcal(vis=…)</code></td>
+<td>Read field metadata for smoothing a calibration table</td>
+<td>Yes</td>
+<td>Yes</td>
+<td><a href="https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_smoothcal_formats.py">Verify field-specific smoothing on both stores</a></td>
+</tr>
+<tr>
+<td><code>tasks.gaincal(vis=…)</code></td>
+<td>Read visibilities for a time-binned per-receptor G gain solve</td>
+<td>Yes</td>
+<td><a href="#solve-time-binned-gains">Point-source mode below</a></td>
+<td><a href="https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_gaincal_formats.py">Verify gains for both stores</a></td>
+</tr>
+<tr>
+<td><code>tasks.gencal(vis=…)</code></td>
+<td>Read metadata for explicit calibration prescriptions</td>
+<td>Yes</td>
+<td><code>amp</code>, <code>ph</code>, <code>sbd</code>, <code>mbd</code>, <code>opac</code>, <a href="#prescribe-calibration-values">manual antenna offsets</a></td>
+<td><a href="https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_gencal_formats.py">Create and accumulate priors on both stores</a></td>
+</tr>
+<tr>
+<td><code>tasks.listcal(vis=…)</code></td>
+<td>Read metadata for a CASA calibration listing</td>
+<td>Yes</td>
+<td>Fixed fields, terminal and file output</td>
+<td><a href="https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_listcal_formats.py">Verify file output on both stores</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="choose-the-output-format">Choose the output format<a class="headerlink" href="#choose-the-output-format" title="Permanent link">&para;</a></h2>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">casars</span><span class="w"> </span><span class="kn">import</span> <span class="n">tasks</span>
+
+<span class="n">converted</span> <span class="o">=</span> <span class="n">tasks</span><span class="o">.</span><span class="n">msconvert</span><span class="p">(</span>
+    <span class="n">vis</span><span class="o">=</span><span class="s2">"target.ms"</span><span class="p">,</span> <span class="n">outputvis</span><span class="o">=</span><span class="s2">"target.ps.zarr"</span><span class="p">,</span> <span class="n">outformat</span><span class="o">=</span><span class="s2">"msv4"</span>
+<span class="p">)</span>
+<span class="n">rewritten</span> <span class="o">=</span> <span class="n">tasks</span><span class="o">.</span><span class="n">msconvert</span><span class="p">(</span>
+    <span class="n">vis</span><span class="o">=</span><span class="s2">"target.ms"</span><span class="p">,</span> <span class="n">outputvis</span><span class="o">=</span><span class="s2">"target-copy.ms"</span><span class="p">,</span> <span class="n">outformat</span><span class="o">=</span><span class="s2">"msv2"</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">converted</span><span class="o">.</span><span class="n">value</span><span class="p">[</span><span class="s2">"losses"</span><span class="p">])</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">rewritten</span><span class="o">.</span><span class="n">value</span><span class="p">[</span><span class="s2">"losses"</span><span class="p">])</span>
+</code></pre></div>
+
+<p>The input format is detected from the store. Give both <code>outputvis</code> and
+<code>outformat</code> to choose its destination and format explicitly. With
+<code>outformat</code> omitted, the task selects the other format. An existing
+destination requires <code>overwrite=True</code>.</p>
+<h2 id="conversion-limits">Conversion limits<a class="headerlink" href="#conversion-limits" title="Permanent link">&para;</a></h2>
+<p><code>msconvert</code> writes a new store from the data its conversion path carries.
+This applies to same-format rewrites too. For example, an MSv2-to-MSv2
+rewrite can report that it dropped the <code>HISTORY</code> subtable or fields such as
+<code>OBSERVATION.LOG</code>. The completion's <code>value["losses"]</code> and task logs report
+the specific losses.</p>
+<ul>
+<li>MSv4 carries element flags. During conversion from MSv2, a row flag
+  contributes to those element flags. The original row flag and flag
+  categories cannot be reconstructed from the element flags.</li>
+<li>MSv4 stores weights and has no <code>SIGMA</code> column. When the source lacks
+  <code>SIGMA</code>, an MSv2 output derives it as <code>1 / sqrt(WEIGHT)</code> for positive
+  weights.</li>
+<li>The conversion to MSv4 uses XRADIO names for fields and antennas. A
+  conversion back to MSv2 keeps the names stated by the MSv4 input.</li>
+<li>An MSv2 output uses <code>padding="flagged"</code> by default for unfilled cells in
+  the time/baseline grid. Use <code>padding="omitted"</code> to skip those cells.</li>
+<li>A feature outside the supported conversion profile can refuse the task.
+  The error identifies the feature it could not carry. Inspect the reported
+  losses before treating the converted store as a replacement for its input.</li>
+</ul>
+<h2 id="re-reference-a-calibration-table">Re-reference a calibration table<a class="headerlink" href="#re-reference-a-calibration-table" title="Permanent link">&para;</a></h2>
+<p>For <code>tasks.rerefant</code> with an MSv4 input, <code>refant</code> selects antennas by
+name or row number in <code>tablein</code>'s <code>ANTENNA</code> subtable. The task matches them
+to the measurement set by station and position and checks that the names
+agree. The task refuses an ambiguous identity before publishing the
+output. With MSv2, <code>refant</code> selects from the MeasurementSet's <code>ANTENNA</code>
+subtable using its stored row numbers and position values.</p>
+<h2 id="smooth-calibration-tables">Smooth calibration tables<a class="headerlink" href="#smooth-calibration-tables" title="Permanent link">&para;</a></h2>
+<p>For <code>tasks.smoothcal</code> with an MSv4 input, <code>field</code> selects rows of
+<code>tablein</code>'s <code>FIELD</code> subtable. The selected rows must identify unique
+observation fields by name and phase centre in the same frame. The task
+refuses field binding for ephemeris-tracking fields or polynomial calibration
+directions. The calibration <code>FIELD</code> subtable must store its own rows.
+With MSv2, <code>field</code> selects from the MeasurementSet's <code>FIELD</code>
+subtable. An empty selector smooths every calibration-table field without
+binding individual field identities across stores.</p>
+<h2 id="solve-time-binned-gains">Solve time-binned gains<a class="headerlink" href="#solve-time-binned-gains" title="Permanent link">&para;</a></h2>
+<p>For an MSv4 input, <code>tasks.gaincal</code> supports <code>gaintype="G"</code> with
+<code>calmode="ap"</code>, <code>calmode="p"</code> or <code>calmode="a"</code>. Give a positive duration
+such as <code>solint="60s"</code> and an explicit unpolarized point source such as
+<code>smodel=[1, 0, 0, 0]</code>. Use the default selection,
+no prior calibration tables, and the default averaging, flagging, and
+combination controls. Keep normalization and robust fitting at their
+defaults. Each MSv4 scan name must map to a distinct decimal scan number,
+and each solution group must be contained in one observation partition.
+The task writes a CASA-format calibration table. MSv4 uses the processing
+set's stored weights. MSv2 uses weights derived from its stored sigmas,
+following CASA.</p>
+<h2 id="prescribe-calibration-values">Prescribe calibration values<a class="headerlink" href="#prescribe-calibration-values" title="Permanent link">&para;</a></h2>
+<p><code>tasks.gencal</code> accepts MSv4 for explicit amplitude, phase, delay and opacity
+values. The task resolves antenna and spectral-window selectors in the
+input's namespace and writes a CASA-format calibration table. You can
+accumulate a phase prescription in an existing gain table as with MSv2.
+MSv4 inputs must have metadata that the CASA calibration subtables can
+represent. The task refuses moving MSv4 fields and updates whose existing
+antenna or spectral-window IDs refer to different physical entities.
+Textual scan names are accepted because these prescriptions do not name a scan.</p>
+<p>For manual antenna offsets, supply <code>caltype="antpos"</code>, an explicit <code>antenna</code>
+selection, and three offset coordinates per selected antenna in <code>parameter</code>.
+<code>caltype="antposvla"</code> rotates offsets from VLA coordinates into ITRF. Both
+modes add offsets to an existing, physically compatible calibration table.
+MSv4 uses the declared <code>overall_telescope_name</code> of each observing session.
+Manual offsets are available when those telescopes do not require the VLA
+tropospheric correction check. For observations consisting entirely of VLA
+or EVLA sessions, the task requires the stated <code>OBSERVATION.TIME_RANGE</code> that
+determines CASA's <code>VLATrDelCorr</code> keyword. MSv4 lacks that field and the task
+reports a typed <code>vis</code> error. Automatic and file-based <code>antpos</code> require MSv2.</p>
+<h2 id="write-a-calibration-listing">Write a calibration listing<a class="headerlink" href="#write-a-calibration-listing" title="Permanent link">&para;</a></h2>
+<p><code>tasks.listcal</code> accepts fixed-field MSv4 observations for terminal display
+and file output. Supply <code>listfile</code> to write a report, or leave it empty to
+display the result. A positive <code>pagerows</code> sets the page size. The task resolves
+<code>field</code>, <code>antenna</code>, and <code>spw</code> against the supplied observation. Use the names
+in the MSv4 observation, which may have gained suffixes during conversion from
+MSv2. The listing retains the supplied observation path and describes the
+solutions in the CASA calibration table.</p>
+<p>The selected field and antenna IDs must agree with the physical identities at
+the same rows of that calibration table. Explicit spectral-window selections
+must agree at the selected windows and channel grids. With an empty or <code>"*"</code>
+<code>spw</code>, every window referenced by a calibration solution must agree. The task
+reports identity conflicts before printing or writing a listing.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

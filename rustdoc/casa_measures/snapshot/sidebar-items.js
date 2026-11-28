@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["create_packaged_snapshot","runtime_root_candidates","validate_runtime_root"]};
+window.SIDEBAR_ITEMS = {"fn":["create_packaged_snapshot","install_packaged_snapshot","packaged_snapshot_provenance","runtime_root_candidates","validate_runtime_root"]};

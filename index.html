@@ -589,6 +589,34 @@
   
   
     <li class="md-nav__item">
+      <a href="python/measurement-sets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MeasurementSet Formats
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="python/tasks-calibrate/" class="md-nav__link">
         
   
@@ -767,12 +795,12 @@
 
 <h1 id="documentation-index">Documentation Index<a class="headerlink" href="#documentation-index" title="Permanent link">&para;</a></h1>
 <p>Truth class: current descriptive
-Last reality check: 2026-11-02
+Last reality check: 2026-11-27
 Verification: just docs-check</p>
-<p>casa-rs is used from the Python package <code>casars</code> and from the task
-executables of the application catalog (such as <code>calibrate gaincal ...</code>),
-which Python also starts for its task calls. Computation is in Rust, and
-the Python package is its interface (<a href="adr/0017-python-first-surface/">ADR-0017</a>).</p>
+<p>Use casa-rs from the Python package <code>casars</code> or the task executables in the
+application catalog, such as <code>calibrate gaincal ...</code>. Python calls the
+shared Rust task providers in process through <code>casars._core</code>.
+<a href="adr/0017-python-first-surface/">Python-first surface</a>.</p>
 <h2 id="user-documentation">User documentation<a class="headerlink" href="#user-documentation" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="install/">Install</a>: the suite installer, release channels, and
@@ -803,6 +831,8 @@ built from <code>main</code>.</p>
   from CASA or casacore, and the CASA behaviours casa-rs follows for parity</li>
 <li><a href="agent-reference/">Agent reference</a>: workstation, CASA/C++ oracle, data
   and storage locations, and release recipes</li>
+<li><a href="release-process/">Release process</a> for milestone triage and documentation
+  cleanup</li>
 <li><code>adr/</code>: accepted architecture decisions</li>
 <li><a href="measurement-set/contracts/">MeasurementSet boundary</a>: its rules and
   the obligations for capabilities not yet offered</li>

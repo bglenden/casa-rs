@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `libs/casacore/casa-ms/src/observation_io/creation/plan.rs`."><title>plan.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="casa_ms" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../../static.files/src-script-813739b1.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_ms/observation_io/creation/</div>plan.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `libs/casacore/casa-ms/src/observation_io/creation/plan.rs`."><title>plan.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="casa_ms" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.1 (20ddd0171 2026-11-25)" data-channel="1.100.1" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../../static.files/src-script-813739b1.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_ms/observation_io/creation/</div>plan.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! A new MeasurementSet v2 planned from observations, then written:
 <a href=#3 id=3 data-nosnippet>3</a>//! subtables from the merged catalogue, and one MAIN row per grid cell (or
 <a href=#4 id=4 data-nosnippet>4</a>//! per acquisition, padding omitted), input after input, each input's
@@ -213,7 +213,7 @@
 <a href=#213 id=213 data-nosnippet>213</a>        found.dedup();
 <a href=#214 id=214 data-nosnippet>214</a>        losses::refuse_unaccepted(<span class="kw-2">&amp;</span>found, <span class="kw-2">&amp;</span>options.accept)<span class="question-mark">?</span>;
 <a href=#215 id=215 data-nosnippet>215</a>        <span class="kw">for </span>input <span class="kw">in </span><span class="kw-2">&amp;</span>inputs {
-<a href=#216 id=216 data-nosnippet>216</a>            refuse_unwritable(input.observation().catalogue())<span class="question-mark">?</span>;
+<a href=#216 id=216 data-nosnippet>216</a>            refuse_unwritable(input.observation().catalogue(), <span class="bool-val">true</span>)<span class="question-mark">?</span>;
 <a href=#217 id=217 data-nosnippet>217</a>        }
 <a href=#218 id=218 data-nosnippet>218</a>        <span class="comment">// A conversion writes the ephemerides its fields follow (#942);
 <a href=#219 id=219 data-nosnippet>219</a>        // combining them, as concat merges ephemeris tables, is not done.
@@ -251,7 +251,7 @@
 <a href=#251 id=251 data-nosnippet>251</a>                 acquisition of another"</span>,
 <a href=#252 id=252 data-nosnippet>252</a>            ));
 <a href=#253 id=253 data-nosnippet>253</a>        }
-<a href=#254 id=254 data-nosnippet>254</a>        refuse_unwritable(<span class="kw-2">&amp;</span>combined.catalogue)<span class="question-mark">?</span>;
+<a href=#254 id=254 data-nosnippet>254</a>        refuse_unwritable(<span class="kw-2">&amp;</span>combined.catalogue, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
 <a href=#255 id=255 data-nosnippet>255</a>        found.extend(combined.losses.iter().cloned());
 <a href=#256 id=256 data-nosnippet>256</a>        found.extend(msv2_ephemeris::filled_rows(<span class="kw-2">&amp;</span>combined.catalogue));
 <a href=#257 id=257 data-nosnippet>257</a>        found.extend(
@@ -600,7 +600,7 @@
 <a href=#600 id=600 data-nosnippet>600</a>/// without channels, a field in another frame than J2000, what its
 <a href=#601 id=601 data-nosnippet>601</a>/// subtables cannot say ([`msv2_tables::refuse_unwritable`]) and an
 <a href=#602 id=602 data-nosnippet>602</a>/// ephemeris its table cannot hold ([`msv2_ephemeris::refuse_unwritable`]).
-<a href=#603 id=603 data-nosnippet>603</a></span><span class="kw">fn </span>refuse_unwritable(catalogue: <span class="kw-2">&amp;</span>Catalogue) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationError&gt; {
+<a href=#603 id=603 data-nosnippet>603</a></span><span class="kw">fn </span>refuse_unwritable(catalogue: <span class="kw-2">&amp;</span>Catalogue, preserve_scans: bool) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationError&gt; {
 <a href=#604 id=604 data-nosnippet>604</a>    <span class="kw">if </span>catalogue
 <a href=#605 id=605 data-nosnippet>605</a>        .fields
 <a href=#606 id=606 data-nosnippet>606</a>        .iter()
@@ -627,7 +627,7 @@
 <a href=#627 id=627 data-nosnippet>627</a>            });
 <a href=#628 id=628 data-nosnippet>628</a>        }
 <a href=#629 id=629 data-nosnippet>629</a>    }
-<a href=#630 id=630 data-nosnippet>630</a>    msv2_tables::refuse_unwritable(catalogue)<span class="question-mark">?</span>;
+<a href=#630 id=630 data-nosnippet>630</a>    msv2_tables::refuse_unwritable(catalogue, preserve_scans)<span class="question-mark">?</span>;
 <a href=#631 id=631 data-nosnippet>631</a>    msv2_ephemeris::refuse_unwritable(catalogue)
 <a href=#632 id=632 data-nosnippet>632</a>}
 <a href=#633 id=633 data-nosnippet>633</a>
@@ -701,10 +701,10 @@
 <a href=#701 id=701 data-nosnippet>701</a>}
 <a href=#702 id=702 data-nosnippet>702</a>
 <a href=#703 id=703 data-nosnippet>703</a><span class="doccomment">/// An in-memory MeasurementSet holding no rows and the subtables an MSv2
-<a href=#704 id=704 data-nosnippet>704</a>/// converted from `observation` would hold, and the `SPECTRAL_WINDOW` row
-<a href=#705 id=705 data-nosnippet>705</a>/// of each partition: the namespace a calibration table solved on a store
-<a href=#706 id=706 data-nosnippet>706</a>/// without one (MSv4) persists. Antennas, fields and sessions keep their
-<a href=#707 id=707 data-nosnippet>707</a>/// catalogue order.
+<a href=#704 id=704 data-nosnippet>704</a>/// converted from `observation` would hold, and the `SPECTRAL_WINDOW` and
+<a href=#705 id=705 data-nosnippet>705</a>/// `DATA_DESCRIPTION` rows of each partition: the namespace a calibration
+<a href=#706 id=706 data-nosnippet>706</a>/// table solved on an MSv4 store persists. Antennas, fields and sessions
+<a href=#707 id=707 data-nosnippet>707</a>/// keep their catalogue order.
 <a href=#708 id=708 data-nosnippet>708</a>///
 <a href=#709 id=709 data-nosnippet>709</a>/// # Errors
 <a href=#710 id=710 data-nosnippet>710</a>///
@@ -712,25 +712,59 @@
 <a href=#712 id=712 data-nosnippet>712</a></span><span class="attr">#[cfg(feature = <span class="string">"msv4"</span>)]
 <a href=#713 id=713 data-nosnippet>713</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>catalogue_subtables(
 <a href=#714 id=714 data-nosnippet>714</a>    observation: <span class="kw-2">&amp;</span><span class="kw">dyn </span>casa_observation::Observation,
-<a href=#715 id=715 data-nosnippet>715</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(MeasurementSet, Vec&lt;i32&gt;), ObservationError&gt; {
-<a href=#716 id=716 data-nosnippet>716</a>    <span class="kw">let </span>catalogue = observation.catalogue();
-<a href=#717 id=717 data-nosnippet>717</a>    refuse_unwritable(catalogue)<span class="question-mark">?</span>;
-<a href=#718 id=718 data-nosnippet>718</a>    <span class="kw">let </span>spans = <span class="kw">match </span>catalogue
-<a href=#719 id=719 data-nosnippet>719</a>        .partitions
-<a href=#720 id=720 data-nosnippet>720</a>        .first()
-<a href=#721 id=721 data-nosnippet>721</a>        .and_then(|entry| entry.data_groups.first())
-<a href=#722 id=722 data-nosnippet>722</a>    {
-<a href=#723 id=723 data-nosnippet>723</a>        <span class="prelude-val">Some</span>(group) =&gt; occupancy::spans(observation, <span class="kw-2">&amp;</span>group.name)<span class="question-mark">?</span>,
-<a href=#724 id=724 data-nosnippet>724</a>        <span class="prelude-val">None </span>=&gt; <span class="kw">super</span>::msv2_rows::Spans {
-<a href=#725 id=725 data-nosnippet>725</a>            time_range: [<span class="number">0.0</span>, <span class="number">0.0</span>],
-<a href=#726 id=726 data-nosnippet>726</a>            observation_ranges: <span class="macro">vec!</span>[[<span class="number">0.0</span>, <span class="number">0.0</span>]; catalogue.observations.len()],
-<a href=#727 id=727 data-nosnippet>727</a>            field_first: <span class="macro">vec!</span>[<span class="prelude-val">None</span>; catalogue.fields.len()],
-<a href=#728 id=728 data-nosnippet>728</a>        },
-<a href=#729 id=729 data-nosnippet>729</a>    };
-<a href=#730 id=730 data-nosnippet>730</a>    <span class="kw">let </span><span class="kw-2">mut </span>ms =
-<a href=#731 id=731 data-nosnippet>731</a>        MeasurementSet::create_memory(msv2_tables::builder(catalogue, <span class="kw-2">&amp;</span>[])).map_err(storage)<span class="question-mark">?</span>;
-<a href=#732 id=732 data-nosnippet>732</a>    <span class="kw">let </span>intents = <span class="kw">super</span>::msv2_identity::intent_partitions(catalogue);
-<a href=#733 id=733 data-nosnippet>733</a>    <span class="kw">let </span>(layout, <span class="kw">_</span>) = msv2_tables::populate(<span class="kw-2">&amp;mut </span>ms, catalogue, <span class="kw-2">&amp;</span>spans, <span class="kw-2">&amp;</span>intents)<span class="question-mark">?</span>;
-<a href=#734 id=734 data-nosnippet>734</a>    <span class="prelude-val">Ok</span>((ms, layout.spectral_window))
-<a href=#735 id=735 data-nosnippet>735</a>}
+<a href=#715 id=715 data-nosnippet>715</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(MeasurementSet, Vec&lt;(i32, i32)&gt;), ObservationError&gt; {
+<a href=#716 id=716 data-nosnippet>716</a>    build_catalogue_subtables(observation, <span class="bool-val">true</span>)
+<a href=#717 id=717 data-nosnippet>717</a>}
+<a href=#718 id=718 data-nosnippet>718</a>
+<a href=#719 id=719 data-nosnippet>719</a><span class="doccomment">/// A prescribed caltable has no scan identity. Its direction columns need
+<a href=#720 id=720 data-nosnippet>720</a>/// physical directions; the persisted table carries no moving-field link.
+<a href=#721 id=721 data-nosnippet>721</a></span><span class="attr">#[cfg(feature = <span class="string">"msv4"</span>)]
+<a href=#722 id=722 data-nosnippet>722</a></span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::observation_io) <span class="kw">fn </span>prescribed_calibration_subtables(
+<a href=#723 id=723 data-nosnippet>723</a>    observation: <span class="kw-2">&amp;</span><span class="kw">dyn </span>casa_observation::Observation,
+<a href=#724 id=724 data-nosnippet>724</a>) -&gt; <span class="prelude-ty">Result</span>&lt;MeasurementSet, ObservationError&gt; {
+<a href=#725 id=725 data-nosnippet>725</a>    <span class="kw">if </span>observation
+<a href=#726 id=726 data-nosnippet>726</a>        .catalogue()
+<a href=#727 id=727 data-nosnippet>727</a>        .fields
+<a href=#728 id=728 data-nosnippet>728</a>        .iter()
+<a href=#729 id=729 data-nosnippet>729</a>        .any(|field| field.ephemeris.is_some())
+<a href=#730 id=730 data-nosnippet>730</a>    {
+<a href=#731 id=731 data-nosnippet>731</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationError::Unsupported {
+<a href=#732 id=732 data-nosnippet>732</a>            what: <span class="string">"a moving FIELD in an MSv4 calibration prescription"</span>,
+<a href=#733 id=733 data-nosnippet>733</a>        });
+<a href=#734 id=734 data-nosnippet>734</a>    }
+<a href=#735 id=735 data-nosnippet>735</a>    build_catalogue_subtables(observation, <span class="bool-val">false</span>).map(|(ms, <span class="kw">_</span>)| ms)
+<a href=#736 id=736 data-nosnippet>736</a>}
+<a href=#737 id=737 data-nosnippet>737</a>
+<a href=#738 id=738 data-nosnippet>738</a><span class="attr">#[cfg(feature = <span class="string">"msv4"</span>)]
+<a href=#739 id=739 data-nosnippet>739</a></span><span class="kw">fn </span>build_catalogue_subtables(
+<a href=#740 id=740 data-nosnippet>740</a>    observation: <span class="kw-2">&amp;</span><span class="kw">dyn </span>casa_observation::Observation,
+<a href=#741 id=741 data-nosnippet>741</a>    preserve_scans: bool,
+<a href=#742 id=742 data-nosnippet>742</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(MeasurementSet, Vec&lt;(i32, i32)&gt;), ObservationError&gt; {
+<a href=#743 id=743 data-nosnippet>743</a>    <span class="kw">let </span>catalogue = observation.catalogue();
+<a href=#744 id=744 data-nosnippet>744</a>    refuse_unwritable(catalogue, preserve_scans)<span class="question-mark">?</span>;
+<a href=#745 id=745 data-nosnippet>745</a>    <span class="kw">let </span>spans = <span class="kw">match </span>catalogue
+<a href=#746 id=746 data-nosnippet>746</a>        .partitions
+<a href=#747 id=747 data-nosnippet>747</a>        .first()
+<a href=#748 id=748 data-nosnippet>748</a>        .and_then(|entry| entry.data_groups.first())
+<a href=#749 id=749 data-nosnippet>749</a>    {
+<a href=#750 id=750 data-nosnippet>750</a>        <span class="prelude-val">Some</span>(group) =&gt; occupancy::spans(observation, <span class="kw-2">&amp;</span>group.name)<span class="question-mark">?</span>,
+<a href=#751 id=751 data-nosnippet>751</a>        <span class="prelude-val">None </span>=&gt; <span class="kw">super</span>::msv2_rows::Spans {
+<a href=#752 id=752 data-nosnippet>752</a>            time_range: [<span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#753 id=753 data-nosnippet>753</a>            observation_ranges: <span class="macro">vec!</span>[[<span class="number">0.0</span>, <span class="number">0.0</span>]; catalogue.observations.len()],
+<a href=#754 id=754 data-nosnippet>754</a>            field_first: <span class="macro">vec!</span>[<span class="prelude-val">None</span>; catalogue.fields.len()],
+<a href=#755 id=755 data-nosnippet>755</a>        },
+<a href=#756 id=756 data-nosnippet>756</a>    };
+<a href=#757 id=757 data-nosnippet>757</a>    <span class="kw">let </span><span class="kw-2">mut </span>ms =
+<a href=#758 id=758 data-nosnippet>758</a>        MeasurementSet::create_memory(msv2_tables::builder(catalogue, <span class="kw-2">&amp;</span>[])).map_err(storage)<span class="question-mark">?</span>;
+<a href=#759 id=759 data-nosnippet>759</a>    <span class="kw">let </span>intents = <span class="kw">super</span>::msv2_identity::intent_partitions(catalogue);
+<a href=#760 id=760 data-nosnippet>760</a>    <span class="kw">let </span>(layout, <span class="kw">_</span>) = msv2_tables::populate(<span class="kw-2">&amp;mut </span>ms, catalogue, <span class="kw-2">&amp;</span>spans, <span class="kw-2">&amp;</span>intents)<span class="question-mark">?</span>;
+<a href=#761 id=761 data-nosnippet>761</a>    <span class="prelude-val">Ok</span>((
+<a href=#762 id=762 data-nosnippet>762</a>        ms,
+<a href=#763 id=763 data-nosnippet>763</a>        layout
+<a href=#764 id=764 data-nosnippet>764</a>            .spectral_window
+<a href=#765 id=765 data-nosnippet>765</a>            .into_iter()
+<a href=#766 id=766 data-nosnippet>766</a>            .zip(layout.data_description)
+<a href=#767 id=767 data-nosnippet>767</a>            .collect(),
+<a href=#768 id=768 data-nosnippet>768</a>    ))
+<a href=#769 id=769 data-nosnippet>769</a>}
 </code></pre></div></section></main></body></html>

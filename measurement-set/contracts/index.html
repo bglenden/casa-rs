@@ -518,6 +518,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../python/measurement-sets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MeasurementSet Formats
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../python/tasks-calibrate/" class="md-nav__link">
         
   
@@ -667,10 +695,32 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#msv2-row-grids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MSv2 row grids
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#owner-decisions-in-force" class="md-nav__link">
     <span class="md-ellipsis">
       
         Owner decisions in force
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#windows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Windows
       
     </span>
   </a>
@@ -779,6 +829,20 @@ Moving the remaining consumers onto the boundary is tracked in #1055.</p>
 change: no compatibility layer and no second production route kept for
 comparison (a baseline build serves that). A consumer has not moved while a
 wrapper still leaks physical rows or <code>DATA_DESC_ID</code> into its algorithm.</p>
+<h2 id="msv2-row-grids">MSv2 row grids<a class="headerlink" href="#msv2-row-grids" title="Permanent link">&para;</a></h2>
+<p>The adapter separates MAIN rows by <code>PROCESSOR_ID</code> so each grid carries one
+processor. If one time within a partition holds more than one field or scan,
+the adapter splits that partition by the conflicting key before allocating
+its grids. Other partitions keep their requested scheme. The field and scan
+splits required to fit the grid share the original partition's spectral-weight
+probe. Imaging keeps its original weight extent across processor and
+field/scan splits.</p>
+<p>Two MAIN rows that still claim the same exact <code>TIME</code> and ordered baseline in
+one partition produce <code>ObservationError::InvalidStore</code> with both row numbers.
+The grid has one cell per time and baseline and no acquisition axis to hold
+both rows. Keeping one or combining the two would discard information.
+Baseline-dependent times retain their exact values. Unoccupied cells are
+padding and are charged at admission.</p>
 <h2 id="owner-decisions-in-force">Owner decisions in force<a class="headerlink" href="#owner-decisions-in-force" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Formats</strong> (2026-10-23): MSv2 and MSv4 (XRADIO schema 4.0.1 on local
@@ -795,6 +859,17 @@ wrapper still leaks physical rows or <code>DATA_DESC_ID</code> into its algorith
   quanta types directly, with no observation-specific measure vocabulary,
   and the Measures APIs may be reworked for bulk use (below).</li>
 </ul>
+<h2 id="windows">Windows<a class="headerlink" href="#windows" title="Permanent link">&para;</a></h2>
+<p>MSv2 has one catalogue window per <code>SPECTRAL_WINDOW</code> row. In MSv4,
+datasets with the same <code>spectral_window_name</code> share a catalogue window
+only when their channel frequencies in stored order, frequency frame,
+signed channel width and reference frequency agree exactly. Numeric
+comparisons treat positive and negative zero as equal. The reference
+frequency agrees when both datasets omit it or both state the same value
+and frame. Opening a conflicting store returns <code>InvalidStore</code>, naming the
+window and the conflicting metadata. The MSv4 writer checks the metadata
+it will emit at dataset declaration. A conflict returns <code>InvalidRequest</code>
+and prevents publication of the processing set.</p>
 <h2 id="capabilities-not-yet-offered">Capabilities not yet offered<a class="headerlink" href="#capabilities-not-yet-offered" title="Permanent link">&para;</a></h2>
 <p>Each is refused today with a typed error, or offered only in part. It is
 offered when its obligation is met.</p>

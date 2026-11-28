@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `libs/casa/casa-calibration/src/execute/solve_priors.rs`."><title>solve_priors.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="casa_calibration" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_calibration/execute/</div>solve_priors.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `libs/casa/casa-calibration/src/execute/solve_priors.rs`."><title>solve_priors.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="casa_calibration" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.1 (20ddd0171 2026-11-25)" data-channel="1.100.1" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_calibration/execute/</div>solve_priors.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Place prior calibration on the correct side of a solve.
 <a href=#3 id=3 data-nosnippet>3</a>
 <a href=#4 id=4 data-nosnippet>4</a></span><span class="kw">use </span>std::cell::RefCell;
@@ -99,265 +99,267 @@
 <a href=#99 id=99 data-nosnippet>99</a>        })
 <a href=#100 id=100 data-nosnippet>100</a>    }
 <a href=#101 id=101 data-nosnippet>101</a>
-<a href=#102 id=102 data-nosnippet>102</a>    <span class="kw">pub fn </span>single_dish(ms: <span class="kw-2">&amp;</span>MeasurementSet, plan: ApplyPlan) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ApplyExecutionError&gt; {
-<a href=#103 id=103 data-nosnippet>103</a>        <span class="kw">let </span><span class="kw-2">mut </span>priors = <span class="self">Self</span>::new(ms, plan, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="number">1</span>)<span class="question-mark">?</span>;
-<a href=#104 id=104 data-nosnippet>104</a>        priors.chain.single_dish_solve = <span class="bool-val">true</span>;
-<a href=#105 id=105 data-nosnippet>105</a>        <span class="prelude-val">Ok</span>(priors)
-<a href=#106 id=106 data-nosnippet>106</a>    }
-<a href=#107 id=107 data-nosnippet>107</a>
-<a href=#108 id=108 data-nosnippet>108</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>correct_single_dish(
-<a href=#109 id=109 data-nosnippet>109</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#110 id=110 data-nosnippet>110</a>        row: usize,
-<a href=#111 id=111 data-nosnippet>111</a>        correlations: <span class="kw-2">&amp;</span>[i32],
-<a href=#112 id=112 data-nosnippet>112</a>        data: <span class="kw-2">&amp;</span>ArrayValue,
-<a href=#113 id=113 data-nosnippet>113</a>        flags: ArrayValue,
-<a href=#114 id=114 data-nosnippet>114</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;EvaluatedApplyRow&gt;, ApplyExecutionError&gt; {
-<a href=#115 id=115 data-nosnippet>115</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>position) = <span class="self">self</span>.rows.get(<span class="kw-2">&amp;</span>row) <span class="kw">else </span>{
-<a href=#116 id=116 data-nosnippet>116</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-<a href=#117 id=117 data-nosnippet>117</a>        };
-<a href=#118 id=118 data-nosnippet>118</a>        <span class="kw">let </span>converted;
-<a href=#119 id=119 data-nosnippet>119</a>        <span class="kw">let </span>data = <span class="kw">if let </span>ArrayValue::Float32(samples) = data {
-<a href=#120 id=120 data-nosnippet>120</a>            converted = complex_visibility_from_float(samples);
-<a href=#121 id=121 data-nosnippet>121</a>            <span class="kw-2">&amp;</span>converted
-<a href=#122 id=122 data-nosnippet>122</a>        } <span class="kw">else </span>{
-<a href=#123 id=123 data-nosnippet>123</a>            data
-<a href=#124 id=124 data-nosnippet>124</a>        };
-<a href=#125 id=125 data-nosnippet>125</a>        <span class="self">self</span>.apply(position, correlations, data, flags).map(<span class="prelude-val">Some</span>)
-<a href=#126 id=126 data-nosnippet>126</a>    }
-<a href=#127 id=127 data-nosnippet>127</a>
-<a href=#128 id=128 data-nosnippet>128</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>correct(
-<a href=#129 id=129 data-nosnippet>129</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#130 id=130 data-nosnippet>130</a>        row: usize,
-<a href=#131 id=131 data-nosnippet>131</a>        correlations: <span class="kw-2">&amp;</span>[i32],
-<a href=#132 id=132 data-nosnippet>132</a>        data: <span class="kw-2">&amp;</span>ArrayValue,
-<a href=#133 id=133 data-nosnippet>133</a>        flags: <span class="kw-2">&amp;</span>ArrayValue,
-<a href=#134 id=134 data-nosnippet>134</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;EvaluatedApplyRow&gt;, ApplyExecutionError&gt; {
-<a href=#135 id=135 data-nosnippet>135</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>position) = <span class="self">self</span>.rows.get(<span class="kw-2">&amp;</span>row) <span class="kw">else </span>{
-<a href=#136 id=136 data-nosnippet>136</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-<a href=#137 id=137 data-nosnippet>137</a>        };
-<a href=#138 id=138 data-nosnippet>138</a>        <span class="kw">let </span>flags = <span class="kw">if </span><span class="self">self</span>.share_input_flags {
-<a href=#139 id=139 data-nosnippet>139</a>            shared_channel_flags(flags).unwrap_or_else(|| flags.clone())
-<a href=#140 id=140 data-nosnippet>140</a>        } <span class="kw">else </span>{
-<a href=#141 id=141 data-nosnippet>141</a>            flags.clone()
-<a href=#142 id=142 data-nosnippet>142</a>        };
-<a href=#143 id=143 data-nosnippet>143</a>        <span class="self">self</span>.apply(position, correlations, data, flags).map(<span class="prelude-val">Some</span>)
-<a href=#144 id=144 data-nosnippet>144</a>    }
-<a href=#145 id=145 data-nosnippet>145</a>
-<a href=#146 id=146 data-nosnippet>146</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>corrupt(
-<a href=#147 id=147 data-nosnippet>147</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#148 id=148 data-nosnippet>148</a>        row: usize,
-<a href=#149 id=149 data-nosnippet>149</a>        correlations: <span class="kw-2">&amp;</span>[i32],
-<a href=#150 id=150 data-nosnippet>150</a>        model: ArrayD&lt;Complex32&gt;,
-<a href=#151 id=151 data-nosnippet>151</a>        flags: <span class="kw-2">&amp;</span>ArrayD&lt;bool&gt;,
-<a href=#152 id=152 data-nosnippet>152</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(ArrayD&lt;Complex32&gt;, <span class="prelude-ty">Option</span>&lt;ArrayD&lt;bool&gt;&gt;), ApplyExecutionError&gt; {
-<a href=#153 id=153 data-nosnippet>153</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>position) = <span class="self">self</span>.rows.get(<span class="kw-2">&amp;</span>row) <span class="kw">else </span>{
-<a href=#154 id=154 data-nosnippet>154</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>((model, <span class="prelude-val">None</span>));
-<a href=#155 id=155 data-nosnippet>155</a>        };
-<a href=#156 id=156 data-nosnippet>156</a>        <span class="kw">let </span>applied = <span class="self">self</span>.apply(
-<a href=#157 id=157 data-nosnippet>157</a>            position,
-<a href=#158 id=158 data-nosnippet>158</a>            correlations,
-<a href=#159 id=159 data-nosnippet>159</a>            <span class="kw-2">&amp;</span>ArrayValue::Complex32(model),
-<a href=#160 id=160 data-nosnippet>160</a>            ArrayValue::Bool(flags.clone()),
-<a href=#161 id=161 data-nosnippet>161</a>        )<span class="question-mark">?</span>;
-<a href=#162 id=162 data-nosnippet>162</a>        <span class="kw">let </span>ArrayValue::Complex32(model) = applied.corrected_data <span class="kw">else </span>{
-<a href=#163 id=163 data-nosnippet>163</a>            <span class="macro">unreachable!</span>(<span class="string">"forward application returns complex visibility data"</span>)
-<a href=#164 id=164 data-nosnippet>164</a>        };
-<a href=#165 id=165 data-nosnippet>165</a>        <span class="kw">let </span>ArrayValue::Bool(flags) = applied.flags <span class="kw">else </span>{
-<a href=#166 id=166 data-nosnippet>166</a>            <span class="macro">unreachable!</span>(<span class="string">"apply flags are boolean"</span>)
-<a href=#167 id=167 data-nosnippet>167</a>        };
-<a href=#168 id=168 data-nosnippet>168</a>        <span class="prelude-val">Ok</span>((model, <span class="prelude-val">Some</span>(flags)))
-<a href=#169 id=169 data-nosnippet>169</a>    }
-<a href=#170 id=170 data-nosnippet>170</a>
-<a href=#171 id=171 data-nosnippet>171</a>    <span class="kw">fn </span>apply(
-<a href=#172 id=172 data-nosnippet>172</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#173 id=173 data-nosnippet>173</a>        position: usize,
-<a href=#174 id=174 data-nosnippet>174</a>        correlations: <span class="kw-2">&amp;</span>[i32],
-<a href=#175 id=175 data-nosnippet>175</a>        data: <span class="kw-2">&amp;</span>ArrayValue,
-<a href=#176 id=176 data-nosnippet>176</a>        flags: ArrayValue,
-<a href=#177 id=177 data-nosnippet>177</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;EvaluatedApplyRow, ApplyExecutionError&gt; {
-<a href=#178 id=178 data-nosnippet>178</a>        <span class="kw">let </span>row = <span class="kw-2">&amp;</span><span class="self">self</span>.plan.selected_rows[position];
-<a href=#179 id=179 data-nosnippet>179</a>        <span class="kw">if </span>!<span class="kw">super</span>::availability::available(row, <span class="kw-2">&amp;</span><span class="self">self</span>.plan) {
-<a href=#180 id=180 data-nosnippet>180</a>            <span class="kw">let </span>shape = IxDyn(data.shape());
-<a href=#181 id=181 data-nosnippet>181</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(EvaluatedApplyRow {
-<a href=#182 id=182 data-nosnippet>182</a>                corrected_data: data.clone(),
-<a href=#183 id=183 data-nosnippet>183</a>                flags: ArrayValue::Bool(ArrayD::from_elem(shape.clone(), <span class="bool-val">true</span>)),
-<a href=#184 id=184 data-nosnippet>184</a>                model_gains: <span class="prelude-val">None</span>,
-<a href=#185 id=185 data-nosnippet>185</a>                weight_factors: (!<span class="self">self</span>.forward).then(|| ArrayD::zeros(shape)),
-<a href=#186 id=186 data-nosnippet>186</a>                plot_weights: <span class="prelude-val">None</span>,
-<a href=#187 id=187 data-nosnippet>187</a>            });
-<a href=#188 id=188 data-nosnippet>188</a>        }
-<a href=#189 id=189 data-nosnippet>189</a>        <span class="kw">let </span>unit_weights = <span class="self">self
-<a href=#190 id=190 data-nosnippet>190</a>            </span>.calwt
-<a href=#191 id=191 data-nosnippet>191</a>            .then(|| ArrayValue::Float32(ArrayD::from_elem(IxDyn(<span class="kw-2">&amp;</span>[correlations.len()]), <span class="number">1.0</span>)));
-<a href=#192 id=192 data-nosnippet>192</a>        <span class="kw">let </span>result = apply_row(
-<a href=#193 id=193 data-nosnippet>193</a>            row,
-<a href=#194 id=194 data-nosnippet>194</a>            ExecutionRowInputs {
-<a href=#195 id=195 data-nosnippet>195</a>                correlation_types: correlations,
-<a href=#196 id=196 data-nosnippet>196</a>                data,
-<a href=#197 id=197 data-nosnippet>197</a>                original_flags: <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>flags),
-<a href=#198 id=198 data-nosnippet>198</a>                original_weight: unit_weights.as_ref(),
-<a href=#199 id=199 data-nosnippet>199</a>                original_weight_spectrum: <span class="prelude-val">None</span>,
-<a href=#200 id=200 data-nosnippet>200</a>                has_weight_spectrum: <span class="self">self</span>.calwt,
-<a href=#201 id=201 data-nosnippet>201</a>                preserved_corrected_data: <span class="prelude-val">None</span>,
-<a href=#202 id=202 data-nosnippet>202</a>                preserved_weight_spectrum: <span class="prelude-val">None</span>,
-<a href=#203 id=203 data-nosnippet>203</a>                channel_grid: <span class="prelude-val">None</span>,
-<a href=#204 id=204 data-nosnippet>204</a>                forward_model: <span class="self">self</span>.forward,
-<a href=#205 id=205 data-nosnippet>205</a>                skip_unavailable_terms: <span class="bool-val">false</span>,
-<a href=#206 id=206 data-nosnippet>206</a>                trial: <span class="bool-val">false</span>,
-<a href=#207 id=207 data-nosnippet>207</a>                parang_calwt: <span class="bool-val">false</span>,
-<a href=#208 id=208 data-nosnippet>208</a>            },
-<a href=#209 id=209 data-nosnippet>209</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.plan,
-<a href=#210 id=210 data-nosnippet>210</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.chain,
-<a href=#211 id=211 data-nosnippet>211</a>            <span class="prelude-val">Some</span>(<span class="kw-2">&amp;mut </span><span class="self">self</span>.geometry.borrow_mut()),
-<a href=#212 id=212 data-nosnippet>212</a>            <span class="prelude-val">None</span>,
-<a href=#213 id=213 data-nosnippet>213</a>            <span class="prelude-val">None</span>,
-<a href=#214 id=214 data-nosnippet>214</a>        )<span class="question-mark">?</span>;
-<a href=#215 id=215 data-nosnippet>215</a>        <span class="prelude-val">Ok</span>(EvaluatedApplyRow {
-<a href=#216 id=216 data-nosnippet>216</a>            corrected_data: result.corrected_data,
-<a href=#217 id=217 data-nosnippet>217</a>            flags: result.updated_flags.unwrap_or(flags),
-<a href=#218 id=218 data-nosnippet>218</a>            model_gains: <span class="prelude-val">None</span>,
-<a href=#219 id=219 data-nosnippet>219</a>            weight_factors: <span class="kw">match </span>result.updated_weight_spectrum {
-<a href=#220 id=220 data-nosnippet>220</a>                <span class="prelude-val">Some</span>(ArrayValue::Float32(factors)) =&gt; <span class="prelude-val">Some</span>(factors),
-<a href=#221 id=221 data-nosnippet>221</a>                <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#222 id=222 data-nosnippet>222</a>            },
-<a href=#223 id=223 data-nosnippet>223</a>            plot_weights: <span class="prelude-val">None</span>,
-<a href=#224 id=224 data-nosnippet>224</a>        })
-<a href=#225 id=225 data-nosnippet>225</a>    }
-<a href=#226 id=226 data-nosnippet>226</a>}
-<a href=#227 id=227 data-nosnippet>227</a>
-<a href=#228 id=228 data-nosnippet>228</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>evaluate_solve_priors(
-<a href=#229 id=229 data-nosnippet>229</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#230 id=230 data-nosnippet>230</a>    <span class="kw-2">mut </span>plan: ApplyPlan,
-<a href=#231 id=231 data-nosnippet>231</a>    boundary: PriorSolveBoundary,
-<a href=#232 id=232 data-nosnippet>232</a>    share_input_flags: bool,
-<a href=#233 id=233 data-nosnippet>233</a>) -&gt; <span class="prelude-ty">Result</span>&lt;PreappliedRows, ApplyExecutionError&gt; {
-<a href=#234 id=234 data-nosnippet>234</a>    <span class="kw">let </span>deferred_data = <span class="macro">matches!</span>(
-<a href=#235 id=235 data-nosnippet>235</a>        boundary,
-<a href=#236 id=236 data-nosnippet>236</a>        PriorSolveBoundary::Leakage { .. }
-<a href=#237 id=237 data-nosnippet>237</a>            | PriorSolveBoundary::CrossHand { .. }
-<a href=#238 id=238 data-nosnippet>238</a>            | PriorSolveBoundary::PositionAngle { .. }
-<a href=#239 id=239 data-nosnippet>239</a>    );
-<a href=#240 id=240 data-nosnippet>240</a>    <span class="kw">let </span>parang_terms = <span class="kw">match </span>boundary {
-<a href=#241 id=241 data-nosnippet>241</a>        PriorSolveBoundary::Leakage { parang_terms }
-<a href=#242 id=242 data-nosnippet>242</a>        | PriorSolveBoundary::CrossHand { parang_terms }
-<a href=#243 id=243 data-nosnippet>243</a>        | PriorSolveBoundary::PositionAngle { parang_terms } =&gt; parang_terms,
-<a href=#244 id=244 data-nosnippet>244</a>        <span class="kw">_ </span>=&gt; usize::from(plan.parang),
-<a href=#245 id=245 data-nosnippet>245</a>    };
-<a href=#246 id=246 data-nosnippet>246</a>    <span class="kw">let </span>polarized = deferred_data || has_polarization_matrix(<span class="kw-2">&amp;</span>plan);
-<a href=#247 id=247 data-nosnippet>247</a>    <span class="kw">let </span>baseline = plan
-<a href=#248 id=248 data-nosnippet>248</a>        .calibration_tables
-<a href=#249 id=249 data-nosnippet>249</a>        .iter()
-<a href=#250 id=250 data-nosnippet>250</a>        .any(|table| <span class="kw">super</span>::baseline::is_subtype(<span class="kw-2">&amp;</span>table.summary.table_subtype));
-<a href=#251 id=251 data-nosnippet>251</a>    <span class="kw">let </span>spectral_opacity = plan
-<a href=#252 id=252 data-nosnippet>252</a>        .calibration_tables
-<a href=#253 id=253 data-nosnippet>253</a>        .iter()
-<a href=#254 id=254 data-nosnippet>254</a>        .any(|table| table.summary.table_subtype == <span class="string">"TfOpac"</span>);
-<a href=#255 id=255 data-nosnippet>255</a>    <span class="kw">let </span>gain_boundary = <span class="macro">matches!</span>(
-<a href=#256 id=256 data-nosnippet>256</a>        boundary,
-<a href=#257 id=257 data-nosnippet>257</a>        PriorSolveBoundary::Gain | PriorSolveBoundary::ScalarGain
-<a href=#258 id=258 data-nosnippet>258</a>    );
-<a href=#259 id=259 data-nosnippet>259</a>    <span class="kw">let </span>solve_order = boundary.viscal_order();
-<a href=#260 id=260 data-nosnippet>260</a>    <span class="comment">// VisEquation::collapse2 corrupts MODEL_DATA with any prior at or after
-<a href=#261 id=261 data-nosnippet>261</a>    // the solved term. Its weights then come from division by that model,
-<a href=#262 id=262 data-nosnippet>262</a>    // regardless of those priors' calwt settings.
-<a href=#263 id=263 data-nosnippet>263</a>    </span><span class="kw">let </span>gain_model_prior = gain_boundary
-<a href=#264 id=264 data-nosnippet>264</a>        &amp;&amp; plan
-<a href=#265 id=265 data-nosnippet>265</a>            .calibration_tables
-<a href=#266 id=266 data-nosnippet>266</a>            .iter()
-<a href=#267 id=267 data-nosnippet>267</a>            .any(|table| viscal_order(<span class="kw-2">&amp;</span>table.summary.table_subtype) &gt;= solve_order);
-<a href=#268 id=268 data-nosnippet>268</a>    <span class="kw">let </span>type_ordered = polarized
-<a href=#269 id=269 data-nosnippet>269</a>        || baseline
-<a href=#270 id=270 data-nosnippet>270</a>        || spectral_opacity
-<a href=#271 id=271 data-nosnippet>271</a>        || gain_model_prior
-<a href=#272 id=272 data-nosnippet>272</a>        || <span class="macro">matches!</span>(
-<a href=#273 id=273 data-nosnippet>273</a>            boundary,
-<a href=#274 id=274 data-nosnippet>274</a>            PriorSolveBoundary::Accor
-<a href=#275 id=275 data-nosnippet>275</a>                | PriorSolveBoundary::Baseline
-<a href=#276 id=276 data-nosnippet>276</a>                | PriorSolveBoundary::GainSpline
-<a href=#277 id=277 data-nosnippet>277</a>        );
-<a href=#278 id=278 data-nosnippet>278</a>    <span class="kw">if </span>!type_ordered &amp;&amp; gain_boundary {
-<a href=#279 id=279 data-nosnippet>279</a>        <span class="kw">return </span>evaluate_apply_rows(ms, <span class="kw-2">&amp;</span>plan, share_input_flags).map(Into::into);
-<a href=#280 id=280 data-nosnippet>280</a>    }
-<a href=#281 id=281 data-nosnippet>281</a>    <span class="comment">// The measurement equation corrects DATA with earlier terms and corrupts
-<a href=#282 id=282 data-nosnippet>282</a>    // MODEL_DATA with the remaining terms. The channel-dependent opacity
-<a href=#283 id=283 data-nosnippet>283</a>    // then enters the solve weights through the model normalization.
-<a href=#284 id=284 data-nosnippet>284</a>    </span><span class="kw">let </span>(data_tables, <span class="kw-2">mut </span>model_tables): (Vec&lt;<span class="kw">_</span>&gt;, Vec&lt;<span class="kw">_</span>&gt;) =
-<a href=#285 id=285 data-nosnippet>285</a>        std::mem::take(<span class="kw-2">&amp;mut </span>plan.calibration_tables)
-<a href=#286 id=286 data-nosnippet>286</a>            .into_iter()
-<a href=#287 id=287 data-nosnippet>287</a>            .partition(|table| {
-<a href=#288 id=288 data-nosnippet>288</a>                <span class="kw">let </span>subtype = table.summary.table_subtype.as_str();
-<a href=#289 id=289 data-nosnippet>289</a>                <span class="kw">if </span>type_ordered {
-<a href=#290 id=290 data-nosnippet>290</a>                    <span class="kw">return </span>viscal_order(subtype) &lt; solve_order;
-<a href=#291 id=291 data-nosnippet>291</a>                }
-<a href=#292 id=292 data-nosnippet>292</a>                <span class="kw">match </span>subtype {
-<a href=#293 id=293 data-nosnippet>293</a>                    <span class="string">"KAntPos Jones" </span>=&gt; <span class="bool-val">true</span>,
-<a href=#294 id=294 data-nosnippet>294</a>                    <span class="string">"B Jones" </span>| <span class="string">"BPOLY" </span>=&gt; <span class="macro">matches!</span>(boundary, PriorSolveBoundary::Delay),
-<a href=#295 id=295 data-nosnippet>295</a>                    <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
-<a href=#296 id=296 data-nosnippet>296</a>                }
-<a href=#297 id=297 data-nosnippet>297</a>            });
-<a href=#298 id=298 data-nosnippet>298</a>    <span class="kw">let </span>forward_parang = type_ordered &amp;&amp; plan.parang &amp;&amp; viscal_order(<span class="string">"P Jones"</span>) &gt;= solve_order;
-<a href=#299 id=299 data-nosnippet>299</a>    plan.parang &amp;= !forward_parang;
-<a href=#300 id=300 data-nosnippet>300</a>    plan.calibration_tables = data_tables;
-<a href=#301 id=301 data-nosnippet>301</a>    <span class="kw">let </span>data_prior = (deferred_data &amp;&amp; (!plan.calibration_tables.is_empty() || plan.parang))
-<a href=#302 id=302 data-nosnippet>302</a>        .then(|| SolvePriorApply::new(ms, plan.clone(), <span class="bool-val">false</span>, share_input_flags, parang_terms))
-<a href=#303 id=303 data-nosnippet>303</a>        .transpose()<span class="question-mark">?</span>;
-<a href=#304 id=304 data-nosnippet>304</a>    <span class="kw">let </span><span class="kw-2">mut </span>rows = <span class="kw">if </span>deferred_data {
-<a href=#305 id=305 data-nosnippet>305</a>        HashMap::new()
-<a href=#306 id=306 data-nosnippet>306</a>    } <span class="kw">else </span>{
-<a href=#307 id=307 data-nosnippet>307</a>        evaluate_apply_rows(ms, <span class="kw-2">&amp;</span>plan, share_input_flags)<span class="question-mark">?
-<a href=#308 id=308 data-nosnippet>308</a>    </span>};
-<a href=#309 id=309 data-nosnippet>309</a>    <span class="kw">if </span>model_tables.is_empty() &amp;&amp; !forward_parang {
-<a href=#310 id=310 data-nosnippet>310</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(PreappliedRows {
-<a href=#311 id=311 data-nosnippet>311</a>            data: rows,
-<a href=#312 id=312 data-nosnippet>312</a>            data_prior,
-<a href=#313 id=313 data-nosnippet>313</a>            model: <span class="prelude-val">None</span>,
-<a href=#314 id=314 data-nosnippet>314</a>            polarized,
-<a href=#315 id=315 data-nosnippet>315</a>        });
-<a href=#316 id=316 data-nosnippet>316</a>    }
-<a href=#317 id=317 data-nosnippet>317</a>    <span class="kw">for </span>table <span class="kw">in </span><span class="kw-2">&amp;mut </span>model_tables {
-<a href=#318 id=318 data-nosnippet>318</a>        table.calwt = <span class="bool-val">false</span>;
-<a href=#319 id=319 data-nosnippet>319</a>    }
-<a href=#320 id=320 data-nosnippet>320</a>    plan.calibration_tables = model_tables;
-<a href=#321 id=321 data-nosnippet>321</a>    plan.parang = forward_parang;
-<a href=#322 id=322 data-nosnippet>322</a>    <span class="comment">// Additive offsets must operate on the actual model, just as matrix terms
-<a href=#323 id=323 data-nosnippet>323</a>    // must. Applying them to unit visibilities cannot represent a gain factor.
-<a href=#324 id=324 data-nosnippet>324</a>    </span><span class="kw">if </span>polarized || forward_parang || <span class="kw">super</span>::additive::in_plan(<span class="kw-2">&amp;</span>plan) {
-<a href=#325 id=325 data-nosnippet>325</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(PreappliedRows {
-<a href=#326 id=326 data-nosnippet>326</a>            data: rows,
-<a href=#327 id=327 data-nosnippet>327</a>            data_prior,
-<a href=#328 id=328 data-nosnippet>328</a>            model: <span class="prelude-val">Some</span>(SolvePriorApply::new(
-<a href=#329 id=329 data-nosnippet>329</a>                ms,
-<a href=#330 id=330 data-nosnippet>330</a>                plan,
-<a href=#331 id=331 data-nosnippet>331</a>                <span class="bool-val">true</span>,
-<a href=#332 id=332 data-nosnippet>332</a>                share_input_flags &amp;&amp; !gain_boundary,
-<a href=#333 id=333 data-nosnippet>333</a>                parang_terms,
-<a href=#334 id=334 data-nosnippet>334</a>            )<span class="question-mark">?</span>),
-<a href=#335 id=335 data-nosnippet>335</a>            polarized,
-<a href=#336 id=336 data-nosnippet>336</a>        });
-<a href=#337 id=337 data-nosnippet>337</a>    }
-<a href=#338 id=338 data-nosnippet>338</a>    for_each_apply_row(
-<a href=#339 id=339 data-nosnippet>339</a>        ms,
-<a href=#340 id=340 data-nosnippet>340</a>        <span class="kw-2">&amp;</span>plan,
-<a href=#341 id=341 data-nosnippet>341</a>        <span class="string">"DATA"</span>,
-<a href=#342 id=342 data-nosnippet>342</a>        <span class="bool-val">true</span>,
-<a href=#343 id=343 data-nosnippet>343</a>        share_input_flags,
-<a href=#344 id=344 data-nosnippet>344</a>        PreviewWeightSource::UnitFactors,
-<a href=#345 id=345 data-nosnippet>345</a>        <span class="prelude-val">None</span>,
-<a href=#346 id=346 data-nosnippet>346</a>        |index, row| {
-<a href=#347 id=347 data-nosnippet>347</a>            <span class="kw">let </span>data = rows.get_mut(<span class="kw-2">&amp;</span>index).expect(<span class="string">"same selection for both sides"</span>);
-<a href=#348 id=348 data-nosnippet>348</a>            <span class="kw">let </span>ArrayValue::Bool(data_flags) = <span class="kw-2">&amp;mut </span>data.flags <span class="kw">else </span>{
-<a href=#349 id=349 data-nosnippet>349</a>                <span class="macro">unreachable!</span>(<span class="string">"apply flags are boolean"</span>)
-<a href=#350 id=350 data-nosnippet>350</a>            };
-<a href=#351 id=351 data-nosnippet>351</a>            <span class="kw">let </span>ArrayValue::Bool(model_flags) = row.flags <span class="kw">else </span>{
-<a href=#352 id=352 data-nosnippet>352</a>                <span class="macro">unreachable!</span>(<span class="string">"model calibration flags are boolean"</span>)
-<a href=#353 id=353 data-nosnippet>353</a>            };
-<a href=#354 id=354 data-nosnippet>354</a>            data_flags.zip_mut_with(<span class="kw-2">&amp;</span>model_flags, |data, <span class="kw-2">&amp;</span>model| <span class="kw-2">*</span>data |= model);
-<a href=#355 id=355 data-nosnippet>355</a>            <span class="kw">let </span>ArrayValue::Complex32(gains) = row.corrected_data <span class="kw">else </span>{
-<a href=#356 id=356 data-nosnippet>356</a>                <span class="macro">unreachable!</span>(<span class="string">"unit visibilities are complex"</span>)
-<a href=#357 id=357 data-nosnippet>357</a>            };
-<a href=#358 id=358 data-nosnippet>358</a>            data.model_gains = <span class="prelude-val">Some</span>(gains);
-<a href=#359 id=359 data-nosnippet>359</a>        },
-<a href=#360 id=360 data-nosnippet>360</a>    )<span class="question-mark">?</span>;
-<a href=#361 id=361 data-nosnippet>361</a>    <span class="prelude-val">Ok</span>(rows.into())
-<a href=#362 id=362 data-nosnippet>362</a>}
+<a href=#102 id=102 data-nosnippet>102</a>    <span class="doccomment">/// Prepares prior calibration for single-dish data using the input MeasurementSet's antenna and
+<a href=#103 id=103 data-nosnippet>103</a>    /// spectral metadata.
+<a href=#104 id=104 data-nosnippet>104</a>    </span><span class="kw">pub fn </span>single_dish(ms: <span class="kw-2">&amp;</span>MeasurementSet, plan: ApplyPlan) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ApplyExecutionError&gt; {
+<a href=#105 id=105 data-nosnippet>105</a>        <span class="kw">let </span><span class="kw-2">mut </span>priors = <span class="self">Self</span>::new(ms, plan, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="number">1</span>)<span class="question-mark">?</span>;
+<a href=#106 id=106 data-nosnippet>106</a>        priors.chain.single_dish_solve = <span class="bool-val">true</span>;
+<a href=#107 id=107 data-nosnippet>107</a>        <span class="prelude-val">Ok</span>(priors)
+<a href=#108 id=108 data-nosnippet>108</a>    }
+<a href=#109 id=109 data-nosnippet>109</a>
+<a href=#110 id=110 data-nosnippet>110</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>correct_single_dish(
+<a href=#111 id=111 data-nosnippet>111</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#112 id=112 data-nosnippet>112</a>        row: usize,
+<a href=#113 id=113 data-nosnippet>113</a>        correlations: <span class="kw-2">&amp;</span>[i32],
+<a href=#114 id=114 data-nosnippet>114</a>        data: <span class="kw-2">&amp;</span>ArrayValue,
+<a href=#115 id=115 data-nosnippet>115</a>        flags: ArrayValue,
+<a href=#116 id=116 data-nosnippet>116</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;EvaluatedApplyRow&gt;, ApplyExecutionError&gt; {
+<a href=#117 id=117 data-nosnippet>117</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>position) = <span class="self">self</span>.rows.get(<span class="kw-2">&amp;</span>row) <span class="kw">else </span>{
+<a href=#118 id=118 data-nosnippet>118</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#119 id=119 data-nosnippet>119</a>        };
+<a href=#120 id=120 data-nosnippet>120</a>        <span class="kw">let </span>converted;
+<a href=#121 id=121 data-nosnippet>121</a>        <span class="kw">let </span>data = <span class="kw">if let </span>ArrayValue::Float32(samples) = data {
+<a href=#122 id=122 data-nosnippet>122</a>            converted = complex_visibility_from_float(samples);
+<a href=#123 id=123 data-nosnippet>123</a>            <span class="kw-2">&amp;</span>converted
+<a href=#124 id=124 data-nosnippet>124</a>        } <span class="kw">else </span>{
+<a href=#125 id=125 data-nosnippet>125</a>            data
+<a href=#126 id=126 data-nosnippet>126</a>        };
+<a href=#127 id=127 data-nosnippet>127</a>        <span class="self">self</span>.apply(position, correlations, data, flags).map(<span class="prelude-val">Some</span>)
+<a href=#128 id=128 data-nosnippet>128</a>    }
+<a href=#129 id=129 data-nosnippet>129</a>
+<a href=#130 id=130 data-nosnippet>130</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>correct(
+<a href=#131 id=131 data-nosnippet>131</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#132 id=132 data-nosnippet>132</a>        row: usize,
+<a href=#133 id=133 data-nosnippet>133</a>        correlations: <span class="kw-2">&amp;</span>[i32],
+<a href=#134 id=134 data-nosnippet>134</a>        data: <span class="kw-2">&amp;</span>ArrayValue,
+<a href=#135 id=135 data-nosnippet>135</a>        flags: <span class="kw-2">&amp;</span>ArrayValue,
+<a href=#136 id=136 data-nosnippet>136</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;EvaluatedApplyRow&gt;, ApplyExecutionError&gt; {
+<a href=#137 id=137 data-nosnippet>137</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>position) = <span class="self">self</span>.rows.get(<span class="kw-2">&amp;</span>row) <span class="kw">else </span>{
+<a href=#138 id=138 data-nosnippet>138</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#139 id=139 data-nosnippet>139</a>        };
+<a href=#140 id=140 data-nosnippet>140</a>        <span class="kw">let </span>flags = <span class="kw">if </span><span class="self">self</span>.share_input_flags {
+<a href=#141 id=141 data-nosnippet>141</a>            shared_channel_flags(flags).unwrap_or_else(|| flags.clone())
+<a href=#142 id=142 data-nosnippet>142</a>        } <span class="kw">else </span>{
+<a href=#143 id=143 data-nosnippet>143</a>            flags.clone()
+<a href=#144 id=144 data-nosnippet>144</a>        };
+<a href=#145 id=145 data-nosnippet>145</a>        <span class="self">self</span>.apply(position, correlations, data, flags).map(<span class="prelude-val">Some</span>)
+<a href=#146 id=146 data-nosnippet>146</a>    }
+<a href=#147 id=147 data-nosnippet>147</a>
+<a href=#148 id=148 data-nosnippet>148</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>corrupt(
+<a href=#149 id=149 data-nosnippet>149</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#150 id=150 data-nosnippet>150</a>        row: usize,
+<a href=#151 id=151 data-nosnippet>151</a>        correlations: <span class="kw-2">&amp;</span>[i32],
+<a href=#152 id=152 data-nosnippet>152</a>        model: ArrayD&lt;Complex32&gt;,
+<a href=#153 id=153 data-nosnippet>153</a>        flags: <span class="kw-2">&amp;</span>ArrayD&lt;bool&gt;,
+<a href=#154 id=154 data-nosnippet>154</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(ArrayD&lt;Complex32&gt;, <span class="prelude-ty">Option</span>&lt;ArrayD&lt;bool&gt;&gt;), ApplyExecutionError&gt; {
+<a href=#155 id=155 data-nosnippet>155</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>position) = <span class="self">self</span>.rows.get(<span class="kw-2">&amp;</span>row) <span class="kw">else </span>{
+<a href=#156 id=156 data-nosnippet>156</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>((model, <span class="prelude-val">None</span>));
+<a href=#157 id=157 data-nosnippet>157</a>        };
+<a href=#158 id=158 data-nosnippet>158</a>        <span class="kw">let </span>applied = <span class="self">self</span>.apply(
+<a href=#159 id=159 data-nosnippet>159</a>            position,
+<a href=#160 id=160 data-nosnippet>160</a>            correlations,
+<a href=#161 id=161 data-nosnippet>161</a>            <span class="kw-2">&amp;</span>ArrayValue::Complex32(model),
+<a href=#162 id=162 data-nosnippet>162</a>            ArrayValue::Bool(flags.clone()),
+<a href=#163 id=163 data-nosnippet>163</a>        )<span class="question-mark">?</span>;
+<a href=#164 id=164 data-nosnippet>164</a>        <span class="kw">let </span>ArrayValue::Complex32(model) = applied.corrected_data <span class="kw">else </span>{
+<a href=#165 id=165 data-nosnippet>165</a>            <span class="macro">unreachable!</span>(<span class="string">"forward application returns complex visibility data"</span>)
+<a href=#166 id=166 data-nosnippet>166</a>        };
+<a href=#167 id=167 data-nosnippet>167</a>        <span class="kw">let </span>ArrayValue::Bool(flags) = applied.flags <span class="kw">else </span>{
+<a href=#168 id=168 data-nosnippet>168</a>            <span class="macro">unreachable!</span>(<span class="string">"apply flags are boolean"</span>)
+<a href=#169 id=169 data-nosnippet>169</a>        };
+<a href=#170 id=170 data-nosnippet>170</a>        <span class="prelude-val">Ok</span>((model, <span class="prelude-val">Some</span>(flags)))
+<a href=#171 id=171 data-nosnippet>171</a>    }
+<a href=#172 id=172 data-nosnippet>172</a>
+<a href=#173 id=173 data-nosnippet>173</a>    <span class="kw">fn </span>apply(
+<a href=#174 id=174 data-nosnippet>174</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#175 id=175 data-nosnippet>175</a>        position: usize,
+<a href=#176 id=176 data-nosnippet>176</a>        correlations: <span class="kw-2">&amp;</span>[i32],
+<a href=#177 id=177 data-nosnippet>177</a>        data: <span class="kw-2">&amp;</span>ArrayValue,
+<a href=#178 id=178 data-nosnippet>178</a>        flags: ArrayValue,
+<a href=#179 id=179 data-nosnippet>179</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;EvaluatedApplyRow, ApplyExecutionError&gt; {
+<a href=#180 id=180 data-nosnippet>180</a>        <span class="kw">let </span>row = <span class="kw-2">&amp;</span><span class="self">self</span>.plan.selected_rows[position];
+<a href=#181 id=181 data-nosnippet>181</a>        <span class="kw">if </span>!<span class="kw">super</span>::availability::available(row, <span class="kw-2">&amp;</span><span class="self">self</span>.plan) {
+<a href=#182 id=182 data-nosnippet>182</a>            <span class="kw">let </span>shape = IxDyn(data.shape());
+<a href=#183 id=183 data-nosnippet>183</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(EvaluatedApplyRow {
+<a href=#184 id=184 data-nosnippet>184</a>                corrected_data: data.clone(),
+<a href=#185 id=185 data-nosnippet>185</a>                flags: ArrayValue::Bool(ArrayD::from_elem(shape.clone(), <span class="bool-val">true</span>)),
+<a href=#186 id=186 data-nosnippet>186</a>                model_gains: <span class="prelude-val">None</span>,
+<a href=#187 id=187 data-nosnippet>187</a>                weight_factors: (!<span class="self">self</span>.forward).then(|| ArrayD::zeros(shape)),
+<a href=#188 id=188 data-nosnippet>188</a>                plot_weights: <span class="prelude-val">None</span>,
+<a href=#189 id=189 data-nosnippet>189</a>            });
+<a href=#190 id=190 data-nosnippet>190</a>        }
+<a href=#191 id=191 data-nosnippet>191</a>        <span class="kw">let </span>unit_weights = <span class="self">self
+<a href=#192 id=192 data-nosnippet>192</a>            </span>.calwt
+<a href=#193 id=193 data-nosnippet>193</a>            .then(|| ArrayValue::Float32(ArrayD::from_elem(IxDyn(<span class="kw-2">&amp;</span>[correlations.len()]), <span class="number">1.0</span>)));
+<a href=#194 id=194 data-nosnippet>194</a>        <span class="kw">let </span>result = apply_row(
+<a href=#195 id=195 data-nosnippet>195</a>            row,
+<a href=#196 id=196 data-nosnippet>196</a>            ExecutionRowInputs {
+<a href=#197 id=197 data-nosnippet>197</a>                correlation_types: correlations,
+<a href=#198 id=198 data-nosnippet>198</a>                data,
+<a href=#199 id=199 data-nosnippet>199</a>                original_flags: <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>flags),
+<a href=#200 id=200 data-nosnippet>200</a>                original_weight: unit_weights.as_ref(),
+<a href=#201 id=201 data-nosnippet>201</a>                original_weight_spectrum: <span class="prelude-val">None</span>,
+<a href=#202 id=202 data-nosnippet>202</a>                has_weight_spectrum: <span class="self">self</span>.calwt,
+<a href=#203 id=203 data-nosnippet>203</a>                preserved_corrected_data: <span class="prelude-val">None</span>,
+<a href=#204 id=204 data-nosnippet>204</a>                preserved_weight_spectrum: <span class="prelude-val">None</span>,
+<a href=#205 id=205 data-nosnippet>205</a>                channel_grid: <span class="prelude-val">None</span>,
+<a href=#206 id=206 data-nosnippet>206</a>                forward_model: <span class="self">self</span>.forward,
+<a href=#207 id=207 data-nosnippet>207</a>                skip_unavailable_terms: <span class="bool-val">false</span>,
+<a href=#208 id=208 data-nosnippet>208</a>                trial: <span class="bool-val">false</span>,
+<a href=#209 id=209 data-nosnippet>209</a>                parang_calwt: <span class="bool-val">false</span>,
+<a href=#210 id=210 data-nosnippet>210</a>            },
+<a href=#211 id=211 data-nosnippet>211</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.plan,
+<a href=#212 id=212 data-nosnippet>212</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.chain,
+<a href=#213 id=213 data-nosnippet>213</a>            <span class="prelude-val">Some</span>(<span class="kw-2">&amp;mut </span><span class="self">self</span>.geometry.borrow_mut()),
+<a href=#214 id=214 data-nosnippet>214</a>            <span class="prelude-val">None</span>,
+<a href=#215 id=215 data-nosnippet>215</a>            <span class="prelude-val">None</span>,
+<a href=#216 id=216 data-nosnippet>216</a>        )<span class="question-mark">?</span>;
+<a href=#217 id=217 data-nosnippet>217</a>        <span class="prelude-val">Ok</span>(EvaluatedApplyRow {
+<a href=#218 id=218 data-nosnippet>218</a>            corrected_data: result.corrected_data,
+<a href=#219 id=219 data-nosnippet>219</a>            flags: result.updated_flags.unwrap_or(flags),
+<a href=#220 id=220 data-nosnippet>220</a>            model_gains: <span class="prelude-val">None</span>,
+<a href=#221 id=221 data-nosnippet>221</a>            weight_factors: <span class="kw">match </span>result.updated_weight_spectrum {
+<a href=#222 id=222 data-nosnippet>222</a>                <span class="prelude-val">Some</span>(ArrayValue::Float32(factors)) =&gt; <span class="prelude-val">Some</span>(factors),
+<a href=#223 id=223 data-nosnippet>223</a>                <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#224 id=224 data-nosnippet>224</a>            },
+<a href=#225 id=225 data-nosnippet>225</a>            plot_weights: <span class="prelude-val">None</span>,
+<a href=#226 id=226 data-nosnippet>226</a>        })
+<a href=#227 id=227 data-nosnippet>227</a>    }
+<a href=#228 id=228 data-nosnippet>228</a>}
+<a href=#229 id=229 data-nosnippet>229</a>
+<a href=#230 id=230 data-nosnippet>230</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>evaluate_solve_priors(
+<a href=#231 id=231 data-nosnippet>231</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#232 id=232 data-nosnippet>232</a>    <span class="kw-2">mut </span>plan: ApplyPlan,
+<a href=#233 id=233 data-nosnippet>233</a>    boundary: PriorSolveBoundary,
+<a href=#234 id=234 data-nosnippet>234</a>    share_input_flags: bool,
+<a href=#235 id=235 data-nosnippet>235</a>) -&gt; <span class="prelude-ty">Result</span>&lt;PreappliedRows, ApplyExecutionError&gt; {
+<a href=#236 id=236 data-nosnippet>236</a>    <span class="kw">let </span>deferred_data = <span class="macro">matches!</span>(
+<a href=#237 id=237 data-nosnippet>237</a>        boundary,
+<a href=#238 id=238 data-nosnippet>238</a>        PriorSolveBoundary::Leakage { .. }
+<a href=#239 id=239 data-nosnippet>239</a>            | PriorSolveBoundary::CrossHand { .. }
+<a href=#240 id=240 data-nosnippet>240</a>            | PriorSolveBoundary::PositionAngle { .. }
+<a href=#241 id=241 data-nosnippet>241</a>    );
+<a href=#242 id=242 data-nosnippet>242</a>    <span class="kw">let </span>parang_terms = <span class="kw">match </span>boundary {
+<a href=#243 id=243 data-nosnippet>243</a>        PriorSolveBoundary::Leakage { parang_terms }
+<a href=#244 id=244 data-nosnippet>244</a>        | PriorSolveBoundary::CrossHand { parang_terms }
+<a href=#245 id=245 data-nosnippet>245</a>        | PriorSolveBoundary::PositionAngle { parang_terms } =&gt; parang_terms,
+<a href=#246 id=246 data-nosnippet>246</a>        <span class="kw">_ </span>=&gt; usize::from(plan.parang),
+<a href=#247 id=247 data-nosnippet>247</a>    };
+<a href=#248 id=248 data-nosnippet>248</a>    <span class="kw">let </span>polarized = deferred_data || has_polarization_matrix(<span class="kw-2">&amp;</span>plan);
+<a href=#249 id=249 data-nosnippet>249</a>    <span class="kw">let </span>baseline = plan
+<a href=#250 id=250 data-nosnippet>250</a>        .calibration_tables
+<a href=#251 id=251 data-nosnippet>251</a>        .iter()
+<a href=#252 id=252 data-nosnippet>252</a>        .any(|table| <span class="kw">super</span>::baseline::is_subtype(<span class="kw-2">&amp;</span>table.summary.table_subtype));
+<a href=#253 id=253 data-nosnippet>253</a>    <span class="kw">let </span>spectral_opacity = plan
+<a href=#254 id=254 data-nosnippet>254</a>        .calibration_tables
+<a href=#255 id=255 data-nosnippet>255</a>        .iter()
+<a href=#256 id=256 data-nosnippet>256</a>        .any(|table| table.summary.table_subtype == <span class="string">"TfOpac"</span>);
+<a href=#257 id=257 data-nosnippet>257</a>    <span class="kw">let </span>gain_boundary = <span class="macro">matches!</span>(
+<a href=#258 id=258 data-nosnippet>258</a>        boundary,
+<a href=#259 id=259 data-nosnippet>259</a>        PriorSolveBoundary::Gain | PriorSolveBoundary::ScalarGain
+<a href=#260 id=260 data-nosnippet>260</a>    );
+<a href=#261 id=261 data-nosnippet>261</a>    <span class="kw">let </span>solve_order = boundary.viscal_order();
+<a href=#262 id=262 data-nosnippet>262</a>    <span class="comment">// VisEquation::collapse2 corrupts MODEL_DATA with any prior at or after
+<a href=#263 id=263 data-nosnippet>263</a>    // the solved term. Its weights then come from division by that model,
+<a href=#264 id=264 data-nosnippet>264</a>    // regardless of those priors' calwt settings.
+<a href=#265 id=265 data-nosnippet>265</a>    </span><span class="kw">let </span>gain_model_prior = gain_boundary
+<a href=#266 id=266 data-nosnippet>266</a>        &amp;&amp; plan
+<a href=#267 id=267 data-nosnippet>267</a>            .calibration_tables
+<a href=#268 id=268 data-nosnippet>268</a>            .iter()
+<a href=#269 id=269 data-nosnippet>269</a>            .any(|table| viscal_order(<span class="kw-2">&amp;</span>table.summary.table_subtype) &gt;= solve_order);
+<a href=#270 id=270 data-nosnippet>270</a>    <span class="kw">let </span>type_ordered = polarized
+<a href=#271 id=271 data-nosnippet>271</a>        || baseline
+<a href=#272 id=272 data-nosnippet>272</a>        || spectral_opacity
+<a href=#273 id=273 data-nosnippet>273</a>        || gain_model_prior
+<a href=#274 id=274 data-nosnippet>274</a>        || <span class="macro">matches!</span>(
+<a href=#275 id=275 data-nosnippet>275</a>            boundary,
+<a href=#276 id=276 data-nosnippet>276</a>            PriorSolveBoundary::Accor
+<a href=#277 id=277 data-nosnippet>277</a>                | PriorSolveBoundary::Baseline
+<a href=#278 id=278 data-nosnippet>278</a>                | PriorSolveBoundary::GainSpline
+<a href=#279 id=279 data-nosnippet>279</a>        );
+<a href=#280 id=280 data-nosnippet>280</a>    <span class="kw">if </span>!type_ordered &amp;&amp; gain_boundary {
+<a href=#281 id=281 data-nosnippet>281</a>        <span class="kw">return </span>evaluate_apply_rows(ms, <span class="kw-2">&amp;</span>plan, share_input_flags).map(Into::into);
+<a href=#282 id=282 data-nosnippet>282</a>    }
+<a href=#283 id=283 data-nosnippet>283</a>    <span class="comment">// The measurement equation corrects DATA with earlier terms and corrupts
+<a href=#284 id=284 data-nosnippet>284</a>    // MODEL_DATA with the remaining terms. The channel-dependent opacity
+<a href=#285 id=285 data-nosnippet>285</a>    // then enters the solve weights through the model normalization.
+<a href=#286 id=286 data-nosnippet>286</a>    </span><span class="kw">let </span>(data_tables, <span class="kw-2">mut </span>model_tables): (Vec&lt;<span class="kw">_</span>&gt;, Vec&lt;<span class="kw">_</span>&gt;) =
+<a href=#287 id=287 data-nosnippet>287</a>        std::mem::take(<span class="kw-2">&amp;mut </span>plan.calibration_tables)
+<a href=#288 id=288 data-nosnippet>288</a>            .into_iter()
+<a href=#289 id=289 data-nosnippet>289</a>            .partition(|table| {
+<a href=#290 id=290 data-nosnippet>290</a>                <span class="kw">let </span>subtype = table.summary.table_subtype.as_str();
+<a href=#291 id=291 data-nosnippet>291</a>                <span class="kw">if </span>type_ordered {
+<a href=#292 id=292 data-nosnippet>292</a>                    <span class="kw">return </span>viscal_order(subtype) &lt; solve_order;
+<a href=#293 id=293 data-nosnippet>293</a>                }
+<a href=#294 id=294 data-nosnippet>294</a>                <span class="kw">match </span>subtype {
+<a href=#295 id=295 data-nosnippet>295</a>                    <span class="string">"KAntPos Jones" </span>=&gt; <span class="bool-val">true</span>,
+<a href=#296 id=296 data-nosnippet>296</a>                    <span class="string">"B Jones" </span>| <span class="string">"BPOLY" </span>=&gt; <span class="macro">matches!</span>(boundary, PriorSolveBoundary::Delay),
+<a href=#297 id=297 data-nosnippet>297</a>                    <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
+<a href=#298 id=298 data-nosnippet>298</a>                }
+<a href=#299 id=299 data-nosnippet>299</a>            });
+<a href=#300 id=300 data-nosnippet>300</a>    <span class="kw">let </span>forward_parang = type_ordered &amp;&amp; plan.parang &amp;&amp; viscal_order(<span class="string">"P Jones"</span>) &gt;= solve_order;
+<a href=#301 id=301 data-nosnippet>301</a>    plan.parang &amp;= !forward_parang;
+<a href=#302 id=302 data-nosnippet>302</a>    plan.calibration_tables = data_tables;
+<a href=#303 id=303 data-nosnippet>303</a>    <span class="kw">let </span>data_prior = (deferred_data &amp;&amp; (!plan.calibration_tables.is_empty() || plan.parang))
+<a href=#304 id=304 data-nosnippet>304</a>        .then(|| SolvePriorApply::new(ms, plan.clone(), <span class="bool-val">false</span>, share_input_flags, parang_terms))
+<a href=#305 id=305 data-nosnippet>305</a>        .transpose()<span class="question-mark">?</span>;
+<a href=#306 id=306 data-nosnippet>306</a>    <span class="kw">let </span><span class="kw-2">mut </span>rows = <span class="kw">if </span>deferred_data {
+<a href=#307 id=307 data-nosnippet>307</a>        HashMap::new()
+<a href=#308 id=308 data-nosnippet>308</a>    } <span class="kw">else </span>{
+<a href=#309 id=309 data-nosnippet>309</a>        evaluate_apply_rows(ms, <span class="kw-2">&amp;</span>plan, share_input_flags)<span class="question-mark">?
+<a href=#310 id=310 data-nosnippet>310</a>    </span>};
+<a href=#311 id=311 data-nosnippet>311</a>    <span class="kw">if </span>model_tables.is_empty() &amp;&amp; !forward_parang {
+<a href=#312 id=312 data-nosnippet>312</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(PreappliedRows {
+<a href=#313 id=313 data-nosnippet>313</a>            data: rows,
+<a href=#314 id=314 data-nosnippet>314</a>            data_prior,
+<a href=#315 id=315 data-nosnippet>315</a>            model: <span class="prelude-val">None</span>,
+<a href=#316 id=316 data-nosnippet>316</a>            polarized,
+<a href=#317 id=317 data-nosnippet>317</a>        });
+<a href=#318 id=318 data-nosnippet>318</a>    }
+<a href=#319 id=319 data-nosnippet>319</a>    <span class="kw">for </span>table <span class="kw">in </span><span class="kw-2">&amp;mut </span>model_tables {
+<a href=#320 id=320 data-nosnippet>320</a>        table.calwt = <span class="bool-val">false</span>;
+<a href=#321 id=321 data-nosnippet>321</a>    }
+<a href=#322 id=322 data-nosnippet>322</a>    plan.calibration_tables = model_tables;
+<a href=#323 id=323 data-nosnippet>323</a>    plan.parang = forward_parang;
+<a href=#324 id=324 data-nosnippet>324</a>    <span class="comment">// Additive offsets must operate on the actual model, just as matrix terms
+<a href=#325 id=325 data-nosnippet>325</a>    // must. Applying them to unit visibilities cannot represent a gain factor.
+<a href=#326 id=326 data-nosnippet>326</a>    </span><span class="kw">if </span>polarized || forward_parang || <span class="kw">super</span>::additive::in_plan(<span class="kw-2">&amp;</span>plan) {
+<a href=#327 id=327 data-nosnippet>327</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(PreappliedRows {
+<a href=#328 id=328 data-nosnippet>328</a>            data: rows,
+<a href=#329 id=329 data-nosnippet>329</a>            data_prior,
+<a href=#330 id=330 data-nosnippet>330</a>            model: <span class="prelude-val">Some</span>(SolvePriorApply::new(
+<a href=#331 id=331 data-nosnippet>331</a>                ms,
+<a href=#332 id=332 data-nosnippet>332</a>                plan,
+<a href=#333 id=333 data-nosnippet>333</a>                <span class="bool-val">true</span>,
+<a href=#334 id=334 data-nosnippet>334</a>                share_input_flags &amp;&amp; !gain_boundary,
+<a href=#335 id=335 data-nosnippet>335</a>                parang_terms,
+<a href=#336 id=336 data-nosnippet>336</a>            )<span class="question-mark">?</span>),
+<a href=#337 id=337 data-nosnippet>337</a>            polarized,
+<a href=#338 id=338 data-nosnippet>338</a>        });
+<a href=#339 id=339 data-nosnippet>339</a>    }
+<a href=#340 id=340 data-nosnippet>340</a>    for_each_apply_row(
+<a href=#341 id=341 data-nosnippet>341</a>        ms,
+<a href=#342 id=342 data-nosnippet>342</a>        <span class="kw-2">&amp;</span>plan,
+<a href=#343 id=343 data-nosnippet>343</a>        <span class="string">"DATA"</span>,
+<a href=#344 id=344 data-nosnippet>344</a>        <span class="bool-val">true</span>,
+<a href=#345 id=345 data-nosnippet>345</a>        share_input_flags,
+<a href=#346 id=346 data-nosnippet>346</a>        PreviewWeightSource::UnitFactors,
+<a href=#347 id=347 data-nosnippet>347</a>        <span class="prelude-val">None</span>,
+<a href=#348 id=348 data-nosnippet>348</a>        |index, row| {
+<a href=#349 id=349 data-nosnippet>349</a>            <span class="kw">let </span>data = rows.get_mut(<span class="kw-2">&amp;</span>index).expect(<span class="string">"same selection for both sides"</span>);
+<a href=#350 id=350 data-nosnippet>350</a>            <span class="kw">let </span>ArrayValue::Bool(data_flags) = <span class="kw-2">&amp;mut </span>data.flags <span class="kw">else </span>{
+<a href=#351 id=351 data-nosnippet>351</a>                <span class="macro">unreachable!</span>(<span class="string">"apply flags are boolean"</span>)
+<a href=#352 id=352 data-nosnippet>352</a>            };
+<a href=#353 id=353 data-nosnippet>353</a>            <span class="kw">let </span>ArrayValue::Bool(model_flags) = row.flags <span class="kw">else </span>{
+<a href=#354 id=354 data-nosnippet>354</a>                <span class="macro">unreachable!</span>(<span class="string">"model calibration flags are boolean"</span>)
+<a href=#355 id=355 data-nosnippet>355</a>            };
+<a href=#356 id=356 data-nosnippet>356</a>            data_flags.zip_mut_with(<span class="kw-2">&amp;</span>model_flags, |data, <span class="kw-2">&amp;</span>model| <span class="kw-2">*</span>data |= model);
+<a href=#357 id=357 data-nosnippet>357</a>            <span class="kw">let </span>ArrayValue::Complex32(gains) = row.corrected_data <span class="kw">else </span>{
+<a href=#358 id=358 data-nosnippet>358</a>                <span class="macro">unreachable!</span>(<span class="string">"unit visibilities are complex"</span>)
+<a href=#359 id=359 data-nosnippet>359</a>            };
+<a href=#360 id=360 data-nosnippet>360</a>            data.model_gains = <span class="prelude-val">Some</span>(gains);
+<a href=#361 id=361 data-nosnippet>361</a>        },
+<a href=#362 id=362 data-nosnippet>362</a>    )<span class="question-mark">?</span>;
+<a href=#363 id=363 data-nosnippet>363</a>    <span class="prelude-val">Ok</span>(rows.into())
+<a href=#364 id=364 data-nosnippet>364</a>}
 </code></pre></div></section></main></body></html>
