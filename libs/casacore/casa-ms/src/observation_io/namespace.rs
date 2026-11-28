@@ -305,7 +305,8 @@ fn validate_calibration_scan_numbers(catalogue: &Catalogue) -> Result<(), Observ
 /// # Errors
 ///
 /// When the store cannot be read, its namespace cannot be represented in
-/// CASA subtables, or opening an MSv4 catalogue exceeds its memory grant.
+/// CASA subtables, an MSv4 field moves with an ephemeris, or opening an
+/// MSv4 catalogue exceeds its memory grant.
 pub fn calibration_subtables(source: &Path) -> Result<MeasurementSet, ObservationError> {
     if !super::is_msv4_store(source) {
         return MeasurementSet::open(source).map_err(storage);
@@ -331,7 +332,7 @@ pub fn calibration_subtables(source: &Path) -> Result<MeasurementSet, Observatio
                 .held_bytes()
                 .saturating_add(super::creation::subtables_bytes(observation.catalogue())),
         )?;
-        super::creation::catalogue_subtables(&observation).map(|(ms, _)| ms)
+        super::creation::prescribed_calibration_subtables(&observation)
     }
     #[cfg(not(all(feature = "msv4", unix)))]
     Err(ObservationError::Unsupported {
@@ -462,6 +463,20 @@ impl NamespaceRows {
         let table = Table::open(TableOptions::new(directory.join("ANTENNA")))
             .map_err(|error| storage(MsError::from(error)))?;
         antennas(&table)
+    }
+
+    /// Read the physical spectral window identities of a persisted
+    /// calibration table in its row order.
+    ///
+    /// # Errors
+    /// When the SPECTRAL_WINDOW subtable is unreadable or its frequency metadata
+    /// is invalid.
+    pub fn read_spectral_windows(
+        directory: &Path,
+    ) -> Result<Vec<NamespaceWindow>, ObservationError> {
+        let table = Table::open(TableOptions::new(directory.join("SPECTRAL_WINDOW")))
+            .map_err(|error| storage(MsError::from(error)))?;
+        windows(&table)
     }
 
     /// The rows of the `ANTENNA`, `FIELD` and `SPECTRAL_WINDOW` subtables

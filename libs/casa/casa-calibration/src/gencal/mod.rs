@@ -1156,6 +1156,12 @@ fn write_prior_caltable(
             specified_sky,
         )?;
     }
+    if mode == crate::output::CalibrationOutputMode::Update
+        && ms.path().is_none()
+        && request.output_table.exists()
+    {
+        spectral_axis::validate_prescribed_namespace(&request.output_table, writer.output_path())?;
+    }
     writer.save_main()?;
 
     let spectral_window_ids = present_windows.into_iter().collect();

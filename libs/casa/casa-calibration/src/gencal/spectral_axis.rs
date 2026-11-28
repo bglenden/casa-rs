@@ -96,3 +96,55 @@ pub(super) fn write_prior_spectral_axis(
             source: Box::new(source),
         })
 }
+
+/// A synthesized observation namespace can number entities differently.
+/// Update only when the old table and the staged CASA subtables give its
+/// ordinal IDs the same physical meanings, including the collapsed SPWs.
+pub(super) fn validate_prescribed_namespace(
+    prior: &Path,
+    staged: &Path,
+) -> Result<(), GencalError> {
+    use crate::rerefant::{names_agree, same_antenna};
+    use casa_ms::observation_io::NamespaceRows;
+
+    let invalid = GencalError::InvalidRequest;
+    let compare_error = |error: casa_observation::ObservationError| invalid(error.to_string());
+    let previous = NamespaceRows::read_antennas(prior).map_err(compare_error)?;
+    let replacement = NamespaceRows::read_antennas(staged).map_err(compare_error)?;
+    if previous.len() != replacement.len()
+        || !previous
+            .iter()
+            .zip(&replacement)
+            .all(|(old, new)| same_antenna(old, new, 0.0) && names_agree(old, new))
+    {
+        return Err(invalid(
+            "existing calibration table has incompatible ANTENNA identity; prior product is unchanged".into(),
+        ));
+    }
+
+    let previous = NamespaceRows::read_spectral_windows(prior).map_err(compare_error)?;
+    let replacement = NamespaceRows::read_spectral_windows(staged).map_err(compare_error)?;
+    if previous.len() != replacement.len()
+        || !previous
+            .iter()
+            .zip(&replacement)
+            .enumerate()
+            .all(|(id, (old, new))| {
+                let original_name = match old.name.as_str() {
+                    "" | "none" => "spw",
+                    name => name,
+                };
+                // The MSv2 converter adds the source SPW row to the XRADIO name.
+                let same_name = old.name == new.name || new.name == format!("{original_name}_{id}");
+                same_name
+                    && old.frame == new.frame
+                    && old.frequencies_hz == new.frequencies_hz
+                    && old.widths_hz == new.widths_hz
+            })
+    {
+        return Err(invalid(
+            "existing calibration table has incompatible SPECTRAL_WINDOW identity; prior product is unchanged".into(),
+        ));
+    }
+    Ok(())
+}

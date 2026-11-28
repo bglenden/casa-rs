@@ -105,4 +105,6 @@ values. The task resolves antenna and spectral-window selectors in the
 input's namespace and writes a CASA-format calibration table. You can
 accumulate a phase prescription in an existing gain table as with MSv2.
 MSv4 inputs must have metadata that the CASA calibration subtables can
-represent.
+represent. The task refuses moving MSv4 fields and updates whose existing
+antenna or spectral-window IDs refer to different physical entities.
+Textual scan names are accepted because these prescriptions do not name a scan.

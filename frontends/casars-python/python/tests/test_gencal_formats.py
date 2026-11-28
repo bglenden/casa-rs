@@ -83,3 +83,74 @@ def test_specified_prior_refuses_unrepresentable_msv4_namespace(store):
         tasks.gencal(vis=store, caltable="prior.cal", caltype="amp", parameter=[1.0])
     assert failure.value.completion.parameter == "vis"
     assert not Path("prior.cal").exists()
+
+
+@pytest.mark.parametrize(("store", "table", "columns"), [
+    ("ms_trial.ps.zarr", "ANTENNA", ("NAME", "STATION", "POSITION")),
+    ("ms_trial_lines.ps.zarr", "SPECTRAL_WINDOW", (
+        "NAME", "CHAN_FREQ", "CHAN_WIDTH", "MEAS_FREQ_REF", "REF_FREQUENCY",
+    )),
+], indirect=["store"])
+def test_specified_msv4_append_refuses_reordered_subtables(store, table, columns):
+    assert tasks.gencal(
+        vis=store, caltable="gain.cal", caltype="amp",
+        spw="0" if table == "ANTENNA" else "0,1",
+        antenna="0,1" if table == "ANTENNA" else "0",
+        pol="X", parameter=[2.0, 3.0],
+    ) is None
+
+    prior = tools.table()
+    assert prior.open(f"gain.cal/{table}", nomodify=False)
+    for column in columns:
+        first, second = (prior.getcell(column, row) for row in (0, 1))
+        assert prior.putcell(column, 0, second)
+        assert prior.putcell(column, 1, first)
+    assert prior.close()
+
+    def scientific_files():
+        return {path: path.read_bytes() for path in Path("gain.cal").rglob("table.*")
+                if path.is_file() and path.name != "table.lock"}
+
+    before = scientific_files()
+    assert before
+    with pytest.raises(tasks.TaskExecutionError, match=f"incompatible {table} identity"):
+        tasks.gencal(
+            vis=store, caltable="gain.cal", caltype="ph",
+            antenna="1", spw="0", pol="X", parameter=[20.0],
+        )
+    assert scientific_files() == before
+
+
+@pytest.mark.parametrize("store", ["ms_trial_ephemeris.ps.zarr"], indirect=True)
+def test_specified_prior_refuses_msv4_moving_field_before_output(store):
+    with pytest.raises(tasks.TaskParameterError, match="moving FIELD") as failure:
+        tasks.gencal(vis=store, caltable="prior.cal", caltype="amp", parameter=[1.0])
+    assert failure.value.completion.parameter == "vis"
+    assert not Path("prior.cal").exists()
+
+
+@pytest.mark.parametrize("store", ["ms_trial.ps.zarr"], indirect=True)
+def test_specified_prior_does_not_require_decimal_msv4_scan_names(store):
+    label = "calibrator-A"
+    scan = Path(store) / "ms_trial_0/scan_name"
+    header = scan / "zarr.json"
+    metadata = json.loads(header.read_text())
+    assert metadata["chunk_grid"]["configuration"]["chunk_shape"] == metadata["shape"]
+    metadata["data_type"]["configuration"]["length_bytes"] = 4 * len(label)
+    metadata["codecs"] = metadata["codecs"][:1]
+    header.write_text(json.dumps(metadata))
+    (scan / "c/0").write_bytes(np.full(metadata["shape"], label, dtype=f"<U{len(label)}").tobytes())
+
+    assert tasks.gencal(vis=store, caltable="prior.cal", caltype="amp", parameter=[2.0]) is None
+    table = tools.table()
+    assert table.open("prior.cal")
+    try:
+        assert table.nrows() == 5
+        np.testing.assert_array_equal(table.getcol("SCAN_NUMBER"), np.full(5, -1))
+        np.testing.assert_array_equal(table.getcol("CPARAM"), np.full((2, 1, 5), 2.0 + 0.0j))
+    finally:
+        assert table.close()
+
+    with pytest.raises(tasks.TaskExecutionError, match="no casacore scan number"):
+        tasks.msconvert(vis=store, outputvis="numbered.ms", outformat="msv2")
+    assert not Path("numbered.ms").exists()
