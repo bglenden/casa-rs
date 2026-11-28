@@ -398,8 +398,11 @@ def test_msv4_reports_source_lines_and_nondefault_signal_state(
     assert sm.close()
     with closing(open_table(native / "STATE")) as state:
         assert bool(read_column(state, "SIG")[0]) == signal
+    with closing(open_table(native / "SPECTRAL_WINDOW")) as window:
+        reference_frequency = read_column(window, "REF_FREQUENCY")[0]
     with closing(open_table(native / "SOURCE")) as source:
-        np.testing.assert_array_equal(read_column(source, "REST_FREQUENCY")[0], [1.4e9])
+        # setfield records the first window's persisted reference frequency.
+        np.testing.assert_array_equal(read_column(source, "REST_FREQUENCY")[0], [reference_frequency])
         np.testing.assert_array_equal(read_column(source, "TRANSITION")[0], ["X"])
         np.testing.assert_array_equal(read_column(source, "SYSVEL")[0], [0.0])
 
