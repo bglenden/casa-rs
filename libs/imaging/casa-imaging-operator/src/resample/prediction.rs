@@ -472,7 +472,9 @@ impl SpectralResampler {
         self.validate_legacy_prediction(row.frequencies_hz)?;
         scratch.begin(correlations);
         scratch.predicted.clear();
-        if let Some(channels) = self.interpolated_planes(axis, order, row.frequencies_hz) {
+        if let Some(channels) =
+            self.interpolated_planes(axis, order, row.frequencies_hz, row.selection_spacing_hz)
+        {
             for channel in channels {
                 let start = scratch.predicted.len();
                 scratch
@@ -520,7 +522,15 @@ impl SpectralResampler {
             .take(count)
     }
 
-    fn prediction_width(&self, native: &[f64]) -> f64 {
+    fn prediction_width(&self, native: &[f64], selection_spacing_hz: Option<f64>) -> f64 {
+        if let Some(spacing) = selection_spacing_hz
+            && self
+                .legacy_prediction_map
+                .as_ref()
+                .is_none_or(|mapping| mapping.selection.is_none())
+        {
+            return spacing;
+        }
         let mut selected = self.prediction_channels(native);
         selected
             .next()
@@ -553,8 +563,9 @@ impl SpectralResampler {
         axis: &SpectralAxis,
         order: Order,
         native: &[f64],
+        selection_spacing_hz: Option<f64>,
     ) -> Option<std::ops::RangeInclusive<u32>> {
-        let width = self.prediction_width(native);
+        let width = self.prediction_width(native, selection_spacing_hz);
         let map = |frequency| self.prediction_channel(axis, order, frequency, width);
         degridded_channels(axis.channels, self.prediction_channels(native), map)
     }
@@ -571,7 +582,7 @@ impl SpectralResampler {
             && (2..4).contains(&axis.channels)
             && self.prediction_channels(native).nth(1).is_some()
             && self
-                .interpolated_planes(axis, Order::Cubic, native)
+                .interpolated_planes(axis, Order::Cubic, native, None)
                 .is_some()
         {
             return Err(OperatorError::SpectralAxis {
@@ -721,7 +732,9 @@ impl SpectralResampler {
                 }
             }
             Some((axis, order)) => {
-                if let Some(channels) = self.interpolated_planes(axis, order, native) {
+                if let Some(channels) =
+                    self.interpolated_planes(axis, order, native, row.selection_spacing_hz)
+                {
                     for channel in channels {
                         place(channel, (axis.centre_hz(channel), None), channel as usize);
                     }
@@ -898,7 +911,7 @@ impl SpectralResampler {
         // −2; −1 stays zero); the end points extrapolate (casacore
         // `InterpolateArray1D`, linear or cubic).
         index_sources(slots, sources, axis.channels as usize);
-        let native_width_hz = self.prediction_width(native);
+        let native_width_hz = self.prediction_width(native, row.selection_spacing_hz);
         let width = (axis.increment_hz / native_width_hz).abs();
         let legacy = self.legacy_prediction_map.is_some();
         let per_channel = if legacy {
@@ -1020,9 +1033,14 @@ impl SpectralResampler {
                     (
                         axis,
                         order,
-                        self.prediction_width(row.frequencies_hz),
-                        self.interpolated_planes(axis, order, row.frequencies_hz)
-                            .is_some(),
+                        self.prediction_width(row.frequencies_hz, row.selection_spacing_hz),
+                        self.interpolated_planes(
+                            axis,
+                            order,
+                            row.frequencies_hz,
+                            row.selection_spacing_hz,
+                        )
+                        .is_some(),
                     )
                 });
             for (channel, (term, covered)) in scratch.terms[first..]
@@ -1071,7 +1089,7 @@ impl SpectralResampler {
         }
         let native = row.frequencies_hz;
         if self
-            .interpolated_planes(axis, Order::Cubic, native)
+            .interpolated_planes(axis, Order::Cubic, native, row.selection_spacing_hz)
             .is_none()
         {
             return;
@@ -1092,7 +1110,7 @@ impl SpectralResampler {
         if !sources.is_empty() {
             spline.prepare(axis, npol, value);
         }
-        let width = self.prediction_width(native);
+        let width = self.prediction_width(native, row.selection_spacing_hz);
         for (channel, &frequency) in native.iter().enumerate() {
             if self.prediction_channel(axis, Order::Cubic, frequency, width) == -1 {
                 continue;
@@ -1131,6 +1149,7 @@ mod tests {
                 placement: slot,
             }));
             let row = NativeRow {
+                selection_spacing_hz: None,
                 uvw_m: [1.0, 0.0, 0.0],
                 phase_shift_m: 0.0,
                 pointing_offset_rad: [0.0; 2],

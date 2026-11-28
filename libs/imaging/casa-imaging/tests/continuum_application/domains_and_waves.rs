@@ -52,7 +52,9 @@ fn read_product(base: &Path, suffix: &str) -> (Vec<usize>, ArrayD<f32>) {
 
 /// A dirty cube imaged in waves equals the cube imaged in one resident
 /// pass, both when its waves read restricted channel windows, of all the
-/// channels or of a selection with a gap (`0:1~10;20~30`), and under
+/// channels or of a selection with a gap, including wider output planes
+/// whose wave's first delivered pair straddles the gap on both uniform
+/// and uneven native centres. Also under
 /// continuum subtraction, whose interior waves reach none of the fit-only
 /// channels (0 and 31) and so read whole rows for the fit. (Residual waves
 /// with a model are pinned by the runtime's pass laws.)
@@ -65,10 +67,36 @@ fn dirty_cubes_in_waves_equal_the_resident_cube() {
         ("windowed", json!({ "imsize": 128 })),
         ("gapped", json!({ "imsize": 128, "spw": "0:1~10;20~30" })),
         (
+            "gapped-wide-edge",
+            json!({ "imsize": 128, "spw": "0:1~2;30", "start": "44.0015GHz", "width": "2.5MHz", "weighting": "natural" }),
+        ),
+        (
             "continuum",
             json!({ "imsize": 128, "fitspw": "0:0;31", "fitorder": 1 }),
         ),
+        (
+            "uneven-wide-edge",
+            json!({ "imsize": 128, "spw": "0:1~2;30", "start": "44.0015GHz", "width": "3.1MHz", "weighting": "natural" }),
+        ),
     ] {
+        if label == "uneven-wide-edge" {
+            let mut ms = MeasurementSet::open(&measurement_set).expect("open MS");
+            let mut frequencies: Vec<_> = (0..32)
+                .map(|channel| 44.0e9 + f64::from(channel) * 1.0e6)
+                .collect();
+            // Leave CHAN_WIDTH at 1 MHz. The resident's 1.2 MHz selected
+            // spacing gives two fine samples, its nominal width three.
+            frequencies[2] += 0.2e6;
+            ms.spectral_window_mut()
+                .unwrap()
+                .set_array(
+                    0,
+                    "CHAN_FREQ",
+                    ArrayValue::Float64(ArrayD::from_shape_vec(vec![32], frequencies).unwrap()),
+                )
+                .unwrap();
+            ms.save().expect("save uneven native centres");
+        }
         let cube = |name: &str, memory: u64| {
             let image_name = root.path().join(format!("{label}-{name}"));
             let imaging = line_cube(&measurement_set, &image_name, overrides.clone());

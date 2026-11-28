@@ -79,6 +79,7 @@ fn predict(
     let values = vec![Complex32::new(1.0, 0.0); frequencies_hz.len() * 2];
     let weights = vec![1.0; frequencies_hz.len() * 2];
     let row = NativeRow {
+        selection_spacing_hz: None,
         uvw_m: UVW_M,
         phase_shift_m,
         pointing_offset_rad: [0.0; 2],
@@ -139,6 +140,7 @@ fn direct_prediction_is_the_degridded_value_at_each_native_channel() {
         let values = vec![Complex32::default(); 2];
         let mut buffer = SampleBuffer::new(2);
         let row = NativeRow {
+            selection_spacing_hz: None,
             uvw_m: UVW_M,
             phase_shift_m: 0.013,
             pointing_offset_rad: [0.0; 2],
@@ -404,6 +406,52 @@ fn linear_prediction_extrapolates_natives_in_casa_halo_and_zeroes_the_rest() {
     }
 }
 
+/// A gap-edge window which no longer holds the first pair still uses the
+/// original 40 MHz spacing for CASA's prediction grid and halo.
+#[test]
+fn linear_prediction_preserves_the_selected_spacing_across_a_gap() {
+    let axis = SpectralAxis::new(1.0e9, 0.1e9, 3).expect("axis");
+    let resampler = SpectralResampler::channel_local(axis, SpectralKernel::Linear);
+    let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
+    let model = point_model(&operator, &[1.0, 4.0, 10.0]);
+    let native = [1.00e9, 1.04e9, 1.18e9, 1.455e9];
+    let values = [Complex32::default(); 8];
+    let weights = [1.0; 8];
+    let flags = [false; 8];
+    let resident = row_on(UVW_M, [0, 1], &native, (&values, &weights, &flags));
+    let delivered = row_on(
+        UVW_M,
+        [0, 1],
+        &native[1..],
+        (&values[2..], &weights[2..], &flags[2..]),
+    );
+    let restricted = NativeRow {
+        selection_spacing_hz: Some(native[1] - native[0]),
+        ..delivered
+    };
+    let resident = predict_one(&resampler, &operator, &model, &resident);
+    let restricted = predict_one(&resampler, &operator, &model, &restricted);
+    let lost_spacing = predict_one(&resampler, &operator, &model, &delivered);
+    let unit = unit_point(&operator, &resampler);
+    let widen = |value: Complex32| Complex64::new(f64::from(value.re), f64::from(value.im));
+    // Casacore interpolates the first sample 0.3 from the 1 Jy to the
+    // 4 Jy model centre. The second is between two repeats of the 10 Jy
+    // plane. The last is outside CASA's 80 MHz halo.
+    for (channel, flux) in [1.9, 10.0, 0.0].into_iter().enumerate() {
+        for pol in 0..2 {
+            let cell = channel * 2 + pol;
+            let actual = widen(restricted[cell]);
+            let expected = unit * flux;
+            assert!(
+                (actual - expected).norm() < 1e-5,
+                "channel {channel}: {actual} vs {expected}"
+            );
+            assert_eq!(restricted[cell], resident[cell + 2]);
+            assert!((actual - widen(lost_spacing[cell])).norm() > 0.1);
+        }
+    }
+}
+
 /// CASA degrids the output channels `FTMachine::getInterpolateArrays` leaves
 /// unflagged: with `chanMap` −1 replaced by its maximum, from its minimum to
 /// its maximum, from channel 0 when a native lies in the halo (−2) or the
@@ -510,6 +558,7 @@ fn row_on<'a>(
     cells: (&'a [Complex32], &'a [f32], &'a [bool]),
 ) -> NativeRow<'a> {
     NativeRow {
+        selection_spacing_hz: None,
         uvw_m,
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],
@@ -776,6 +825,7 @@ fn a_batch_predicts_each_row_as_alone_within_what_it_charges() {
             let weights = widths.map(|channels| vec![1.0; channels * 2]);
             let flags = widths.map(|channels| vec![false; channels * 2]);
             let rows = std::array::from_fn::<_, 3, _>(|index| NativeRow {
+                selection_spacing_hz: None,
                 uvw_m: UVW_M,
                 phase_shift_m: 0.0,
                 pointing_offset_rad: [0.0; 2],

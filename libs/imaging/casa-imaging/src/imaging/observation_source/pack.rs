@@ -7,7 +7,7 @@ use casa_core::measures::MjdHighPrec;
 use casa_imaging_model::{
     AntennaResponseClass, BatchGeometry, CompiledProblem, ContinuumFitRule,
     DirectionCoordinateSpec, FiniteValuePolicy, FrequencyBands, GeometryPlan,
-    SelectedAntennaResponses, SkyDirection,
+    SelectedAntennaResponses, SkyDirection, SpectralKernel,
 };
 use casa_imaging_operator::RowContext;
 use casa_imaging_runtime::pass::{
@@ -19,6 +19,50 @@ use num_complex::Complex32;
 use super::keys::StoreKeys;
 use super::selection::{PartitionSelection, SelectedPartition};
 use crate::imaging::continuum::{ContinuumRow, flag_unimaged_channels, subtract_continuum};
+
+/// Map compact channels to the fit selection before copying fitted samples.
+fn prepare_fit_positions(
+    layout: &Layout,
+    input_layout: &Layout,
+    prefit: bool,
+    positions: &mut Vec<usize>,
+) -> Result<(), SourceError> {
+    positions.clear();
+    if prefit {
+        for channel in &layout.channel_indices {
+            positions.push(
+                input_layout
+                    .channel_indices
+                    .binary_search(channel)
+                    .map_err(|_| "a compact channel is absent from the fit selection")?,
+            );
+        }
+    }
+    Ok(())
+}
+
+/// A channel the time's bands miss is not read: no sample of it, or
+/// interpolated from it, is imaged.
+fn flag_channels_outside_band(flags: &mut [bool], in_band: &[bool], products: usize) {
+    for (cells, _) in flags
+        .chunks_mut(products)
+        .zip(in_band)
+        .filter(|(_, selected)| !**selected)
+    {
+        cells.fill(true);
+    }
+}
+
+/// The selected batch and its layouts before and after time compaction.
+pub(super) struct PackInput<'a, 'batch> {
+    pub batch: &'a VisibilityBatch<'batch>,
+    pub store: usize,
+    pub partition: &'a SelectedPartition,
+    pub layout: &'a Layout,
+    pub input_layout: &'a Layout,
+    pub selection_bands: Option<&'a FrequencyBands>,
+    pub selection_rule: Option<&'a ContinuumFitRule>,
+}
 
 /// The block layout of one partition's batches in one wave: which of a
 /// batch's channels and correlations a block holds.
@@ -424,6 +468,53 @@ impl Packer<'_> {
         Ok(())
     }
 
+    /// The first pair of channels the untrimmed selection delivers at
+    /// this time. Apply the same compacting predicates and frequency
+    /// conversion as the resident traversal, including its rounding at
+    /// integral width ratios.
+    fn selection_spacing(
+        &self,
+        (batch, store, partition): (&VisibilityBatch<'_>, usize, &SelectedPartition),
+        (channels, delivered): (&[u32], &[u32]),
+        (bands, rule): (Option<&FrequencyBands>, Option<&ContinuumFitRule>),
+        time: usize,
+    ) -> Result<Option<f64>, SourceError> {
+        if bands.is_none() && rule.is_none() && channels[..2] == delivered[..2] {
+            return Ok(None);
+        }
+        let entry = batch.catalogue.partition(partition.id);
+        let epoch = batch.time.seconds_since(time, MjdHighPrec::new(0.0, 0.0));
+        let scale = batch.time.reference();
+        let field = batch.field[time];
+        let plan = &self.plans[store];
+        let convert = plan.frequency_converter(entry.frequency_frame, field, epoch, scale)?;
+        let factor = bands
+            .map(|band| plan.frequency_factor(band.frame().frequency_ref(), field, epoch, scale))
+            .transpose()?;
+        let mut selected = channels.iter().filter_map(|&channel| {
+            if rule.is_some_and(|fit| {
+                !fit.channel_use(channel)
+                    .is_some_and(|use_| use_.contributes_to_output())
+            }) {
+                return None;
+            }
+            let index = channel as usize;
+            let native = entry.frequencies_hz[index];
+            let centre = convert(native);
+            let half_width = entry.channel_widths_hz[index].abs() / 2.0;
+            if let Some((band, factor)) = bands.zip(factor)
+                && !channel_meets_band(band, factor, centre, native, half_width)
+            {
+                return None;
+            }
+            Some(centre)
+        });
+        Ok(selected
+            .next()
+            .zip(selected.next())
+            .map(|(first, second)| second - first))
+    }
+
     /// Pack `batch`'s samples `keep` names into `out` under `layout`, with
     /// `geometry` applied to those samples; the rows are keyed as store
     /// `store`'s ([`StoreKeys`]). Unread visibilities are zero.
@@ -431,13 +522,15 @@ impl Packer<'_> {
     /// the sample.
     pub(super) fn pack(
         &self,
-        (batch, store, partition, layout, input_layout): (
-            &VisibilityBatch<'_>,
-            usize,
-            &SelectedPartition,
-            &Layout,
-            &Layout,
-        ),
+        PackInput {
+            batch,
+            store,
+            partition,
+            layout,
+            input_layout,
+            selection_bands,
+            selection_rule,
+        }: PackInput<'_, '_>,
         geometry: &BatchGeometry,
         keep: &[bool],
         (values, writing, prediction): (bool, bool, bool),
@@ -489,18 +582,18 @@ impl Packer<'_> {
             scratch.in_band_by_time.resize(cells, false);
         }
         let compacted = !std::ptr::eq(layout, input_layout);
-        scratch.fit_positions.clear();
-        if compacted && values && !prediction && self.problem.visibility_transform().is_some() {
-            for channel in &layout.channel_indices {
-                scratch.fit_positions.push(
-                    input_layout
-                        .channel_indices
-                        .binary_search(channel)
-                        .map_err(|_| "a compact channel is absent from the fit selection")?,
-                );
-            }
-        }
+        prepare_fit_positions(
+            layout,
+            input_layout,
+            compacted && values && !prediction && self.problem.visibility_transform().is_some(),
+            &mut scratch.fit_positions,
+        )?;
         let rest_aw = super::super::rest_aw_uses_native_wavelengths(self.problem);
+        let channels = partition.channels_for(values, prediction);
+        let needs_spacing = input_layout.channel_indices.len() < channels.len()
+            && layout.channel_indices.len() >= 2
+            && self.problem.science().spectral().sampling().kernel() == SpectralKernel::Linear;
+        let mut selection_spacing_hz = None;
         let (mut packed_time, mut native_frequency_ratio) = (None, 1.0);
         for sample in (0..batch.samples()).filter(|sample| keep[*sample]) {
             let time = sample / per_time;
@@ -513,6 +606,14 @@ impl Packer<'_> {
                     scratch,
                 )?;
                 native_frequency_ratio = stored_frequency_ratio(batch, layout, scratch);
+                if needs_spacing {
+                    selection_spacing_hz = self.selection_spacing(
+                        (batch, store, partition),
+                        (channels, &layout.channel_indices),
+                        (selection_bands, selection_rule),
+                        time,
+                    )?;
+                }
                 packed_time = Some(time);
             }
             let row = Row {
@@ -544,6 +645,7 @@ impl Packer<'_> {
             let baseline = batch.baselines[sample % per_time];
             let field = batch.field[time];
             let header = NativeRowHeader {
+                selection_spacing_hz,
                 row_flag: flagged || nonfinite_uvw,
                 context: RowContext {
                     native_frequency_ratio,
@@ -606,16 +708,8 @@ impl Packer<'_> {
                             reject_flagged,
                         )?;
                     }
-                    // A channel the time's bands miss is not read: no
-                    // sample of it, or interpolated from it, is imaged.
                     if !prediction {
-                        for (cells, _) in flags_out
-                            .chunks_mut(routed.len())
-                            .zip(in_band)
-                            .filter(|(_, selected)| !**selected)
-                        {
-                            cells.fill(true);
-                        }
+                        flag_channels_outside_band(flags_out, in_band, routed.len());
                     }
                     // A row's uvw matters only if one of its samples is imaged.
                     let imaged = !flagged && flags_out.iter().any(|flag| !*flag);
@@ -753,10 +847,20 @@ fn in_band(
             .zip(&layout.native_hz)
             .zip(&layout.half_widths_hz)
             .map(|((centre, native), half_width)| {
-                let half_width = half_width * centre / native;
-                bands.meets(factor, [centre - half_width, centre + half_width])
+                channel_meets_band(bands, factor, *centre, *native, *half_width)
             }),
     );
+}
+
+fn channel_meets_band(
+    bands: &FrequencyBands,
+    factor: f64,
+    centre: f64,
+    native: f64,
+    half_width: f64,
+) -> bool {
+    let half_width = half_width * centre / native;
+    bands.meets(factor, [centre - half_width, centre + half_width])
 }
 
 /// One sample being packed, for naming it in an error.

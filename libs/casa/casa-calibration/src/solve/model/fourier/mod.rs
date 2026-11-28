@@ -553,6 +553,7 @@ impl PreparedFourierModel {
         let (parallactic_angle, pointing_offset_rad) =
             self.legacy_pbw_placement(&row, pointing_offset_rad)?;
         let native = NativeRow {
+            selection_spacing_hz: None,
             uvw_m: uvw_m.map(|coordinate| coordinate * wavelength_scale),
             phase_shift_m: phase_shift_m * wavelength_scale,
             pointing_offset_rad,

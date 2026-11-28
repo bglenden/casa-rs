@@ -43,6 +43,8 @@ pub struct DomainProjection {
 /// Values of one native row shared by every image domain.
 #[derive(Clone, Copy, Debug)]
 pub struct NativeRowHeader {
+    /// The actual selection spacing retained across wave restriction.
+    pub selection_spacing_hz: Option<f64>,
     /// Row flag (MAIN `FLAG_ROW`, or a row CASA excludes from imaging).
     pub row_flag: bool,
     /// Per-row context for kernel-set cell selection.
@@ -440,6 +442,7 @@ impl NativeBlock {
         // Shared rows all read the one row of samples the block keeps.
         let samples = if self.shared { 0 } else { index };
         NativeRow {
+            selection_spacing_hz: header.selection_spacing_hz,
             uvw_m: projection.uvw_m,
             phase_shift_m: projection.phase_shift_m,
             pointing_offset_rad: projection.pointing_offset_rad,
@@ -475,6 +478,7 @@ mod tests {
 
     fn header(antennas: [u32; 2], row: u64) -> NativeRowHeader {
         NativeRowHeader {
+            selection_spacing_hz: None,
             row_flag: false,
             context: RowContext {
                 native_frequency_ratio: 1.0,
@@ -580,10 +584,11 @@ mod tests {
         }
     }
 
-    /// The native-frequency factor is retained per row, including when a
-    /// model write carries separate flags, and its bytes are admitted (#1121).
+    /// Native frequency factors and the full selected spacing survive
+    /// restriction and separate model flags. The admitted block includes
+    /// the per-row frequency metadata.
     #[test]
-    fn native_frequency_factors_are_retained_and_charged_per_row() {
+    fn native_frequency_metadata_is_retained_and_charged_per_row() {
         let shape = BlockShape {
             rows: 64,
             spectrum: RowSpectrum::evenly_spaced(2),
@@ -601,6 +606,7 @@ mod tests {
         for index in 0..shape.rows {
             let mut row = header([0, 1], index as u64);
             row.context.native_frequency_ratio = 1.0 + index as f64 * 1.0e-6;
+            row.selection_spacing_hz = Some(1.0e6 + index as f64);
             block.push_row(
                 row,
                 &[projection],
@@ -616,6 +622,9 @@ mod tests {
                 block.row(0, index).context.native_frequency_ratio,
                 1.0 + index as f64 * 1.0e-6
             );
+            let spacing = Some(1.0e6 + index as f64);
+            assert_eq!(block.row(0, index).selection_spacing_hz, spacing);
+            assert_eq!(block.prediction_row(0, index).selection_spacing_hz, spacing);
         }
         assert!(
             block.capacity_bytes() <= shape.bytes(),

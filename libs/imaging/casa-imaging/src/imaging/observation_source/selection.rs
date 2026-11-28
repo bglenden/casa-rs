@@ -44,6 +44,22 @@ pub(crate) struct SelectedPartition {
     pub(crate) wavelength_m: Option<f64>,
 }
 
+impl SelectedPartition {
+    /// Physical channel selection before a wave or the density traversal
+    /// divides it into smaller reads.
+    pub(super) fn channels_for(&self, values: bool, prediction: bool) -> &[u32] {
+        if prediction {
+            self.prediction_channels
+                .as_deref()
+                .unwrap_or(&self.channels)
+        } else if !values {
+            self.density_channels.as_deref().unwrap_or(&self.channels)
+        } else {
+            &self.channels
+        }
+    }
+}
+
 /// The compiled selection resolved to the observation's partitions: what
 /// [`super::ObservationSource`] binds and tests.
 ///

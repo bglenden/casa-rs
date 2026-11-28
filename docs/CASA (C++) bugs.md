@@ -891,6 +891,23 @@ geometry. The regression
 `reforming_a_mosaic_cube_psf_uses_the_requested_geometry` checks the
 PSF, beams, PB, weight, residual and sums on a cube restart.
 
+## Retuning a cube chunk can change the native interpolation width
+
+CASA 6.7.6.14 `FTMachine::interpolateFrequencyTogrid` and
+`interpolateFrequencyFromgrid` take the width from the separation of the
+first two VisBuffer channel centres in the interpolation frame.
+`matchChannel` uses the same separation for the prediction halo. VI2 can
+return several disjoint frequency slices, and `SynthesisImagerVi2::tuneChunk`
+restricts those slices for each chunk. With a selection such as `0:0~1;100`,
+a chunk might start with channels 1 and 100 while the complete selection
+starts with 0 and 1.
+
+For a linear cube, casa-rs preserves the first pair of the full selected
+channels at each epoch when it reads a wave. It evaluates their centres in
+the same frame as the delivered data. The fine gridding and prediction
+coordinates and the prediction halo then agree with the resident cube
+through gaps and uneven channel spacing.
+
 ## The cube Briggs weightor grids and looks up its density in different uvw frames
 
 - Date noted: 2026-10-15

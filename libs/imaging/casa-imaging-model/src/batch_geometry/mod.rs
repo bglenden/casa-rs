@@ -666,10 +666,29 @@ impl GeometryPlan {
         time_mjd_s: f64,
         scale: EpochRef,
     ) -> Result<f64, BatchGeometryError> {
+        Ok(self.frequency_converter(frame, field, time_mjd_s, scale)?(
+            1.0,
+        ))
+    }
+
+    /// Prepare the same channel-centre conversion as [`Self::apply`].
+    /// A wave uses it to recover the selected channel centres it did not
+    /// read, including the first pair needed for linear interpolation.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::frequency_factor`].
+    pub fn frequency_converter(
+        &self,
+        frame: FrequencyRef,
+        field: FieldId,
+        time_mjd_s: f64,
+        scale: EpochRef,
+    ) -> Result<impl Fn(f64) -> f64, BatchGeometryError> {
         let direction = self.frames.field_at(field, time_mjd_s, scale)?;
-        Ok(self
-            .frequency_conversion((time_mjd_s, scale), field, &direction, frame)?
-            .convert_hz(1.0))
+        let conversion =
+            self.frequency_conversion((time_mjd_s, scale), field, &direction, frame)?;
+        Ok(move |frequency_hz| conversion.convert_hz(frequency_hz))
     }
 
     /// The geometry of `batch`'s row samples (`rows`, one flag a sample)

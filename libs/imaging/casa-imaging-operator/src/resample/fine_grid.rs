@@ -35,8 +35,13 @@ pub(super) struct FineGrid<'a> {
 }
 
 impl<'a> FineGrid<'a> {
-    pub(super) fn compile(output: &'a SpectralAxis, native: &[f64], order: Order) -> Option<Self> {
-        let native_increment_hz = native[1] - native[0];
+    pub(super) fn compile(
+        output: &'a SpectralAxis,
+        native: &[f64],
+        order: Order,
+        selection_spacing_hz: Option<f64>,
+    ) -> Option<Self> {
+        let native_increment_hz = selection_spacing_hz.unwrap_or_else(|| native[1] - native[0]);
         let output_increment_hz = output.increment_hz;
         if native_increment_hz == 0.0 || !native_increment_hz.is_finite() {
             return None;

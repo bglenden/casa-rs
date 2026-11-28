@@ -43,7 +43,7 @@ use casa_observation::{AccessRequest, BatchBuffers, Observation, ReadEvent, Trav
 
 pub(crate) use admission::{Batching, StoreBatches, admit_batches};
 pub(crate) use keys::StoreKeys;
-use pack::{Layout, PackScratch, Packer, select_samples};
+use pack::{Layout, PackInput, PackScratch, Packer, select_samples};
 use pointing::PointingCache;
 pub(crate) use pointing::pointing_direction;
 pub(crate) use selection::{PartitionSelection, SelectedPartition};
@@ -161,19 +161,7 @@ impl BatchRoute {
         let route = &self.stores[key.store];
         let partition = &route.selection.partitions[key.partition];
         let entry = route.observation().catalogue().partition(partition.id);
-        let channels = if prediction {
-            partition
-                .prediction_channels
-                .as_ref()
-                .unwrap_or(&partition.channels)
-        } else if !values {
-            partition
-                .density_channels
-                .as_ref()
-                .unwrap_or(&partition.channels)
-        } else {
-            &partition.channels
-        };
+        let channels = partition.channels_for(values, prediction);
         let layout = Layout::new(partition, entry, &channels[window])?;
         let probe = requests::payload(
             (&route.selection, &route.plan),
@@ -665,7 +653,15 @@ impl<'a> ObservationSource<'a> {
             let input_layout = &*layout;
             let layout = compact.as_ref().unwrap_or(input_layout);
             self.packer.pack(
-                (&batch, key.store, partition, layout, input_layout),
+                PackInput {
+                    batch: &batch,
+                    store: key.store,
+                    partition,
+                    layout,
+                    input_layout,
+                    selection_bands: bands,
+                    selection_rule: rule,
+                },
                 &self.geometry,
                 &self.keep,
                 (

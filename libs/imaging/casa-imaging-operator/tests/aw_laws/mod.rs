@@ -417,6 +417,7 @@ fn linear_aw_places_the_interpolated_frequency_in_each_output_plane() {
         GridPrecision::F64,
     );
     let row = NativeRow {
+        selection_spacing_hz: None,
         uvw_m: [15.0, 0.0, 0.0],
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],
@@ -514,6 +515,7 @@ fn prediction_uses_original_ms_w_while_gridding_uses_rotated_w() {
     let operator = operator_with(catalog);
     let resampler = SpectralResampler::direct(Basis::Constant).expect("resampler");
     let row = NativeRow {
+        selection_spacing_hz: None,
         uvw_m: [0.0, 0.0, 700.0 / scale],
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],

@@ -49,6 +49,7 @@ struct Row {
 impl Row {
     fn native(&self) -> NativeRow<'_> {
         NativeRow {
+            selection_spacing_hz: None,
             uvw_m: self.uvw_m,
             phase_shift_m: 0.0,
             pointing_offset_rad: [0.0; 2],
