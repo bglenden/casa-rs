@@ -242,6 +242,13 @@ fn collect_spectra(
     let mut sums = [BTreeMap::new(), BTreeMap::new()];
     let mut means = [BTreeMap::new(), BTreeMap::new()];
     let mut participation = vec![vec![0; occupied_channel_count]; antennas.len()];
+    #[cfg_attr(
+        not(feature = "solve-test-hooks"),
+        expect(
+            clippy::unused_enumerate_index,
+            reason = "only test checkpoints use the index"
+        )
+    )]
     for (_index, (description, [a, b], receptor, spectrum)) in group
         .polynomial
         .iter()
