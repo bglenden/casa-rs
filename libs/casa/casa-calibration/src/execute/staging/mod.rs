@@ -378,11 +378,22 @@ pub(super) fn execute(
 mod tests {
     use super::*;
 
+    fn write_main(path: &Path) {
+        let schema = casa_tables::TableSchema::new(vec![ColumnSchema::scalar(
+            "ID",
+            casa_core::PrimitiveType::Int32,
+        )])
+        .unwrap();
+        Table::with_schema(schema)
+            .save(TableOptions::new(path))
+            .unwrap();
+    }
+
     #[test]
     fn staged_apply_refuses_a_generation_published_after_reading() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("MAIN");
-        Table::new().save(TableOptions::new(&path)).unwrap();
+        write_main(&path);
         let snapshot = MainSnapshot::capture(&path).unwrap();
         let mut writer = TableWriteLock::acquire(&path, 1).unwrap();
         writer.record_write();
@@ -402,10 +413,10 @@ mod tests {
     fn staged_apply_refuses_replacement_at_the_same_path() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("MAIN");
-        Table::new().save(TableOptions::new(&path)).unwrap();
+        write_main(&path);
         let snapshot = MainSnapshot::capture(&path).unwrap();
         std::fs::rename(&path, root.path().join("old")).unwrap();
-        Table::new().save(TableOptions::new(&path)).unwrap();
+        write_main(&path);
         let Err(error) = snapshot.accept(&path, &Cancellation::new()) else {
             panic!("staged changes accepted against a different table");
         };
