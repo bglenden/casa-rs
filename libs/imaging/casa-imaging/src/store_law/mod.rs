@@ -397,7 +397,14 @@ fn batch_rows(
             let rows = samples.iter().map(Option::is_some).collect::<Vec<_>>();
             let pointing = plan
                 .reads_pointing()
-                .then(|| observation.pointing(&pointing_request(problem, &batch, partition)))
+                .then(|| {
+                    let request = pointing_request(problem, &batch, partition);
+                    if plan.reads_aw_pointing() {
+                        observation.aw_pointing(&request)
+                    } else {
+                        observation.pointing(&request)
+                    }
+                })
                 .transpose()?;
             plan.apply(
                 &batch,

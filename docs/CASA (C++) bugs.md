@@ -665,6 +665,29 @@ debugger run without the intervention reproduces all 19 stock
 products exactly. The three windows share a feed angle and usable
 integration times, so casa-rs uses one schedule for all three.
 
+## A/W POINTING lookup differs from the legacy casacore iterator
+
+In CASA 6.7.6.14, `PointingOffsets` gets each antenna's direction through
+`VisBufferUtil::getPointingDir`. Its `pointingIndex` searches the original
+POINTING table from row zero at every visibility time. By contrast, legacy
+`VisBuffer::fillDirection1` and `fillDirection2` pass their last successful
+row to casacore `MSPointingColumns::pointingIndex`, which wraps from the end
+of the table and treats negative intervals as valid at every epoch.
+
+For `awproject(usepointing=True)` on MSv2, casa-rs follows the CASA A/W
+row selection for covered queries. It infers a nonpositive interval's
+half-width from the next different time for that antenna in table order,
+or the preceding different time if no later one exists. The first covering
+row wins unless a nonpositive-interval row is at least as close. For example,
+physical rows at 20 s and 10 s with positive intervals of 30 s cover 11 s;
+the A/W lookup selects the 20 s row regardless of a previous query.
+
+With only one distinct time for an antenna, a nonpositive sample covers all
+times. casa-rs handles this case directly. For an uncovered query, CASA's AW
+helper returns its nearest nonpositive row if one exists, or uses the FIELD
+phase centre. casa-rs gives uncovered queries to its existing pointing law,
+which uses the nearest samples and holds an endpoint under its A/W policy.
+
 ## AW pointing can reuse the origin of an earlier convolution buffer
 
 - Date noted: 2026-11-12

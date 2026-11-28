@@ -309,6 +309,19 @@ fn opening_and_pointing_hold_at_most_their_bounds(root: &Path) {
         "the query held {query} bytes, beyond {budget}"
     );
     assert!(series.held_bytes() <= budget);
+    drop(series);
+
+    drop(opened.aw_pointing(&request).expect("warm AW coverage"));
+    let (series, query) = peak_of(|| opened.aw_pointing(&request).expect("within its bound"));
+    eprintln!(
+        "a query of every POINTING row with AW coverage: peak {query} bytes, bound {budget}, series {}",
+        series.held_bytes()
+    );
+    assert!(
+        query <= budget as u64,
+        "AW pointing held {query} bytes, beyond {budget}"
+    );
+    assert!(series.held_bytes() <= budget);
 }
 
 /// A second scan holds one baseline at every other time. It creates

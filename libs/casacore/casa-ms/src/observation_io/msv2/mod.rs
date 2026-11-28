@@ -1184,7 +1184,11 @@ impl Observation for Msv2Observation {
     }
 
     fn pointing(&self, request: &PointingRequest) -> Result<PointingSeries, ObservationError> {
-        self.read_pointing(request)
+        self.read_pointing(request, false)
+    }
+
+    fn aw_pointing(&self, request: &PointingRequest) -> Result<PointingSeries, ObservationError> {
+        self.read_pointing(request, true)
     }
 
     fn pointing_bytes(&self) -> Result<usize, ObservationError> {

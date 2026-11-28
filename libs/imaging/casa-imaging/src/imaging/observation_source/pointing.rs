@@ -24,6 +24,7 @@ use casa_observation::{
 #[derive(Debug, PartialEq)]
 struct Query {
     direction: PointingDirection,
+    aw_coverage: bool,
     antennas: Vec<AntennaId>,
     span: [u64; 2],
     origin: [u64; 2],
@@ -72,6 +73,7 @@ impl PointingCache {
         &mut self,
         observation: &dyn Observation,
         budget: usize,
+        aw_coverage: bool,
         (direction, partition, span): (PointingDirection, PartitionId, [f64; 2]),
     ) -> Result<(), SourceError> {
         let entry = observation.catalogue().partition(partition);
@@ -84,6 +86,7 @@ impl PointingCache {
         antennas.dedup();
         let query = Query {
             direction,
+            aw_coverage,
             antennas,
             span: span.map(f64::to_bits),
             origin: [
@@ -105,15 +108,23 @@ impl PointingCache {
             times: span[0]..=span[1],
             budget_bytes,
         };
+        let read = |budget_bytes| {
+            let request = request(budget_bytes);
+            if aw_coverage {
+                observation.aw_pointing(&request)
+            } else {
+                observation.pointing(&request)
+            }
+        };
         let series = if self.held.is_empty() {
-            observation.pointing(&request(budget))?
+            read(budget)?
         } else {
             let free = budget.saturating_sub(self.held_bytes());
-            match observation.pointing(&request(free)) {
+            match read(free) {
                 Ok(series) => series,
                 Err(ObservationError::OverBudget { .. }) => {
                     self.held.clear();
-                    observation.pointing(&request(budget))?
+                    read(budget)?
                 }
                 Err(error) => return Err(error.into()),
             }
@@ -284,6 +295,7 @@ mod tests {
         cache.hold(
             observation,
             budget,
+            false,
             (PointingDirection::Beam, PartitionId(partition), span),
         )
     }
