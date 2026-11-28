@@ -5,7 +5,7 @@
 
 use casa_core::measures::MjdHighPrec;
 use casa_imaging_model::{
-    BaselineSelection, IdSelection, LinearSpacingSelection, TimeSelection, UvSelection,
+    BaselineSelection, IdSelection, NativeSpacingSelection, TimeSelection, UvSelection,
 };
 use casa_imaging_runtime::pass::SourceError;
 use casa_observation::{
@@ -26,7 +26,7 @@ pub(crate) struct SelectedPartition {
     /// some of `channels` ([`casa_imaging_model::FrequencyBands`]).
     pub(crate) frequency_bands: Option<casa_imaging_model::FrequencyBands>,
     /// The leading linear selection, when the cube support pruned it.
-    pub(crate) linear_spacing: Option<LinearSpacingSelection>,
+    pub(crate) native_spacing: Option<NativeSpacingSelection>,
     /// Whether compile found no channel of it reaching the image's axis
     /// ([`casa_imaging_model::SpectralWindowSelection::density_only`]), so a
     /// pass that images tests whether to skip it.
@@ -51,15 +51,15 @@ pub(crate) struct SelectedPartition {
 impl SelectedPartition {
     /// Spacing for a cube's gridding traversal. Whole-selection density and
     /// final prediction have their own untuned reads.
-    pub(super) fn linear_spacing_for(
+    pub(super) fn native_spacing_for(
         &self,
         values: bool,
         prediction: bool,
-    ) -> Option<&LinearSpacingSelection> {
+    ) -> Option<&NativeSpacingSelection> {
         if prediction || (!values && self.density_channels.is_some()) {
             None
         } else {
-            self.linear_spacing.as_ref()
+            self.native_spacing.as_ref()
         }
     }
 
@@ -121,8 +121,8 @@ impl PartitionSelection {
                 .partitions
                 .iter()
                 .map(|partition| {
-                    let spacing_bytes = match &partition.linear_spacing {
-                        Some(LinearSpacingSelection::Bands(bands)) => bands.allocated_bytes(),
+                    let spacing_bytes = match &partition.native_spacing {
+                        Some(NativeSpacingSelection::Bands(bands)) => bands.allocated_bytes(),
                         _ => 0,
                     };
                     spacing_bytes
@@ -208,7 +208,7 @@ mod tests {
             spectral_window: 0,
             channels: vec![0],
             frequency_bands: None,
-            linear_spacing: None,
+            native_spacing: None,
             density_only: false,
             density_channels: None,
             density_bands: None,

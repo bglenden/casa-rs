@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use super::{OperatorError, RowSpectrum, SpectralAxis, linear_samples};
+use super::{OperatorError, RowSpectrum, SpectralAxis};
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct TabularAxis {
@@ -144,7 +144,7 @@ impl SpectralAxis {
     /// the native span. The table can have unequal adjacent intervals.
     pub(super) fn samples_per_row(&self, row: RowSpectrum) -> usize {
         let Some(table) = &self.tabular else {
-            return linear_samples(self.increment_hz, self.channels as usize, row);
+            return self.linear_samples(self.channels as usize, row);
         };
         if self.channels <= 1 || row.channels <= 1 {
             return row.channels;

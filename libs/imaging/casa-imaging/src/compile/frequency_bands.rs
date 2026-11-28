@@ -49,9 +49,11 @@ use std::collections::BTreeMap;
 use casa_core::measures::PreparedFrequencyConversion;
 use casa_core::measures::direction::MDirection;
 use casa_core::measures::frequency::FrequencyRef;
-use casa_imaging_model::{FrequencyBands, LinearSpacingSelection};
+use casa_imaging_model::{FrequencyBands, NativeSpacingSelection};
 use casa_ms::{CubeSpectralSetup, derived::engine::MsCalEngine};
 use casa_observation::Catalogue;
+
+use crate::{ImagingRequest, SpecMode};
 
 use super::PrepareError;
 use super::envelope::{epoch_frame, selection_band};
@@ -75,6 +77,35 @@ pub(super) enum SelectionFrame {
     /// The data's frame, each range's channel centres as they are (CASA's
     /// `ignoreframe` for a selection frame of `REST` or `Undefined`).
     Data,
+}
+
+/// The bands a cube's gridding selects one store's windows' channels by at
+/// each time ([`cube_bands`]): a `cube`'s in `outframe`,
+/// or tuned to the image's band `image_band` where CASA tunes the
+/// selection; in the data's frame where tclean's selection frame is
+/// `Undefined` (`cubedata`) or `REST` (`cubesource`, or a `cube` whose
+/// `outframe` is `REST`), which select each named range's channels at
+/// every time, a range with a stride whole. None for a `fitspw` fit,
+/// which reads its channels as named.
+pub(super) fn cube_read_bands(
+    request: &ImagingRequest,
+    (catalogue, engine): (&Catalogue, &MsCalEngine),
+    survey: &Survey,
+    image_band: Option<[f64; 2]>,
+) -> Result<Option<CubeBands>, PrepareError> {
+    if request.fitspw.is_some() {
+        return Ok(None);
+    }
+    let frame = match request.specmode {
+        SpecMode::Cube if image_band.is_some() => SelectionFrame::Converted(FrequencyRef::LSRK),
+        SpecMode::Cube if request.outframe != FrequencyRef::REST => {
+            SelectionFrame::Converted(request.outframe)
+        }
+        SpecMode::Mfs | SpecMode::Cube | SpecMode::Cubedata | SpecMode::Cubesource => {
+            SelectionFrame::Data
+        }
+    };
+    cube_bands((catalogue, engine), survey, frame, image_band).map(Some)
 }
 
 /// The image's band in LSRK as `SynthesisImager::tuneSelectData` states
@@ -249,6 +280,67 @@ impl EpochSelection {
     }
 }
 
+/// Keep the selected channels whose cubic stencils can reach the
+/// source-frame cube band. The coarse output centres alone can miss a
+/// native pair reached by a fine sample between a centre and its edge.
+/// Two neighbours on either side also cover the four-point stencil when
+/// the other side reaches the end of the selected channels.
+pub(super) fn cubic_read_support(
+    retained: &mut Vec<usize>,
+    frequencies: &[f64],
+    [lower, upper]: [f64; 2],
+    epochs: Option<&EpochSelection>,
+    explicit: Option<&[usize]>,
+) -> Option<NativeSpacingSelection> {
+    let selected = |channel| match epochs {
+        Some(epochs) => epochs.ever(channel),
+        None => explicit.is_none_or(|indices| indices.contains(&channel)),
+    };
+    let channels = 0..frequencies.len();
+    let mut previous: Option<usize> = None;
+    let mut support: Option<(usize, usize)> = None;
+    for right in channels.clone().filter(|&index| selected(index)) {
+        if let Some(left) = previous {
+            let [a, b] = [frequencies[left], frequencies[right]];
+            if a.min(b) <= upper && a.max(b) >= lower {
+                support = Some((support.map_or(left, |(first, _)| first), right));
+            }
+        }
+        previous = Some(right);
+    }
+    let (first, last) = support?;
+    let first = (0..first)
+        .rev()
+        .filter(|&index| selected(index))
+        .take(2)
+        .last()
+        .unwrap_or(first);
+    let last = (last + 1..channels.end)
+        .filter(|&index| selected(index))
+        .take(2)
+        .last()
+        .unwrap_or(last);
+    if let Some((&retained_first, &retained_last)) = retained.first().zip(retained.last()) {
+        retained.extend(
+            (first..retained_first)
+                .chain(retained_last + 1..=last)
+                .filter(|&index| selected(index)),
+        );
+        retained.sort_unstable();
+    } else {
+        retained.extend((first..=last).filter(|&index| selected(index)));
+    }
+    // Cubesource selects in the stored frame, so the leading pair is
+    // the same at every epoch (its converted centres still move).
+    let mut physical = channels.filter(|&index| selected(index));
+    let pair = [physical.next()?, physical.next()?];
+    (!retained.starts_with(&pair)).then(|| {
+        NativeSpacingSelection::Pair(
+            pair.map(|index| u32::try_from(index).expect("a CHAN_FREQ index fits u32")),
+        )
+    })
+}
+
 /// Match the physical selection at the edges of cube support. The numeric
 /// support brackets the image on the full catalogue, so when its outer
 /// channel is missing from a selection, retain the nearest selected
@@ -259,7 +351,7 @@ pub(super) fn linear_read_support(
     (retained, (lower, upper)): (&mut Vec<usize>, (usize, usize)),
     explicit: Option<&[usize]>,
     by_band: Option<(&EpochSelection, &FrequencyBands)>,
-) -> Option<LinearSpacingSelection> {
+) -> Option<NativeSpacingSelection> {
     let ever = |channel: usize| match by_band {
         Some((epochs, _)) => epochs.ever(channel),
         None => explicit.is_none_or(|channels| channels.contains(&channel)),
@@ -289,7 +381,7 @@ pub(super) fn linear_read_support(
     let pair = [possible.next()?, possible.next()?];
     if by_band.is_none_or(|(epochs, _)| pair.iter().all(|&channel| epochs.always(channel))) {
         return (!retained.starts_with(&pair)).then(|| {
-            LinearSpacingSelection::Pair(
+            NativeSpacingSelection::Pair(
                 pair.map(|channel| u32::try_from(channel).expect("a CHAN_FREQ index fits u32")),
             )
         });
@@ -298,7 +390,7 @@ pub(super) fn linear_read_support(
     let mut always = 0;
     for channel in pair.into_iter().chain(possible) {
         if retained.binary_search(&channel).is_err() {
-            return Some(LinearSpacingSelection::Bands(bands.clone()));
+            return Some(NativeSpacingSelection::Bands(bands.clone()));
         }
         always += usize::from(epochs.always(channel));
         if always == 2 {

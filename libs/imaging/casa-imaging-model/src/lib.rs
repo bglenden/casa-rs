@@ -70,7 +70,7 @@ pub use model_state::{
 pub use casa_observation::PartitionId;
 pub use observation::{
     BaselineSelection, CompileObservationError, CorrelationProduct, FlagPolicy, FrequencyBands,
-    IdSelection, IntentSelection, LinearSpacingSelection, MsColumnKind, ObservationSelection,
+    IdSelection, IntentSelection, MsColumnKind, NativeSpacingSelection, ObservationSelection,
     ObservationSnapshot, ObservationSnapshotInput, ObservationSource, ObservationSourceInput,
     ObservationSourceProvenance, PartitionSelection, RowSelection, SelectedColumns, SelectionBound,
     SpectralWindowCoordinateCatalog, SpectralWindowSelection, TimeCondition, TimeSelection,

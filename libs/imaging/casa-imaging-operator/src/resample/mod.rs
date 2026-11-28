@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use casa_core::measures::PreparedFrequencyConversion;
 use num_complex::{Complex32, Complex64};
 
-use self::fine_grid::{FineGrid, linear_samples};
+use self::fine_grid::{FineGrid, IntegralWidths};
 pub use self::prediction::{PlacedRow, PredictionScratch};
 use self::tabular::TabularAxis;
 use crate::accumulator::PlaneRange;
@@ -58,11 +58,11 @@ pub struct NativeRow<'a> {
     pub pointing_offset_rad: [f64; 2],
     /// Native channel centres in Hz in the interpolation frame.
     pub frequencies_hz: &'a [f64],
-    /// Signed spacing of the first two channels of the complete selection
-    /// at this row's epoch, in the interpolation frame. Required when a
-    /// wave's restricted channels omit that pair. `None` lets an intact
-    /// row use its own first pair.
-    pub selection_spacing_hz: Option<f64>,
+    /// The interpolation-frame centres of the first two channels of the
+    /// complete selection at this row's epoch. The pair preserves both
+    /// spacing and coordinate precision if a wave omits those channels.
+    /// `None` lets an intact row use its own first pair.
+    pub selection_centres_hz: Option<[f64; 2]>,
     /// Visibilities.
     pub values: &'a [Complex32],
     /// Input weights (`WEIGHT_SPECTRUM` or `WEIGHT` repeated per channel).
@@ -135,7 +135,7 @@ pub struct SpectralAxis {
     channels: u32,
     reporting_axis: Option<ReportingAxis>,
     tabular: Option<TabularAxis>,
-    exact_width_from_below: bool,
+    integral_widths: IntegralWidths,
 }
 
 /// A retained LSRK axis's reported image coordinate and its conversion.
@@ -174,7 +174,7 @@ impl SpectralAxis {
             channels,
             reporting_axis: None,
             tabular: None,
-            exact_width_from_below: false,
+            integral_widths: IntegralWidths::Floor,
         })
     }
 
@@ -1223,7 +1223,7 @@ impl SpectralResampler {
         match (shape.rule, &self.sampling) {
             (DensityCellRule::Cube, Sampling::Interpolated(axis, _)) => {
                 axis.padded(shape.padding).map_or_else(
-                    |_| linear_samples(axis.increment_hz, shape.planes, spectrum),
+                    |_| axis.linear_samples(shape.planes, spectrum),
                     |padded| padded.samples_per_row(spectrum),
                 )
             }
@@ -1370,7 +1370,7 @@ impl SpectralResampler {
             Sampling::Interpolated(axis, order) => {
                 let output = self.gridding_axis(axis);
                 let Some(mut grid) =
-                    FineGrid::compile(&output, native, *order, row.selection_spacing_hz)
+                    FineGrid::compile(&output, native, *order, row.selection_centres_hz)
                 else {
                     return;
                 };

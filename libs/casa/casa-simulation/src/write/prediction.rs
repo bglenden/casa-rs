@@ -950,7 +950,7 @@ impl<'s> PredictionStage<'s> {
                 });
             }
             let header = NativeRowHeader {
-                selection_spacing_hz: None,
+                selection_centres_hz: None,
                 row_flag: row.flagged,
                 context: RowContext {
                     native_frequency_ratio: 1.0,

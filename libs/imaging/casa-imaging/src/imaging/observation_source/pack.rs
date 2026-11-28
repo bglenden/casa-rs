@@ -7,7 +7,7 @@ use casa_core::measures::MjdHighPrec;
 use casa_imaging_model::{
     AntennaResponseClass, BatchGeometry, CompiledProblem, ContinuumFitRule,
     DirectionCoordinateSpec, FiniteValuePolicy, FrequencyBands, GeometryPlan,
-    LinearSpacingSelection, SelectedAntennaResponses, SkyDirection, SpectralKernel,
+    NativeSpacingSelection, SelectedAntennaResponses, SkyDirection, SpectralKernel,
 };
 use casa_imaging_operator::RowContext;
 use casa_imaging_runtime::pass::{
@@ -468,17 +468,23 @@ impl Packer<'_> {
         Ok(())
     }
 
+    fn uses_selection_centres(&self) -> bool {
+        let kernel = self.problem.science().spectral().sampling().kernel();
+        kernel == SpectralKernel::Linear
+            || (kernel == SpectralKernel::Cubic && super::super::uses_tracked_widths(self.problem))
+    }
+
     /// The first pair of channels the untrimmed selection delivers at
     /// this time. Apply the same compacting predicates and frequency
     /// conversion as the resident traversal, including its rounding at
     /// integral width ratios.
-    fn selection_spacing(
+    fn selection_centres(
         &self,
         (batch, store, partition): (&VisibilityBatch<'_>, usize, &SelectedPartition),
-        (channels, delivered, spacing): (&[u32], &[u32], Option<&LinearSpacingSelection>),
+        (channels, delivered, spacing): (&[u32], &[u32], Option<&NativeSpacingSelection>),
         (bands, rule): (Option<&FrequencyBands>, Option<&ContinuumFitRule>),
         time: usize,
-    ) -> Result<Option<f64>, SourceError> {
+    ) -> Result<Option<[f64; 2]>, SourceError> {
         if spacing.is_none() && bands.is_none() && rule.is_none() && channels[..2] == delivered[..2]
         {
             return Ok(None);
@@ -489,14 +495,14 @@ impl Packer<'_> {
         let field = batch.field[time];
         let plan = &self.plans[store];
         let convert = plan.frequency_converter(entry.frequency_frame, field, epoch, scale)?;
-        if let Some(LinearSpacingSelection::Pair([first, second])) = spacing {
-            return Ok(Some(
-                convert(entry.frequencies_hz[*second as usize])
-                    - convert(entry.frequencies_hz[*first as usize]),
-            ));
+        if let Some(NativeSpacingSelection::Pair([first, second])) = spacing {
+            return Ok(Some([
+                convert(entry.frequencies_hz[*first as usize]),
+                convert(entry.frequencies_hz[*second as usize]),
+            ]));
         }
         let (prefix, count, bands) = match spacing {
-            Some(LinearSpacingSelection::Bands(full)) => {
+            Some(NativeSpacingSelection::Bands(full)) => {
                 (&[][..], entry.frequencies_hz.len(), Some(full))
             }
             _ => (channels, 0, bands),
@@ -530,7 +536,7 @@ impl Packer<'_> {
         Ok(selected
             .next()
             .zip(selected.next())
-            .map(|(first, second)| second - first))
+            .map(|(first, second)| [first, second]))
     }
 
     /// Pack `batch`'s samples `keep` names into `out` under `layout`, with
@@ -608,12 +614,11 @@ impl Packer<'_> {
         )?;
         let rest_aw = super::super::rest_aw_uses_native_wavelengths(self.problem);
         let channels = partition.channels_for(values, prediction);
-        let spacing = partition.linear_spacing_for(values, prediction);
-        let needs_spacing = (spacing.is_some()
-            || input_layout.channel_indices.len() < channels.len())
-            && layout.channel_indices.len() >= 2
-            && self.problem.science().spectral().sampling().kernel() == SpectralKernel::Linear;
-        let mut selection_spacing_hz = None;
+        let spacing = partition.native_spacing_for(values, prediction);
+        let needs_spacing = self.uses_selection_centres()
+            && (spacing.is_some() || input_layout.channel_indices.len() < channels.len())
+            && layout.channel_indices.len() >= 2;
+        let mut selection_centres_hz = None;
         let (mut packed_time, mut native_frequency_ratio) = (None, 1.0);
         for sample in (0..batch.samples()).filter(|sample| keep[*sample]) {
             let time = sample / per_time;
@@ -627,7 +632,7 @@ impl Packer<'_> {
                 )?;
                 native_frequency_ratio = stored_frequency_ratio(batch, layout, scratch);
                 if needs_spacing {
-                    selection_spacing_hz = self.selection_spacing(
+                    selection_centres_hz = self.selection_centres(
                         (batch, store, partition),
                         (channels, &layout.channel_indices, spacing),
                         (selection_bands, selection_rule),
@@ -664,7 +669,7 @@ impl Packer<'_> {
             let flagged = arrays.row_flagged(sample, &flag_layout.channels, &scratch.routed);
             let (baseline, field) = (batch.baselines[sample % per_time], batch.field[time]);
             let header = NativeRowHeader {
-                selection_spacing_hz,
+                selection_centres_hz,
                 row_flag: flagged || nonfinite_uvw,
                 context: RowContext {
                     native_frequency_ratio,

@@ -14,7 +14,7 @@ use casa_core::measures::{
 use casa_core::quanta::Quantity;
 use casa_imaging_model::{
     DirectionCoordinateSpec, DopplerConvention, Epoch, FrequencyBands, FrequencyFrame,
-    ItrfPosition, LinearSpacingSelection, ReconstructionBasis, RestFrequency, SourceLsrkGrid,
+    ItrfPosition, NativeSpacingSelection, ReconstructionBasis, RestFrequency, SourceLsrkGrid,
     SpectralCoordinateSpec, SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, TimeScale,
 };
 use casa_ms::derived::engine::MsCalEngine;
@@ -89,8 +89,8 @@ pub(super) struct WindowRead {
     /// Its per-time frequency selection, for a time that reads only some of
     /// its channels ([`frequency_bands`]).
     pub(super) bands: Option<FrequencyBands>,
-    /// Physical linear spacing metadata discarded by cube support.
-    pub(super) linear_spacing: Option<LinearSpacingSelection>,
+    /// The leading selected pair when cube support can trim it.
+    pub(super) native_spacing: Option<NativeSpacingSelection>,
     /// Whether it's read only to count its samples in the density and to
     /// write them, if the source's test over its rows agrees that no channel
     /// reaches the axis.
@@ -158,7 +158,7 @@ pub(super) fn prepare_axis<'a>(
     (stores, reference): (&[SurveyedStore], usize),
     continuum: Option<&'a ContinuumBand>,
     frame: &FrameContext<'_>,
-    moving_rest_frame: Option<&MeasFrame>,
+    moving_rest_frame: Option<(&MeasFrame, &casa_ms::PhaseCentreEphemeris)>,
     continuum_reference_hz: Option<f64>,
 ) -> Result<PreparedSpectralAxis<'a>, PrepareError> {
     let store = &stores[reference];
@@ -574,6 +574,7 @@ fn cube_store_reads(
             ((store.catalogue(), &store.engine), survey, field),
             setup,
             (image_band, tuned),
+            None,
         )?;
         if index == reference && !reads.reaches_axis {
             return Err(PrepareError::NoCommonCubeChannels);
@@ -620,21 +621,22 @@ fn store_reads(
     ((catalogue, engine), survey, field): ((&Catalogue, &MsCalEngine), &Survey, usize),
     setup: &CubeSpectralSetup,
     (image_band, tuned): (Option<[f64; 2]>, bool),
+    cubic_read_band: Option<[f64; 2]>,
 ) -> Result<StoreReads, PrepareError> {
-    let bands = cube_bands(request, (catalogue, engine), survey, image_band)?;
+    let bands = frequency_bands::cube_read_bands(request, (catalogue, engine), survey, image_band)?;
     let keep_iterator_channels = tracked_aw_cube_density(
         request,
         survey.source_frequency_reference,
         setup.output_freq_ref,
     );
     let density_bands = if whole_selection_density(request) {
-        cube_bands(request, (catalogue, engine), survey, None)?
+        frequency_bands::cube_read_bands(request, (catalogue, engine), survey, None)?
     } else {
         None
     };
     let prediction_bands =
         if request.savemodel == SaveModel::ModelColumn && request.predicts_final_model() {
-            cube_bands(request, (catalogue, engine), survey, None)?
+            frequency_bands::cube_read_bands(request, (catalogue, engine), survey, None)?
         } else {
             None
         };
@@ -673,6 +675,21 @@ fn store_reads(
             }
             _ => {}
         }
+        if let Some(band) = cubic_read_band
+            && let Some(spacing) = frequency_bands::cubic_read_support(
+                &mut channels,
+                &window.frequencies_hz,
+                band,
+                selection.as_ref(),
+                explicit.map(Vec::as_slice),
+            )
+        {
+            reads
+                .windows
+                .entry(window.spw_id)
+                .or_default()
+                .native_spacing = Some(spacing);
+        }
         if channels.is_empty() {
             // `spw`'s channels, or the whole window when it names none.
             channels = explicit
@@ -710,7 +727,7 @@ fn store_reads(
                         .windows
                         .entry(window.spw_id)
                         .or_default()
-                        .linear_spacing = Some(spacing);
+                        .native_spacing = Some(spacing);
                 }
             }
             if let (Some(bands), Some(selection)) = (&bands, &selection)
@@ -801,36 +818,6 @@ fn whole_selection_density(request: &ImagingRequest) -> bool {
     request.fitspw.is_none()
         && request.weighting.uses_density()
         && !(request.perchanweightdensity && request.weighting.per_channel_density())
-}
-
-/// The bands a cube's gridding selects one store's windows' channels by at
-/// each time ([`frequency_bands::cube_bands`]): a `cube`'s in `outframe`,
-/// or tuned to the image's band `image_band` where CASA tunes the
-/// selection; in the data's frame where tclean's selection frame is
-/// `Undefined` (`cubedata`) or `REST` (`cubesource`, or a `cube` whose
-/// `outframe` is `REST`), which select each named range's channels at
-/// every time, a range with a stride whole. None for a `fitspw` fit,
-/// which reads its channels as named.
-fn cube_bands(
-    request: &ImagingRequest,
-    (catalogue, engine): (&Catalogue, &MsCalEngine),
-    survey: &Survey,
-    image_band: Option<[f64; 2]>,
-) -> Result<Option<frequency_bands::CubeBands>, PrepareError> {
-    use frequency_bands::SelectionFrame;
-    if request.fitspw.is_some() {
-        return Ok(None);
-    }
-    let frame = match request.specmode {
-        SpecMode::Cube if image_band.is_some() => SelectionFrame::Converted(FrequencyRef::LSRK),
-        SpecMode::Cube if request.outframe != FrequencyRef::REST => {
-            SelectionFrame::Converted(request.outframe)
-        }
-        SpecMode::Mfs | SpecMode::Cube | SpecMode::Cubedata | SpecMode::Cubesource => {
-            SelectionFrame::Data
-        }
-    };
-    frequency_bands::cube_bands((catalogue, engine), survey, frame, image_band).map(Some)
 }
 
 /// A cube in its output frame (`cube`) or the data's (`cubedata`), laid
@@ -1095,7 +1082,7 @@ fn source_frame_cube_law(
     request: &ImagingRequest,
     store: &SurveyedStore,
     frame: &FrameContext<'_>,
-    moving_rest_frame: &MeasFrame,
+    (moving_rest_frame, ephemeris): (&MeasFrame, &casa_ms::PhaseCentreEphemeris),
 ) -> Result<AxisLaw<'static>, PrepareError> {
     let (catalogue, survey) = (store.catalogue(), &store.survey);
     if survey.spectral_windows.len() > 1 {
@@ -1121,6 +1108,17 @@ fn source_frame_cube_law(
     let (mut setup, _) = cube_setup(request, (survey, &[survey]), frame, axis, factor)?;
     let output_channels = setup.output_channel_frequencies_hz.len();
     let (reference_frequency_hz, increment_hz) = first_and_increment(&setup, output_channels)?;
+    let cubic_read_band = if setup.interpolation == CubeInterpolation::Cubic && output_channels > 1
+    {
+        super::envelope::tracked_read_band(
+            (catalogue, &store.engine),
+            survey,
+            ephemeris,
+            (reference_frequency_hz, increment_hz, output_channels),
+        )?
+    } else {
+        None
+    };
     // The selection helper reads stored frequencies. Put its support
     // bounds in that same frame before choosing the source channels.
     for hz in setup
@@ -1135,6 +1133,7 @@ fn source_frame_cube_law(
         ((catalogue, &store.engine), survey, frame.field_id),
         &setup,
         (None, false),
+        cubic_read_band,
     )?;
     if !reads.reaches_axis {
         return Err(PrepareError::NoCommonCubeChannels);
