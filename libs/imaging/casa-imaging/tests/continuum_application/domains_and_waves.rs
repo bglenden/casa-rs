@@ -127,6 +127,78 @@ fn dirty_cubes_in_waves_equal_the_resident_cube() {
     }
 }
 
+/// The physical cubedata iterator starts with channels 0 and 1 even
+/// though neither contributes a sample to the output image.
+#[test]
+fn cubedata_wide_planes_use_the_untuned_first_pair() {
+    let _execution_guard = EXECUTION_LOCK.lock().unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let epoch = 59_000.0 * 86_400.0;
+    let measurement_set =
+        spectral_spacing_measurement_set(root, "cubedata.ms", 128, 1e6, [epoch, epoch + 10.0]);
+    let cube = |name, memory| {
+        let image = root.join(name);
+        let request = request(
+            &measurement_set,
+            &image,
+            json!({"specmode":"cubedata", "outframe":"TOPO", "spw":"0:0~1;80;85;90;95;100",
+                   "start":"1.080GHz", "width":"3.1MHz", "channel_count":7,
+                   "interpolation":"linear", "imsize":192, "niter":0, "weighting":"natural"}),
+        );
+        let result = casa_imaging::execute(&request, context_with(memory_policy(memory))).unwrap();
+        (result.planes_per_wave, read_product(&image, ".sumwt").1)
+    };
+    let (resident, full) = cube("resident", 4 << 30);
+    let (waves, bounded) = cube("waves", 10 << 20);
+    assert_eq!(resident, None);
+    assert!(waves.is_some_and(|planes| planes < 7), "waves {waves:?}");
+    // CASA 6.7.6.14 grids three fine samples per row in each output plane.
+    assert_eq!(full.as_slice().unwrap(), &[6.0; 7]);
+    assert_eq!(bounded, full);
+}
+
+/// A restricted wave in a gap still needs both of each epoch's
+/// selected endpoints. The topocentric centres move by 1.11 kHz over
+/// the real VLA observation in LSRK, changing the gap's endpoints.
+#[test]
+fn lsrk_gapped_waves_keep_the_pairs_selected_at_each_epoch() {
+    let _execution_guard = EXECUTION_LOCK.lock().unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let epoch = 59_000.0 * 86_400.0;
+    let measurement_set = spectral_spacing_measurement_set(
+        root,
+        "drifting.ms",
+        24,
+        1000.0,
+        [epoch + 13.0 * 3600.0, epoch + 20.0 * 3600.0],
+    );
+    let cube = |name, memory| {
+        let image = root.join(name);
+        let request = request(
+            &measurement_set,
+            &image,
+            json!({"specmode":"cube", "outframe":"LSRK", "spw":"0:0~1;20~22",
+                   "start":"1000010981.6Hz", "width":"3kHz", "channel_count":8,
+                   "interpolation":"linear", "imsize":192, "niter":0, "weighting":"natural"}),
+        );
+        let result = casa_imaging::execute(&request, context_with(memory_policy(memory))).unwrap();
+        (result.planes_per_wave, read_product(&image, ".sumwt").1)
+    };
+    let (resident, full) = cube("resident", 4 << 30);
+    let (waves, bounded) = cube("waves", 10 << 20);
+    assert_eq!(resident, None);
+    assert!(waves.is_some_and(|planes| planes < 8), "waves {waves:?}");
+    // The selected channels are [0,1,2,20,21,22,23] and [0,1,19,20,21,22]
+    // at the two epochs. CASA 6.7.6.14 includes both rows in the gap.
+    assert_eq!(
+        full.as_slice().unwrap(),
+        &[3.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0]
+    );
+    assert_eq!(bounded, full);
+}
+
 /// The second view supplies the PSF for every wave, with the original
 /// geometry and weights used for the other products.
 #[test]

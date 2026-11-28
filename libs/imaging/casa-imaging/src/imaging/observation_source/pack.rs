@@ -7,7 +7,7 @@ use casa_core::measures::MjdHighPrec;
 use casa_imaging_model::{
     AntennaResponseClass, BatchGeometry, CompiledProblem, ContinuumFitRule,
     DirectionCoordinateSpec, FiniteValuePolicy, FrequencyBands, GeometryPlan,
-    SelectedAntennaResponses, SkyDirection, SpectralKernel,
+    LinearSpacingSelection, SelectedAntennaResponses, SkyDirection, SpectralKernel,
 };
 use casa_imaging_operator::RowContext;
 use casa_imaging_runtime::pass::{
@@ -475,11 +475,12 @@ impl Packer<'_> {
     fn selection_spacing(
         &self,
         (batch, store, partition): (&VisibilityBatch<'_>, usize, &SelectedPartition),
-        (channels, delivered): (&[u32], &[u32]),
+        (channels, delivered, spacing): (&[u32], &[u32], Option<&LinearSpacingSelection>),
         (bands, rule): (Option<&FrequencyBands>, Option<&ContinuumFitRule>),
         time: usize,
     ) -> Result<Option<f64>, SourceError> {
-        if bands.is_none() && rule.is_none() && channels[..2] == delivered[..2] {
+        if spacing.is_none() && bands.is_none() && rule.is_none() && channels[..2] == delivered[..2]
+        {
             return Ok(None);
         }
         let entry = batch.catalogue.partition(partition.id);
@@ -488,27 +489,44 @@ impl Packer<'_> {
         let field = batch.field[time];
         let plan = &self.plans[store];
         let convert = plan.frequency_converter(entry.frequency_frame, field, epoch, scale)?;
+        if let Some(LinearSpacingSelection::Pair([first, second])) = spacing {
+            return Ok(Some(
+                convert(entry.frequencies_hz[*second as usize])
+                    - convert(entry.frequencies_hz[*first as usize]),
+            ));
+        }
+        let (prefix, count, bands) = match spacing {
+            Some(LinearSpacingSelection::Bands(full)) => {
+                (&[][..], entry.frequencies_hz.len(), Some(full))
+            }
+            _ => (channels, 0, bands),
+        };
         let factor = bands
             .map(|band| plan.frequency_factor(band.frame().frequency_ref(), field, epoch, scale))
             .transpose()?;
-        let mut selected = channels.iter().filter_map(|&channel| {
-            if rule.is_some_and(|fit| {
-                !fit.channel_use(channel)
-                    .is_some_and(|use_| use_.contributes_to_output())
-            }) {
-                return None;
-            }
-            let index = channel as usize;
-            let native = entry.frequencies_hz[index];
-            let centre = convert(native);
-            let half_width = entry.channel_widths_hz[index].abs() / 2.0;
-            if let Some((band, factor)) = bands.zip(factor)
-                && !channel_meets_band(band, factor, centre, native, half_width)
-            {
-                return None;
-            }
-            Some(centre)
-        });
+        let native_count = u32::try_from(count).expect("a CHAN_FREQ count fits u32");
+        let mut selected = prefix
+            .iter()
+            .copied()
+            .chain(0..native_count)
+            .filter_map(|channel| {
+                if rule.is_some_and(|fit| {
+                    !fit.channel_use(channel)
+                        .is_some_and(|use_| use_.contributes_to_output())
+                }) {
+                    return None;
+                }
+                let index = channel as usize;
+                let native = entry.frequencies_hz[index];
+                let centre = convert(native);
+                let half_width = entry.channel_widths_hz[index].abs() / 2.0;
+                if let Some((band, factor)) = bands.zip(factor)
+                    && !channel_meets_band(band, factor, centre, native, half_width)
+                {
+                    return None;
+                }
+                Some(centre)
+            });
         Ok(selected
             .next()
             .zip(selected.next())
@@ -590,7 +608,9 @@ impl Packer<'_> {
         )?;
         let rest_aw = super::super::rest_aw_uses_native_wavelengths(self.problem);
         let channels = partition.channels_for(values, prediction);
-        let needs_spacing = input_layout.channel_indices.len() < channels.len()
+        let spacing = partition.linear_spacing_for(values, prediction);
+        let needs_spacing = (spacing.is_some()
+            || input_layout.channel_indices.len() < channels.len())
             && layout.channel_indices.len() >= 2
             && self.problem.science().spectral().sampling().kernel() == SpectralKernel::Linear;
         let mut selection_spacing_hz = None;
@@ -609,7 +629,7 @@ impl Packer<'_> {
                 if needs_spacing {
                     selection_spacing_hz = self.selection_spacing(
                         (batch, store, partition),
-                        (channels, &layout.channel_indices),
+                        (channels, &layout.channel_indices, spacing),
                         (selection_bands, selection_rule),
                         time,
                     )?;
@@ -852,7 +872,7 @@ fn in_band(
     );
 }
 
-fn channel_meets_band(
+pub(super) fn channel_meets_band(
     bands: &FrequencyBands,
     factor: f64,
     centre: f64,

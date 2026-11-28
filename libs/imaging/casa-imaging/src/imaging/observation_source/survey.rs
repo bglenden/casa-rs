@@ -6,16 +6,19 @@
 
 use std::collections::HashMap;
 
-use casa_core::measures::MjdHighPrec;
+use casa_core::measures::{MjdHighPrec, epoch::EpochRef};
+use casa_imaging_model::FrequencyBands;
 use casa_imaging_runtime::pass::SourceError;
-use casa_observation::{BatchBuffers, ReadEvent};
+use casa_observation::{BatchBuffers, FieldId, PartitionEntry, ReadEvent};
 
 use super::StoreRoute;
+use super::pack::channel_meets_band;
 use super::requests;
-use super::window::FactorRange;
+use super::selection::{PartitionSelection, SelectedPartition};
+use super::window::{FactorRange, InterpolationPartners};
 
 /// One partition surveyed.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct PartitionSurvey {
     /// The first and last of its selected times, their time centroids
     /// included when geometry reads them, in seconds from the partition's
@@ -24,6 +27,20 @@ pub(super) struct PartitionSurvey {
     /// The conversion factors its selected (field, time)s span, when
     /// surveyed.
     pub(super) factors: Option<FactorRange>,
+    /// Adjacent interpolation pairs exposed by moving frequency bands.
+    pub(super) partners: Option<InterpolationPartners>,
+}
+
+/// Bytes for the retained survey entries and the pairs of a moving linear
+/// selection. The batching admission holds both while the source is open.
+pub(super) fn retained_bytes(selection: &PartitionSelection, linear: bool) -> usize {
+    size_of::<PartitionSurvey>() * selection.partitions.len()
+        + selection
+            .partitions
+            .iter()
+            .filter(|partition| linear && partition.frequency_bands.is_some())
+            .map(|partition| InterpolationPartners::bytes(partition.channels.len()))
+            .sum::<usize>()
 }
 
 /// Each of one store's `route`'s partitions surveyed, with their conversion
@@ -35,6 +52,7 @@ pub(super) fn survey(
     route: &StoreRoute,
     survey_bytes: usize,
     factors: bool,
+    linear: bool,
 ) -> Result<Vec<PartitionSurvey>, SourceError> {
     let catalogue = route.observation().catalogue();
     let mut conversions = HashMap::new();
@@ -55,6 +73,11 @@ pub(super) fn survey(
             let mut traversal = route.observation().bind_read(&request)?;
             let mut span: Option<[f64; 2]> = None;
             let mut range = FactorRange::EMPTY;
+            let bands = partition
+                .frequency_bands
+                .as_ref()
+                .filter(|_| factors && linear);
+            let mut partners = bands.map(|_| InterpolationPartners::new(partition.channels.len()));
             while let Some(event) = traversal.next(&mut buffers)? {
                 let ReadEvent::Batch(batch) = event else {
                     continue;
@@ -103,12 +126,49 @@ pub(super) fn survey(
                         }
                     };
                     range = range.with(factor);
+                    if let Some((bands, partners)) = bands.zip(partners.as_mut()) {
+                        include_partners(
+                            route,
+                            partition,
+                            entry,
+                            bands,
+                            (field, time_mjd_s, scale),
+                            partners,
+                        )?;
+                    }
                 }
             }
             Ok(PartitionSurvey {
                 span,
                 factors: factors.then_some(range),
+                partners,
             })
         })
         .collect()
+}
+
+/// Find a time's actual input partners using the same converted centres,
+/// widths and band predicate as the batch packer. Keep their ordinals in
+/// the union selection so the planner can widen a wave before binding it.
+fn include_partners(
+    route: &StoreRoute,
+    partition: &SelectedPartition,
+    entry: &PartitionEntry,
+    bands: &FrequencyBands,
+    (field, epoch, scale): (FieldId, f64, EpochRef),
+    partners: &mut InterpolationPartners,
+) -> Result<(), SourceError> {
+    let plan = &route.plan;
+    let convert = plan.frequency_converter(entry.frequency_frame, field, epoch, scale)?;
+    let factor = plan.frequency_factor(bands.frame().frequency_ref(), field, epoch, scale)?;
+    partners.include_epoch(partition.channels.iter().enumerate().filter_map(
+        |(ordinal, &index)| {
+            let index = index as usize;
+            let native = entry.frequencies_hz[index];
+            let half_width = entry.channel_widths_hz[index].abs() / 2.0;
+            channel_meets_band(bands, factor, convert(native), native, half_width)
+                .then_some(ordinal)
+        },
+    ));
+    Ok(())
 }

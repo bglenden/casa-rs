@@ -3,7 +3,7 @@
 //! and the charge of everything the source and the passes' blocks hold,
 //! admitted before the run opens the source.
 
-use casa_imaging_model::{CompiledProblem, GeometryPlan};
+use casa_imaging_model::{CompiledProblem, GeometryPlan, SpectralKernel};
 use casa_imaging_runtime::pass::{
     BlockShape, OVERLAPPED_BLOCKS, RowSamples, chunk_bytes_per_row, source_block_bytes,
 };
@@ -16,6 +16,7 @@ use casa_observation::{AccessRequest, Observation, PartitionEstimate};
 use super::pack::PackScratch;
 use super::requests;
 use super::selection::PartitionSelection;
+use super::survey;
 use crate::imaging::ImagingError;
 
 /// An upper bound of the bytes the survey's conversion table holds per
@@ -242,13 +243,16 @@ pub(crate) fn admit_batches(
         .max()
         .unwrap_or(0)
         .max(SURVEY_BATCH_BYTES);
+    let linear = problem.science().spectral().sampling().kernel() == SpectralKernel::Linear;
     let mut keys = 0;
     let mut kept = 0;
     let mut pointing = 0;
     for (store, costs) in stores.iter().zip(&store_costs) {
         let store_keys = costs.iter().map(|cost| cost.times).sum::<usize>();
         keys += store_keys;
-        kept += store.plan.cache_bound(store_keys) + store.selection.predicate_bytes();
+        kept += store.plan.cache_bound(store_keys)
+            + store.selection.predicate_bytes()
+            + survey::retained_bytes(store.selection, linear);
         if store.plan.reads_pointing() {
             pointing += store.pointing_budget;
         }

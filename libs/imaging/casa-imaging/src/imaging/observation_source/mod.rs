@@ -31,7 +31,7 @@ mod write;
 use std::ops::Range;
 
 use casa_imaging_model::{
-    BatchGeometry, CompiledProblem, FrequencyBands, GeometryPlan, GeometryTraversal,
+    BatchGeometry, CompiledProblem, FrequencyBands, GeometryPlan, GeometryTraversal, SpectralKernel,
 };
 use casa_imaging_operator::PlaneRange;
 use casa_imaging_runtime::pass::{
@@ -395,9 +395,8 @@ impl<'a> ObservationSource<'a> {
             .map(|key| {
                 let store = &route.stores[key.store];
                 let partition = &store.selection.partitions[key.partition];
-                let factors = surveys[key.store][key.partition]
-                    .factors
-                    .expect("factors surveyed");
+                let survey = &surveys[key.store][key.partition];
+                let factors = survey.factors.expect("factors surveyed");
                 let entry = store.observation().catalogue().partition(partition.id);
                 let native = partition
                     .channels
@@ -406,7 +405,11 @@ impl<'a> ObservationSource<'a> {
                     .collect::<Vec<_>>();
                 let window = (!factors.is_empty())
                     .then(|| wave_window(&native, factors, bounds))
-                    .flatten();
+                    .flatten()
+                    .map(|window| match &survey.partners {
+                        Some(partners) => partners.extend(window),
+                        None => window,
+                    });
                 (key, window)
             })
             .collect())
@@ -486,12 +489,15 @@ impl<'a> ObservationSource<'a> {
                     .all(|survey| survey.factors.is_some())
         });
         if !current {
+            self.surveys = None;
             let survey_bytes = self.route.batching.survey_bytes();
+            let linear = self.packer.problem.science().spectral().sampling().kernel()
+                == SpectralKernel::Linear;
             self.surveys = Some(
                 self.route
                     .stores
                     .iter()
-                    .map(|store| survey(store, survey_bytes, factors))
+                    .map(|store| survey(store, survey_bytes, factors, linear))
                     .collect::<Result<_, _>>()?,
             );
         }

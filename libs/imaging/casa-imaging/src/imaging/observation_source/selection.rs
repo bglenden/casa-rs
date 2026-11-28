@@ -4,7 +4,9 @@
 //! cannot state.
 
 use casa_core::measures::MjdHighPrec;
-use casa_imaging_model::{BaselineSelection, IdSelection, TimeSelection, UvSelection};
+use casa_imaging_model::{
+    BaselineSelection, IdSelection, LinearSpacingSelection, TimeSelection, UvSelection,
+};
 use casa_imaging_runtime::pass::SourceError;
 use casa_observation::{
     Correlation, FieldSelection, OrderedBaseline, PartitionId, VisibilityBatch,
@@ -23,6 +25,8 @@ pub(crate) struct SelectedPartition {
     /// The window's per-time frequency selection, when a time reads only
     /// some of `channels` ([`casa_imaging_model::FrequencyBands`]).
     pub(crate) frequency_bands: Option<casa_imaging_model::FrequencyBands>,
+    /// The leading linear selection, when the cube support pruned it.
+    pub(crate) linear_spacing: Option<LinearSpacingSelection>,
     /// Whether compile found no channel of it reaching the image's axis
     /// ([`casa_imaging_model::SpectralWindowSelection::density_only`]), so a
     /// pass that images tests whether to skip it.
@@ -45,6 +49,20 @@ pub(crate) struct SelectedPartition {
 }
 
 impl SelectedPartition {
+    /// Spacing for a cube's gridding traversal. Whole-selection density and
+    /// final prediction have their own untuned reads.
+    pub(super) fn linear_spacing_for(
+        &self,
+        values: bool,
+        prediction: bool,
+    ) -> Option<&LinearSpacingSelection> {
+        if prediction || (!values && self.density_channels.is_some()) {
+            None
+        } else {
+            self.linear_spacing.as_ref()
+        }
+    }
+
     /// Physical channel selection before a wave or the density traversal
     /// divides it into smaller reads.
     pub(super) fn channels_for(&self, values: bool, prediction: bool) -> &[u32] {
@@ -103,10 +121,15 @@ impl PartitionSelection {
                 .partitions
                 .iter()
                 .map(|partition| {
-                    partition
-                        .prediction_channels
-                        .as_ref()
-                        .map_or(0, |channels| channels.capacity() * size_of::<u32>())
+                    let spacing_bytes = match &partition.linear_spacing {
+                        Some(LinearSpacingSelection::Bands(bands)) => bands.allocated_bytes(),
+                        _ => 0,
+                    };
+                    spacing_bytes
+                        + partition
+                            .prediction_channels
+                            .as_ref()
+                            .map_or(0, |channels| channels.capacity() * size_of::<u32>())
                         + partition
                             .prediction_bands
                             .as_ref()
@@ -185,6 +208,7 @@ mod tests {
             spectral_window: 0,
             channels: vec![0],
             frequency_bands: None,
+            linear_spacing: None,
             density_only: false,
             density_channels: None,
             density_bands: None,
