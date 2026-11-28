@@ -134,6 +134,16 @@ pub(crate) fn count_valid(
     mask: &ArrayD<bool>,
     cancellation: Option<&Cancellation>,
 ) -> Result<usize, ImageError> {
+    // Counts do not depend on traversal order. Use contiguous memory even
+    // for Fortran-order images to keep the scan local and vectorizable.
+    if let Some(pixels) = mask.as_slice_memory_order() {
+        let mut count = 0;
+        for batch in pixels.chunks(BATCH_SIZE) {
+            check(cancellation)?;
+            count += batch.iter().filter(|&&bit| bit).count();
+        }
+        return Ok(count);
+    }
     let mut pixels = mask.iter();
     let mut count = 0;
     for _ in (0..mask.len()).step_by(BATCH_SIZE) {
@@ -150,6 +160,21 @@ mod tests {
     use ndarray::{Array2, s};
 
     use super::*;
+
+    #[test]
+    fn valid_pixel_count_matches_for_contiguous_and_strided_masks() {
+        use ndarray::ShapeBuilder;
+
+        let mask =
+            Array2::from_shape_fn((3, BATCH_SIZE + 3).f(), |(row, col)| (row + col) % 3 != 0);
+        let strided = mask.clone().slice_move(s![..;2, ..]).into_dyn();
+        let contiguous = mask.into_dyn();
+        let cancellation = Cancellation::new();
+        for mask in [contiguous, strided] {
+            let expected = mask.iter().filter(|&&good| good).count();
+            assert_eq!(count_valid(&mask, Some(&cancellation)).unwrap(), expected);
+        }
+    }
 
     #[test]
     fn strided_plane_copy_stops_before_the_next_batch() {
