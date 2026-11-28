@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::f64::consts::PI;
 use std::fs::{File, OpenOptions, create_dir_all};
+use std::hash::{DefaultHasher, Hash};
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -399,6 +400,7 @@ pub fn import_archive_with_history(
         &mut writer,
         options,
         &selection,
+        None,
         VlaImportState::push_record,
     )?;
     writer.finish()?;
@@ -447,12 +449,19 @@ fn process_archive_records(
     writer: &mut VlaImportState,
     options: &ImportVlaOptions,
     selection: &ArchiveSelection,
+    mut digest: Option<&mut DefaultHasher>,
     mut push: impl FnMut(&mut VlaImportState, NormalizedRecord) -> Result<(), VlaError>,
 ) -> Result<(), VlaError> {
     for path in options.require_archivefiles()? {
+        if let Some(digest) = digest.as_deref_mut() {
+            path.hash(digest);
+        }
         let mut reader = open_import_archive(path)?;
         let mut frequency_tolerance = options.frequencytol_hz;
         while let Some(record) = reader.next_record()? {
+            if let Some(digest) = digest.as_deref_mut() {
+                record.bytes().hash(digest);
+            }
             writer.logical_records_seen += 1;
             let normalize_started = Instant::now();
             let normalized = normalize_record(

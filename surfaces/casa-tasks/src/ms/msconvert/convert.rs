@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn the_creation_date_is_iso_8601_utc() {
-        let now = utc_now();
+        let now = utc_now_iso8601();
         assert_eq!(now.len(), "2026-11-02T12:34:56+00:00".len(), "{now}");
         assert_eq!(&now[4..5], "-");
         assert_eq!(&now[10..11], "T");

@@ -4,6 +4,7 @@
 
 import argparse
 import ast
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, redirect_stderr
 import hashlib
 from io import StringIO
@@ -13,6 +14,7 @@ import shutil
 import struct
 import subprocess
 from tempfile import TemporaryDirectory
+from time import monotonic, sleep
 import os
 
 import casatasks
@@ -241,27 +243,36 @@ def failures(root, archive):
     print("passed rejected names and project, empty selection, missing and unreadable archives, same-path retry and protected output", flush=True)
 
 
+SECTOR_BYTES = 2048
+RECORD_BYTES = 13 * SECTOR_BYTES
+HEADER_BYTES = 4
+
+
+def logical_record_starts(contents):
+    start = 0
+    while start < len(contents):
+        number, blocks, words = struct.unpack_from(">HHi", contents, start)
+        if number != 1 or not 0 < blocks <= 39 or words <= 0:
+            start += SECTOR_BYTES
+            continue
+        yield start + HEADER_BYTES
+        tail = 2 * words - (blocks - 1) * (RECORD_BYTES - HEADER_BYTES)
+        start += (blocks - 1) * RECORD_BYTES + (
+            (tail + SECTOR_BYTES - 1) // SECTOR_BYTES * SECTOR_BYTES
+        )
+
+
 def mixed_shapes(root, continuum, spectral):
     # Reuse the public sample's raw visibilities and flags. Set the
     # continuum test record's direction tag to J2000 so both archive
     # inputs can fill one synthetic product. The original archive is
     # read only. Neither dataset's sky position is used in a science test.
     scratch = bytearray(continuum.read_bytes())
-    sector = 2048
-    record = 13 * sector
-    start = 0
-    while start < len(scratch):
-        number, blocks, words = struct.unpack_from(">HHi", scratch, start)
-        if number != 1 or not 0 < blocks <= 39 or words <= 0:
-            start += sector
-            continue
-        # Physical header, RCA's SDA word offset, then SDA direction epoch.
-        offset = 2 * struct.unpack_from(">I", scratch, start + 4 + 2 * 12)[0]
-        epoch = start + 4 + offset + 2 * 161
+    for rca in logical_record_starts(scratch):
+        offset = 2 * struct.unpack_from(">I", scratch, rca + 2 * 12)[0]
+        epoch = rca + offset + 2 * 161
         assert struct.unpack_from(">h", scratch, epoch) == (1950,)
         struct.pack_into(">h", scratch, epoch, 2000)
-        tail = 2 * words - (blocks - 1) * (record - 4)
-        start += (blocks - 1) * record + (tail + sector - 1) // sector * sector
 
     amended = root / "test-continuum"
     amended.write_bytes(scratch)
@@ -269,6 +280,54 @@ def mixed_shapes(root, continuum, spectral):
     with table(expected) as tab:
         assert set(tab.getcolshapestring("DATA")) == {"[4, 1]", "[1, 127]"}
         assert set(tab.getcolshapestring("FLAG_CATEGORY")) == {"[4, 1, 6]", "[1, 127, 6]"}
+
+
+def changed_archive(root, source):
+    # Change a channel value of the last spectral-line integration's
+    # first cross baseline during replay. The record layout and ordinal
+    # identifiers still agree with what the first pass declared.
+    raw = source.read_bytes()
+    location = None
+    for rca in logical_record_starts(raw):
+        antennas = struct.unpack_from(">H", raw, rca + 2 * 17)[0]
+        for cda in range(4):
+            base = rca + 8 * cda
+            offset = 2 * struct.unpack_from(">I", raw, base + 2 * 18)[0]
+            width = 2 * struct.unpack_from(">H", raw, base + 2 * 21)[0]
+            if offset and width >= 512 and antennas > 2:
+                # This fixture has 128 archived channels. The first
+                # non-average channel is 24 bytes into the baseline.
+                block, within = divmod(offset + width * antennas + 24,
+                                       RECORD_BYTES - HEADER_BYTES)
+                location = rca + block * RECORD_BYTES + within
+                break
+    assert location is not None
+    archive = root / source.name
+    archive.write_bytes(raw)
+    output = root / "changed.ps.zarr"
+
+    def mutate():
+        deadline = monotonic() + 25
+        while not list(root.glob(f".{output.name}.staging-*")):
+            if monotonic() >= deadline:
+                raise AssertionError("MSv4 staging directory never appeared")
+            sleep(0.002)
+        with archive.open("r+b") as stream:
+            stream.seek(location)
+            stream.write(bytes([raw[location] ^ 16]))
+
+    with ThreadPoolExecutor() as pool:
+        writing = pool.submit(mutate)
+        try:
+            tasks.importvla(archivefiles=[archive], vis=output, outformat="msv4")
+        except RuntimeError as error:
+            assert "changed between MSv4 declaration and write" in str(error), str(error)
+        else:
+            raise AssertionError("the archive changed between passes and was published")
+        finally:
+            writing.result()
+    assert not output.exists() and not list(root.glob(".*.staging-*"))
+    print("passed changed archive refusal before publication", flush=True)
 
 
 def format_cases(root, continuum, spectral, xradio_python):
@@ -349,6 +408,11 @@ def main():
     if selected("variable-shapes") and args.spectral:
         with TemporaryDirectory(prefix="importvla-") as temporary:
             mixed_shapes(Path(temporary), archive, args.spectral.resolve(strict=True))
+    if "changed-archive" in args.cases:
+        if args.spectral is None:
+            parser.error("changed-archive requires --spectral")
+        with TemporaryDirectory(prefix="importvla-") as temporary:
+            changed_archive(Path(temporary), args.spectral.resolve(strict=True))
     if selected("formats") and args.spectral:
         if args.xradio_python is None:
             parser.error("--spectral requires --xradio-python")

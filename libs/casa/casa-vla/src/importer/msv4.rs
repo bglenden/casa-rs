@@ -4,6 +4,7 @@
 //! Only the metadata and the current archive record's payload are retained.
 
 use std::collections::BTreeSet;
+use std::hash::Hasher;
 
 use casa_core::measures::MjdHighPrec;
 use casa_ms::observation_io::creation::{
@@ -170,11 +171,18 @@ pub(super) fn import(
         budget: default_memory_bytes().map_err(provider_error)?,
         planned_bytes: 0,
     };
-    process_archive_records(&mut describe, options, selection, |state, record| {
-        state.visit_integrations(record, |_, integration, antennas, baselines| {
-            inventory.add(integration, antennas, &baselines)
-        })
-    })?;
+    let mut described = DefaultHasher::new();
+    process_archive_records(
+        &mut describe,
+        options,
+        selection,
+        Some(&mut described),
+        |state, record| {
+            state.visit_integrations(record, |_, integration, antennas, baselines| {
+                inventory.add(integration, antennas, &baselines)
+            })
+        },
+    )?;
     if inventory.plans.is_empty() {
         return Err(VlaError::import(format!(
             "visibility file is empty: {}",
@@ -194,24 +202,37 @@ pub(super) fn import(
         std::array::from_fn(|_| BatchBuffers::with_envelope(inventory.budget / DATA_GROUPS.len()));
     let mut row_flags = false;
     let mut replay = metadata(options)?;
-    process_archive_records(&mut replay, options, selection, |state, record| {
-        state.visit_integrations(record, |writer, integration, antennas, baselines| {
-            let id = *inventory.ids.get(&integration.into()).ok_or_else(changed)?;
-            let time = unix_utc(integration.time, &inventory.frame)?;
-            let rows = baselines.len();
-            row_flags |= write_integration(
-                &mut datasets[id.0 as usize],
-                &mut buffers,
-                &catalogue,
-                id,
-                (integration, time),
-                antennas,
-                baselines,
-            )?;
-            writer.main_rows_written += rows;
-            Ok(())
-        })
-    })?;
+    let mut filled = DefaultHasher::new();
+    process_archive_records(
+        &mut replay,
+        options,
+        selection,
+        Some(&mut filled),
+        |state, record| {
+            state.visit_integrations(record, |writer, integration, antennas, baselines| {
+                let id = *inventory.ids.get(&integration.into()).ok_or_else(changed)?;
+                let time = unix_utc(integration.time, &inventory.frame)?;
+                let rows = baselines.len();
+                row_flags |= write_integration(
+                    &mut datasets[id.0 as usize],
+                    &mut buffers,
+                    &catalogue,
+                    id,
+                    (integration, time),
+                    antennas,
+                    baselines,
+                )?;
+                writer.main_rows_written += rows;
+                Ok(())
+            })
+        },
+    )?;
+    // A change can preserve dimensions and ordinal IDs while replacing the
+    // physical field, window or antenna coordinates used to declare them.
+    // Admit replay only if both passes saw the same input records.
+    if described.finish() != filled.finish() {
+        return Err(changed());
+    }
     for dataset in datasets {
         dataset.finish().map_err(provider_error)?;
     }
