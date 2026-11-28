@@ -65,5 +65,6 @@ pub use session::spectral::SpectralWindowSpec;
 pub use session::{
     ApplySpec, AtmosphereSpec, BackendRequest, DEFAULT_SEED, ExecutionControls, GainSpec,
     LeakageSpec, NoiseSpec, PredictSpec, PredictionOptions, SessionResources, Simulator,
-    SimulatorOptions, TroposphereSpec, TsysParameters, UnknownBackend, VoltagePatternSpec,
+    SimulatorFormat, SimulatorOptions, TroposphereSpec, TsysParameters, UnknownBackend,
+    VoltagePatternSpec,
 };

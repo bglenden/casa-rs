@@ -9,16 +9,19 @@ use std::path::Path;
 
 use casa_core::{ArrayValue, ScalarValue};
 use casa_observation::ObservationError;
-use casa_tables::{ColumnOverrides, streamed_tiled::StreamedTiledShapeValueType};
+use casa_tables::{
+    ColumnOverrides, StreamedScalarValues, streamed_tiled::StreamedTiledShapeValueType,
+};
 use ndarray::ArrayD;
 
 use crate::observation_io::update::{request_error, storage};
 use crate::write_session::{
     MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
     MeasurementSetWritePlan, MeasurementSetWriteResources, MeasurementSetWriteSession,
-    MeasurementSetWriteTelemetry, standard_main_scalar_column_plans,
+    MeasurementSetWriteTelemetry, ScalarColumnId, VisibilityColumns,
+    standard_main_scalar_column_plans,
 };
-use crate::{MeasurementSet, MeasurementSetBuilder};
+use crate::{MeasurementSet, MeasurementSetBuilder, SubtableColumnOverrides};
 
 /// The native MAIN cells of one acquisition. The producer's metadata must
 /// supply the referenced subtable rows and the measure frames and units.
@@ -61,6 +64,7 @@ pub struct Msv2CreationRow<'a> {
 pub struct Msv2MainWriter {
     pub(super) session: MeasurementSetWriteSession,
     overrides: ColumnOverrides,
+    recycled: Option<VisibilityColumns>,
 }
 
 impl Msv2MainWriter {
@@ -95,7 +99,11 @@ impl Msv2MainWriter {
             overrides.insert_deferred(&column.name);
         }
         let session = MeasurementSetWriteSession::start(path, plan).map_err(storage)?;
-        Ok(Self { session, overrides })
+        Ok(Self {
+            session,
+            overrides,
+            recycled: None,
+        })
     }
 
     /// Append an acquisition with raw flags and per-correlation weights.
@@ -168,6 +176,122 @@ impl Msv2MainWriter {
         Ok(())
     }
 
+    /// Resolve a scalar column once before sending producer batches.
+    ///
+    /// # Errors
+    /// If the name does not identify a planned scalar column.
+    pub fn scalar_column(&self, name: &str) -> Result<ScalarColumnId, ObservationError> {
+        self.session.scalar_column(name).map_err(storage)
+    }
+
+    /// Append a contiguous run of a scalar column in native row order.
+    ///
+    /// # Errors
+    /// If the column's type or remaining row count disagrees with the run.
+    pub fn push_scalar_column(
+        &mut self,
+        column: ScalarColumnId,
+        values: StreamedScalarValues<'_>,
+    ) -> Result<(), ObservationError> {
+        self.session
+            .push_scalar_column(column, values)
+            .map_err(storage)
+    }
+
+    /// Append one constant to every row of a contiguous scalar run.
+    ///
+    /// # Errors
+    /// If the column's type or remaining row count disagrees with the run.
+    pub fn push_repeated_scalar(
+        &mut self,
+        column: ScalarColumnId,
+        value: ScalarValue,
+        rows: usize,
+    ) -> Result<(), ObservationError> {
+        self.session
+            .push_repeated_scalar(column, Some(value), rows)
+            .map_err(storage)
+    }
+
+    /// Recycle an empty visibility batch. For variable-shaped batches, the
+    /// writer is synchronous and can return its own last batch immediately.
+    pub fn visibility_columns(&mut self, variable: bool) -> VisibilityColumns {
+        if variable {
+            self.recycled.take().unwrap_or_default()
+        } else {
+            self.session.visibility_columns()
+        }
+    }
+
+    /// Submit a batch of DATA, UVW, flags and per-row weights. The regular
+    /// visibility plan queues column batches; a variable plan accepts one
+    /// correlation/channel shape per batch. This layout repeats row flags
+    /// and weights over the cells and leaves FLAG_CATEGORY undefined.
+    ///
+    /// # Errors
+    /// If the payload disagrees with the plan or cannot be written.
+    pub fn send_visibility_columns(
+        &mut self,
+        batch: VisibilityColumns,
+        variable: Option<(usize, usize)>,
+    ) -> Result<(), ObservationError> {
+        match variable {
+            None => self.session.send_visibility_columns(batch).map_err(storage),
+            Some(cell) => self.send_shape(batch, cell),
+        }
+    }
+
+    fn send_shape(
+        &mut self,
+        mut batch: VisibilityColumns,
+        (correlations, channels): (usize, usize),
+    ) -> Result<(), ObservationError> {
+        let samples = correlations
+            .checked_mul(channels)
+            .ok_or_else(|| request_error("visibility cell size overflows"))?;
+        let rows = batch.row_count();
+        if rows.checked_mul(samples) != Some(batch.data.len()) || rows != batch.uvw.len() {
+            return Err(request_error(
+                "visibility batch does not match its declared shape",
+            ));
+        }
+        let shape = [correlations, channels];
+        let mut flags = vec![false; samples];
+        let mut weights = vec![0.; correlations];
+        for row in 0..rows {
+            self.session
+                .push_complex32_row(
+                    "DATA",
+                    &shape,
+                    &batch.data[row * samples..(row + 1) * samples],
+                )
+                .map_err(storage)?;
+            flags.fill(batch.flag_row[row]);
+            self.session
+                .push_bool_row("FLAG", &shape, &flags)
+                .map_err(storage)?;
+            self.session
+                .push_undefined_row("FLAG_CATEGORY")
+                .map_err(storage)?;
+            self.session
+                .push_f64_row("UVW", &[3], &batch.uvw[row])
+                .map_err(storage)?;
+            for (name, values) in [("WEIGHT", &batch.weight), ("SIGMA", &batch.sigma)] {
+                weights.fill(values.get(row).copied().unwrap_or(1.));
+                self.session
+                    .push_f32_row(name, &[correlations], &weights)
+                    .map_err(storage)?;
+            }
+        }
+        batch.data.clear();
+        batch.flag_row.clear();
+        batch.uvw.clear();
+        batch.weight.clear();
+        batch.sigma.clear();
+        self.recycled = Some(batch);
+        Ok(())
+    }
+
     /// Install the streamed columns with the final metadata and return
     /// writer telemetry, before the caller publishes its staging product.
     ///
@@ -179,6 +303,21 @@ impl Msv2MainWriter {
     ) -> Result<MeasurementSetWriteTelemetry, ObservationError> {
         self.session
             .save_and_finish(ms, &self.overrides)
+            .map_err(storage)
+    }
+
+    /// Finish MAIN alongside subtables with generated columns.
+    ///
+    /// # Errors
+    /// If a planned column is incomplete or the final metadata cannot be
+    /// written.
+    pub fn finish_with_subtables(
+        self,
+        ms: &mut MeasurementSet,
+        generated: &SubtableColumnOverrides,
+    ) -> Result<MeasurementSetWriteTelemetry, ObservationError> {
+        self.session
+            .save_and_finish_with_subtables(ms, &self.overrides, generated)
             .map_err(storage)
     }
 }

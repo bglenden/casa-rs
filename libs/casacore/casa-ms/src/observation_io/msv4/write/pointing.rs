@@ -112,7 +112,7 @@ pub(super) fn write_pointing(
     )?;
     // Each antenna's next sample, as the chunks advance through the times.
     let mut next = vec![0_usize; columns.len()];
-    let mut values = Vec::with_capacity(CHUNK_TIMES * columns.len() * 2);
+    let mut values = Vec::with_capacity(times.len().min(CHUNK_TIMES) * columns.len() * 2);
     for (block, block_times) in times.chunks(CHUNK_TIMES).enumerate() {
         values.clear();
         values.resize(block_times.len() * columns.len() * 2, f64::NAN);

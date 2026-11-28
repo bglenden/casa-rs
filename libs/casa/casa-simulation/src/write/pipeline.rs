@@ -50,7 +50,7 @@ use casa_core::Complex32;
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_ms::VisibilityColumns;
 
-use super::MainWriter;
+use super::BatchWriter;
 use super::data::{DataBatch, DataStage, PendingNoise};
 use super::geometry::{ArrayGeometry, RowGeometry};
 use super::resources::NoiseScales;
@@ -213,7 +213,7 @@ impl<'s> Pipeline<'s> {
     /// rows, as (scan, stored TIME), in MAIN order.
     pub(super) fn write_range(
         &mut self,
-        writer: &mut MainWriter,
+        writer: &mut impl BatchWriter,
         mut next: impl Iterator<Item = (usize, f64)>,
         range: std::ops::Range<usize>,
         batch_rows: usize,
@@ -316,7 +316,7 @@ impl Rows<'_> {
     /// computed for the batch.
     fn fill(
         &self,
-        writer: &mut MainWriter,
+        writer: &mut impl BatchWriter,
         batch: &mut VisibilityColumns,
         (first_row, rows): (u64, usize),
         pending: Option<PendingNoise<'_, '_>>,
@@ -411,21 +411,21 @@ impl Rows<'_> {
 }
 
 /// A job of a batch's fill.
-enum BatchJob<'a> {
-    Columns(ColumnsJob<'a>),
+enum BatchJob<'a, W> {
+    Columns(ColumnsJob<'a, W>),
     Noise(NoiseJob<'a>),
 }
 
 /// The batch's per-row columns and the scalar columns of its integrations.
-struct ColumnsJob<'a> {
-    writer: &'a mut MainWriter,
+struct ColumnsJob<'a, W> {
+    writer: &'a mut W,
     flag_row: &'a mut Vec<bool>,
     uvw: &'a mut Vec<[f64; 3]>,
     weight: &'a mut Vec<f32>,
     sigma: &'a mut Vec<f32>,
 }
 
-impl ColumnsJob<'_> {
+impl<W: BatchWriter> ColumnsJob<'_, W> {
     /// Copy the columns of `rows`, the batch's, and push the scalar columns
     /// of `integrations`, whose rows are in `geometry`.
     fn run(

@@ -195,9 +195,9 @@ impl PySimulator {
     }
 
     /// Start a new MeasurementSet `ms`, closing (writing) any open one.
-    #[pyo3(signature = (ms = ""), text_signature = "($self, ms='')")]
-    fn open(&self, py: Python<'_>, ms: &str) -> PyResult<bool> {
-        lifecycle::open(self, py, ms)
+    #[pyo3(signature = (ms = "", *, outformat = "msv2"), text_signature = "($self, ms='', *, outformat='msv2')")]
+    fn open(&self, py: Python<'_>, ms: &str, outformat: &str) -> PyResult<bool> {
+        lifecycle::open(self, py, ms, outformat)
     }
 
     /// Write the MeasurementSet and end the session.

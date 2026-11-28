@@ -454,6 +454,30 @@ fn write_states(ms: &mut MeasurementSet, session: &Simulator) -> SimulatorResult
     add_rows(ms, SubtableId::State, rows)
 }
 
+/// Provide the small DATA_DESCRIPTION namespace of the in-memory creator.
+pub(super) fn populate_descriptions(
+    ms: &mut MeasurementSet,
+    session: &Simulator,
+) -> SimulatorResult<()> {
+    let descriptions = session
+        .data_descriptions()
+        .iter()
+        .map(|description| {
+            row(
+                SubtableId::DataDescription,
+                vec![
+                    ("SPECTRAL_WINDOW_ID", scalar_i32(description.window as i32)),
+                    (
+                        "POLARIZATION_ID",
+                        scalar_i32(description.polarization as i32),
+                    ),
+                ],
+            )
+        })
+        .collect();
+    add_rows(ms, SubtableId::DataDescription, descriptions)
+}
+
 /// The subtables the MeasurementSet's save writes from generated columns:
 /// POINTING, one row per antenna per integration (see [`pointing`]), and
 /// DATA_DESCRIPTION, generated from the shared mapping without record rows.

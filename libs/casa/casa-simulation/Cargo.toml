@@ -39,7 +39,8 @@ casa-imaging-products.workspace = true
 casa-imaging-runtime.workspace = true
 casa-imaging-singledish.workspace = true
 casa-lattices.workspace = true
-casa-ms.workspace = true
+casa-ms = { workspace = true, features = ["msv4"] }
+casa-observation.workspace = true
 casa-numerics.workspace = true
 casa-tables.workspace = true
 casa-core.workspace = true
