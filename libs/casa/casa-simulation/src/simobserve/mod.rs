@@ -84,6 +84,7 @@ mod schedule;
 mod sky;
 #[cfg(test)]
 mod tests;
+mod uvw;
 
 pub use parameters::SimobserveParameters;
 
@@ -225,6 +226,9 @@ pub fn simobserve_with_controls<'a, 'b>(
     cancel: &Cancel,
 ) -> Result<SimobserveOutcome, SimobserveError> {
     check_cancel(cancel)?;
+    if let Some(reason) = request.parameters.output_format_refusal() {
+        return Err(SimobserveError::raised(reason));
+    }
     let graphics_requested = matches!(
         request.parameters.graphics.as_str(),
         "file" | "screen" | "both"
@@ -238,7 +242,14 @@ pub fn simobserve_with_controls<'a, 'b>(
     let calibrator = schedule::calibrator(&mut run)?;
     check_cancel(cancel)?;
     if run.predict {
-        observe::observe(&mut run, &sky, &array, &pointings, calibrator.as_ref())?;
+        observe::observe(
+            &mut run,
+            &sky,
+            &array,
+            &pointings,
+            calibrator.as_ref(),
+            cancel,
+        )?;
     } else if !run.parameters.thermalnoise.is_empty() || run.parameters.leakage > 0.0 {
         let ms = run.measurement_set();
         if !ms.exists() {
@@ -457,7 +468,12 @@ impl<'a> Run<'a> {
     /// The MeasurementSet observed: `<stem>.ms`, or `<stem>.sd.ms` for a
     /// single dish.
     fn measurement_set(&self) -> PathBuf {
-        self.file(if self.uvmode { ".ms" } else { ".sd.ms" })
+        let suffix = match self.parameters.outformat {
+            crate::SimulatorFormat::Msv4 => ".ps.zarr",
+            crate::SimulatorFormat::Msv2 if self.uvmode => ".ms",
+            crate::SimulatorFormat::Msv2 => ".sd.ms",
+        };
+        self.file(suffix)
     }
 
     /// Record `path` as written.
@@ -549,7 +565,7 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), SimobserveError> {
 
 /// A simulator session on the new MeasurementSet `path`.
 fn open_session(run: &Run<'_>, path: &Path) -> Simulator {
-    Simulator::open(path, run.request.options.clone())
+    Simulator::open_with_format(path, run.request.options.clone(), run.parameters.outformat)
 }
 
 /// Python's `str(x)` of a float, as CASA writes numbers into messages and

@@ -17,3 +17,25 @@ def test_integer_type_refusal_matches_casa(case: dict) -> None:
     with pytest.raises(TypeError) as error:
         tasks.simobserve(**case["args"])
     assert str(error.value) == case["message"]
+
+
+@pytest.mark.parametrize("values, diagnostic", [
+    ({"obsmode": "sd"}, "obsmode='int'"),
+    ({"thermalnoise": "tsys-atm"}, "thermalnoise='' and leakage=0"),
+    ({"leakage": 0.01}, "thermalnoise='' and leakage=0"),
+    ({"graphics": "file"}, "graphics='none'"),
+])
+def test_msv4_incompatible_options_refuse_before_the_project(tmp_path, monkeypatch, values, diagnostic):
+    from casars.tasks import _runner
+
+    def renderer_unavailable():
+        raise AssertionError("the MSv4 task must refuse before importing a renderer")
+
+    monkeypatch.setattr(_runner, "_require_plotting", renderer_unavailable)
+    project = tmp_path / "sim"
+    parameters = dict(thermalnoise="", graphics="none", project=str(project), outformat="msv4")
+    parameters.update(values)
+    with pytest.raises(tasks.TaskParameterError, match=diagnostic) as error:
+        tasks.simobserve(**parameters)
+    assert error.value.completion.parameter == "outformat"
+    assert not project.exists()

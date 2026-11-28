@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The observation: the session's setters as CASA's task calls them, the
-//! schedule's `observe` and `observemany`, `predict`, and the rest
-//! frequencies CASA rewrites afterwards.
+//! schedule's `observe` and `observemany`, `predict`, and the persisted
+//! model reference frequency.
 
 use std::path::{Path, PathBuf};
 
@@ -9,41 +9,81 @@ use casa_core::measures::direction::MDirection;
 use casa_core::measures::frequency::FrequencyRef;
 use casa_core::quanta::Quantity;
 use casa_core::quanta::casacore::tos;
-use casa_core::{ArrayValue, ScalarValue, Value};
-use casa_ms::MeasurementSet;
-use casa_tables::{Table, TableOptions};
+use casa_ms::observation_io::creation::{Loss, Replacement, Stage};
+use casa_ms::observation_io::{is_measurement_set, is_msv4_store};
 
 use super::antennas::Array;
 use super::pointings::Pointings;
 use super::schedule::{Calibrator, Schedule, Step, schedule};
 use super::sky::Sky;
-use super::{Run, SimobserveError, entry_exists, make_way, open_session, python};
+use super::{
+    Cancel, Run, SimobserveError, check_cancel, entry_exists, make_way, open_session, python,
+};
 use crate::session::Simulator;
 use crate::simutil::direction::direction_measure;
 use crate::simutil::qa;
 use crate::simutil::receivers::band_name;
 use crate::{
     ArrayConfig, CoordinateSystem, ObserveManySpec, ObserveSpec, Pointing, PredictSpec,
-    PredictionOptions, SpectralWindowSpec, StateSpec, VoltagePatternSpec,
+    PredictionOptions, SimulatorFormat, SpectralWindowSpec, StateSpec, VoltagePatternSpec,
 };
 
 /// The calibrator's field and source name.
 const CALIBRATOR: &str = "phase calibrator";
 
-/// The MAIN rows read at once to find the longest baseline.
-const UVW_ROWS: usize = 1 << 16;
-
-/// Observe the pointings and predict the model into `<stem>.ms` (or
-/// `<stem>.sd.ms`), then set its rest frequencies to the model's.
+/// Observe the pointings and predict the model into the requested store,
+/// carrying the model's reference frequency into the written metadata.
 pub(super) fn observe(
     run: &mut Run<'_>,
     sky: &Sky,
     array: &Array,
     pointings: &Pointings,
     calibrator: Option<&Calibrator>,
+    cancel: &Cancel,
 ) -> Result<(), SimobserveError> {
-    let model = &sky.model;
     let ms = run.measurement_set();
+    if entry_exists(&ms) && !run.parameters.overwrite {
+        return Err(SimobserveError::raised(format!(
+            "measurement set {} already exists and user does not wish to overwrite",
+            ms.display()
+        )));
+    }
+    let resources = &run.request.options.resources;
+    let created = |path: &Path| -> Result<Vec<Loss>, SimobserveError> {
+        let losses = render(run, sky, array, pointings, calibrator, path)?;
+        check_baselines(path, &ms, run.uvmode, resources)?;
+        Ok(losses)
+    };
+    let losses = if run.parameters.outformat == SimulatorFormat::Msv4 {
+        publish_msv4(&ms, |path| {
+            let losses = created(path)?;
+            check_cancel(cancel)?;
+            Ok(losses)
+        })?
+    } else {
+        // The legacy equivalent of CASA's overwrite rule lives here.
+        make_way(&ms)?;
+        created(&ms)?
+    };
+    for loss in losses {
+        let warning = format!("MSv4: {loss}");
+        tracing::warn!("{warning}");
+        run.warnings.push(warning);
+    }
+    run.wrote(&ms);
+    tracing::info!("generation of measurement set {} complete", ms.display());
+    Ok(())
+}
+
+fn render(
+    run: &Run<'_>,
+    sky: &Sky,
+    array: &Array,
+    pointings: &Pointings,
+    calibrator: Option<&Calibrator>,
+    path: &Path,
+) -> Result<Vec<Loss>, SimobserveError> {
+    let model = &sky.model;
     if run.parameters.verbose {
         tracing::warn!("preparing empty measurement set");
     } else {
@@ -51,16 +91,7 @@ pub(super) fn observe(
     }
     let band = band_name(qa::value_in(&model.specrefval, "GHz")?);
     let schedule = schedule(run, pointings, calibrator.is_some())?;
-    if entry_exists(&ms) && !run.parameters.overwrite {
-        return Err(SimobserveError::raised(format!(
-            "measurement set {} already exists and user does not wish to overwrite",
-            ms.display()
-        )));
-    }
-    // A MeasurementSet of the project's own stays until the new one
-    // replaces it at `close`.
-    make_way(&ms)?;
-    let mut sm = open_session(run, &ms);
+    let mut sm = open_session(run, path);
     set_up(run, &mut sm, sky, array, &band)?;
     let integration_s = qa::value_in(&qa::read(&pointings.integration)?, "s")?;
     sm.set_times(integration_s, true, schedule.reference.clone())?;
@@ -75,13 +106,49 @@ pub(super) fn observe(
     set_prediction(run, &mut sm, sky, array, pointings.pointings.len())?;
     tracing::info!("done setting up observations (blank visibilities)");
     predict(run, &mut sm, sky, calibrator)?;
-    sm.close()?;
-    run.wrote(&ms);
-    tracing::info!("generation of measurement set {} complete", ms.display());
-    let hz = qa::value_in(&model.specrefval, "Hz")?;
-    rewrite_column(&ms.join("SPECTRAL_WINDOW"), "REF_FREQUENCY", hz)?;
-    rewrite_column(&ms.join("SOURCE"), "REST_FREQUENCY", hz)?;
-    check_baselines(&ms, run.uvmode)
+    sm.set_output_reference_frequency(qa::value_in(&model.specrefval, "Hz")?);
+    sm.close_with_report().map_err(Into::into)
+}
+
+/// Keep an existing processing set in place until its replacement passes
+/// the stored baseline check. A new destination uses the same no-clobber
+/// publication as the common creation boundary.
+fn publish_msv4(
+    destination: &Path,
+    create: impl FnOnce(&Path) -> Result<Vec<Loss>, SimobserveError>,
+) -> Result<Vec<Loss>, SimobserveError> {
+    let error = |value: casa_ms::observation_io::ObservationError| SimobserveError::Table {
+        table: destination.to_path_buf(),
+        reason: value.to_string(),
+    };
+    let replacement = if entry_exists(destination) {
+        if !is_msv4_store(destination) || !is_measurement_set(destination) {
+            return Err(SimobserveError::raised(format!(
+                "{} is not an MSv4 processing set to replace",
+                destination.display()
+            )));
+        }
+        Some(Replacement::hold(destination).map_err(&error)?)
+    } else {
+        None
+    };
+    let stage = Stage::reserve(destination, "simobserve").map_err(&error)?;
+    let result = create(stage.path()).and_then(|losses| {
+        if let Some(replacement) = replacement {
+            if let Some(leftover) = replacement.publish(stage.path()).map_err(&error)? {
+                tracing::warn!(path = %leftover.display(), "the replaced processing set could not be removed");
+            }
+        } else {
+            stage.publish_new(destination).map_err(error)?;
+        }
+        Ok(losses)
+    });
+    if result.is_ok() {
+        stage.release();
+    } else {
+        stage.remove();
+    }
+    result
 }
 
 /// `setconfig`, `setspwindow`, `setfeed`, `setlimits` (only when
@@ -370,80 +437,31 @@ fn predict(
     Ok(())
 }
 
-/// Set every cell of the `Double` column `column` of `table` to `value`,
-/// as CASA's task sets the rest frequencies, which the simulator writes as
-/// the first channel's frequency, to the model's.
-fn rewrite_column(table: &Path, column: &str, value: f64) -> Result<(), SimobserveError> {
-    let failed = |reason: &dyn std::fmt::Display| SimobserveError::Table {
-        table: table.to_path_buf(),
-        reason: format!("{column}: {reason}"),
-    };
-    let mut handle = Table::open(TableOptions::new(table)).map_err(|error| failed(&error))?;
-    for row in 0..handle.row_count() {
-        let cell = handle
-            .cell_accessor(row, column)
-            .map_err(|error| failed(&error))?;
-        let new = match cell.value().map_err(|error| failed(&error))? {
-            Some(Value::Array(ArrayValue::Float64(values))) => {
-                Value::Array(ArrayValue::Float64(values.mapv(|_| value)))
-            }
-            _ => Value::Scalar(ScalarValue::Float64(value)),
-        };
-        handle
-            .cell_accessor_mut(row, column)
-            .and_then(|mut cell| cell.set(new))
-            .map_err(|error| failed(&error))?;
-    }
-    handle
-        .prepare_write()
-        .save_selected_columns(&[column])
-        .map_err(|error| failed(&error))
-}
-
 /// CASA's check of the observation against the mode: an interferometer's
 /// MeasurementSet must have a positive `u` or `v` (a baseline), a single
 /// dish's none.
-fn check_baselines(ms: &Path, uvmode: bool) -> Result<(), SimobserveError> {
-    let failed = |reason: &dyn std::fmt::Display| SimobserveError::Table {
-        table: ms.to_path_buf(),
-        reason: format!("UVW: {reason}"),
-    };
-    let set = MeasurementSet::open(ms).map_err(|error| failed(&error))?;
-    let main = set.main_table();
-    let rows = main.row_count();
-    if rows == 0 {
+fn check_baselines(
+    ms: &Path,
+    destination: &Path,
+    uvmode: bool,
+    resources: &crate::SessionResources,
+) -> Result<(), SimobserveError> {
+    let Some(longest) = super::uvw::largest_signed_uv(ms, resources)? else {
         return Err(SimobserveError::raised(format!(
             "no rows were observed in {}: is the source above the elevation limit?",
-            ms.display()
+            destination.display()
         )));
-    }
-    let column = main
-        .column_accessor("UVW")
-        .map_err(|error| failed(&error))?;
-    let mut longest = f64::NEG_INFINITY;
-    let mut first = 0;
-    while first < rows {
-        let chunk: Vec<usize> = (first..rows.min(first + UVW_ROWS)).collect();
-        for cell in column
-            .array_cells_owned(&chunk)
-            .map_err(|error| failed(&error))?
-        {
-            if let Some(ArrayValue::Float64(uvw)) = cell {
-                longest = uvw.iter().take(2).copied().fold(longest, f64::max);
-            }
-        }
-        first += UVW_ROWS;
-    }
+    };
     if longest > 0. && !uvmode {
         return Err(SimobserveError::raised(format!(
             "An single observation is requested but CROSS-correlation in {}",
-            ms.display()
+            destination.display()
         )));
     }
     if longest <= 0. && uvmode {
         return Err(SimobserveError::raised(format!(
             "An interferometer observation is requested but only AUTO-correlation in {}",
-            ms.display()
+            destination.display()
         )));
     }
     Ok(())

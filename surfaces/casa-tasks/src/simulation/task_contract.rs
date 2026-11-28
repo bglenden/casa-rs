@@ -143,9 +143,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_schema_bundle_carries_the_contract_8_surface() {
+    fn the_schema_bundle_carries_the_contract_9_surface() {
         let bundle = simobserve_task_schema_bundle();
         assert_eq!(bundle.protocol.protocol_name, SIMOBSERVE_TASK_PROTOCOL_NAME);
-        assert_eq!(bundle.parameter_surfaces[0].surface.contract_version(), 8);
+        assert_eq!(bundle.parameter_surfaces[0].surface.contract_version(), 9);
     }
 }

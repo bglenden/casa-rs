@@ -151,6 +151,9 @@ pub struct Simulator {
     destination: PathBuf,
     options: SimulatorOptions,
     format: SimulatorFormat,
+    /// The task's published model reference, when different from the first
+    /// visibility channel. Prediction still reads the original window.
+    output_reference_frequency_hz: Option<f64>,
     telescope: String,
     antennas: Vec<Antenna>,
     feeds: Vec<Feed>,
@@ -241,6 +244,7 @@ impl Simulator {
             name: path,
             options,
             format,
+            output_reference_frequency_hz: None,
             // NewMSSimulator's telescope until setconfig.
             telescope: "Unknown".to_string(),
             antennas: Vec::new(),
@@ -714,6 +718,14 @@ impl Simulator {
 
     pub(crate) fn options(&self) -> &SimulatorOptions {
         &self.options
+    }
+
+    pub(crate) fn set_output_reference_frequency(&mut self, hz: f64) {
+        self.output_reference_frequency_hz = Some(hz);
+    }
+
+    pub(crate) fn output_reference_frequency(&self, original_hz: f64) -> f64 {
+        self.output_reference_frequency_hz.unwrap_or(original_hz)
     }
 
     pub(crate) fn telescope(&self) -> &str {

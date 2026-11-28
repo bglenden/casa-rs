@@ -345,6 +345,8 @@ def simobserve(
     graphics: Literal['', 'both', 'file', 'none', 'screen'] = 'both',
     verbose: bool = False,
     overwrite: bool = True,
+    *,
+    outformat: Literal['msv2', 'msv4'] = 'msv2',
 ) -> Any:
     """Simulate an observation of a sky model: CASA's simobserve
 

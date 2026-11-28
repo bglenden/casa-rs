@@ -1999,6 +1999,9 @@ def _execute(
     task: str, resolved: SurfaceParameters, workspace: Path, *, value_only: bool = False,
 ) -> TaskCompletion:
     use_payload = task in {"simobserve", "simanalyze", "simalma"} and resolved.get("graphics") in {"file", "screen", "both"}
+    if task == "simobserve" and resolved.get("outformat") == "msv4":
+        # Let the native provider diagnose unsupported MSv4 graphics.
+        use_payload = False
     if task == "plotms":
         path = resolved.get("plotfile") or ""
         export = resolved.get("expformat") or Path(path).suffix.lstrip(".")

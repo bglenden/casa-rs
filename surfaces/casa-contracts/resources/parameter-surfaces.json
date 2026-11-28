@@ -9554,7 +9554,7 @@
     {
       "kind": "task",
       "id": "simobserve",
-      "contract_version": 8,
+      "contract_version": 9,
       "display_name": "SimObserve",
       "category": "Simulation",
       "summary": "Simulate an observation of a sky model: CASA's simobserve",
@@ -11467,6 +11467,59 @@
             }
           },
           "reviewed_homonym": null
+        },
+        {
+          "name": "outformat",
+          "concept": {
+            "id": "simobserve.outformat",
+            "semantic_revision": 1
+          },
+          "order": 38,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "msv2"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--outformat"
+              ],
+              "false_flags": [],
+              "metavar": "FORMAT"
+            },
+            "provider": {
+              "field": "outformat",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "outformat",
+              "type_hint": null,
+              "keyword_only": true
+            },
+            "presentation": {
+              "label": "Output Format",
+              "group": "Output",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "simobserve selects the format of a predicted observation. Its MSv4 profile admits ordinary interferometric creation; importvla selects archive import and msconvert can infer the opposite input format."
+          }
         }
       ]
     },
