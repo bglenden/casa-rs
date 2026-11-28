@@ -22,6 +22,13 @@ pub(super) fn solve(
     let layout = CombinedSpectrum::new(&buffers, cross_hand || legacy)?;
     if cross_hand {
         let mut spectrum = layout.empty_spectrum()?;
+        #[cfg_attr(
+            not(feature = "solve-test-hooks"),
+            expect(
+                clippy::unused_enumerate_index,
+                reason = "only test checkpoints use the index"
+            )
+        )]
         for (_index, (window, rows)) in buffers.iter().enumerate() {
             control.check()?;
             layout.add(

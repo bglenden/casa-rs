@@ -109,6 +109,11 @@ pub(super) fn for_each_apply_row_controlled(
         batch_rows
     };
     let mut geometry_cache = RowGeometryCache::default();
+    // Only test checkpoints use the batch index.
+    #[cfg_attr(
+        not(feature = "solve-test-hooks"),
+        expect(clippy::unused_enumerate_index)
+    )]
     for (_batch_index, batch) in plan.selected_rows.chunks(batch_rows).enumerate() {
         check_preview(control)?;
         #[cfg(feature = "solve-test-hooks")]
