@@ -311,10 +311,12 @@ fn a_full_save_that_removes_rows_publishes_fewer() {
     stale_table(root);
     let mut table = Table::open(TableOptions::new(root)).expect("open the stale table");
     table.remove_rows(&[0, 1]).expect("remove two rows");
-    let mut write_lock = TableWriteLock::acquire(root, 1).expect("casacore's write lock");
-    write_lock.record_write();
+    let write_lock = TableWriteLock::acquire(root, 1).expect("casacore's write lock");
     table
-        .save(TableOptions::new(root).with_data_manager(DataManagerKind::TiledShapeStMan))
+        .save_with_write_lock(
+            TableOptions::new(root).with_data_manager(DataManagerKind::TiledShapeStMan),
+            Some(&write_lock),
+        )
         .expect("save the whole table");
     write_lock.release().expect("publish the write");
     assert_eq!(table_dat_rows(root), (ROWS - 2, ROWS - 2));

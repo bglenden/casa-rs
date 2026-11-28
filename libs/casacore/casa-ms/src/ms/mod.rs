@@ -296,7 +296,7 @@ impl MeasurementSet {
 
     fn save_using(
         &mut self,
-        save_main: impl FnOnce(&mut Table, &Path) -> MsResult<()>,
+        save_main: impl FnOnce(&mut Table, &Path, Option<&TableWriteLock>) -> MsResult<()>,
     ) -> MsResult<()> {
         let path = self
             .path
@@ -312,14 +312,17 @@ impl MeasurementSet {
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
-        let mut locks = self.lock_tables_for_in_place_save(&path, true)?;
-        locks.record(None);
-        save_main(&mut self.main, &path)?;
+        let locks = self.lock_tables_for_in_place_save(&path, true)?;
+        save_main(&mut self.main, &path, locks.for_table(None))?;
 
-        for (id, table) in &self.subtables {
-            let subtable_path = self.subtable_path(&path, *id);
-            locks.record(Some(*id));
-            table.save(measurement_set_table_options(&subtable_path))?;
+        for id in self.subtables.keys().copied().collect::<Vec<_>>() {
+            let subtable_path = self.subtable_path(&path, id);
+            self.subtables
+                .get_mut(&id)
+                .expect("known subtable")
+                .prepare_write()
+                .using_write_lock(locks.for_table(Some(id)))
+                .save(measurement_set_table_options(&subtable_path))?;
         }
         locks.release()?;
 
@@ -465,9 +468,13 @@ impl MeasurementSet {
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
-        let mut locks = self.lock_tables_for_in_place_save(&path, true)?;
-        locks.record(None);
-        save_main_table_with_policy_and_column_overrides(&mut self.main, &path, main)?;
+        let locks = self.lock_tables_for_in_place_save(&path, true)?;
+        save_main_table_with_policy_and_column_overrides(
+            &mut self.main,
+            &path,
+            main,
+            locks.for_table(None),
+        )?;
 
         let subtable_paths = self
             .subtables
@@ -475,15 +482,15 @@ impl MeasurementSet {
             .map(|id| (*id, self.subtable_path(&path, *id)))
             .collect::<HashMap<_, _>>();
         for (id, table) in &mut self.subtables {
-            locks.record(Some(*id));
             let options = measurement_set_table_options(&subtable_paths[id]);
+            let mut plan = table
+                .prepare_write()
+                .using_write_lock(locks.for_table(Some(*id)));
             match subtables.get(*id) {
-                Some(overrides) => table.prepare_write().save_with_column_overrides(
-                    options,
-                    &HashMap::new(),
-                    overrides,
-                )?,
-                None => table.prepare_write().save(options)?,
+                Some(overrides) => {
+                    plan.save_with_column_overrides(options, &HashMap::new(), overrides)?
+                }
+                None => plan.save(options)?,
             }
         }
         locks.release()?;
@@ -510,9 +517,8 @@ impl MeasurementSet {
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
-        let mut locks = self.lock_tables_for_in_place_save(&path, false)?;
-        locks.record(None);
-        save_main_table_with_policy(&mut self.main, &path)?;
+        let locks = self.lock_tables_for_in_place_save(&path, false)?;
+        save_main_table_with_policy(&mut self.main, &path, locks.for_table(None))?;
         locks.release()?;
         Ok(())
     }
@@ -534,8 +540,10 @@ impl MeasurementSet {
     /// # Errors
     /// Returns the same destination and storage errors as [`Self::save_as`].
     pub fn save_as_standard(&mut self, path: impl AsRef<Path>) -> MsResult<()> {
-        self.save_as_using(path.as_ref(), |main, path| {
-            main.save(measurement_set_table_options(path))?;
+        self.save_as_using(path.as_ref(), |main, path, lock| {
+            main.prepare_write()
+                .using_write_lock(lock)
+                .save(measurement_set_table_options(path))?;
             Ok(())
         })
     }
@@ -543,7 +551,7 @@ impl MeasurementSet {
     fn save_as_using(
         &mut self,
         path: &Path,
-        save_main: impl FnOnce(&mut Table, &Path) -> MsResult<()>,
+        save_main: impl FnOnce(&mut Table, &Path, Option<&TableWriteLock>) -> MsResult<()>,
     ) -> MsResult<()> {
         let path = path.to_path_buf();
         let target = crate::write_session::MeasurementSetCreateTarget::prepare(&path, true)
