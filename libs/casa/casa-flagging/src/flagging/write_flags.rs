@@ -66,6 +66,7 @@ pub(super) fn set_selected_flags(
     correlations: Option<&CorrelationSelection>,
     flag: bool,
     row_policy: SelectedFlagRowPolicy,
+    cancellation: Option<&Cancellation>,
 ) -> Result<ChangeSet, FlaggingError> {
     let row_policy = if is_calibration_table(ms) {
         SelectedFlagRowPolicy::Preserve
@@ -78,14 +79,19 @@ pub(super) fn set_selected_flags(
         channel_selections,
         None,
         correlations,
-        false,
-        None,
+        SampleLoadOptions {
+            cancellation,
+            ..SampleLoadOptions::default()
+        },
     )?;
     let mut updates = loaded.flags_by_row;
     let mut changed = ChangeSet::default();
     let mut touched_rows = std::collections::BTreeSet::new();
     let mut coverage = BTreeMap::<usize, usize>::new();
-    for sample in loaded.samples {
+    for (index, sample) in loaded.samples.into_iter().enumerate() {
+        if index % 1024 == 0 {
+            check_cancelled(cancellation)?;
+        }
         if row_policy == SelectedFlagRowPolicy::FullySelectedRows {
             *coverage.entry(sample.row).or_default() += 1;
         }

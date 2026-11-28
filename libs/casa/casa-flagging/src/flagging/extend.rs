@@ -19,7 +19,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::clip_time::ordered_baseline_chunks;
 use super::{
     ChangeSet, ChannelSelection, CorrelationSelection, FlagDataRequest, FlaggingError,
-    MeasurementSet, Sample, load_samples, stage_flag_mask, write_touched_flag_updates,
+    MeasurementSet, Sample, SampleLoadOptions, load_samples, stage_flag_mask,
+    write_touched_flag_updates,
 };
 
 pub(super) fn apply(
@@ -35,12 +36,19 @@ pub(super) fn apply(
         changed.agent_skipped = true;
         return Ok(changed);
     }
-    let timed =
-        ordered_baseline_chunks(ms, selected, request.time_chunk, request.combinescans, path)?;
+    let timed = ordered_baseline_chunks(
+        ms,
+        selected,
+        request.time_chunk,
+        request.combinescans,
+        path,
+        request.cancellation.as_ref(),
+    )?;
     // Stage changed cells only. Later invalid rows must not leave a
     // caller with a partially updated MeasurementSet open in memory.
     let mut pending = BTreeMap::new();
     for baseline in timed.chunk_by(|a, b| a.baseline_key() == b.baseline_key()) {
+        request.check_cancelled()?;
         let rows = baseline.iter().map(|row| row.row).collect::<Vec<_>>();
         let mut loaded = load_samples(
             ms,
@@ -48,8 +56,11 @@ pub(super) fn apply(
             channels,
             None,
             correlations,
-            request.casa_row_selection,
-            None,
+            SampleLoadOptions {
+                retain_channel_overlaps: request.casa_row_selection,
+                cancellation: request.cancellation.as_ref(),
+                ..SampleLoadOptions::default()
+            },
         )?;
         let grown = grow(&loaded.samples, request);
         let (touched, changed_samples) = stage_flag_mask(

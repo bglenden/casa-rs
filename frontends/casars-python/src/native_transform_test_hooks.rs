@@ -2,14 +2,13 @@
 //! Private signal harness for the opt-in transform test build.
 
 use std::cell::Cell;
-use std::sync::mpsc::{Sender, channel};
-use std::time::Duration;
+use std::sync::mpsc::Sender;
 
 use casa_mstransform::test_hooks::{Checkpoint, with_single_row_batches};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use crate::native_tasks::WorkerMessage;
+use crate::native_tasks::{WorkerMessage, signal_test_worker};
 
 #[derive(Clone, Copy)]
 pub(super) enum Control {
@@ -57,14 +56,7 @@ pub(super) fn run<T>(
             if matches!(control, Control::Interrupt(target) if target == checkpoint)
                 && !sent.replace(true)
             {
-                // The checkpoint has no shared table write lock. The collector
-                // sends SIGINT and checks it before releasing this test worker.
-                let (resume, wait) = channel();
-                sender.send(WorkerMessage::TestInterrupt(resume)).unwrap();
-                assert!(matches!(
-                    wait.recv_timeout(Duration::from_secs(15)),
-                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
-                ));
+                signal_test_worker(&sender);
             }
         },
         run,

@@ -200,15 +200,16 @@ repository provider-conformance tests, `tests/provider_contract_conformance.rs`)
 and `scripts/test-python-package.sh`, which runs the Python tests against an
 editable checkout, then installs the built wheel and sdist into fresh
 environments and checks them away from the source tree. The wheel smoke test
-runs `flagmanager` in-process with an empty command search path and an empty
+runs `flagdata` and `flagmanager` in-process with an empty command search path and an empty
 Cargo target directory. The install-suite smoke test first exercises the
 standalone commands, then hides the suite's binaries before invoking Python
 from the installed suite. The package script runs the `casars.tools` tests
 against the bundled measures snapshot unless
 `CASA_RS_MEASURESPATH` names a runtime. The editable build enables
-`transform-test-hooks` for the public SIGINT tests. The feature forces
-single-row batches and lets the tests interrupt at an observed staging
-boundary. Run the Rust staging concurrency checks with
+`transform-test-hooks` and `flagdata-test-hooks` for the public SIGINT tests.
+The features let the tests interrupt at observed staging boundaries and force
+single-row batches where the tests check that the next batch never starts.
+Run the Rust staging concurrency checks with
 `cargo test -p casa-mstransform --features transform-test-hooks --test api transform_cancellation::`. `test_binding_snapshots.py` pins what
 the binding returns to Python; regenerate its fixture only for an intended
 change.

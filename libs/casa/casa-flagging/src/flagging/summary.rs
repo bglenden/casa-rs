@@ -14,13 +14,14 @@
 use std::collections::BTreeMap;
 
 use casa_core::ArrayValue;
+use casa_core::cancellation::Cancellation;
 use ndarray::ArrayD;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{
     ChannelSelection, CorrelationSelection, FLAG_COLUMN, FlagDataMode, FlagDataReport,
-    FlaggingError, data_description_spw_map, display_ms_path, load_i32_cells,
+    FlaggingError, check_cancelled, data_description_spw_map, display_ms_path, load_i32_cells,
 };
 use casa_ms::MeasurementSet;
 use casa_ms::stokes_name;
@@ -302,12 +303,20 @@ pub(super) fn report(
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     correlations: Option<&CorrelationSelection>,
     options: FlagSummaryOptions,
+    cancellation: Option<&Cancellation>,
 ) -> Result<FlagDataReport, FlaggingError> {
     if correlations.is_some_and(|selection| !selection.has_setup()) {
         // With no matching polarization setup CASA cannot create the agent.
         return Err(FlaggingError::MissingCorrelationSummary);
     }
-    let summary = summarize(ms, rows, channel_selections, correlations, options)?;
+    let summary = summarize(
+        ms,
+        rows,
+        channel_selections,
+        correlations,
+        options,
+        cancellation,
+    )?;
     let report = FlagDataReport {
         mode: FlagDataMode::Summary,
         selected_rows: rows.len(),
@@ -339,6 +348,7 @@ fn summarize(
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     correlations: Option<&CorrelationSelection>,
     options: FlagSummaryOptions,
+    cancellation: Option<&Cancellation>,
 ) -> Result<FlagSummaryBreakdown, FlaggingError> {
     let lookup = Lookup::read(ms, correlations)?;
     let mut summary = FlagSummaryBreakdown::with_options(options);
@@ -350,6 +360,7 @@ fn summarize(
     for block in rows.chunks(BLOCK_ROWS) {
         let ids = BlockIds::read(ms, block, lookup.calibration)?;
         for (batch_index, batch) in block.chunks(FLAG_BATCH_ROWS).enumerate() {
+            check_cancelled(cancellation)?;
             let start = batch_index * FLAG_BATCH_ROWS;
             let (slots, selected): (Vec<_>, Vec<_>) = batch
                 .iter()
@@ -392,6 +403,7 @@ fn summarize(
             }
         }
     }
+    check_cancelled(cancellation)?;
     if let Some(fields) = fields {
         if let Some(reserved) = ["type", "name"]
             .into_iter()

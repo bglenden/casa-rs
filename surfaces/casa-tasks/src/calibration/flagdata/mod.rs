@@ -189,6 +189,7 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         Some(casa_calibration::models::flagdata_model),
     )
     .map_err(|error| match error {
+        FlaggingError::Interrupted => TaskFailure::interrupted(error.to_string()),
         FlaggingError::MissingCorrelationSummary => {
             TaskFailure::execution(error.to_string()).at("correlation")
         }
@@ -839,6 +840,7 @@ fn flagdata_request(
     };
     let (timedev, freqdev) = (&thresholds.time, &thresholds.frequency);
     Ok(FlagDataRequest {
+        cancellation: task.cancellation().cloned(),
         selection: selection(task, &spw)?,
         casa_row_selection: true,
         spw: (!spw.is_empty()).then_some(spw),

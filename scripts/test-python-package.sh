@@ -42,7 +42,7 @@ echo "==> Installing editable casars package and running Python tests"
 "$python_bin" -m venv "$editable_venv"
 source "$editable_venv/bin/activate"
 # The interrupt tests use the opt-in checkpoints in the editable build.
-MATURIN_PEP517_ARGS="${MATURIN_PEP517_ARGS:-} --features transform-test-hooks" \
+MATURIN_PEP517_ARGS="${MATURIN_PEP517_ARGS:-} --features transform-test-hooks,flagdata-test-hooks" \
   python -m pip install -e "frontends/casars-python[$extras]"
 pytest frontends/casars-python/python/tests -q
 deactivate
@@ -117,11 +117,17 @@ import casars._core
 from casars import tasks
 
 assert Path(sys.argv[1]).resolve() in Path(casars._core.__file__).resolve().parents
+assert not hasattr(casars._core, "_arm_flagdata_test")
+assert shutil.which("flagdata") is None
 assert shutil.which("flagmanager") is None
 ms = Path("mssel_test_small.ms")
 completion = tasks.run("flagmanager", vis=ms, mode="list")
 assert completion.successful, completion.describe()
 assert tasks.flagmanager(vis=ms, mode="list") == {"MS": str(ms.resolve())}
+assert tasks.flagdata(vis=ms, mode="manual") == {}
+summary = tasks.flagdata(vis=ms, mode="summary")
+assert summary["total"] > 0 and summary["flagged"] == summary["total"], summary
+assert tasks.flagmanager(vis=ms, mode="list")[0]["name"] == "flagdata_1"
 PY
 )
 test_installed "$wheel_venv" "$tests_dir"

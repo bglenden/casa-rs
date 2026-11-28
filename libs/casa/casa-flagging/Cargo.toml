@@ -19,6 +19,9 @@ targets = ["x86_64-unknown-linux-gnu"]
 [lints]
 workspace = true
 
+[features]
+flagdata-test-hooks = []
+
 [dependencies]
 casa-core.workspace = true
 casa-ms.workspace = true

@@ -14,7 +14,7 @@ use casa_ms::{MeasurementSet, MsReadPlan, MsResult, MsSelectionIoBudget, open_me
 
 use super::clip_time::{ClipTimedRow, integration_blocks, read_clip_times, sort_iterator_rows};
 use super::geometry::{apply_geometric_flags, phase_center};
-use super::{ChangeSet, CorrelationSelection, FlaggingError};
+use super::{Cancellation, ChangeSet, CorrelationSelection, FlaggingError, check_cancelled};
 
 /// A dish used for flagging shadows. Additional dishes do not become MS rows.
 #[derive(Clone, Copy, Debug)]
@@ -53,6 +53,7 @@ pub(super) fn apply(
     channels: Option<&BTreeMap<i32, ChannelSelection>>,
     correlations: Option<&CorrelationSelection>,
     path: &str,
+    cancellation: Option<&Cancellation>,
 ) -> Result<ChangeSet, FlaggingError> {
     if !options.enabled {
         return Ok(ChangeSet {
@@ -63,8 +64,8 @@ pub(super) fn apply(
     if selected.is_empty() {
         return Ok(ChangeSet::default());
     }
-    let affected = shadowed_rows(ms, selected, options, path)?;
-    apply_geometric_flags(ms, &affected, channels, correlations)
+    let affected = shadowed_rows(ms, selected, options, path, cancellation)?;
+    apply_geometric_flags(ms, &affected, channels, correlations, cancellation)
 }
 
 struct Baseline {
@@ -79,6 +80,7 @@ fn shadowed_rows(
     selected: &[usize],
     options: &ShadowOptions,
     path: &str,
+    cancellation: Option<&Cancellation>,
 ) -> Result<Vec<usize>, FlaggingError> {
     let fail = |reason: String| FlaggingError::MutateFlags {
         path: path.to_owned(),
@@ -99,7 +101,7 @@ fn shadowed_rows(
         .into_iter()
         .chain(options.additional.iter().copied())
         .collect();
-    let mut ordered = read_clip_times(ms, selected, path)?;
+    let mut ordered = read_clip_times(ms, selected, path, cancellation)?;
     sort_iterator_rows(&mut ordered);
     let bytes_per_row = size_of::<Baseline>()
         + size_of::<usize>()
@@ -122,10 +124,12 @@ fn shadowed_rows(
         // Physical I/O is bounded even when one logical integration is large.
         let mut baselines = Vec::with_capacity(block.len());
         for rows in block.chunks(batch_rows) {
+            check_cancelled(cancellation)?;
             baselines.extend(read_baselines(ms, rows, antenna_count, fail)?);
         }
         let mut unread = baselines.as_slice();
         for integration in block.chunk_by(ClipTimedRow::shares_integration) {
+            check_cancelled(cancellation)?;
             let next_field = usize::try_from(integration[0].field())
                 .map_err(|_| fail(format!("negative FIELD_ID at row {}", integration[0].row)))?;
             if field != Some(next_field) {

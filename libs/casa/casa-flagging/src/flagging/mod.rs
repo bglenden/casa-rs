@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use casa_core::cancellation::Cancellation;
 use casa_core::{
     ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
@@ -64,6 +65,8 @@ mod program;
 mod shadow;
 mod shared_average;
 mod summary;
+#[cfg(feature = "flagdata-test-hooks")]
+pub mod test_hooks;
 
 pub use antint::AntennaIntegrationOptions;
 use clip::{ClipOptions, apply_clip_array};
@@ -248,6 +251,10 @@ pub enum QuackMode {
 /// Request for native `flagdata`.
 #[derive(Debug, Clone)]
 pub struct FlagDataRequest {
+    /// Cooperative stop request used while calculating and staging flags.
+    /// A completed backup is retained. Once MAIN publication begins, it
+    /// finishes even if cancellation is requested.
+    pub cancellation: Option<Cancellation>,
     /// Structured row selection.
     pub selection: MsSelection,
     /// Interpret row selectors using the public CASA flagdata task grammar.
@@ -359,6 +366,7 @@ pub struct FlagDataRequest {
 impl Default for FlagDataRequest {
     fn default() -> Self {
         Self {
+            cancellation: None,
             selection: MsSelection::new(),
             casa_row_selection: false,
             spw: None,
@@ -472,6 +480,10 @@ pub struct FlagVersionEntry {
 /// Native flagging errors.
 #[derive(Debug, Error)]
 pub enum FlaggingError {
+    /// Cancellation was observed before the staged flags were published.
+    #[error("flagdata interrupted")]
+    Interrupted,
+
     /// Opening an MS failed.
     #[error("failed to open MeasurementSet {path}: {source}")]
     OpenMeasurementSet {
@@ -585,7 +597,23 @@ pub enum FlaggingError {
     },
 }
 
+impl FlagDataRequest {
+    fn check_cancelled(&self) -> Result<(), FlaggingError> {
+        check_cancelled(self.cancellation.as_ref())
+    }
+}
+
+fn check_cancelled(cancellation: Option<&Cancellation>) -> Result<(), FlaggingError> {
+    if cancellation.is_some_and(Cancellation::is_cancelled) {
+        return Err(FlaggingError::Interrupted);
+    }
+    Ok(())
+}
+
 /// Run native `flagdata` on an opened MeasurementSet.
+///
+/// On interruption, discard and reopen the supplied table to clear any
+/// staged in-memory flags. The path-based entry point does this for callers.
 pub fn flagdata(
     ms: &mut MeasurementSet,
     request: &FlagDataRequest,
@@ -609,9 +637,11 @@ fn persist_changed_flags(
     ms: &mut MeasurementSet,
     changes: &ChangeSet,
     ms_path: &str,
+    cancellation: Option<&Cancellation>,
 ) -> Result<(), FlaggingError> {
     let mut maximum_flag_bytes = 0usize;
     for &row in &changes.changed_row_indices {
+        check_cancelled(cancellation)?;
         maximum_flag_bytes = maximum_flag_bytes.max(clone_flag_matrix(ms, row)?.len());
     }
     let mut columns = vec![MeasurementSetWriteColumnPlan {
@@ -649,6 +679,13 @@ fn persist_changed_flags(
         reason: format!("plan changed MAIN flag rows: {error}"),
     })?;
     let batch_rows = write_plan.batch_rows();
+    #[cfg(feature = "flagdata-test-hooks")]
+    test_hooks::observe(test_hooks::Checkpoint::BeforeCommit);
+    check_cancelled(cancellation)?;
+    // This session publishes FLAG and FLAG_ROW in batches under the MAIN
+    // write lock. Once accepted, finish the whole session and flush both columns.
+    #[cfg(feature = "flagdata-test-hooks")]
+    test_hooks::observe(test_hooks::Checkpoint::CommitAccepted);
     let mut write_session = MeasurementSetWriteSession::start_selected_row_mutation(ms, write_plan)
         .map_err(|error| FlaggingError::MutateFlags {
             path: ms_path.to_owned(),
@@ -738,6 +775,7 @@ pub fn flagdata_path_with_model(
 /// absent when CASA cannot configure that agent and continues the program.
 /// With multiple commands, selection is local to each agent and a time
 /// range gates the calibration buffers at their first integration.
+/// Use the same cancellation token for the program's requests.
 pub fn flagdata_calibration_program(
     table: MeasurementSet,
     requests: &[FlagDataRequest],

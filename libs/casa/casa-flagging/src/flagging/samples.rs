@@ -88,6 +88,7 @@ pub(super) fn load_time_averaged_tfcrop(
         request.time_chunk,
         request.combinescans,
         &path,
+        request.cancellation.as_ref(),
     )?;
     let flags_by_row = selected
         .iter()
@@ -127,6 +128,7 @@ pub(super) fn load_time_averaged_tfcrop(
     let mut flags_by_bin = BTreeMap::new();
     let mut channel_layouts = HashMap::<(i32, usize), Arc<[usize]>>::new();
     for group in averaging.groups(&timed) {
+        request.check_cancelled()?;
         if averaging.filter.is_some() {
             let last_unflagged = group
                 .iter()
@@ -160,7 +162,15 @@ pub(super) fn load_time_averaged_tfcrop(
         let mut average = columns
             .as_mut()
             .map(|columns| {
-                clip_time::collect_time_bin(ms, group, rows_per_block, columns, &ddid_to_spw, &path)
+                clip_time::collect_time_bin(
+                    ms,
+                    group,
+                    rows_per_block,
+                    columns,
+                    &ddid_to_spw,
+                    &path,
+                    request.cancellation.as_ref(),
+                )
             })
             .transpose()?
             .map(|(average, _, _)| average);
@@ -270,9 +280,14 @@ pub(super) fn load_samples(
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     data: Option<SampleData<'_>>,
     flag_correlations: Option<&CorrelationSelection>,
-    retain_channel_overlaps: bool,
-    widths: Option<&[u32]>,
+    options: SampleLoadOptions<'_>,
 ) -> Result<LoadedSamples, FlaggingError> {
+    let SampleLoadOptions {
+        retain_channel_overlaps,
+        widths,
+        cancellation,
+    } = options;
+    check_cancelled(cancellation)?;
     let path = display_ms_path(ms);
     let calibration = is_calibration_table(ms);
     let ddid_to_spw = if calibration {
@@ -295,6 +310,7 @@ pub(super) fn load_samples(
     } else {
         None
     };
+    check_cancelled(cancellation)?;
     let flag_cells = table
         .column_accessor(FLAG_COLUMN)
         .and_then(|column| column.array_cells_owned(selected_rows))
@@ -326,6 +342,7 @@ pub(super) fn load_samples(
         "DATA_DESC_ID"
     };
     let ddids = load_i32_cells(table, selected_rows, row_window, &path)?;
+    check_cancelled(cancellation)?;
     let visibility = if let Some(SampleData::Visibility(column, columns)) = data {
         Some((
             column.name(),
@@ -351,6 +368,7 @@ pub(super) fn load_samples(
     let mut averaged_channels = BTreeMap::new();
     let mut channel_layouts = HashMap::<(i32, usize), Arc<[usize]>>::new();
     for (row_slot, (&row, flags)) in selected_rows.iter().zip(flag_cells).enumerate() {
+        check_cancelled(cancellation)?;
         let ddid = ddids[row_slot];
         let spw = if calibration {
             ddid
@@ -476,6 +494,13 @@ pub(super) fn load_samples(
 }
 
 /// `row`'s cell of `column`: a numeric array of its flags' shape.
+#[derive(Default)]
+pub(super) struct SampleLoadOptions<'a> {
+    pub(super) retain_channel_overlaps: bool,
+    pub(super) widths: Option<&'a [u32]>,
+    pub(super) cancellation: Option<&'a Cancellation>,
+}
+
 pub(super) fn checked_row_data<'a>(
     cell: Option<&'a Option<ArrayValue>>,
     flags: &ArrayD<bool>,
