@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use casa_core::{ArrayValue, Complex32, Value};
-use casa_ms::MeasurementSet;
+use casa_ms::observation_io::{FieldNamespace, ObservationError, with_field_namespace};
 use casa_tables::{RequiredScalarColumnValues, Table, TableOptions};
 
 use crate::solution_edit::{edit_calibration_table, error_text};
@@ -32,8 +32,31 @@ impl Smoother {
     }
 }
 
-/// Smooths calibration solutions over a time interval in seconds for the selected fields and
-/// publishes the result.
+/// Failures in the MeasurementSet field reader or calibration-table edit.
+#[derive(Debug, thiserror::Error)]
+pub enum SmoothError {
+    /// The observation could not be opened.
+    #[error(transparent)]
+    Observation(#[from] ObservationError),
+    /// The selection, smoothing calculation, or table edit failed.
+    #[error("{0}")]
+    Calibration(String),
+}
+
+impl From<String> for SmoothError {
+    fn from(error: String) -> Self {
+        Self::Calibration(error)
+    }
+}
+
+/// Smooth calibration solutions over a centered time window and publish
+/// the result. MSv2 field expressions use the MeasurementSet's FIELD
+/// numbering. With MSv4, expressions use the calibration table's FIELD
+/// numbering and the selected rows must identify fields in the observation.
+///
+/// # Errors
+/// When the observation cannot be opened, the selection cannot be resolved,
+/// or the calibration table cannot be smoothed or written.
 pub fn smooth_calibration_table(
     ms_path: &Path,
     input: &Path,
@@ -42,15 +65,30 @@ pub fn smooth_calibration_table(
     smoother: Smoother,
     seconds: f64,
     ratesmooth: bool,
-) -> Result<(), String> {
+) -> Result<(), SmoothError> {
     if seconds.is_nan() || seconds <= 0.0 {
-        return Err("smoothtime must be a positive duration in seconds".into());
+        return Err(SmoothError::Calibration(
+            "smoothtime must be a positive duration in seconds".into(),
+        ));
     }
-    let ms = MeasurementSet::open(ms_path).map_err(error_text)?;
-    let fields = ms.resolve_field_selector(field).map_err(error_text)?;
-    edit_calibration_table(input, destination, |table, path| {
-        smooth_table(table, path, &fields, smoother, seconds / 2.0, ratesmooth)
-    })
+    let smooth = |table: &mut Table, path: &Path, fields: &[i32]| {
+        smooth_table(table, path, fields, smoother, seconds / 2.0, ratesmooth)
+            .map_err(SmoothError::from)
+    };
+    with_field_namespace(ms_path, |namespace| match namespace {
+        FieldNamespace::Msv2(selection) => {
+            let fields = selection.select(field).map_err(error_text)?;
+            edit_calibration_table(input, destination, |table, path| {
+                smooth(table, path, &fields)
+            })
+        }
+        FieldNamespace::Msv4(selection) => {
+            edit_calibration_table(input, destination, |table, path| {
+                let fields = selection.select(path, field)?;
+                smooth(table, path, &fields)
+            })
+        }
+    })?
 }
 
 fn smooth_table(

@@ -4,7 +4,8 @@
 use crate::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_contracts::CasaValue;
 
-use casa_calibration::smooth::{Smoother, smooth_calibration_table};
+use casa_calibration::smooth::{SmoothError, Smoother, smooth_calibration_table};
+use casa_observation::ObservationError;
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let vis = task.input_path("vis")?;
@@ -39,6 +40,11 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         seconds,
         ratesmooth,
     )
-    .map_err(TaskFailure::execution)?;
+    .map_err(|error| match error {
+        SmoothError::Observation(ObservationError::Unsupported { .. }) => {
+            TaskFailure::validation(error.to_string()).at("vis")
+        }
+        _ => TaskFailure::execution(error.to_string()),
+    })?;
     TaskSuccess::new(CasaValue::None, &())
 }

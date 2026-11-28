@@ -15,6 +15,7 @@
 
 #[cfg(unix)]
 pub mod creation;
+mod field_namespace;
 mod grouping;
 mod heap;
 mod msv2;
@@ -29,6 +30,9 @@ use casa_observation::Observation;
 
 pub use casa_observation::ObservationError;
 
+pub use field_namespace::{
+    FieldNamespace, Msv2FieldSelection, Msv4FieldSelection, with_field_namespace,
+};
 pub use msv2::catalogue::{Feeds, read_feeds};
 pub use msv2::{MainRowKeys, Msv2Cursor, Msv2Observation};
 #[cfg(feature = "msv4")]
