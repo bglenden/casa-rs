@@ -434,6 +434,7 @@ mod tests {
 
     #[test]
     fn interruptible_write_lock_refuses_generation_published_by_foreign_writer() {
+        let _guard = crate::tracing_test_lock();
         let tmp = TempDir::new().unwrap();
         let table_dir = tmp.path().join("table");
         std::fs::create_dir_all(&table_dir).unwrap();
