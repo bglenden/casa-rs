@@ -18,10 +18,10 @@
 
 use casa_core::{RecordField, RecordValue, Value};
 
+use super::CompositeStorage;
 use super::StorageError;
 use super::table_control::PlainColumnEntry;
 use super::virtual_engine::{VirtualColumnEngine, VirtualContext};
-use super::{CompositeStorage, StorageManager};
 use crate::table_path::add_directory_for_link;
 
 /// Keyword name storing the referenced table path on each forwarding column.

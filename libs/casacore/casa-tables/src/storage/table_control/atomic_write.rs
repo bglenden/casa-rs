@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::fs::{self, File};
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use super::{TableDatContents, serialize_table_dat};
@@ -21,6 +21,7 @@ pub(crate) fn is_staged_table_dat(name: &str) -> bool {
 /// descriptor's access metadata before a caller writes any manager files.
 pub(crate) struct StagedTableDat<'a> {
     table: &'a Path,
+    keyword_table: &'a Path,
     destination: PathBuf,
     staged: tempfile::NamedTempFile,
     previous: Option<AccessMetadata>,
@@ -34,6 +35,14 @@ impl<'a> StagedTableDat<'a> {
 
     pub(crate) fn in_table_directory(table: &'a Path) -> Result<Self, StorageError> {
         Self::prepare(table, table.join(TABLE_CONTROL_FILE), false)
+    }
+
+    /// Encode a full save in private storage, with links relative to its
+    /// eventual table directory.
+    pub(crate) fn for_save_stage(stage: &'a Path, table: &'a Path) -> Result<Self, StorageError> {
+        let mut control = Self::in_table_directory(stage)?;
+        control.keyword_table = table;
+        Ok(control)
     }
 
     pub(crate) fn for_existing_table(table: &'a Path) -> Result<Self, StorageError> {
@@ -66,6 +75,7 @@ impl<'a> StagedTableDat<'a> {
         }
         Ok(Self {
             table,
+            keyword_table: table,
             destination,
             staged,
             previous,
@@ -76,18 +86,55 @@ impl<'a> StagedTableDat<'a> {
         self.table
     }
 
-    pub(crate) fn publish(mut self, contents: &TableDatContents) -> Result<(), StorageError> {
+    pub(crate) fn keyword_table_path(&self) -> &'a Path {
+        self.keyword_table
+    }
+
+    pub(crate) fn publish(self, contents: &TableDatContents) -> Result<(), StorageError> {
         // Backpatch object lengths in memory and store table keywords relative
         // to the same parent directory used by the previous writer.
-        let contents = stored_table_dat_keywords(contents, self.table);
-        self.staged.write_all(&serialize_table_dat(&contents)?)?;
+        let contents = stored_table_dat_keywords(contents, self.keyword_table);
+        self.stage(&mut &*serialize_table_dat(&contents)?)?
+            .publish()?;
+        Ok(())
+    }
+
+    pub(crate) fn stage(mut self, contents: &mut impl io::Read) -> io::Result<TableDatCommit> {
+        io::copy(contents, &mut self.staged)?;
         if let Some(access) = &self.previous {
             // A write can clear special mode bits on some filesystems.
             access.apply(self.staged.as_file())?;
+        }
+        Ok(TableDatCommit {
+            destination: self.destination,
+            staged: self.staged,
+            previous: self.previous,
+        })
+    }
+}
+
+pub(crate) struct TableDatCommit {
+    destination: PathBuf,
+    staged: tempfile::NamedTempFile,
+    previous: Option<AccessMetadata>,
+}
+
+impl TableDatCommit {
+    pub(crate) fn backup(&self, backup: &Path) -> io::Result<()> {
+        if let Some(access) = &self.previous {
+            let mut output = File::options().write(true).create_new(true).open(backup)?;
+            io::copy(&mut File::open(&self.destination)?, &mut output)?;
+            access.apply(&output)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn publish(self) -> io::Result<()> {
+        if let Some(access) = &self.previous {
             if existing_access(&self.destination)?.as_ref() != Some(access) {
-                return Err(
-                    io::Error::other("table.dat access metadata changed during save").into(),
-                );
+                return Err(io::Error::other(
+                    "table.dat access metadata changed during save",
+                ));
             }
             self.staged
                 .persist(&self.destination)

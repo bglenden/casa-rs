@@ -550,7 +550,18 @@ impl Table {
             if reload {
                 // Publish the count before reopening; the old lock sync
                 // count otherwise hides removals.
-                this.note_full_save(path)?;
+                #[cfg(unix)]
+                if let Some(state) = this.lock_state.as_ref()
+                    && state.lock_file.has_lock(LockType::Write)
+                {
+                    crate::lock::publish_persisted_rows(&state.lock_file, &state.path).map_err(
+                        |error| TableError::LockIo {
+                            path: state.path.display().to_string(),
+                            message: error.to_string(),
+                        },
+                    )?;
+                }
+                this.note_full_save(path);
                 this.reload_disk_state_at(path)
             } else {
                 // The handle is consumed. Its lock still announces the

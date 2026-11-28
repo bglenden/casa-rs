@@ -323,7 +323,7 @@ pub(crate) struct LockFile {
 }
 
 impl LockFile {
-    pub(super) fn matches_table_path(&self, dir: &Path) -> bool {
+    pub(crate) fn matches_table_path(&self, dir: &Path) -> bool {
         path_key(&dir.join(LOCK_FILE_NAME)).is_ok_and(|key| key == Some(self.key))
     }
 
@@ -749,30 +749,33 @@ impl LockFile {
     }
 
     /// Write sync data to the lock file (after the request list header).
+    /// The caller owns the table write lock or a private copy of the file.
     pub fn write_sync_data(&self, sync: &SyncData) -> io::Result<()> {
-        if !self.shared.writable {
-            return Ok(());
-        }
-        let fd = self.shared.fd;
-        let payload = sync.encode()?;
-        let info_len = payload.len() as u32;
-
-        // Write info length at offset SIZEREQID.
-        let len_bytes = info_len.to_be_bytes();
-        write_at(fd, &len_bytes, SIZEREQID as i64)?;
-
-        // Write payload immediately after.
-        let offset = (SIZEREQID + SIZEINT) as i64;
-        write_at(fd, &payload, offset)?;
-
-        // fsync to ensure data reaches disk (important for NFS).
-        unsafe { libc::fsync(fd) };
-
-        Ok(())
+        self.replace_sync_data(&sync.encode()?)
     }
 
     pub(crate) fn clear_sync_data(&self) -> io::Result<()> {
-        write_at(self.shared.fd, &0u32.to_be_bytes(), SIZEREQID as i64).map(|_| ())
+        self.replace_sync_data(&[])
+    }
+
+    fn replace_sync_data(&self, payload: &[u8]) -> io::Result<()> {
+        if !self.shared.writable {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "table.lock is read-only",
+            ));
+        }
+        let fd = self.shared.fd;
+        let previous = read_sync_payload(fd)?;
+        if let Err(error) = write_sync_payload(fd, payload) {
+            if let Err(recovery) = write_sync_payload(fd, &previous) {
+                return Err(io::Error::other(format!(
+                    "writing table.lock sync data failed: {error}; restoring the previous record also failed: {recovery}"
+                )));
+            }
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Check if other processes need the lock.
@@ -990,27 +993,75 @@ pub fn table_holder(table_dir: &Path) -> io::Result<Option<TableHolder>> {
 
 /// Read the sync data that follows the request list in an open lock file.
 fn read_sync_data_from_fd(fd: RawFd) -> io::Result<Option<SyncData>> {
-    let mut len_buf = [0u8; SIZEINT];
-    let n = read_at(fd, &mut len_buf, SIZEREQID as i64)?;
-    if n < SIZEINT {
+    let payload = read_sync_payload(fd)?;
+    if payload.is_empty() {
         return Ok(None);
+    }
+    SyncData::decode(&payload).map(Some)
+}
+
+const SYNC_PAYLOAD_OFFSET: i64 = (SIZEREQID + SIZEINT) as i64;
+
+/// Keep the original bytes, including records written by casacore.
+fn read_sync_payload(fd: RawFd) -> io::Result<Vec<u8>> {
+    let mut len_buf = [0u8; SIZEINT];
+    if read_up_to_at(fd, &mut len_buf, SIZEREQID as i64)? < SIZEINT {
+        return Ok(Vec::new());
     }
     let info_len = u32::from_be_bytes(len_buf) as usize;
-    if info_len == 0 {
-        return Ok(None);
-    }
-
     let mut payload = vec![0u8; info_len];
-    let offset = (SIZEREQID + SIZEINT) as i64;
-    let n = read_at(fd, &mut payload, offset)?;
+    let n = read_up_to_at(fd, &mut payload, SYNC_PAYLOAD_OFFSET)?;
     if n < info_len {
         return Err(io::Error::new(
             io::ErrorKind::UnexpectedEof,
             format!("sync data truncated: expected {info_len}, got {n}"),
         ));
     }
+    Ok(payload)
+}
 
-    SyncData::decode(&payload).map(Some)
+fn read_up_to_at(fd: RawFd, buf: &mut [u8], offset: i64) -> io::Result<usize> {
+    let mut read = 0;
+    while read < buf.len() {
+        match read_at(fd, &mut buf[read..], offset + read as i64) {
+            Ok(0) => break,
+            Ok(count) => read += count,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(read)
+}
+
+fn write_sync_payload(fd: RawFd, payload: &[u8]) -> io::Result<()> {
+    let info_len = u32::try_from(payload.len()).map_err(io::Error::other)?;
+    write_all_at(fd, payload, SYNC_PAYLOAD_OFFSET)?;
+    write_all_at(fd, &info_len.to_be_bytes(), SIZEREQID as i64)?;
+    loop {
+        // SAFETY: the caller retains the registered descriptor.
+        if unsafe { libc::fsync(fd) } == 0 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+
+fn write_all_at(fd: RawFd, mut buf: &[u8], mut offset: i64) -> io::Result<()> {
+    while !buf.is_empty() {
+        match write_at(fd, buf, offset) {
+            Ok(0) => return Err(io::Error::from(io::ErrorKind::WriteZero)),
+            Ok(count) => {
+                buf = &buf[count..];
+                offset += count as i64;
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 impl Drop for LockFile {
@@ -1138,12 +1189,36 @@ fn read_at(fd: RawFd, buf: &mut [u8], offset: i64) -> io::Result<usize> {
 
 /// Write to a file descriptor at a given offset using `pwrite`.
 fn write_at(fd: RawFd, buf: &[u8], offset: i64) -> io::Result<usize> {
+    #[cfg(test)]
+    let buf = if offset >= SYNC_PAYLOAD_OFFSET {
+        match SYNC_WRITE_FAULT.take() {
+            Some(0) => return Err(io::Error::from_raw_os_error(libc::ENOSPC)),
+            Some(count) => {
+                SYNC_WRITE_FAULT.set(Some(0));
+                &buf[..count.min(buf.len())]
+            }
+            None => buf,
+        }
+    } else {
+        buf
+    };
     let n = unsafe { libc::pwrite(fd, buf.as_ptr().cast(), buf.len(), offset) };
     if n < 0 {
         Err(io::Error::last_os_error())
     } else {
         Ok(n as usize)
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static SYNC_WRITE_FAULT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn inject_short_sync_write() {
+    // Reach the changed counters but leave part of the AipsIO record unwritten.
+    SYNC_WRITE_FAULT.set(Some(29));
 }
 
 /// Convert a `Path` to a C string for use with `libc::open`.
@@ -1158,301 +1233,4 @@ fn path_to_cstring(path: &Path) -> io::Result<std::ffi::CString> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    #[test]
-    fn create_lock_file_writes_zeroed_header() {
-        let dir = TempDir::new().unwrap();
-        let lf = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
-
-        // Read the raw header from disk.
-        let lock_path = dir.path().join(LOCK_FILE_NAME);
-        let data = std::fs::read(&lock_path).unwrap();
-        assert!(data.len() >= SIZEREQID);
-        // Request count should be 0.
-        assert_eq!(&data[0..4], &[0, 0, 0, 0]);
-        // All request slots should be zero.
-        assert!(data[..SIZEREQID].iter().all(|&b| b == 0));
-
-        drop(lf);
-    }
-
-    #[test]
-    fn acquire_release_write_lock() {
-        let dir = TempDir::new().unwrap();
-        let mut lf = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
-
-        assert!(!lf.has_lock(LockType::Write));
-        assert!(lf.acquire(LockType::Write, 1).unwrap().is_acquired());
-        assert!(lf.has_lock(LockType::Write));
-        assert!(lf.has_lock(LockType::Read));
-
-        assert!(lf.release().unwrap());
-        assert!(!lf.has_lock(LockType::Write));
-    }
-
-    #[test]
-    fn acquire_release_read_lock() {
-        let dir = TempDir::new().unwrap();
-        let mut lf = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
-
-        assert!(lf.acquire(LockType::Read, 1).unwrap().is_acquired());
-        assert!(lf.has_lock(LockType::Read));
-        assert!(!lf.has_lock(LockType::Write));
-
-        assert!(lf.release().unwrap());
-        assert!(!lf.has_lock(LockType::Read));
-    }
-
-    #[test]
-    fn sync_data_round_trip_through_file() {
-        let dir = TempDir::new().unwrap();
-        let lf = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
-
-        let sync = SyncData {
-            nrrow: 42,
-            nrcolumn: 2,
-            modify_counter: 3,
-            table_change_counter: 1,
-            data_man_change_counters: vec![5, 7],
-        };
-        lf.write_sync_data(&sync).unwrap();
-
-        let read_back = lf.read_sync_data().unwrap().expect("sync data present");
-        assert_eq!(sync, read_back);
-    }
-
-    #[test]
-    fn read_sync_data_returns_none_when_empty() {
-        let dir = TempDir::new().unwrap();
-        let lf = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
-
-        // Fresh lock file has no sync data.
-        let result = lf.read_sync_data().unwrap();
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn release_returns_false_when_not_locked() {
-        let dir = TempDir::new().unwrap();
-        let mut lf = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
-        assert!(!lf.release().unwrap());
-    }
-
-    #[test]
-    fn inspect_throttles_calls() {
-        let dir = TempDir::new().unwrap();
-        let mut lf = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
-
-        // First 25 non-forced inspect calls should return false (throttled).
-        for _ in 0..25 {
-            assert!(!lf.inspect(false).unwrap());
-        }
-
-        // Forced inspect should always check.
-        // No requests pending, so should return false.
-        assert!(!lf.inspect(true).unwrap());
-    }
-
-    #[test]
-    fn lock_refusals_are_classified_by_errno() {
-        let outcome = |errno| outcome_of_failed_lock(io::Error::from_raw_os_error(errno));
-        for errno in [libc::ENOLCK, libc::ENOTSUP, libc::EOPNOTSUPP] {
-            assert_eq!(outcome(errno).unwrap(), FcntlOutcome::Unsupported(errno));
-        }
-        for errno in [libc::EAGAIN, libc::EACCES] {
-            assert_eq!(outcome(errno).unwrap(), FcntlOutcome::Held);
-        }
-        assert_eq!(outcome(libc::EDEADLK).unwrap(), FcntlOutcome::Deadlock);
-        assert!(outcome(libc::EBADF).is_err());
-    }
-
-    /// A file system without lock support (NFS without lockd, macOS smbfs)
-    /// grants every lock, as casacore does for ENOLCK, and is reported once
-    /// per lock file; a lock held by another process is still refused.
-    #[test]
-    fn a_file_system_without_locking_grants_locks_and_warns_once() {
-        let dir = TempDir::new().unwrap();
-        let lock = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
-        for errno in [libc::ENOTSUP, libc::EOPNOTSUPP, libc::ENOLCK] {
-            assert!(
-                lock.shared
-                    .granted(Ok(FcntlOutcome::Unsupported(errno)))
-                    .unwrap()
-            );
-        }
-        assert!(
-            !report_unsupported_locking(&lock.shared.path, libc::ENOTSUP),
-            "the lock file is reported once"
-        );
-        assert!(!lock.shared.granted(Ok(FcntlOutcome::Held)).unwrap());
-        assert!(
-            lock.shared
-                .granted(outcome_of_failed_lock(io::Error::from_raw_os_error(
-                    libc::EBADF
-                )))
-                .is_err()
-        );
-    }
-
-    /// casacore's `FileLocker::acquire(Read)` keeps a held write lock.
-    #[test]
-    fn a_read_request_keeps_a_held_write_lock() {
-        let dir = TempDir::new().unwrap();
-        let mut writer = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
-        let mut other = LockFile::create_or_open(dir.path(), false, 5.0, false).unwrap();
-        assert!(writer.acquire(LockType::Write, 1).unwrap().is_acquired());
-        assert!(writer.acquire(LockType::Read, 1).unwrap().is_acquired());
-        assert!(writer.has_lock(LockType::Write));
-        assert_eq!(writer.shared.state().writer, Some(writer.id));
-        assert_eq!(writer.shared.state().readers, 0);
-        assert_eq!(
-            other.acquire(LockType::Write, 1).unwrap(),
-            LockOutcome::HeldInProcess
-        );
-        assert!(writer.release().unwrap());
-        assert!(other.acquire(LockType::Write, 1).unwrap().is_acquired());
-    }
-
-    #[test]
-    fn handles_in_one_process_share_one_descriptor() {
-        let dir = TempDir::new().unwrap();
-        let first = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
-        let second = LockFile::create_or_open(dir.path(), false, 5.0, false).unwrap();
-        assert!(Arc::ptr_eq(&first.shared, &second.shared));
-        assert_eq!(
-            registry().get(&first.key).map(|entry| entry.handles),
-            Some(2)
-        );
-        let key = first.key;
-        drop(first);
-        drop(second);
-        assert!(registry().get(&key).is_none());
-    }
-
-    #[test]
-    fn a_second_handle_is_refused_the_write_lock_until_the_first_releases() {
-        let dir = TempDir::new().unwrap();
-        let mut first = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
-        let mut second = LockFile::create_or_open(dir.path(), false, 5.0, false).unwrap();
-
-        assert!(first.acquire(LockType::Write, 1).unwrap().is_acquired());
-        assert_eq!(
-            second.acquire(LockType::Write, 1).unwrap(),
-            LockOutcome::HeldInProcess
-        );
-        // Waiting on a writer in this process could wait on this very
-        // thread, so neither an indefinite nor a bounded wait waits.
-        let started = Instant::now();
-        for nattempts in [0, 3] {
-            assert_eq!(
-                second.acquire(LockType::Write, nattempts).unwrap(),
-                LockOutcome::HeldInProcess
-            );
-        }
-        assert!(started.elapsed() < Duration::from_secs(1));
-        // Reads within one process never conflict.
-        assert!(second.acquire(LockType::Read, 1).unwrap().is_acquired());
-        assert!(second.release().unwrap());
-
-        assert!(first.release().unwrap());
-        assert!(second.acquire(LockType::Write, 1).unwrap().is_acquired());
-        assert_eq!(
-            first.acquire(LockType::Write, 1).unwrap(),
-            LockOutcome::HeldInProcess
-        );
-    }
-
-    #[test]
-    fn refusals_say_who_holds_the_lock() {
-        let in_process = LockOutcome::HeldInProcess.refusal(LockType::Write, 0);
-        assert!(in_process.contains("another handle on this table in this process"));
-        let once = LockOutcome::HeldByAnotherProcess.refusal(LockType::Write, 1);
-        assert!(once.contains("another process holds a read or write lock"));
-        assert!(once.contains("one attempt"));
-        let bounded = LockOutcome::HeldByAnotherProcess.refusal(LockType::Read, 5);
-        assert!(bounded.contains("another process holds the write lock"));
-        assert!(bounded.contains("5 attempts"));
-        let deadlock = LockOutcome::Deadlock.refusal(LockType::Write, 0);
-        assert!(deadlock.contains("would deadlock with another process waiting for this table"));
-        for message in [in_process, once, bounded, deadlock] {
-            assert!(!message.contains("write-locked"), "{message}");
-        }
-    }
-
-    /// The request list is casacore's: a big-endian count followed by
-    /// big-endian `(pid, hostid)` pairs, host id 0.
-    #[test]
-    fn request_ids_use_the_casacore_layout() {
-        let dir = TempDir::new().unwrap();
-        let lf = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
-        let header = || std::fs::read(dir.path().join(LOCK_FILE_NAME)).unwrap()[..12].to_vec();
-
-        lf.add_request_id().unwrap();
-        let mut expected = 1i32.to_be_bytes().to_vec();
-        expected.extend(lf.pid.to_be_bytes());
-        expected.extend(0i32.to_be_bytes());
-        assert_eq!(header(), expected);
-        assert_eq!(lf.read_request_count().unwrap(), 1);
-
-        lf.remove_request_id().unwrap();
-        assert_eq!(header(), vec![0; 12]);
-        assert_eq!(lf.read_request_count().unwrap(), 0);
-    }
-
-    #[test]
-    fn releasing_one_handle_keeps_the_lock_another_still_holds() {
-        let dir = TempDir::new().unwrap();
-        let mut reader = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
-        let mut writer = LockFile::create_or_open(dir.path(), false, 5.0, false).unwrap();
-        assert!(reader.acquire(LockType::Read, 1).unwrap().is_acquired());
-        assert!(writer.acquire(LockType::Write, 1).unwrap().is_acquired());
-        assert_eq!(writer.shared.state().readers, 1);
-
-        assert!(writer.release().unwrap());
-        assert!(reader.has_lock(LockType::Read));
-        assert_eq!(reader.shared.state().readers, 1);
-        assert!(reader.shared.state().writer.is_none());
-
-        // Dropping a handle that holds nothing leaves the reader's lock and
-        // the shared descriptor in place.
-        drop(writer);
-        assert!(registry().contains_key(&reader.key));
-        assert!(reader.release().unwrap());
-    }
-
-    #[test]
-    fn sync_data_peek_reads_through_a_registered_descriptor() {
-        let dir = TempDir::new().unwrap();
-        let mut holder = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
-        assert!(holder.acquire(LockType::Write, 1).unwrap().is_acquired());
-        let sync = SyncData {
-            nrrow: 7,
-            nrcolumn: 1,
-            modify_counter: 1,
-            table_change_counter: 1,
-            data_man_change_counters: vec![1],
-        };
-        holder.write_sync_data(&sync).unwrap();
-        assert_eq!(
-            read_sync_data_from_table_dir(dir.path()).unwrap(),
-            Some(sync)
-        );
-        assert!(holder.has_lock(LockType::Write));
-    }
-
-    #[test]
-    fn a_table_held_in_this_process_is_reported_before_any_other_holder() {
-        let dir = TempDir::new().unwrap();
-        assert_eq!(table_holder(dir.path()).unwrap(), None, "no lock file");
-        let holder = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
-        assert_eq!(
-            table_holder(dir.path()).unwrap(),
-            Some(TableHolder::ThisProcess)
-        );
-        drop(holder);
-        assert_eq!(table_holder(dir.path()).unwrap(), None, "closed");
-    }
-}
+mod tests;

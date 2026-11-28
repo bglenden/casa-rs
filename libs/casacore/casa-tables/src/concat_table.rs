@@ -14,9 +14,7 @@ use std::collections::HashMap;
 use casa_core::{RecordValue, Value};
 
 use crate::schema::TableSchema;
-use crate::storage::{
-    CompositeStorage, StorageManager, StorageSnapshot, table_control::ConcatTableDatContents,
-};
+use crate::storage::{CompositeStorage, StorageSnapshot, table_control::ConcatTableDatContents};
 use crate::table::{Table, TableError, TableOptions};
 use crate::table_path::strip_directory;
 
@@ -315,15 +313,7 @@ impl ConcatTable {
             retained_read_metadata: None,
         };
 
-        let storage = CompositeStorage;
-        storage.save(
-            opts.path(),
-            &snapshot,
-            opts.data_manager(),
-            opts.endian_format().is_big_endian(),
-            opts.tile_shape(),
-        )?;
-        Ok(())
+        Table::save_materialized_snapshot(snapshot, opts)
     }
 }
 
