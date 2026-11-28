@@ -542,12 +542,27 @@ impl NamespaceRows {
             && same_direction(&direction, &reference))
     }
 
-    /// Read physical identities in the row order of an open SPECTRAL_WINDOW table.
-    ///
+    /// Prepare a reader for physical `SPECTRAL_WINDOW` identities by stored
+    /// row number. It reads only the requested rows and shares the table's
+    /// frequency measure descriptors across them.
     /// # Errors
-    /// When the table's frequency metadata cannot be read or is invalid.
-    pub fn spectral_windows(table: &Table) -> Result<Vec<NamespaceWindow>, ObservationError> {
-        windows(table)
+    /// Construction refuses invalid units. The reader reports bad frequency
+    /// metadata in the requested row.
+    pub fn spectral_window_reader(
+        table: &Table,
+    ) -> Result<impl Fn(usize) -> Result<NamespaceWindow, ObservationError> + '_, ObservationError>
+    {
+        require_units(table, "CHAN_FREQ", "Hz")?;
+        require_units(table, "CHAN_WIDTH", "Hz")?;
+        let frequency_refs = crate::columns::frequency_columns::ChanFreqColumn::new(table);
+        Ok(move |row| {
+            Ok(NamespaceWindow {
+                name: string(table, row, "NAME")?,
+                frame: frequency_refs.frequency_reference(row).map_err(storage)?,
+                frequencies_hz: floats(table, row, "CHAN_FREQ")?,
+                widths_hz: floats(table, row, "CHAN_WIDTH")?,
+            })
+        })
     }
 
     /// Read the physical spectral window identities of a persisted
@@ -678,17 +693,7 @@ fn fields(table: &Table) -> Result<Vec<NamespaceField>, ObservationError> {
 }
 
 fn windows(table: &Table) -> Result<Vec<NamespaceWindow>, ObservationError> {
-    require_units(table, "CHAN_FREQ", "Hz")?;
-    require_units(table, "CHAN_WIDTH", "Hz")?;
-    let frequency_refs = crate::columns::frequency_columns::ChanFreqColumn::new(table);
     (0..table.row_count())
-        .map(|row| {
-            Ok(NamespaceWindow {
-                name: string(table, row, "NAME")?,
-                frame: frequency_refs.frequency_reference(row).map_err(storage)?,
-                frequencies_hz: floats(table, row, "CHAN_FREQ")?,
-                widths_hz: floats(table, row, "CHAN_WIDTH")?,
-            })
-        })
+        .map(NamespaceRows::spectral_window_reader(table)?)
         .collect()
 }

@@ -99,6 +99,53 @@ def test_selected_msv4_listing_refuses_incompatible_calibration_identity(
     assert not Path("out.txt").exists()
 
 
+@pytest.mark.parametrize(("column", "value", "reason"), [
+    ("NUM_CHAN", -1, "invalid NUM_CHAN -1"),
+    ("MEAS_FREQ_REF", 100, "invalid measure reference code 100"),
+])
+def test_msv4_validates_only_spectral_windows_needed_by_the_listing(
+    paired_calibration, column, value, reason,
+):
+    ms_v2, ms_v4 = paired_calibration
+
+    def list_window(vis, spw, output):
+        return tasks.listcal(vis=vis, caltable="input.cal", spw=spw, pagerows=0, listfile=output)
+
+    assert list_window(ms_v2, "0:0", "reference.txt") is None
+    reference = Path("reference.txt").read_text()
+    expected_v4 = reference.replace(
+        f"MS name = {Path(ms_v2).absolute()}", f"MS name = {Path(ms_v4).absolute()}",
+    )
+    table = tools.table()
+    assert table.open("input.cal/SPECTRAL_WINDOW", nomodify=False)
+    assert table.nrows() == 2
+    assert table.putcell(column, 1, value)
+    assert table.close()
+
+    assert list_window(ms_v4, "0:0", "explicit.txt") is None
+    assert Path("explicit.txt").read_text() == expected_v4
+    with pytest.raises(tasks.TaskParameterError, match=f"window 1.*{reason}") as failure:
+        list_window(ms_v4, "*", "wildcard.txt")
+    assert failure.value.completion.parameter == "vis"
+    assert not Path("wildcard.txt").exists()
+
+    if column == "NUM_CHAN":
+        with pytest.raises(tasks.TaskExecutionError, match="number too small to fit in target type"):
+            list_window(ms_v2, "0:0", "legacy.txt")
+        assert not Path("legacy.txt").exists()
+    else:
+        assert list_window(ms_v2, "0:0", "legacy.txt") is None
+        assert Path("legacy.txt").read_text() == reference
+
+    assert table.open("input.cal", nomodify=False)
+    remove = [row for row, window in enumerate(table.getcol("SPECTRAL_WINDOW_ID")) if window == 1]
+    assert remove and table.removerows(remove)
+    assert set(table.getcol("SPECTRAL_WINDOW_ID")) == {0}
+    assert table.close()
+    assert list_window(ms_v4, "*", "wildcard.txt") is None
+    assert Path("wildcard.txt").read_text() == expected_v4
+
+
 def test_paged_msv4_file_listing_returns_typed_refusal(paired_calibration):
     _, ms_v4 = paired_calibration
     with pytest.raises(tasks.TaskParameterError, match="pagerows=0") as failure:
