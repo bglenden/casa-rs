@@ -86,6 +86,7 @@ where
             blcf,
             trcf,
             &world_text,
+            cancellation,
         )?;
         ImstatOutcome::Global(summary)
     } else {
@@ -123,6 +124,7 @@ pub(super) fn imstat_global_summary<T>(
     blcf: String,
     trcf: String,
     world_text: &dyn Fn(&[usize]) -> Result<String, ImageError>,
+    cancellation: Option<&Cancellation>,
 ) -> Result<ImageStatisticsSummary, ImageError>
 where
     T: ImagePixel + StatsElement,
@@ -137,6 +139,7 @@ where
             // statistics; a gapped Stokes set needs the sample route.
             let sub = image.sub_image(selection.start.clone(), selection.shape.clone())?;
             let mut stats = LatticeStatistics::new(&sub);
+            stats.set_cancellation(cancellation);
             if let Some([min, max]) = request.includepix {
                 stats.set_include_range(min, max);
             }
@@ -173,8 +176,9 @@ where
                 selection.stokes_axis,
                 selection.stokes_indices.as_deref(),
                 &selection.start,
-            );
-            match compute_robust_stats(&sample, robust)? {
+                cancellation,
+            )?;
+            match compute_robust_stats_with_cancellation(&sample, robust, cancellation)? {
                 RobustStats::Sample(stats) => ComputedStats {
                     npts: stats.npts,
                     sum: stats.sum,
@@ -206,8 +210,7 @@ where
                     // The biweight reports only its location and scale,
                     // with the sample's count and extrema.
                     let npts = sample.len() as f64;
-                    let min = sample.iter().map(|p| p.value).fold(f64::NAN, f64::min);
-                    let max = sample.iter().map(|p| p.value).fold(f64::NAN, f64::max);
+                    let (min, max) = sample_extrema(&sample, cancellation)?;
                     ComputedStats {
                         npts,
                         sum: f64::NAN,
@@ -407,13 +410,12 @@ where
         biweight,
     };
     let mut iterations = Vec::new();
-    for bucket in &buckets {
+    for mut sample in buckets {
         check_imstat_cancelled(cancellation)?;
         #[cfg(feature = "imstat-test-hooks")]
         observe(Checkpoint::PlaneStarted);
-        let mut sample = bucket.clone();
         sample.sort_by_key(|point| point.position);
-        match compute_robust_stats(&sample, algorithm)? {
+        match compute_robust_stats_with_cancellation(&sample, algorithm, cancellation)? {
             RobustStats::Sample(stats) => {
                 iterations.push(stats.chauvenet_iterations);
                 planes.npts.push(stats.npts);
@@ -443,8 +445,7 @@ where
             }
             RobustStats::Biweight { location, scale } => {
                 let count = sample.len() as f64;
-                let min = sample.iter().map(|p| p.value).fold(f64::NAN, f64::min);
-                let max = sample.iter().map(|p| p.value).fold(f64::NAN, f64::max);
+                let (min, max) = sample_extrema(&sample, cancellation)?;
                 planes.npts.push(count);
                 planes.min.push(min);
                 planes.max.push(max);
@@ -482,6 +483,21 @@ where
         )?;
     }
     Ok(planes)
+}
+
+fn sample_extrema(
+    sample: &[SamplePoint],
+    cancellation: Option<&Cancellation>,
+) -> Result<(f64, f64), ImageError> {
+    let (mut min, mut max) = (f64::NAN, f64::NAN);
+    for batch in sample.chunks(4096) {
+        check_imstat_cancelled(cancellation)?;
+        for point in batch {
+            min = min.min(point.value);
+            max = max.max(point.value);
+        }
+    }
+    Ok((min, max))
 }
 
 /// The statistics one `imstat` computation reports, before the record and

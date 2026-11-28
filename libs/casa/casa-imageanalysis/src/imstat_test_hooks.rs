@@ -12,6 +12,10 @@ pub enum Checkpoint {
     PlaneFinished,
     /// The task adapter is about to check cancellation before logfile publication.
     BeforeLogfile,
+    /// A batch in the current median absolute deviation pass is about to start.
+    DeviationBatchStarted,
+    /// A batch in the current median absolute deviation pass has finished.
+    DeviationBatchFinished,
 }
 
 type Observer = Box<dyn Fn(Checkpoint)>;
@@ -30,7 +34,16 @@ pub fn with_observer<T>(observer: impl Fn(Checkpoint) + 'static, run: impl FnOnc
         }
     }
     let _reset = Reset(OBSERVER.replace(Some(Box::new(observer))));
-    run()
+    use casa_lattices::statistics_test_hooks::{self, Checkpoint as StatisticsCheckpoint};
+    statistics_test_hooks::with_observer(
+        |checkpoint| {
+            observe(match checkpoint {
+                StatisticsCheckpoint::DeviationBatchStarted => Checkpoint::DeviationBatchStarted,
+                StatisticsCheckpoint::DeviationBatchFinished => Checkpoint::DeviationBatchFinished,
+            })
+        },
+        run,
+    )
 }
 
 /// Report a checkpoint to the observer on the current thread.

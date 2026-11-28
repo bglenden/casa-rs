@@ -177,7 +177,8 @@ pub(super) fn sample_points<T>(
     stokes_axis: Option<usize>,
     stokes_indices: Option<&[usize]>,
     start: &[usize],
-) -> Vec<SamplePoint>
+    cancellation: Option<&Cancellation>,
+) -> Result<Vec<SamplePoint>, ImageError>
 where
     T: ImagePixel + StatsElement,
 {
@@ -189,7 +190,10 @@ where
         stride *= axis_shape as u64;
     }
     let mut sample = Vec::new();
-    for (index, value) in pixels.indexed_iter() {
+    for (visited, (index, value)) in pixels.indexed_iter().enumerate() {
+        if visited.is_multiple_of(4096) {
+            check_imstat_cancelled(cancellation)?;
+        }
         if let Some(mask) = pixel_mask {
             let position: &[usize] = index.slice();
             if !mask[position] {
@@ -225,8 +229,9 @@ where
     }
     // casacore walks its arrays in Fortran order, so a tie's reported
     // position is the first in that order.
+    check_imstat_cancelled(cancellation)?;
     sample.sort_by_key(|point| point.position);
-    sample
+    Ok(sample)
 }
 
 /// The position of a Fortran-linear index inside a selection shape.

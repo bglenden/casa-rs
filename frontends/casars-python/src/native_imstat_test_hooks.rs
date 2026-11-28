@@ -19,6 +19,7 @@ pub(crate) fn _arm_imstat_test(stage: &str) -> PyResult<()> {
     NEXT_IMSTAT.set(Some(match stage {
         "plane" => Checkpoint::PlaneFinished,
         "before-logfile" => Checkpoint::BeforeLogfile,
+        "deviation-batch" => Checkpoint::DeviationBatchFinished,
         _ => return Err(PyValueError::new_err("unknown imstat test checkpoint")),
     }));
     Ok(())
@@ -44,6 +45,14 @@ pub(super) fn run<T>(
     let sent = Cell::new(false);
     with_observer(
         move |checkpoint| {
+            if interruption != Checkpoint::DeviationBatchFinished
+                && matches!(
+                    checkpoint,
+                    Checkpoint::DeviationBatchStarted | Checkpoint::DeviationBatchFinished
+                )
+            {
+                return;
+            }
             tracing::debug!("imstat test checkpoint {checkpoint:?}");
             if checkpoint == interruption && !sent.replace(true) {
                 signal_test_worker(&sender);

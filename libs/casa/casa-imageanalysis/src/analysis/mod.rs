@@ -11,8 +11,8 @@ use casa_core::cancellation::Cancellation;
 use casa_core::{ArrayD, RecordValue, ScalarValue, Value};
 use casa_lattices::{
     LatticeStatistics, RobustStats, SamplePoint, Statistic, StatisticsAlgorithm,
-    StatisticsAlgorithmKind, StatsElement, TiledShape, compute_robust_stats, parse_algorithm,
-    parse_center, parse_clmethod,
+    StatisticsAlgorithmKind, StatsElement, TiledShape, compute_robust_stats_with_cancellation,
+    parse_algorithm, parse_center, parse_clmethod,
 };
 use casa_tables::{Table, TableOptions};
 use fitsio::images::ImageType as FitsImageType;
