@@ -58,6 +58,9 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     // The output the transform refuses before it starts is the argument's
     // fault; anything else failed the transform.
     let report = mstransform_task(&request, &options).map_err(|error| match error {
+        MsTransformError::Interrupted => {
+            TaskFailure::interrupted(format!("{} interrupted", task.surface()))
+        }
         MsTransformError::OutputExists { .. } | MsTransformError::SameInputOutput { .. } => {
             TaskFailure::validation(error.to_string()).at("outputvis")
         }
@@ -113,6 +116,7 @@ fn transform_request(
         (None, None)
     };
     let options = MsTransformTaskOptions {
+        cancel: task.cancellation().cloned(),
         use_weight_spectrum: task.surface() == "mstransform" && task.flag("usewtspectrum")?,
         hanning: task.surface() == "mstransform" && task.flag("hanning")?,
         combine_spws: task.surface() == "mstransform" && task.flag("combinespws")?,

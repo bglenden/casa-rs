@@ -47,15 +47,19 @@ impl ImagingExecutionOptions {
             evla_surface: default_evla_surface(),
         }
     }
+
+    pub(crate) fn native(cancel: Cancel) -> Self {
+        Self {
+            cancel,
+            write_run_summary: false,
+            evla_surface: default_evla_surface(),
+        }
+    }
 }
 
 impl Default for ImagingExecutionOptions {
     fn default() -> Self {
-        Self {
-            cancel: Cancel::new(),
-            write_run_summary: false,
-            evla_surface: default_evla_surface(),
-        }
+        Self::native(Cancel::new())
     }
 }
 

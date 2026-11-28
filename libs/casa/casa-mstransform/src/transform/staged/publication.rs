@@ -39,6 +39,7 @@ pub(super) fn publish_transform(
     rows: OutputRows<'_>,
     spectra: OutputSpectra<'_>,
     write: OutputWrite<'_>,
+    options: &MsTransformTaskOptions,
     budget: MsSelectionIoBudget,
     started_at: Instant,
 ) -> Result<MsTransformReport, MsTransformError> {
@@ -83,10 +84,14 @@ pub(super) fn publish_transform(
     for name in spectra_output {
         output_column_overrides.insert_deferred(name);
     }
-    for (&input_row, ddid) in output_input_rows[..selected_output_rows]
+    for (index, (&input_row, ddid)) in output_input_rows[..selected_output_rows]
         .iter()
         .zip(&output_input_ddids[..selected_output_rows])
+        .enumerate()
     {
+        if index.is_multiple_of(4096) {
+            options.check_cancelled()?;
+        }
         let compact = regrid
             .as_ref()
             .and_then(|plan| plan.output_description(input_row))
@@ -115,7 +120,13 @@ pub(super) fn publish_transform(
                 })?;
         }
     }
-    for field_id in &selected_field_ids_for_metadata[..selected_output_rows] {
+    for (index, field_id) in selected_field_ids_for_metadata[..selected_output_rows]
+        .iter()
+        .enumerate()
+    {
+        if index.is_multiple_of(4096) {
+            options.check_cancelled()?;
+        }
         let compact = match &field_id_map {
             Some(ids) => ids.get(field_id).copied().ok_or_else(|| {
                 MsTransformError::SpectralMetadata {
@@ -136,6 +147,7 @@ pub(super) fn publish_transform(
                 })?;
         }
     }
+    options.check_cancelled()?;
     let output_options = measurement_set_table_options(&request.output_ms);
     let write_telemetry = if writes_rows {
         let output_bindings = measurement_set_main_table_bindings(output_main);
@@ -165,6 +177,7 @@ pub(super) fn publish_transform(
         stage_started_at.elapsed(),
         started_at.elapsed(),
     );
+    options.check_cancelled()?;
     let stage_started_at = Instant::now();
     if let Some(regrid) = &regrid {
         regrid.write_metadata(request, compact_metadata)?;

@@ -205,7 +205,11 @@ Cargo target directory. The install-suite smoke test first exercises the
 standalone commands, then hides the suite's binaries before invoking Python
 from the installed suite. The package script runs the `casars.tools` tests
 against the bundled measures snapshot unless
-`CASA_RS_MEASURESPATH` names a runtime. `test_binding_snapshots.py` pins what
+`CASA_RS_MEASURESPATH` names a runtime. The editable build enables
+`transform-test-hooks` for the public SIGINT tests. The feature forces
+single-row batches and lets the tests interrupt at an observed staging
+boundary. Run the Rust staging concurrency checks with
+`cargo test -p casa-mstransform --features transform-test-hooks --test api transform_cancellation::`. `test_binding_snapshots.py` pins what
 the binding returns to Python; regenerate its fixture only for an intended
 change.
 
