@@ -67,6 +67,18 @@ def test_time_binned_point_source_gaincal(tmp_path, monkeypatch, store):
     assert np.max(np.abs(np.abs(ratio) - 1.0)) < 0.2
 
 
+@pytest.mark.parametrize("store", ["ms_trial.ms", "ms_trial.ps.zarr"])
+def test_time_binned_gaincal_uses_casas_interval_origin(tmp_path, monkeypatch, store):
+    prepare_store(tmp_path, monkeypatch, store)
+    result = tasks.gaincal(
+        vis=store, caltable="solved.cal", gaintype="G", calmode="ap", solint="10.0005s",
+        refant="0", refantmode="strict", smodel=[1.0, 0.0, 0.0, 0.0], minsnr=0, minblperant=1,
+    )
+    # CASA offsets the first solution interval by 10 ms. For 10 s
+    # integrations and this interval width it expects all 12 intervals.
+    np.testing.assert_array_equal(result["solvestats"]["expected"], [12, 12])
+
+
 def test_gaincal_refuses_an_unavailable_msv4_mode_before_publication(tmp_path, monkeypatch):
     store = "ms_trial.ps.zarr"
     prepare_store(tmp_path, monkeypatch, store)

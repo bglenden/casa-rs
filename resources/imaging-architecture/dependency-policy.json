@@ -143,6 +143,7 @@
    "casa-ms",
    "casa-mstransform",
    "casa-numerics",
+   "casa-observation",
    "casa-tables"
   ],
   "casa-singledish": [
