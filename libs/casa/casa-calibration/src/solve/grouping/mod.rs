@@ -52,6 +52,25 @@ pub(crate) fn build_solve_groups(
     channel_bin_widths: &BTreeMap<i32, usize>,
     options: SolveGroupOptions,
 ) -> Result<BTreeMap<(SolveBaseKey, SolveBucketKey), SolveAccumulator>, GainSolveError> {
+    build_solve_groups_with_control(
+        ms,
+        rows,
+        preapplied_rows,
+        channel_bin_widths,
+        options,
+        Default::default(),
+    )
+}
+
+pub(crate) fn build_solve_groups_with_control(
+    ms: &MeasurementSet,
+    rows: &[SelectedSolveRow],
+    preapplied_rows: Option<&PreappliedRows>,
+    channel_bin_widths: &BTreeMap<i32, usize>,
+    options: SolveGroupOptions,
+    control: super::control::SolveControl<'_>,
+) -> Result<BTreeMap<(SolveBaseKey, SolveBucketKey), SolveAccumulator>, GainSolveError> {
+    control.check()?;
     let mut groups = BTreeMap::<(SolveBaseKey, SolveBucketKey), SolveAccumulator>::new();
     let mut models = super::model::ModelInputs::new(ms, rows, options.model_source)?;
     let only_autocorrelations = options.input_rows == SolveInputRows::Autocorrelations;
@@ -124,11 +143,19 @@ pub(crate) fn build_solve_groups(
             SpectralWeights::new(ms, &ordered, options.combine)?
         };
     let pipelined = overlap_inputs(ordered.len());
+    let batch_rows = 256;
+    #[cfg(feature = "solve-test-hooks")]
+    let batch_rows = if crate::solve_test_hooks::small_batches() {
+        32
+    } else {
+        batch_rows
+    };
     if std::env::var_os("CASA_RS_CALIBRATION_TIMING").is_some() {
         eprintln!("calibration_workers {}", if pipelined { 2 } else { 1 });
     }
     let read_uncalibrated_data = preapplied_rows.is_none();
     let read = |batch: &[BucketedRow<'_>]| {
+        control.check()?;
         let _phase = crate::timing::Phase::start("solve_read_decode");
         let indices = batch
             .iter()
@@ -156,7 +183,12 @@ pub(crate) fn build_solve_groups(
             options.polynomial_bandpass && !channel_bin_widths.is_empty(),
         )
     };
-    let mut consume = |batch: &[BucketedRow<'_>], inputs: SolveInputBatch| {
+    let mut consume = |_batch_index: usize, batch: &[BucketedRow<'_>], inputs: SolveInputBatch| {
+        control.check()?;
+        #[cfg(feature = "solve-test-hooks")]
+        control.observe(crate::solve_test_hooks::Checkpoint::LegacyBatchStarted(
+            _batch_index,
+        ));
         let _accumulate_phase = crate::timing::Phase::start("solve_accumulate");
         for (index, &(row, base_key, bucket_key)) in batch.iter().enumerate() {
             let group = groups.entry((base_key, bucket_key)).or_insert_with(|| {
@@ -187,9 +219,15 @@ pub(crate) fn build_solve_groups(
                 return Err(GainSolveError::GatherOnlyCannotFit);
             }
         }
+        #[cfg(feature = "solve-test-hooks")]
+        control.observe(crate::solve_test_hooks::Checkpoint::LegacyBatchFinished(
+            _batch_index,
+        ));
         Ok::<_, GainSolveError>(())
     };
     if pipelined {
+        #[cfg(feature = "solve-test-hooks")]
+        control.observe(crate::solve_test_hooks::Checkpoint::LegacyPipelineStarted);
         let dispatch = tracing::dispatcher::get_default(Clone::clone);
         std::thread::scope(|scope| {
             let (sender, receiver) = std::sync::mpsc::sync_channel(1);
@@ -197,7 +235,7 @@ pub(crate) fn build_solve_groups(
             let dispatch = &dispatch;
             scope.spawn(move || {
                 tracing::dispatcher::with_default(dispatch, || {
-                    for batch in producer_rows.chunks(256) {
+                    for batch in producer_rows.chunks(batch_rows) {
                         let input = read(batch);
                         let failed = input.is_err();
                         if sender.send(input).is_err() || failed {
@@ -209,18 +247,20 @@ pub(crate) fn build_solve_groups(
             // Drop the receiver before scope joins the reader on an error,
             // unblocking a producer that is waiting to send its next batch.
             (|| {
-                for (batch, input) in ordered.chunks(256).zip(receiver) {
-                    consume(batch, input?)?;
+                for (index, (batch, input)) in ordered.chunks(batch_rows).zip(receiver).enumerate()
+                {
+                    consume(index, batch, input?)?;
                 }
                 Ok::<_, GainSolveError>(())
             })()
         })?;
     } else {
-        for batch in ordered.chunks(256) {
-            consume(batch, read(batch)?)?;
+        for (index, batch) in ordered.chunks(batch_rows).enumerate() {
+            consume(index, batch, read(batch)?)?;
         }
     }
 
+    control.check()?;
     Ok(groups)
 }
 
@@ -1066,20 +1106,20 @@ impl SolveAccumulator {
     /// `SDBList::aggregateTimeCentroid`: each baseline's TIME_CENTROID,
     /// averaged over its rows by row weight as time averaging does, weighted
     /// by the baseline's solve weight after that phase-only scaling.
+    #[cfg(test)]
     pub(crate) fn finalize_for_solve(&mut self, solve_mode: GainSolveMode, preserve_samples: bool) {
-        self.finalize(solve_mode, preserve_samples, false);
+        self.finalize(solve_mode, preserve_samples, false, Default::default())
+            .expect("no cancellation token");
     }
 
-    pub(crate) fn finalize_bandpass(&mut self, solve_mode: GainSolveMode) {
-        self.finalize(solve_mode, false, true);
-    }
-
-    fn finalize(
+    pub(crate) fn finalize(
         &mut self,
         solve_mode: GainSolveMode,
         preserve_samples: bool,
         direct_centroid: bool,
-    ) {
+        control: super::control::SolveControl<'_>,
+    ) -> Result<(), GainSolveError> {
+        control.check()?;
         self.channel_graphs = vec![
             vec![SolveGraph::default(); self.receptor_accumulations.len()];
             self.solution_channels
@@ -1088,6 +1128,9 @@ impl SolveAccumulator {
         for (receptor, accumulations) in self.receptor_accumulations.iter().enumerate() {
             for (key, channels) in accumulations {
                 for (channel_index, accumulation) in channels.iter().enumerate() {
+                    if channel_index.is_multiple_of(256) {
+                        control.check()?;
+                    }
                     if accumulation.weight <= 0.0 {
                         continue;
                     }
@@ -1168,7 +1211,7 @@ impl SolveAccumulator {
 
         if direct_centroid {
             self.solution_time = self.bandpass_centroid(baseline_weights);
-            return;
+            return Ok(());
         }
         let mut solution_time = WeightedTime::default();
         for (baseline, weight) in baseline_weights {
@@ -1180,6 +1223,7 @@ impl SolveAccumulator {
         self.solution_time = solution_time
             .mean()
             .unwrap_or_else(|| self.aggregate_time());
+        Ok(())
     }
 
     fn bandpass_centroid(&self, weights: HashMap<AveragedBaseline, f64>) -> f64 {

@@ -13,6 +13,8 @@ pub(crate) use metadata::{
 };
 mod postprocess;
 
+use crate::solve::control::SolveControl;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -33,9 +35,10 @@ use crate::constants::{
     COL_WEIGHT,
 };
 use crate::selected_data::SelectedData;
-use crate::session::prepare_calibration_solve;
+use crate::session::{prepare_calibration_solve, prepare_calibration_solve_with_control};
 use crate::solve::grouping::{
-    SelectedSolveRow, SolveAccumulator, SolveGroupOptions, SolveInputRows, build_solve_groups,
+    SelectedSolveRow, SolveAccumulator, SolveGroupOptions, SolveInputRows,
+    build_solve_groups_with_control,
 };
 use crate::solve::kernel::{SolveGraphOptions, SolveStart, SolvedGraphs, solve_graphs};
 use crate::solve::spectral_window_ids;
@@ -387,7 +390,9 @@ pub(crate) fn solve_bandpass(
     mode: crate::output::CalibrationOutputMode,
     activity: Option<&mut ToolSolveActivity>,
     controls: BandpassSolveControls,
+    control: SolveControl<'_>,
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
+    control.check()?;
     validate_bandpass_request(request)?;
     let use_casa_solve = request.band_type == BandpassType::B || request.cuts.is_some();
     let polynomial_bandpass = request.band_type == BandpassType::BPoly
@@ -395,21 +400,24 @@ pub(crate) fn solve_bandpass(
         && !controls.modern_polynomial;
     let rotate_model = request.parang && use_casa_solve;
     let input_phase = crate::timing::Phase::start("bandpass_select_read_average");
-    let context = prepare_calibration_solve(
+    let context = prepare_calibration_solve_with_control(
         ms,
         &request.selection,
         &request.refant,
         &request.prior_calibration_tables,
         request.parang,
         use_casa_solve,
-        if use_casa_solve {
-            crate::solve::grouping::PriorCalibrationMode::Bandpass {
-                share_input_flags: !request.correlation_dependent_flags && !polynomial_bandpass,
-                rotate_model,
-            }
-        } else {
-            crate::solve::grouping::PriorCalibrationMode::Data
-        },
+        (
+            if use_casa_solve {
+                crate::solve::grouping::PriorCalibrationMode::Bandpass {
+                    share_input_flags: !request.correlation_dependent_flags && !polynomial_bandpass,
+                    rotate_model,
+                }
+            } else {
+                crate::solve::grouping::PriorCalibrationMode::Data
+            },
+            control,
+        ),
     );
     let context = match context {
         Ok(context) => context,
@@ -428,7 +436,7 @@ pub(crate) fn solve_bandpass(
     // introduced by a prior remain on the affected correlations.
     let correlation_dependent_flags = request.correlation_dependent_flags
         || (use_casa_solve && context.preapplied_rows.is_some());
-    let groups = build_solve_groups(
+    let groups = build_solve_groups_with_control(
         ms,
         &context.rows,
         context.preapplied_rows.as_ref(),
@@ -459,6 +467,7 @@ pub(crate) fn solve_bandpass(
             robust_seed: false,
             correlation_dependent_flags,
         },
+        control,
     )?;
 
     if groups.is_empty() {
@@ -479,7 +488,7 @@ pub(crate) fn solve_bandpass(
             groups.into_values(),
             &channel_bin_widths,
             activity,
-            mode,
+            (mode, control),
         );
     }
     let kernel_phase = crate::timing::Phase::start("bandpass_solve");
@@ -490,9 +499,12 @@ pub(crate) fn solve_bandpass(
         &context.available_antennas,
     );
     for mut group in groups.into_values() {
+        control.check()?;
         match request.band_type {
-            BandpassType::B => group.finalize_bandpass(controls.solve_mode),
-            BandpassType::BPoly => group.finalize_for_solve(GainSolveMode::AmplitudePhase, false),
+            BandpassType::B => group.finalize(controls.solve_mode, false, true, control)?,
+            BandpassType::BPoly => {
+                group.finalize(GainSolveMode::AmplitudePhase, false, false, control)?
+            }
         }
         let mut stages = IntervalStages::of(
             &group,
@@ -514,7 +526,8 @@ pub(crate) fn solve_bandpass(
                 correlation_dependent_flags,
                 request.correlation_dependent_flags,
             ),
-        );
+            control,
+        )?;
         if request.band_type == BandpassType::BPoly && request.normalize_average_amplitude {
             normalize_bandpass_rows(&mut rows, group.solution_channels);
         }
@@ -538,8 +551,30 @@ pub(crate) fn solve_bandpass(
         solve_stats.solutions(group.spw_id, solutions);
         solution_rows.extend(rows);
     }
+    control.check()?;
     solve_stats.track_activity(activity);
     drop(kernel_phase);
+    write_solved_bandpass(
+        ms,
+        request,
+        context,
+        &channel_bin_widths,
+        controls,
+        (solution_rows, solve_stats),
+        (mode, control),
+    )
+}
+
+fn write_solved_bandpass(
+    ms: &MeasurementSet,
+    request: &BandpassSolveRequest,
+    context: crate::session::CalibrationSolveContext,
+    channel_bin_widths: &BTreeMap<i32, usize>,
+    controls: BandpassSolveControls,
+    (mut solution_rows, mut solve_stats): (Vec<BandpassSolutionRow>, SolveStatsBuilder),
+    (mode, control): (crate::output::CalibrationOutputMode, SolveControl<'_>),
+) -> Result<BandpassSolveReport, BandpassSolveError> {
+    control.check()?;
     let _write_phase = crate::timing::Phase::start("bandpass_write");
     if solution_rows.is_empty() {
         return Ok(empty_report(
@@ -577,14 +612,19 @@ pub(crate) fn solve_bandpass(
                 request,
                 context.refant_id,
                 &solution_rows,
-                &channel_bin_widths,
+                channel_bin_widths,
                 &context.rows,
-                mode,
+                (mode, control),
             )
         }
-        BandpassType::BPoly => {
-            write_bpoly_caltable(ms, request, context.refant_id, &solution_rows, mode)
-        }
+        BandpassType::BPoly => write_bpoly_caltable(
+            ms,
+            request,
+            context.refant_id,
+            &solution_rows,
+            mode,
+            control,
+        ),
     }?;
     Ok(BandpassSolveReport {
         selected_data: context.selected_data,
@@ -736,7 +776,8 @@ fn solve_bandpass_group(
     request: &BandpassSolveRequest,
     solve_mode: GainSolveMode,
     (correlation_dependent_flags, independent_input_flags): (bool, bool),
-) -> (Vec<BandpassSolutionRow>, BTreeSet<i32>) {
+    control: SolveControl<'_>,
+) -> Result<(Vec<BandpassSolutionRow>, BTreeSet<i32>), BandpassSolveError> {
     let BandpassSolveRequest {
         combine,
         cuts,
@@ -749,6 +790,11 @@ fn solve_bandpass_group(
     let mut solved_channels = vec![None; channel_count];
     let mut start = None::<SolvedGraphs>;
     for (channel, graphs) in group.channel_graphs.iter().enumerate().rev() {
+        control.check()?;
+        #[cfg(feature = "solve-test-hooks")]
+        control.observe(crate::solve_test_hooks::Checkpoint::BandpassChannelStarted(
+            channel,
+        ));
         let solved = solve_graphs(
             graphs,
             GainType::G,
@@ -760,6 +806,7 @@ fn solve_bandpass_group(
                 correlation_dependent_flags,
                 defer_reference: band_type == BandpassType::B,
                 robustness: None,
+                control,
             },
             if band_type == BandpassType::BPoly {
                 start
@@ -774,10 +821,13 @@ fn solve_bandpass_group(
                 SolveStart::PreviousChannel(start.as_ref())
             },
         );
+        control.check()?;
         if solved.is_some() || band_type == BandpassType::B {
             start.clone_from(&solved);
         }
         solved_channels[channel] = solved;
+        #[cfg(feature = "solve-test-hooks")]
+        control.observe(crate::solve_test_hooks::Checkpoint::BandpassChannelFinished(channel));
     }
     // The antennas the channel solves referred their gains to.
     let refants = solved_channels
@@ -786,7 +836,7 @@ fn solve_bandpass_group(
         .map(|solved| solved.refant_id)
         .collect::<BTreeSet<_>>();
     if refants.is_empty() {
-        return (Vec::new(), refants);
+        return Ok((Vec::new(), refants));
     }
     // CASA keeps the previous formal errors and SNR when a channel fails
     // to solve, while flagging its gains. It traverses the channels backward.
@@ -817,7 +867,9 @@ fn solve_bandpass_group(
 
     let mut solution_rows = Vec::new();
     for field_id in output_field_ids {
+        control.check()?;
         for antenna_id in antenna_ids.iter().copied() {
+            control.check()?;
             let mut gains = Vec::with_capacity(2 * channel_count);
             let mut flags = Vec::with_capacity(2 * channel_count);
             let mut param_errors = Vec::with_capacity(2 * channel_count);
@@ -867,7 +919,7 @@ fn solve_bandpass_group(
         }
     }
 
-    (solution_rows, refants)
+    Ok((solution_rows, refants))
 }
 
 fn write_bandpass_caltable(
@@ -877,8 +929,9 @@ fn write_bandpass_caltable(
     rows: &[BandpassSolutionRow],
     channel_bin_widths: &BTreeMap<i32, usize>,
     selected_rows: &[SelectedSolveRow],
-    mode: crate::output::CalibrationOutputMode,
+    (mode, control): (crate::output::CalibrationOutputMode, SolveControl<'_>),
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
+    control.check()?;
     let schema = TableSchema::new(vec![
         ColumnSchema::scalar(COL_TIME, casa_core::PrimitiveType::Float64),
         ColumnSchema::scalar(COL_FIELD_ID, casa_core::PrimitiveType::Int32),
@@ -913,7 +966,10 @@ fn write_bandpass_caltable(
         mode,
     )?;
 
-    for row in rows {
+    for (index, row) in rows.iter().enumerate() {
+        if index.is_multiple_of(256) {
+            control.check()?;
+        }
         let receptor_count = 2;
         writer.append(RecordValue::new(vec![
             RecordField::new(
@@ -1003,7 +1059,7 @@ fn write_bandpass_caltable(
         selected_rows,
         request.combine.spectral_windows,
     )?;
-    writer.save_main()?;
+    writer.save_main_with_control(control)?;
 
     let field_ids = rows.iter().map(|row| row.field_id).collect::<BTreeSet<_>>();
     let spw_ids = rows.iter().map(|row| row.spw_id).collect::<BTreeSet<_>>();

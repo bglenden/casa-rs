@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Prior calibration and packed visibility inputs shared by calibration solvers.
 
+use crate::solve::control::SolveControl;
+
 use casa_core::ArrayValue;
 use casa_ms::{MeasurementSet, MsSelection};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
@@ -56,7 +58,9 @@ pub(crate) fn load_preapplied_rows(
     prior_calibration_tables: &[ApplyCalibrationTableSpec],
     parang: bool,
     mode: PriorCalibrationMode,
+    control: SolveControl<'_>,
 ) -> Result<Option<PreappliedRows>, GainSolveError> {
+    control.check()?;
     let legacy_rotate = match mode {
         PriorCalibrationMode::Gain { rotate_model, .. }
         | PriorCalibrationMode::Bandpass { rotate_model, .. }
@@ -82,13 +86,23 @@ pub(crate) fn load_preapplied_rows(
         plan.parang = false;
     }
     let preapplied = match mode {
-        PriorCalibrationMode::Data => evaluate_apply_rows(ms, &plan, false).map(Into::into),
-        PriorCalibrationMode::Baseline { share_input_flags } => {
-            evaluate_solve_priors(ms, plan, PriorSolveBoundary::Baseline, share_input_flags)
+        PriorCalibrationMode::Data => {
+            evaluate_apply_rows(ms, &plan, false, control).map(Into::into)
         }
-        PriorCalibrationMode::Accor { share_input_flags } => {
-            evaluate_solve_priors(ms, plan, PriorSolveBoundary::Accor, share_input_flags)
-        }
+        PriorCalibrationMode::Baseline { share_input_flags } => evaluate_solve_priors(
+            ms,
+            plan,
+            PriorSolveBoundary::Baseline,
+            share_input_flags,
+            control,
+        ),
+        PriorCalibrationMode::Accor { share_input_flags } => evaluate_solve_priors(
+            ms,
+            plan,
+            PriorSolveBoundary::Accor,
+            share_input_flags,
+            control,
+        ),
         PriorCalibrationMode::Gain {
             scalar,
             share_input_flags,
@@ -99,17 +113,29 @@ pub(crate) fn load_preapplied_rows(
             } else {
                 PriorSolveBoundary::Gain
             };
-            evaluate_solve_priors(ms, plan, boundary, share_input_flags)
+            evaluate_solve_priors(ms, plan, boundary, share_input_flags, control)
         }
         PriorCalibrationMode::Bandpass {
             share_input_flags, ..
-        } => evaluate_solve_priors(ms, plan, PriorSolveBoundary::Bandpass, share_input_flags),
+        } => evaluate_solve_priors(
+            ms,
+            plan,
+            PriorSolveBoundary::Bandpass,
+            share_input_flags,
+            control,
+        ),
         PriorCalibrationMode::GainSpline => {
-            evaluate_solve_priors(ms, plan, PriorSolveBoundary::GainSpline, true)
+            evaluate_solve_priors(ms, plan, PriorSolveBoundary::GainSpline, true, control)
         }
         PriorCalibrationMode::Delay {
             share_input_flags, ..
-        } => evaluate_solve_priors(ms, plan, PriorSolveBoundary::Delay, share_input_flags),
+        } => evaluate_solve_priors(
+            ms,
+            plan,
+            PriorSolveBoundary::Delay,
+            share_input_flags,
+            control,
+        ),
         PriorCalibrationMode::Leakage {
             share_input_flags,
             parang_terms,
@@ -118,6 +144,7 @@ pub(crate) fn load_preapplied_rows(
             plan,
             PriorSolveBoundary::Leakage { parang_terms },
             share_input_flags,
+            control,
         ),
         PriorCalibrationMode::CrossHand {
             share_input_flags,
@@ -127,6 +154,7 @@ pub(crate) fn load_preapplied_rows(
             plan,
             PriorSolveBoundary::CrossHand { parang_terms },
             share_input_flags,
+            control,
         ),
         PriorCalibrationMode::PositionAngle {
             share_input_flags,
@@ -136,13 +164,15 @@ pub(crate) fn load_preapplied_rows(
             plan,
             PriorSolveBoundary::PositionAngle { parang_terms },
             share_input_flags,
+            control,
         ),
     };
-    preapplied
-        .map(Some)
-        .map_err(|source| GainSolveError::PriorCalibrationApply {
+    preapplied.map(Some).map_err(|source| match source {
+        crate::apply::ApplyExecutionError::Interrupted => GainSolveError::Interrupted,
+        source => GainSolveError::PriorCalibrationApply {
             source: Box::new(source),
-        })
+        },
+    })
 }
 
 /// Array payloads live for one batch, without filling the table's row cache.

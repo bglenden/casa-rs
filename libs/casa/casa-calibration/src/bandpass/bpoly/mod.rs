@@ -3,6 +3,8 @@
 
 mod fit;
 
+use crate::solve::control::SolveControl;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -70,7 +72,7 @@ pub(super) fn solve_polynomial(
     groups: impl Iterator<Item = SolveAccumulator>,
     bin_widths: &BTreeMap<i32, usize>,
     mut activity: Option<&mut ToolSolveActivity>,
-    mode: crate::output::CalibrationOutputMode,
+    (mode, control): (crate::output::CalibrationOutputMode, SolveControl<'_>),
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
     let cuts = request
         .cuts
@@ -149,6 +151,7 @@ pub(super) fn solve_polynomial(
         tracing::warn!(
             "Spectral windows with different selected channel counts cannot be combined"
         );
+        control.check()?;
         return Ok(empty_report(
             request,
             context.refant_id,
@@ -162,6 +165,7 @@ pub(super) fn solve_polynomial(
     let mut channel_count = 0;
     let mut fitted = Vec::new();
     for group in groups {
+        control.check()?;
         let Some(polynomial) = &group.polynomial else {
             continue;
         };
@@ -187,6 +191,7 @@ pub(super) fn solve_polynomial(
             context.refant_id,
             request,
             cuts,
+            control,
         ) {
             Ok(rows) => rows,
             Err(error @ BandpassSolveError::FitPolynomial { .. }) if activity.is_none() => {
@@ -213,6 +218,7 @@ pub(super) fn solve_polynomial(
         }
     }
     if fitted.is_empty() {
+        control.check()?;
         return Ok(empty_report(
             request,
             context.refant_id,
@@ -220,8 +226,15 @@ pub(super) fn solve_polynomial(
             SolveStats::default(),
         ));
     }
-    let report =
-        write_polynomial_rows(ms, request, context.refant_id, &fitted, channel_count, mode)?;
+    let report = write_polynomial_rows(
+        ms,
+        request,
+        context.refant_id,
+        &fitted,
+        channel_count,
+        mode,
+        control,
+    )?;
     Ok(BandpassSolveReport {
         selected_data: context.selected_data,
         ..report
@@ -234,6 +247,7 @@ pub(super) fn write_bpoly_caltable(
     refant_id: i32,
     rows: &[BandpassSolutionRow],
     mode: crate::output::CalibrationOutputMode,
+    control: SolveControl<'_>,
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
     let fitted_rows = fit_bpoly_rows(
         ms,
@@ -242,9 +256,18 @@ pub(super) fn write_bpoly_caltable(
         request.phase_degree,
         request.cuts,
         &request.selection,
+        control,
     )?;
     let channel_count = rows.first().map(|row| row.channel_count).unwrap_or(0);
-    write_polynomial_rows(ms, request, refant_id, &fitted_rows, channel_count, mode)
+    write_polynomial_rows(
+        ms,
+        request,
+        refant_id,
+        &fitted_rows,
+        channel_count,
+        mode,
+        control,
+    )
 }
 
 #[expect(
@@ -258,7 +281,9 @@ fn write_polynomial_rows(
     fitted_rows: &[BPolySolutionRow],
     channel_count: usize,
     mode: crate::output::CalibrationOutputMode,
+    control: SolveControl<'_>,
 ) -> Result<BandpassSolveReport, BandpassSolveError> {
+    control.check()?;
     // Existing casa-rs BPOLY tables used rank-one placeholder arrays and
     // two extra diagnostic columns. Keep that layout when appending to one.
     let casa_layout = mode != crate::output::CalibrationOutputMode::Append
@@ -344,7 +369,10 @@ fn write_polynomial_rows(
     } else {
         (&[1], &[1], &[2], &[2])
     };
-    for row in fitted_rows {
+    for (index, row) in fitted_rows.iter().enumerate() {
+        if index.is_multiple_of(256) {
+            control.check()?;
+        }
         let from_casa_task = request.cuts.is_some();
         let status_weight = if casa_layout { 0.0 } else { 1.0 };
         let unset = if casa_layout { -1 } else { 0 };
@@ -637,7 +665,7 @@ fn write_polynomial_rows(
         path: history.display().to_string(),
         source: Box::new(source),
     })?;
-    writer.save_main()?;
+    writer.save_main_with_control(control)?;
 
     let field_ids = fitted_rows
         .iter()
@@ -751,6 +779,7 @@ fn fit_bpoly_rows(
     phase_degree: usize,
     cuts: Option<BandpassSolveCuts>,
     selection: &casa_ms::MsSelection,
+    control: SolveControl<'_>,
 ) -> Result<Vec<BPolySolutionRow>, BandpassSolveError> {
     let spectral_window =
         ms.spectral_window()
@@ -763,6 +792,7 @@ fn fit_bpoly_rows(
             })?;
     rows.iter()
         .map(|row| {
+            control.check()?;
             let spw_row = usize::try_from(row.spw_id).map_err(|_| {
                 BandpassSolveError::UnsupportedParameterShape {
                     path: "SPECTRAL_WINDOW row id".to_string(),

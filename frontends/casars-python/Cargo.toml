@@ -13,6 +13,7 @@ name = "casars_python"
 crate-type = ["cdylib"]
 
 [features]
+solve-test-hooks = ["casa-calibration/solve-test-hooks"]
 transform-test-hooks = ["casa-mstransform/transform-test-hooks"]
 flagdata-test-hooks = ["casa-flagging/flagdata-test-hooks"]
 imregrid-test-hooks = ["casa-imageanalysis/imregrid-test-hooks"]

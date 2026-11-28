@@ -6,6 +6,7 @@ pub(crate) mod scan_timing;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use casa_core::cancellation::Cancellation;
 use casa_ms::{
     MeasurementSet, MsError, MsSelection, MsSelectionError, MsSelectionIoBudget,
     ResolvedMsSelection, ResolvedMsSelectionRow,
@@ -19,14 +20,16 @@ use crate::bandpass::{
 };
 use crate::execute::PreappliedRows;
 use crate::selected_data::SelectedData;
+use crate::solve::control::SolveControl;
 use crate::solve::grouping::{
     PriorCalibrationMode, SelectedSolveRow, all_antenna_ids, collect_selected_rows,
     load_preapplied_rows, resolve_refants,
 };
 use crate::solve::{
     GainSolveError, GainSolveReport, GainSolveRequest, GainSplineControls, GainType,
-    RefAntSelector, accor, fringe, gspline, solve_gain,
+    RefAntSelector, accor, fringe, gspline,
 };
+use crate::writer::CalibrationTableWriteError;
 
 /// Input ownership for one calibration solve.
 pub enum CalibrationDataset<'a> {
@@ -119,6 +122,9 @@ pub enum CalibrationSolveResult {
 /// Failure from the shared calibration solve lifecycle or a family kernel.
 #[derive(Debug, Error)]
 pub enum CalibrationError {
+    /// Cancellation was observed before product publication.
+    #[error("calibration solve interrupted")]
+    Interrupted,
     /// Opening an on-disk MeasurementSet failed.
     #[error("failed to open MeasurementSet {path}: {source}")]
     OpenMeasurementSet {
@@ -138,13 +144,25 @@ pub enum CalibrationError {
 
 impl From<GainSolveError> for CalibrationError {
     fn from(error: GainSolveError) -> Self {
-        Self::Gain(Box::new(error))
+        match error {
+            GainSolveError::Interrupted
+            | GainSolveError::CalibrationTable(CalibrationTableWriteError::Interrupted) => {
+                Self::Interrupted
+            }
+            error => Self::Gain(Box::new(error)),
+        }
     }
 }
 
 impl From<BandpassSolveError> for CalibrationError {
     fn from(error: BandpassSolveError) -> Self {
-        Self::Bandpass(Box::new(error))
+        match error {
+            BandpassSolveError::SharedSolve(GainSolveError::Interrupted)
+            | BandpassSolveError::CalibrationTable(CalibrationTableWriteError::Interrupted) => {
+                Self::Interrupted
+            }
+            error => Self::Bandpass(Box::new(error)),
+        }
     }
 }
 
@@ -168,7 +186,29 @@ pub fn solve_calibration_with_output_mode(
     request: CalibrationSolveRequest,
     mode: crate::output::CalibrationOutputMode,
 ) -> Result<CalibrationSolveResult, CalibrationError> {
-    solve_calibration_with_activity(dataset, request, mode, None, ToolSolveOptions::default())
+    solve_calibration_with_cancellation(dataset, request, mode, None)
+}
+
+/// Execute a gain or bandpass solve with cooperative cancellation.
+///
+/// The optional token can stop calculation or discard a privately staged
+/// product. A publication accepted by the final check runs to completion.
+pub fn solve_calibration_with_cancellation(
+    dataset: CalibrationDataset<'_>,
+    request: CalibrationSolveRequest,
+    mode: crate::output::CalibrationOutputMode,
+    cancellation: Option<&Cancellation>,
+) -> Result<CalibrationSolveResult, CalibrationError> {
+    solve_calibration_with_activity(
+        dataset,
+        request,
+        mode,
+        None,
+        ToolSolveOptions {
+            control: SolveControl(cancellation),
+            ..Default::default()
+        },
+    )
 }
 
 #[derive(Default)]
@@ -178,6 +218,7 @@ pub(crate) struct ToolSolveOptions<'a> {
     pub legacy_iterator: bool,
     pub invalid_mode: bool,
     pub tf: Option<crate::solve::TfSolveSettings>,
+    pub control: SolveControl<'a>,
 }
 
 pub(crate) fn solve_calibration_with_activity(
@@ -187,6 +228,7 @@ pub(crate) fn solve_calibration_with_activity(
     activity: Option<&mut crate::solve_stats::ToolSolveActivity>,
     options: ToolSolveOptions<'_>,
 ) -> Result<CalibrationSolveResult, CalibrationError> {
+    options.control.check()?;
     if let CalibrationSolveRequest::Fringe { gain, .. }
     | CalibrationSolveRequest::FringeTool { gain, .. } = &request
         && gain.gain_type != GainType::K
@@ -216,7 +258,8 @@ pub(crate) fn solve_calibration_with_activity(
                 && !options.invalid_mode
             {
                 if crate::solve::observation_gain::supports(gain) {
-                    if let Some(report) = crate::solve::observation_gain::solve(&path, gain, mode)?
+                    if let Some(report) =
+                        crate::solve::observation_gain::solve(&path, gain, mode, options.control)?
                     {
                         return Ok(CalibrationSolveResult::Gain(report));
                     }
@@ -255,20 +298,29 @@ fn solve_open_dataset(
         legacy_iterator,
         invalid_mode,
         tf,
+        control,
     } = options;
+    control.check()?;
     match request {
         CalibrationSolveRequest::Gain(request) => {
             let result = if let Some(settings) = tf {
                 crate::solve::solve_tf(measurement_set, &request, settings, mode, activity)
             } else {
-                solve_gain(measurement_set, &request, mode, activity, legacy_iterator)
+                crate::solve::solve_gain_with_control(
+                    measurement_set,
+                    &request,
+                    mode,
+                    activity,
+                    legacy_iterator,
+                    control,
+                )
             };
             result
                 .map(CalibrationSolveResult::Gain)
                 .map_err(CalibrationError::from)
         }
         CalibrationSolveRequest::GainSpline { gain, controls } => {
-            gspline::solve(measurement_set, &gain, controls, mode, spline_mode)
+            gspline::solve(measurement_set, &gain, controls, mode, spline_mode, control)
                 .map(CalibrationSolveResult::Gain)
                 .map_err(CalibrationError::from)
         }
@@ -343,7 +395,7 @@ fn solve_open_dataset(
             .map_err(|error| CalibrationError::Gain(Box::new(error)))
         }
         CalibrationSolveRequest::Bandpass(request) => {
-            solve_bandpass(measurement_set, &request, mode, activity, bandpass)
+            solve_bandpass(measurement_set, &request, mode, activity, bandpass, control)
                 .map(CalibrationSolveResult::Bandpass)
                 .map_err(CalibrationError::from)
         }
@@ -371,10 +423,32 @@ pub(crate) fn prepare_calibration_solve(
     full_selection: bool,
     prior_mode: PriorCalibrationMode,
 ) -> Result<CalibrationSolveContext, GainSolveError> {
+    prepare_calibration_solve_with_control(
+        measurement_set,
+        selection,
+        refant,
+        prior_calibration_tables,
+        parang,
+        full_selection,
+        (prior_mode, SolveControl::default()),
+    )
+}
+
+pub(crate) fn prepare_calibration_solve_with_control(
+    measurement_set: &MeasurementSet,
+    selection: &MsSelection,
+    refant: &RefAntSelector,
+    prior_calibration_tables: &[ApplyCalibrationTableSpec],
+    parang: bool,
+    full_selection: bool,
+    (prior_mode, control): (PriorCalibrationMode, SolveControl<'_>),
+) -> Result<CalibrationSolveContext, GainSolveError> {
+    control.check()?;
     let refants = resolve_refants(measurement_set, refant)?;
     let refant_id = refants.first().copied().unwrap_or(-1);
     let available_antennas = all_antenna_ids(measurement_set)?;
     let rows = collect_selected_rows(measurement_set, selection, full_selection)?;
+    control.check()?;
     if !full_selection {
         // The legacy bandpass setup still addresses a description by its
         // window. Gaincal can solve descriptions separately.
@@ -392,6 +466,7 @@ pub(crate) fn prepare_calibration_solve(
             prior_calibration_tables,
             parang,
             prior_mode,
+            control,
         )?,
     })
 }

@@ -42,7 +42,7 @@ echo "==> Installing editable casars package and running Python tests"
 "$python_bin" -m venv "$editable_venv"
 source "$editable_venv/bin/activate"
 # The interrupt tests use the opt-in checkpoints in the editable build.
-MATURIN_PEP517_ARGS="${MATURIN_PEP517_ARGS:-} --features transform-test-hooks,flagdata-test-hooks,imstat-test-hooks,immoments-test-hooks,imregrid-test-hooks" \
+MATURIN_PEP517_ARGS="${MATURIN_PEP517_ARGS:-} --features transform-test-hooks,flagdata-test-hooks,imstat-test-hooks,immoments-test-hooks,imregrid-test-hooks,solve-test-hooks" \
   python -m pip install -e "frontends/casars-python[$extras]"
 pytest frontends/casars-python/python/tests -q
 deactivate

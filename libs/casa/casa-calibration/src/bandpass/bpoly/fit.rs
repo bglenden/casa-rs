@@ -9,13 +9,18 @@ use num_complex::Complex64;
 
 use super::legacy_bpoly_basis;
 use super::{BPolySolutionRow, BandpassSolveCuts, BandpassSolveError, BandpassSolveRequest};
-use crate::solve::grouping::SolveAccumulator;
+use crate::solve::{GainSolveError, control::SolveControl, grouping::SolveAccumulator};
 
 struct VisibilitySample {
     antennas: [usize; 2],
     channel: usize,
     visibility: Complex64,
     weight: f64,
+}
+
+struct PolynomialSpectra {
+    samples: [Vec<VisibilitySample>; 2],
+    participation: Vec<Vec<usize>>,
 }
 
 pub(super) fn fit_interval(
@@ -25,7 +30,9 @@ pub(super) fn fit_interval(
     refant: i32,
     request: &BandpassSolveRequest,
     cuts: BandpassSolveCuts,
+    control: SolveControl<'_>,
 ) -> Result<Vec<BPolySolutionRow>, BandpassSolveError> {
+    control.check()?;
     let error = |reason: &str| BandpassSolveError::FitPolynomial {
         antenna_id: refant,
         field_id: group.field_id,
@@ -87,8 +94,17 @@ pub(super) fn fit_interval(
         .enumerate()
         .map(|(i, &id)| (id, i))
         .collect::<BTreeMap<_, _>>();
-    let (spectra, participation) =
-        collect_spectra(group, &indices, basis.len(), &antenna_indices, cuts);
+    let PolynomialSpectra {
+        samples: spectra,
+        participation,
+    } = collect_spectra(
+        group,
+        &indices,
+        basis.len(),
+        &antenna_indices,
+        cuts,
+        control,
+    )?;
     if spectra.iter().all(Vec::is_empty) {
         return Ok(Vec::new());
     }
@@ -115,6 +131,7 @@ pub(super) fn fit_interval(
         .collect::<Vec<_>>();
 
     for (receptor, samples) in spectra.iter().enumerate() {
+        control.check()?;
         if samples.is_empty() {
             continue;
         }
@@ -140,15 +157,17 @@ pub(super) fn fit_interval(
             .filter(|index| active.contains(index))
             .or_else(|| active.first())
             .copied();
-        let Some((amplitudes, phases)) =
-            fit_coefficients(samples, &basis, &active, amp_count, None).zip(fit_coefficients(
-                samples,
-                &basis,
-                &active,
-                phase_count,
-                phase_reference,
-            ))
-        else {
+        let Some((amplitudes, phases)) = fit_coefficients(
+            samples, &basis, &active, amp_count, None, control,
+        )?
+        .zip(fit_coefficients(
+            samples,
+            &basis,
+            &active,
+            phase_count,
+            phase_reference,
+            control,
+        )?) else {
             tracing::warn!("{}", error("normal equations are singular"));
             return Ok(Vec::new());
         };
@@ -218,19 +237,29 @@ fn collect_spectra(
     occupied_channel_count: usize,
     antennas: &BTreeMap<i32, usize>,
     cuts: BandpassSolveCuts,
-) -> ([Vec<VisibilitySample>; 2], Vec<Vec<usize>>) {
+    control: SolveControl<'_>,
+) -> Result<PolynomialSpectra, GainSolveError> {
     let mut sums = [BTreeMap::new(), BTreeMap::new()];
     let mut means = [BTreeMap::new(), BTreeMap::new()];
     let mut participation = vec![vec![0; occupied_channel_count]; antennas.len()];
-    for (description, [a, b], receptor, spectrum) in
-        group.polynomial.iter().flat_map(|data| data.spectra())
+    for (_index, (description, [a, b], receptor, spectrum)) in group
+        .polynomial
+        .iter()
+        .flat_map(|data| data.spectra())
+        .enumerate()
     {
+        control.check()?;
+        #[cfg(feature = "solve-test-hooks")]
+        control.observe(crate::solve_test_hooks::Checkpoint::PolynomialSpectrumStarted(_index));
         let bins = &bins[&description];
         let (i, j) = (antennas[&a], antennas[&b]);
         let weight = f64::from(spectrum.weight);
         for (channel, (&bin, &sample)) in
             bins.iter().zip(&spectrum.weighted_visibilities).enumerate()
         {
+            if channel.is_multiple_of(256) {
+                control.check()?;
+            }
             if cuts.masks_polynomial_channel(channel, bins.len()) || sample.norm_sqr() == 0.0 {
                 continue;
             }
@@ -250,7 +279,11 @@ fn collect_spectra(
             participation[i][bin] += 1;
             participation[j][bin] += 1;
         }
+        #[cfg(feature = "solve-test-hooks")]
+        control.observe(crate::solve_test_hooks::Checkpoint::PolynomialSpectrumFinished(_index));
     }
+    #[cfg(feature = "solve-test-hooks")]
+    control.observe(crate::solve_test_hooks::Checkpoint::PolynomialSpectraFinished);
     let [first, second] = sums;
     let [first_means, second_means] = means;
     let spectra = [(first, first_means), (second, second_means)].map(|(sum, means)| {
@@ -276,7 +309,10 @@ fn collect_spectra(
             })
             .collect::<Vec<_>>()
     });
-    (spectra, participation)
+    Ok(PolynomialSpectra {
+        samples: spectra,
+        participation,
+    })
 }
 
 fn fit_coefficients(
@@ -285,7 +321,9 @@ fn fit_coefficients(
     active: &BTreeSet<usize>,
     count: usize,
     phase_reference: Option<usize>,
-) -> Option<Vec<f64>> {
+    control: SolveControl<'_>,
+) -> Result<Option<Vec<f64>>, GainSolveError> {
+    control.check()?;
     let columns = active
         .iter()
         .filter(|&&index| Some(index) != phase_reference)
@@ -294,7 +332,7 @@ fn fit_coefficients(
         .collect::<BTreeMap<_, _>>();
     let size = columns.len() * count;
     if size == 0 {
-        return Some(Vec::new());
+        return Ok(Some(Vec::new()));
     }
     let phase = phase_reference.is_some();
     let signs = [1.0, if phase { -1.0 } else { 1.0 }];
@@ -314,7 +352,10 @@ fn fit_coefficients(
         })
         .collect::<Vec<_>>();
     let mut normal = vec![0.0; size * size];
-    for sample in &samples {
+    for (index, sample) in samples.iter().enumerate() {
+        if index.is_multiple_of(256) {
+            control.check()?;
+        }
         for (left, left_sign) in sample.terms(signs) {
             for (i, &x) in sample.basis.iter().enumerate() {
                 let weighted = sample.weight * left_sign * x;
@@ -326,14 +367,20 @@ fn fit_coefficients(
             }
         }
     }
-    let inverse = invert_symmetric_positive_definite(&normal, size)?;
+    control.check()?;
+    let Some(inverse) = invert_symmetric_positive_definite(&normal, size) else {
+        return Ok(None);
+    };
     let mut coefficients = vec![0.0; size];
     let mut right = vec![0.0; size];
     // CLIC POLYANT starts phase coefficients at zero and uses the sine
     // of the baseline residual. Its normal matrix is constant across steps.
     for _ in 0..if phase { 100 } else { 1 } {
         right.fill(0.0);
-        for sample in &samples {
+        for (index, sample) in samples.iter().enumerate() {
+            if index.is_multiple_of(256) {
+                control.check()?;
+            }
             let residual = if phase {
                 let predicted = sample
                     .terms(signs)
@@ -361,7 +408,7 @@ fn fit_coefficients(
             break;
         }
     }
-    Some(coefficients)
+    Ok(Some(coefficients))
 }
 
 struct FitSample<'a> {

@@ -8,7 +8,7 @@ use num_complex::{Complex32, Complex64};
 use super::{
     GainSolveRobustness, RobustSample, SolveEdgeStats, SolveGraph, SolveIteration, solve_lm,
 };
-use crate::solve::grouping::CollapsedVisibility;
+use crate::solve::{control::SolveControl, grouping::CollapsedVisibility};
 
 const L1_CLAMPS: [f32; 3] = [5e-3, 5e-4, 5e-5];
 
@@ -37,6 +37,7 @@ pub(super) fn solve(
     mut gains: Gains,
     refant_id: i32,
     options: &GainSolveRobustness,
+    control: SolveControl<'_>,
 ) -> Option<(Gains, Vec<SolveGraph>)> {
     let mut selected = nominal.clone();
     if options.l1 {
@@ -45,6 +46,9 @@ pub(super) fn solve(
         }
     }
     for pass in 0..=options.rms_thresholds.len() {
+        if control.is_cancelled() {
+            return None;
+        }
         if options.l1 {
             for clamp in L1_CLAMPS {
                 gains = solve_lm(
@@ -53,10 +57,18 @@ pub(super) fn solve(
                     gains,
                     refant_id,
                     SolveIteration::L1(clamp),
+                    control,
                 )?;
             }
         } else {
-            gains = solve_lm(&selected, antennas, gains, refant_id, SolveIteration::Rms)?;
+            gains = solve_lm(
+                &selected,
+                antennas,
+                gains,
+                refant_id,
+                SolveIteration::Rms,
+                control,
+            )?;
         }
         if let Some(&threshold) = options.rms_thresholds.get(pass) {
             selected = reject_outliers(&nominal, &selected, &gains, threshold);

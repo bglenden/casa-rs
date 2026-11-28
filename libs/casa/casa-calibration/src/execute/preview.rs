@@ -7,16 +7,17 @@ pub(super) fn evaluate_rows(
     plan: &ApplyPlan,
     share_input_flags: bool,
     weight_source: PreviewWeightSource,
+    control: SolveControl<'_>,
 ) -> Result<HashMap<usize, EvaluatedApplyRow>, ApplyExecutionError> {
     let mut rows = HashMap::new();
-    for_each_apply_row(
+    for_each_apply_row_controlled(
         ms,
         plan,
         apply_observed_column(ms, false),
         false,
         share_input_flags,
         weight_source,
-        None,
+        (None, control),
         |index, row| {
             rows.insert(index, row);
         },
@@ -37,7 +38,35 @@ pub(super) fn for_each_apply_row(
     forward_model: bool,
     share_input_flags: bool,
     weight_source: PreviewWeightSource,
-    mut tool: Option<&mut ToolApplyExecution<'_>>,
+    tool: Option<&mut ToolApplyExecution<'_>>,
+    consume: impl FnMut(usize, EvaluatedApplyRow),
+) -> Result<(), ApplyExecutionError> {
+    for_each_apply_row_controlled(
+        ms,
+        plan,
+        observed_column,
+        forward_model,
+        share_input_flags,
+        weight_source,
+        (tool, SolveControl::default()),
+        consume,
+    )
+}
+
+/// Evaluate one row at a time, allowing TRIAL validation without accumulating
+/// corrected data or publishing any MS changes.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "preview and tool callers use the same row executor"
+)]
+pub(super) fn for_each_apply_row_controlled(
+    ms: &MeasurementSet,
+    plan: &ApplyPlan,
+    observed_column: &str,
+    forward_model: bool,
+    share_input_flags: bool,
+    weight_source: PreviewWeightSource,
+    (mut tool, control): (Option<&mut ToolApplyExecution<'_>>, SolveControl<'_>),
     mut consume: impl FnMut(usize, EvaluatedApplyRow),
 ) -> Result<(), ApplyExecutionError> {
     let ms_path = display_ms_path(ms);
@@ -73,166 +102,181 @@ pub(super) fn for_each_apply_row(
     let mut readers = PreviewReaders::new(ms.main_table(), &columns).map_err(read_error)?;
     let data_index = (!forward_model).then_some(1);
     let batch_rows = preview_batch_rows(plan, &correlation_types_by_ddid);
-    let mut arrays = Vec::new();
+    #[cfg(feature = "solve-test-hooks")]
+    let batch_rows = if crate::solve_test_hooks::small_batches() {
+        batch_rows.min(32)
+    } else {
+        batch_rows
+    };
     let mut geometry_cache = RowGeometryCache::default();
-    for (index, row) in plan.selected_rows.iter().enumerate() {
-        let offset = index % batch_rows;
-        if offset == 0 {
-            arrays.clear();
-            let end = (index + batch_rows).min(plan.selected_rows.len());
-            let indices: Vec<_> = plan.selected_rows[index..end]
-                .iter()
-                .map(|row| row.row_index)
-                .collect();
-            arrays = readers
-                .selected
-                .iter()
-                .map(|column| {
-                    column
-                        .as_ref()
-                        .map(|column| column.array_cells_owned_uncached(&indices))
-                        .transpose()
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(read_error)?;
-        }
-        let correlation_types = correlation_types_by_ddid
-            .get(&row.data_desc_id)
-            .ok_or_else(|| ApplyExecutionError::UnsupportedCorrelationLayout {
-                data_desc_id: row.data_desc_id,
-                correlation_types: Vec::new(),
-            })?;
-        if let Some(prepared) = readers.prepared.as_mut() {
-            prepared.load(row.row_index).map_err(read_error)?;
-        }
-        let read = |slot: usize| {
-            if let (Some(prepared), Some(prepared_slot)) =
-                (&readers.prepared, readers.prepared_slots[slot])
-            {
-                return prepared.array_at(prepared_slot).map_err(read_error);
+    for (_batch_index, batch) in plan.selected_rows.chunks(batch_rows).enumerate() {
+        check_preview(control)?;
+        #[cfg(feature = "solve-test-hooks")]
+        control.observe(crate::solve_test_hooks::Checkpoint::PriorBatchStarted(
+            _batch_index,
+        ));
+        let indices: Vec<_> = batch.iter().map(|row| row.row_index).collect();
+        let arrays = readers
+            .selected
+            .iter()
+            .map(|column| {
+                column
+                    .as_ref()
+                    .map(|column| column.array_cells_owned_uncached(&indices))
+                    .transpose()
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(read_error)?;
+        for (offset, row) in batch.iter().enumerate() {
+            let correlation_types = correlation_types_by_ddid
+                .get(&row.data_desc_id)
+                .ok_or_else(|| ApplyExecutionError::UnsupportedCorrelationLayout {
+                    data_desc_id: row.data_desc_id,
+                    correlation_types: Vec::new(),
+                })?;
+            if let Some(prepared) = readers.prepared.as_mut() {
+                prepared.load(row.row_index).map_err(read_error)?;
             }
-            arrays[slot]
-                .as_ref()
-                .and_then(|cells| cells[offset].as_ref())
-                .ok_or_else(|| {
-                    read_error(casa_tables::TableError::ColumnNotFound {
-                        row_index: row.row_index,
-                        column: columns[slot].to_owned(),
+            let read = |slot: usize| {
+                if let (Some(prepared), Some(prepared_slot)) =
+                    (&readers.prepared, readers.prepared_slots[slot])
+                {
+                    return prepared.array_at(prepared_slot).map_err(read_error);
+                }
+                arrays[slot]
+                    .as_ref()
+                    .and_then(|cells| cells[offset].as_ref())
+                    .ok_or_else(|| {
+                        read_error(casa_tables::TableError::ColumnNotFound {
+                            row_index: row.row_index,
+                            column: columns[slot].to_owned(),
+                        })
                     })
-                })
-        };
-        let input_flags = read(0)?;
-        let shared;
-        let original_flags =
-            if share_input_flags && let Some(flags) = shared_channel_flags(input_flags) {
-                shared = flags;
-                &shared
-            } else {
-                input_flags
             };
-        let units;
-        let data = if let Some(index) = data_index {
-            read(index)?
-        } else {
-            units = ArrayValue::Complex32(ArrayD::from_elem(
-                IxDyn(original_flags.shape()).f(),
-                Complex32::new(1., 0.),
-            ));
-            &units
-        };
-        let complex_data;
-        let data = if let ArrayValue::Float32(values) = data {
-            complex_data = complex_visibility_from_float(values);
-            &complex_data
-        } else {
-            data
-        };
-        let plot_weights = plot_weight_columns
-            .map(|columns| columns.read(read, data.shape()))
-            .transpose()?;
-        if !availability::available(row, plan) {
-            if plan.apply_mode == ApplyMode::Trial {
+            let input_flags = read(0)?;
+            let shared;
+            let original_flags =
+                if share_input_flags && let Some(flags) = shared_channel_flags(input_flags) {
+                    shared = flags;
+                    &shared
+                } else {
+                    input_flags
+                };
+            let units;
+            let data = if let Some(index) = data_index {
+                read(index)?
+            } else {
+                units = ArrayValue::Complex32(ArrayD::from_elem(
+                    IxDyn(original_flags.shape()).f(),
+                    Complex32::new(1., 0.),
+                ));
+                &units
+            };
+            let complex_data;
+            let data = if let ArrayValue::Float32(values) = data {
+                complex_data = complex_visibility_from_float(values);
+                &complex_data
+            } else {
+                data
+            };
+            let plot_weights = plot_weight_columns
+                .map(|columns| columns.read(read, data.shape()))
+                .transpose()?;
+            if !availability::available(row, plan) {
+                if plan.apply_mode == ApplyMode::Trial {
+                    continue;
+                }
+                // VisEquation::collapse2 excludes data that cannot be pre-calibrated
+                // from solving, independently of the table's calwt setting.
+                let shape = IxDyn(data.shape());
+                consume(
+                    row.row_index,
+                    EvaluatedApplyRow {
+                        corrected_data: data.clone(),
+                        flags: ArrayValue::Bool(ArrayD::from_elem(shape.clone(), true)),
+                        model_gains: None,
+                        weight_factors: Some(ArrayD::zeros(shape)),
+                        plot_weights,
+                    },
+                );
                 continue;
             }
-            // VisEquation::collapse2 excludes data that cannot be pre-calibrated
-            // from solving, independently of the table's calwt setting.
-            let shape = IxDyn(data.shape());
+            // Unit weights through the calwt update leave its factors.
+            let unit_weight = (any_calwt && plot_weights.is_none()).then(|| {
+                ArrayValue::Float32(ArrayD::from_elem(IxDyn(&[correlation_types.len()]), 1.0))
+            });
+
+            let result = apply_row(
+                row,
+                ExecutionRowInputs {
+                    correlation_types,
+                    data,
+                    original_flags: Some(original_flags),
+                    original_weight: plot_weights
+                        .as_ref()
+                        .map(|weights| &weights.scalar)
+                        .or(unit_weight.as_ref()),
+                    original_weight_spectrum: plot_weights
+                        .as_ref()
+                        .and_then(|weights| weights.spectrum.as_ref()),
+                    has_weight_spectrum: plot_weight_columns
+                        .map_or(any_calwt, weights::PlotWeightColumns::has_spectrum),
+                    preserved_corrected_data: None,
+                    preserved_weight_spectrum: None,
+                    channel_grid: None,
+                    forward_model,
+                    skip_unavailable_terms: false,
+                    trial: false,
+                    parang_calwt: false,
+                },
+                plan,
+                &chain,
+                Some(&mut geometry_cache),
+                None,
+                tool.as_deref_mut().map(|run| &mut *run.activity),
+            )?;
+            let (plot_weights, weight_factors) = match plot_weights {
+                Some(weights) => (
+                    Some(PlotWeights {
+                        scalar: result.updated_weight.unwrap_or(weights.scalar),
+                        spectrum: result.updated_weight_spectrum.or(weights.spectrum),
+                    }),
+                    None,
+                ),
+                None => (
+                    None,
+                    match result.updated_weight_spectrum {
+                        Some(ArrayValue::Float32(factors)) => Some(factors),
+                        _ => None,
+                    },
+                ),
+            };
             consume(
                 row.row_index,
                 EvaluatedApplyRow {
-                    corrected_data: data.clone(),
-                    flags: ArrayValue::Bool(ArrayD::from_elem(shape.clone(), true)),
+                    corrected_data: result.corrected_data,
                     model_gains: None,
-                    weight_factors: Some(ArrayD::zeros(shape)),
+                    flags: result
+                        .updated_flags
+                        .unwrap_or_else(|| original_flags.clone()),
+                    weight_factors,
                     plot_weights,
                 },
             );
-            continue;
         }
-        // Unit weights through the calwt update leave its factors.
-        let unit_weight = (any_calwt && plot_weights.is_none()).then(|| {
-            ArrayValue::Float32(ArrayD::from_elem(IxDyn(&[correlation_types.len()]), 1.0))
-        });
-
-        let result = apply_row(
-            row,
-            ExecutionRowInputs {
-                correlation_types,
-                data,
-                original_flags: Some(original_flags),
-                original_weight: plot_weights
-                    .as_ref()
-                    .map(|weights| &weights.scalar)
-                    .or(unit_weight.as_ref()),
-                original_weight_spectrum: plot_weights
-                    .as_ref()
-                    .and_then(|weights| weights.spectrum.as_ref()),
-                has_weight_spectrum: plot_weight_columns
-                    .map_or(any_calwt, weights::PlotWeightColumns::has_spectrum),
-                preserved_corrected_data: None,
-                preserved_weight_spectrum: None,
-                channel_grid: None,
-                forward_model,
-                skip_unavailable_terms: false,
-                trial: false,
-                parang_calwt: false,
-            },
-            plan,
-            &chain,
-            Some(&mut geometry_cache),
-            None,
-            tool.as_deref_mut().map(|run| &mut *run.activity),
-        )?;
-        let (plot_weights, weight_factors) = match plot_weights {
-            Some(weights) => (
-                Some(PlotWeights {
-                    scalar: result.updated_weight.unwrap_or(weights.scalar),
-                    spectrum: result.updated_weight_spectrum.or(weights.spectrum),
-                }),
-                None,
-            ),
-            None => (
-                None,
-                match result.updated_weight_spectrum {
-                    Some(ArrayValue::Float32(factors)) => Some(factors),
-                    _ => None,
-                },
-            ),
-        };
-        consume(
-            row.row_index,
-            EvaluatedApplyRow {
-                corrected_data: result.corrected_data,
-                model_gains: None,
-                flags: result
-                    .updated_flags
-                    .unwrap_or_else(|| original_flags.clone()),
-                weight_factors,
-                plot_weights,
-            },
-        );
+        #[cfg(feature = "solve-test-hooks")]
+        control.observe(crate::solve_test_hooks::Checkpoint::PriorBatchFinished(
+            _batch_index,
+        ));
     }
 
+    check_preview(control)
+}
+
+fn check_preview(control: SolveControl<'_>) -> Result<(), ApplyExecutionError> {
+    if control.is_cancelled() {
+        return Err(ApplyExecutionError::Interrupted);
+    }
     Ok(())
 }
 

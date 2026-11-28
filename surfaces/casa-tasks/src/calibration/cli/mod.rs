@@ -224,7 +224,12 @@ pub(crate) fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFai
             .map(CalibrationTaskResult::Gencal)
             .map_err(gencal_failure)?
     } else {
-        request.execute_with_output_mode(mode)?
+        let cancellation = if matches!(task.surface(), "gaincal" | "bandpass") {
+            task.native_options().map(|options| &options.cancel)
+        } else {
+            None
+        };
+        request.execute_with_output_mode(mode, cancellation)?
     };
     if task.surface() == "fluxscale"
         && let (

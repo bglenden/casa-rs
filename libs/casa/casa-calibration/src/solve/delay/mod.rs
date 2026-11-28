@@ -3,6 +3,8 @@
 
 mod multiband;
 
+use super::control::SolveControl;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_core::Complex32;
@@ -11,7 +13,7 @@ use casa_ms::MeasurementSet;
 
 use super::grouping::{
     DelaySpectrum, PriorCalibrationMode, SelectedSolveRow, SolveAccumulator, SolveGroupOptions,
-    SolveInputRows, build_solve_groups, correlation_types_for_ddid, selected_channels,
+    SolveInputRows, build_solve_groups_with_control, correlation_types_for_ddid, selected_channels,
 };
 use super::kernel::SolutionRow;
 use super::{
@@ -19,7 +21,7 @@ use super::{
     GainType, RefAntSelector, SolvedGains, spectral_window_ids, validate_smodel,
     validate_solve_interval,
 };
-use crate::session::prepare_calibration_solve;
+use crate::session::prepare_calibration_solve_with_control;
 use crate::solve_stats::{IntervalStages, SolveStatsBuilder, ToolSolveActivity};
 
 pub(super) fn solve(
@@ -27,6 +29,7 @@ pub(super) fn solve(
     request: &GainSolveRequest,
     mut activity: Option<&mut ToolSolveActivity>,
     legacy_iterator: bool,
+    control: SolveControl<'_>,
 ) -> Result<SolvedGains, GainSolveError> {
     if matches!(request.refant, RefAntSelector::Unspecified) {
         return Err(delay_error("specify a reference antenna explicitly"));
@@ -39,23 +42,26 @@ pub(super) fn solve(
     let antenna_position = request.gain_type == GainType::KAntPos;
     let legacy_multiband = legacy_iterator && request.gain_type == GainType::KMbd;
     let input_phase = crate::timing::Phase::start("gain_select_read_average");
-    let context = prepare_calibration_solve(
+    let context = prepare_calibration_solve_with_control(
         ms,
         &request.selection,
         &request.refant,
         &request.prior_calibration_tables,
         request.parang,
         true,
-        PriorCalibrationMode::Delay {
-            share_input_flags: !request.correlation_dependent_flags,
-            rotate_model: request.parang,
-        },
+        (
+            PriorCalibrationMode::Delay {
+                share_input_flags: !request.correlation_dependent_flags,
+                rotate_model: request.parang,
+            },
+            control,
+        ),
     )?;
     let windows = delay_windows(ms, &context.rows, cross_hand)?;
     let combined_output_spw = (legacy_iterator && request.combine.spectral_windows)
         .then(|| context.rows.iter().map(|row| row.data_spw_id).min())
         .flatten();
-    let groups = build_solve_groups(
+    let groups = build_solve_groups_with_control(
         ms,
         &context.rows,
         context.preapplied_rows.as_ref(),
@@ -86,6 +92,7 @@ pub(super) fn solve(
             channelized: true,
             polynomial_bandpass: false,
         },
+        control,
     )?;
     if groups.is_empty() {
         return Err(GainSolveError::EmptySelection);
@@ -113,7 +120,8 @@ pub(super) fn solve(
     }
     let mut stats = SolveStatsBuilder::new(parameters, window_ids, &context.available_antennas);
     for mut group in groups.into_values() {
-        group.finalize_for_solve(request.solve_mode, false);
+        control.check()?;
+        group.finalize(request.solve_mode, false, false, control)?;
         let mut stages = IntervalStages::of(&group, 0);
         if cross_hand || antenna_position {
             // CASA reports data availability for the full output parameter
@@ -146,6 +154,7 @@ pub(super) fn solve(
             &windows,
             &mut transforms,
             legacy_multiband,
+            control,
         )?;
         attempted_spw_ids.insert(output_spw);
         stats.record_success(output_spw, true);
@@ -277,9 +286,11 @@ fn group_delays(
     windows: &BTreeMap<i32, DelayWindow>,
     transforms: &mut BTreeMap<i32, DelayTransform>,
     legacy: bool,
+    control: SolveControl<'_>,
 ) -> Result<DelaySolutions, GainSolveError> {
     let mut buffers = BTreeMap::<_, Vec<DelaySpectrum<'_>>>::new();
     for spectrum in group.delay_spectra() {
+        control.check()?;
         buffers.entry(spectrum.buffer).or_default().push(spectrum);
     }
     let cross_hand = request.gain_type == GainType::KCross;
@@ -308,6 +319,7 @@ fn group_delays(
             mode,
             cross_hand,
             legacy,
+            control,
         );
     }
     let Some((&(dd, _, _), spectra)) = buffers.first_key_value() else {
@@ -320,9 +332,9 @@ fn group_delays(
         }
     };
     if cross_hand {
-        group_cross_hand(spectra, mode, transform)
+        group_cross_hand(spectra, mode, transform, control)
     } else {
-        group_antenna(spectra, reference, mode, transform)
+        group_antenna(spectra, reference, mode, transform, control)
     }
 }
 
@@ -344,9 +356,11 @@ fn group_antenna(
     reference: i32,
     mode: GainSolveMode,
     transform: &mut DelayTransform,
+    control: SolveControl<'_>,
 ) -> Result<BTreeMap<i32, [Option<f32>; 2]>, GainSolveError> {
     let mut results = BTreeMap::from([(reference, [Some(0.); 2])]);
     for spectrum in spectra.iter().filter(|spectrum| spectrum.parallel_hand) {
+        control.check()?;
         let ((first, second), receptor) = (spectrum.antennas, spectrum.receptor);
         let (antenna, sign) = match (first == reference, second == reference) {
             (true, false) => (second, -1.),
@@ -367,6 +381,7 @@ fn group_cross_hand(
     spectra: &[DelaySpectrum<'_>],
     mode: GainSolveMode,
     transform: &mut DelayTransform,
+    control: SolveControl<'_>,
 ) -> Result<BTreeMap<i32, [Option<f32>; 2]>, GainSolveError> {
     let mut sum = vec![(Complex32::default(), 0.); transform.channels];
     // CASA accumulates both hands of each averaged baseline consecutively.
@@ -377,6 +392,7 @@ fn group_cross_hand(
         .collect::<Vec<_>>();
     cross_hands.sort_unstable_by_key(|spectrum| (spectrum.antennas, spectrum.correlation));
     for spectrum in cross_hands {
+        control.check()?;
         for ((total, weights), (value, weight)) in sum.iter_mut().zip(spectrum.channels()) {
             let (value, weight) = constrain(value, weight, mode);
             let value = if spectrum.correlation == 1 {

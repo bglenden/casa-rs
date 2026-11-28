@@ -31,6 +31,8 @@ use crate::native_immoments_test_hooks as immoments_test_hooks;
 use crate::native_imregrid_test_hooks as imregrid_test_hooks;
 #[cfg(all(unix, feature = "imstat-test-hooks"))]
 use crate::native_imstat_test_hooks as imstat_test_hooks;
+#[cfg(all(unix, feature = "solve-test-hooks"))]
+use crate::native_solve_test_hooks as solve_test_hooks;
 #[cfg(all(unix, feature = "transform-test-hooks"))]
 use crate::native_transform_test_hooks as transform_test_hooks;
 
@@ -142,6 +144,7 @@ pub(crate) enum WorkerMessage {
             feature = "flagdata-test-hooks",
             feature = "imstat-test-hooks",
             feature = "immoments-test-hooks",
+            feature = "solve-test-hooks",
             feature = "imregrid-test-hooks"
         )
     ))]
@@ -156,6 +159,7 @@ pub(crate) enum WorkerMessage {
         feature = "flagdata-test-hooks",
         feature = "imstat-test-hooks",
         feature = "immoments-test-hooks",
+        feature = "solve-test-hooks",
         feature = "imregrid-test-hooks"
     )
 ))]
@@ -272,6 +276,8 @@ pub(crate) fn run_native_task(
         ..NativeTaskOptions::default()
     };
     let cancel = execution.cancel.clone();
+    #[cfg(all(unix, feature = "solve-test-hooks"))]
+    let solve_test = solve_test_hooks::take(&surface);
     #[cfg(all(unix, feature = "flagdata-test-hooks"))]
     let flagdata_test = flagdata_test_hooks::take(&surface);
     #[cfg(all(unix, feature = "immoments-test-hooks"))]
@@ -299,6 +305,8 @@ pub(crate) fn run_native_task(
             };
             #[cfg(all(unix, feature = "transform-test-hooks"))]
             let run = || transform_test_hooks::run(transform_test, &sender, run);
+            #[cfg(all(unix, feature = "solve-test-hooks"))]
+            let run = || solve_test_hooks::run(solve_test, &sender, run);
             #[cfg(all(unix, feature = "flagdata-test-hooks"))]
             let run = || flagdata_test_hooks::run(flagdata_test, &sender, run);
             #[cfg(all(unix, feature = "immoments-test-hooks"))]
@@ -366,6 +374,7 @@ fn collect_logs(
                     feature = "flagdata-test-hooks",
                     feature = "imstat-test-hooks",
                     feature = "immoments-test-hooks",
+                    feature = "solve-test-hooks",
                     feature = "imregrid-test-hooks"
                 )
             ))]
