@@ -5,23 +5,20 @@ use super::*;
 /// casacore's write locks on the tables of a MeasurementSet that a save
 /// rewrites in place, taken by `MeasurementSet::lock_tables_for_in_place_save`.
 ///
-/// A table's write is recorded only when the save starts writing that table.
-/// If the save fails, a table it never reached publishes nothing, and one it
-/// reached publishes what was persisted (see [`TableWriteLock::release`]).
+/// A table being created has no preexisting lock.
 pub(super) struct InPlaceSaveLocks {
     pub(super) locks: Vec<(Option<SubtableId>, TableWriteLock)>,
 }
 
 impl InPlaceSaveLocks {
-    /// Record that the save starts writing table `id`, MAIN for `None`. A
-    /// table being created holds no lock and records nothing.
-    pub(super) fn record(&mut self, id: Option<SubtableId>) {
-        if let Some((_, lock)) = self.locks.iter_mut().find(|(locked, _)| *locked == id) {
-            lock.record_write();
-        }
+    pub(super) fn for_table(&self, id: Option<SubtableId>) -> Option<&TableWriteLock> {
+        self.locks
+            .iter()
+            .find(|(locked, _)| *locked == id)
+            .map(|(_, lock)| lock)
     }
 
-    /// Release the locks, publishing every recorded table as persisted.
+    /// Release the locks after the saves have published their changes.
     pub(super) fn release(self) -> MsResult<()> {
         for (_, lock) in self.locks.into_iter().rev() {
             lock.release()?;
@@ -32,10 +29,15 @@ impl InPlaceSaveLocks {
 
 /// Save MAIN with CASA's mixed storage managers
 /// ([`measurement_set_main_table_bindings`]).
-pub(super) fn save_main_table_with_policy(main: &mut Table, path: &Path) -> MsResult<()> {
+pub(super) fn save_main_table_with_policy(
+    main: &mut Table,
+    path: &Path,
+    lock: Option<&TableWriteLock>,
+) -> MsResult<()> {
     let options = measurement_set_table_options(path);
     let bindings = measurement_set_main_table_bindings(main);
     main.prepare_write()
+        .using_write_lock(lock)
         .save_with_bindings(options, &bindings)?;
     Ok(())
 }
@@ -44,10 +46,12 @@ pub(super) fn save_main_table_with_policy_and_column_overrides(
     main: &mut Table,
     path: &Path,
     column_overrides: &ColumnOverrides,
+    lock: Option<&TableWriteLock>,
 ) -> MsResult<()> {
     let options = measurement_set_table_options(path);
     let bindings = measurement_set_main_table_bindings(main);
     main.prepare_write()
+        .using_write_lock(lock)
         .save_with_column_overrides(options, &bindings, column_overrides)?;
     Ok(())
 }

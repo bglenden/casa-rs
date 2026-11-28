@@ -323,7 +323,7 @@ pub(crate) struct LockFile {
 }
 
 impl LockFile {
-    pub(super) fn matches_table_path(&self, dir: &Path) -> bool {
+    pub(crate) fn matches_table_path(&self, dir: &Path) -> bool {
         path_key(&dir.join(LOCK_FILE_NAME)).is_ok_and(|key| key == Some(self.key))
     }
 

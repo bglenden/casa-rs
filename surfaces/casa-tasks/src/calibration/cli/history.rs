@@ -59,7 +59,7 @@ fn append(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let path = vis.join("HISTORY");
     #[cfg(unix)]
-    let mut delegated = task
+    let delegated = task
         .and_then(TaskInvocation::native_options)
         .and_then(|options| options.table_writes.as_ref())
         .map(|reservations| {
@@ -106,9 +106,8 @@ fn append(
         table.add_row(row)?;
     }
     #[cfg(unix)]
-    if let Some(lock) = delegated.as_mut() {
-        lock.record_write();
-    }
+    table.save_with_write_lock(TableOptions::new(path), delegated.as_ref())?;
+    #[cfg(not(unix))]
     table.save(TableOptions::new(path))?;
     #[cfg(unix)]
     if let Some(lock) = delegated {

@@ -62,14 +62,13 @@ pub(crate) fn rewrite_component_list(
     // Built first, so that a component CASA could not write is refused
     // before the table is locked or touched.
     let mut table = build_table(list, path, spectral_records)?;
-    let mut lock = lock_existing(path).map_err(table_error)?;
+    let lock = lock_existing(path).map_err(table_error)?;
     // Read the current keyword record only after acquiring the write lock:
     // another writer may have updated it since this list was opened. CASA's
     // writeTable replaces the component rows without dropping those values.
     let existing = Table::open_metadata_only(TableOptions::new(path)).map_err(table_error)?;
     *table.keywords_mut() = existing.keywords().clone();
-    lock.record_write();
-    let saved = save(&table, path, has_limb_darkened_disk(list));
+    let saved = save(&mut table, path, has_limb_darkened_disk(list), Some(&lock));
     let released = lock.release();
     saved.and(released).map_err(table_error)
 }
@@ -92,9 +91,9 @@ fn staged(
     path: &Path,
     spectral_records: &BTreeMap<usize, RecordValue>,
 ) -> Result<PathBuf, ComponentListError> {
-    let table = build_table(list, path, spectral_records)?;
+    let mut table = build_table(list, path, spectral_records)?;
     let staging = prepare_staging(path)?;
-    let saved = save(&table, &staging, has_limb_darkened_disk(list));
+    let saved = save(&mut table, &staging, has_limb_darkened_disk(list), None);
     if let Err(source) = saved {
         let _ = fs::remove_dir_all(&staging);
         return Err(ComponentListError::Table {
@@ -251,7 +250,12 @@ fn component_row(
 /// Save into `staging`: every column in one `StandardStMan`, as CASA's
 /// default binding, and `Optional_Parameters` in a `TiledCellStMan` with
 /// one-element tiles, as `createTable` binds it.
-fn save(table: &Table, staging: &Path, optional_parameters: bool) -> Result<(), TableError> {
+fn save(
+    table: &mut Table,
+    staging: &Path,
+    optional_parameters: bool,
+    lock: Option<&TableWriteLock>,
+) -> Result<(), TableError> {
     let mut bindings = HashMap::new();
     if optional_parameters {
         bindings.insert(
@@ -262,10 +266,13 @@ fn save(table: &Table, staging: &Path, optional_parameters: bool) -> Result<(), 
             },
         );
     }
-    table.save_with_bindings(
-        TableOptions::new(staging).with_data_manager(DataManagerKind::StandardStMan),
-        &bindings,
-    )
+    table
+        .prepare_write()
+        .using_write_lock(lock)
+        .save_with_bindings(
+            TableOptions::new(staging).with_data_manager(DataManagerKind::StandardStMan),
+            &bindings,
+        )
 }
 
 /// Reserve a staging directory beside `path` (ADR-0008: a new table is built

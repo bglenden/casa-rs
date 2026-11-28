@@ -30,18 +30,6 @@ impl CompositeStorage {
 
         let table_path = control.table_path();
 
-        if table_path.is_dir()
-            && let Ok(entries) = fs::read_dir(table_path)
-        {
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                let name_str = name.to_string_lossy();
-                if name_str.starts_with("table.f") {
-                    let _ = fs::remove_file(entry.path());
-                }
-            }
-        }
-
         let schema = schema.ok_or_else(|| {
             StorageError::FormatMismatch("cannot save without schema".to_string())
         })?;
@@ -93,7 +81,7 @@ impl CompositeStorage {
                         &dm_data,
                         big_endian,
                         virtual_bindings,
-                        table_path,
+                        control.keyword_table_path(),
                     )
                 } else {
                     TableDatContents::from_snapshot(
@@ -140,7 +128,7 @@ impl CompositeStorage {
                         &[],
                         big_endian,
                         virtual_bindings,
-                        table_path,
+                        control.keyword_table_path(),
                     )
                 } else {
                     TableDatContents::from_snapshot(
@@ -186,7 +174,7 @@ impl CompositeStorage {
                         &dm_data,
                         big_endian,
                         virtual_bindings,
-                        table_path,
+                        control.keyword_table_path(),
                     )
                 } else {
                     TableDatContents::from_snapshot(
@@ -579,7 +567,7 @@ impl CompositeStorage {
                 &[],
                 big_endian,
                 virtual_bindings,
-                table_path,
+                control.keyword_table_path(),
             )
         } else {
             TableDatContents::from_snapshot(

@@ -2,10 +2,18 @@
 
 use super::*;
 
-impl TableWritePlan<'_> {
+impl<'a> TableWritePlan<'a> {
+    /// Use the caller's verified write guard for full saves through this plan.
+    /// The guard must cover the destination.
+    #[doc(hidden)]
+    pub fn using_write_lock(mut self, lock: Option<&'a crate::TableWriteLock>) -> Self {
+        self.write_lock = lock;
+        self
+    }
+
     /// Validate the complete table and save it to `options.path()`.
     pub fn save(&mut self, options: TableOptions) -> Result<(), TableError> {
-        self.table.save(options)
+        self.table.save_with_write_lock(options, self.write_lock)
     }
 
     /// Validate the table and per-column bindings, then save it.
@@ -15,7 +23,8 @@ impl TableWritePlan<'_> {
         bindings: &std::collections::HashMap<String, ColumnBinding>,
     ) -> Result<(), TableError> {
         self.validate_bindings(bindings)?;
-        self.table.save_with_bindings(options, bindings)
+        self.table
+            .save_bindings_with_write_lock(options, bindings, self.write_lock)
     }
 
     /// Validate bindings and column overrides, then save without materializing
@@ -75,8 +84,12 @@ impl TableWritePlan<'_> {
                 }
             }
         }
-        self.table
-            .persist_with_bindings_and_column_overrides(options, bindings, overrides)
+        self.table.persist_with_bindings_and_column_overrides(
+            options,
+            bindings,
+            overrides,
+            self.write_lock,
+        )
     }
 
     /// Persist the data-manager groups containing `columns`.

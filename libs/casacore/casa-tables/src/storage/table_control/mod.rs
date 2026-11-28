@@ -313,7 +313,7 @@ fn is_array_data_type(dt: CasacoreDataType) -> bool {
 // ---------------------------------------------------------------------------
 
 mod atomic_write;
-pub(crate) use atomic_write::{StagedTableDat, is_staged_table_dat};
+pub(crate) use atomic_write::{StagedTableDat, TableDatCommit, is_staged_table_dat};
 
 #[cfg(test)]
 pub(crate) fn write_table_dat(

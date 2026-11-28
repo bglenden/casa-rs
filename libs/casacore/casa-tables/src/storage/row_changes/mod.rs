@@ -18,6 +18,8 @@ use super::{
 };
 
 mod publish;
+#[cfg(test)]
+pub(crate) use publish::FAIL_AFTER_UPDATES;
 mod replace_columns;
 pub(crate) use publish::ReversibleEdit;
 pub(crate) use replace_columns::replace_private_int32_column;
@@ -127,7 +129,7 @@ impl<'a> StagedEdit<'a> {
         Ok(edit)
     }
 
-    pub(super) fn new(table: &'a Path) -> Result<Self, StorageError> {
+    pub(crate) fn new(table: &'a Path) -> Result<Self, StorageError> {
         Ok(Self {
             table,
             staged: tempfile::Builder::new()
@@ -136,6 +138,10 @@ impl<'a> StagedEdit<'a> {
             extensions: Vec::new(),
             preserve_file_identity: false,
         })
+    }
+
+    pub(crate) fn stage_path(&self) -> &Path {
+        self.staged.path()
     }
 
     pub(super) fn for_shared_manager_files(table: &'a Path) -> Result<Self, StorageError> {

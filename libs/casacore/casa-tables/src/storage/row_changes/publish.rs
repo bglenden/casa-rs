@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+use crate::storage::TABLE_INFO_FILE;
 use crate::storage::standard_stman::{DEFAULT_SSM_BUCKET_SIZE, SSM_HEADER_SIZE, StagedRecords};
+use crate::storage::table_control::{StagedTableDat, TableDatCommit};
 
 use super::{Extension, StagedEdit, StorageError, TABLE_CONTROL_FILE, tiled_stman};
 
@@ -41,6 +44,15 @@ enum Update {
         target: PathBuf,
         original: Option<PathBuf>,
     },
+    PublishFullControl {
+        commit: Option<TableDatCommit>,
+        target: PathBuf,
+        original: Option<PathBuf>,
+    },
+    Remove {
+        target: PathBuf,
+        original: PathBuf,
+    },
 }
 
 impl Update {
@@ -68,6 +80,11 @@ impl Update {
             Self::Replace { staged, target, .. } | Self::PublishControl { staged, target, .. } => {
                 fs::rename(staged, target)
             }
+            Self::PublishFullControl { commit, .. } => commit
+                .take()
+                .expect("descriptor is published once")
+                .publish(),
+            Self::Remove { target, original } => fs::rename(target, original),
         }
     }
 
@@ -95,8 +112,19 @@ impl Update {
                 target,
                 original: Some(original),
                 ..
-            } => fs::rename(original, target),
+            }
+            | Self::PublishFullControl {
+                target,
+                original: Some(original),
+                ..
+            }
+            | Self::Remove { target, original } => fs::rename(original, target),
             Self::Replace {
+                target,
+                original: None,
+                ..
+            }
+            | Self::PublishFullControl {
                 target,
                 original: None,
                 ..
@@ -149,6 +177,75 @@ fn rollback_path(staging: &Path, name: &std::ffi::OsStr) -> PathBuf {
 }
 
 impl StagedEdit<'_> {
+    /// Prepare every destination and rollback copy before changing the table.
+    /// A casacore reader can keep a manager file open across lock periods.
+    pub(crate) fn prepare_full_publication(
+        self,
+        control: StagedTableDat<'_>,
+        mut original_managers: BTreeSet<OsString>,
+    ) -> Result<ReversibleEdit, StorageError> {
+        let staging = self.staged.path();
+        let mut entries = fs::read_dir(staging)?.collect::<Result<Vec<_>, _>>()?;
+        entries.sort_by_key(fs::DirEntry::file_name);
+        let mut changes = Vec::new();
+        let commit = control.stage(&mut File::open(staging.join(TABLE_CONTROL_FILE))?)?;
+        let descriptor_backup = rollback_path(staging, TABLE_CONTROL_FILE.as_ref());
+        commit.backup(&descriptor_backup)?;
+        for entry in entries {
+            let name = entry.file_name();
+            if name == TABLE_CONTROL_FILE {
+                continue;
+            }
+            let target = self.table.join(&name);
+            let staged = entry.path();
+            match target.symlink_metadata() {
+                Ok(_) if original_managers.remove(&name) || name == TABLE_INFO_FILE => {
+                    crate::publication::private_table_file_metadata(&target)?;
+                    let file = File::options().read(true).write(true).open(&target)?;
+                    changes.push(backup_rewrite(
+                        file,
+                        &staged,
+                        &rollback_path(staging, &name),
+                    )?);
+                }
+                Ok(_) => {
+                    return Err(StorageError::FormatMismatch(format!(
+                        "full save would replace an auxiliary entry: {}",
+                        target.display()
+                    )));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    changes.push(Update::Replace {
+                        staged,
+                        target,
+                        original: None,
+                    });
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        for name in original_managers {
+            let target = self.table.join(&name);
+            crate::publication::private_table_file_metadata(&target)?;
+            File::options().write(true).open(&target)?;
+            changes.push(Update::Remove {
+                target,
+                original: rollback_path(staging, &name),
+            });
+        }
+        changes.push(Update::PublishFullControl {
+            commit: Some(commit),
+            target: self.table.join(TABLE_CONTROL_FILE),
+            original: descriptor_backup.exists().then_some(descriptor_backup),
+        });
+        Ok(ReversibleEdit {
+            table: self.table.to_path_buf(),
+            staging: self.staged,
+            changes,
+            applied: 0,
+        })
+    }
+
     /// Publish under a write lock, with the control file last. Preflight
     /// every target before changing any and restore the previous files if
     /// an ordinary I/O failure interrupts the update.
@@ -250,12 +347,7 @@ impl StagedEdit<'_> {
                 Ok(file) if retain_manager => {
                     // Retained casacore readers keep manager files open and
                     // resync through those handles after the lock changes.
-                    fs::copy(&target, &backup)?;
-                    changes.push(Update::Rewrite {
-                        file,
-                        original: File::open(backup)?,
-                        updated: File::open(staged)?,
-                    });
+                    changes.push(backup_rewrite(file, &staged, &backup)?);
                     continue;
                 }
                 Ok(file) => {
@@ -281,6 +373,20 @@ impl StagedEdit<'_> {
     }
 }
 
+fn backup_rewrite(mut file: File, staged: &Path, backup: &Path) -> std::io::Result<Update> {
+    let mut original = File::options()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(backup)?;
+    std::io::copy(&mut file, &mut original)?;
+    Ok(Update::Rewrite {
+        file,
+        original,
+        updated: File::open(staged)?,
+    })
+}
+
 pub(crate) struct ReversibleEdit {
     table: PathBuf,
     staging: tempfile::TempDir,
@@ -288,16 +394,33 @@ pub(crate) struct ReversibleEdit {
     applied: usize,
 }
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static FAIL_AFTER_UPDATES: std::cell::Cell<Option<usize>> = const {
+        std::cell::Cell::new(None)
+    };
+}
+
 impl ReversibleEdit {
     pub(crate) fn apply(&mut self) -> Result<(), StorageError> {
         while let Some(change) = self.changes.get_mut(self.applied) {
+            #[cfg(test)]
+            if FAIL_AFTER_UPDATES.get() == Some(self.applied) {
+                FAIL_AFTER_UPDATES.set(None);
+                return Err(
+                    std::io::Error::other("injected failure after live file update").into(),
+                );
+            }
             // A failed rename leaves both paths intact. Direct writes can
             // change bytes before surfacing an error and must be undone.
             let result = change.apply();
             if result.is_ok()
                 || !matches!(
                     change,
-                    Update::Replace { .. } | Update::PublishControl { .. }
+                    Update::Replace { .. }
+                        | Update::PublishControl { .. }
+                        | Update::PublishFullControl { .. }
+                        | Update::Remove { .. }
                 )
             {
                 self.applied += 1;
