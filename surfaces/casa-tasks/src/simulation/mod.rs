@@ -29,7 +29,7 @@ use casa_simulation::simobserve::{
     Cancel, SimobserveError, SimobserveParameters, SimobserveRequest, simobserve_with_controls,
 };
 use casa_simulation::simutil::direction::Directions;
-use casa_simulation::{ExecutionControls, SessionResources, SimulatorOptions};
+use casa_simulation::{ExecutionControls, SessionResources, SimulatorFormat, SimulatorOptions};
 use serde_json::{Map, Value};
 
 use crate::{
@@ -134,6 +134,11 @@ fn parameters_from(
         graphics: text("graphics")?,
         verbose: flag("verbose")?,
         overwrite: flag("overwrite")?,
+        outformat: match text("outformat")?.as_str() {
+            "msv2" => SimulatorFormat::Msv2,
+            "msv4" => SimulatorFormat::Msv4,
+            _ => return Err(missing("outformat", "msv2 or msv4")),
+        },
     };
     Ok((SimobserveTaskParameters(resolved), parameters))
 }
@@ -228,7 +233,7 @@ pub(crate) fn artifact(stem: &str, path: &Path) -> SimobserveArtifact {
         .and_then(|suffix| suffix.strip_prefix('.'))
         .unwrap_or(&name)
         .to_string();
-    let resource_kind = if kind == "ms" || kind.ends_with(".ms") {
+    let resource_kind = if kind == "ms" || kind.ends_with(".ms") || kind == "ps.zarr" {
         RunProductKind::MeasurementSet
     } else if kind.ends_with("skymodel")
         || kind.ends_with(".flat")
@@ -267,6 +272,9 @@ pub fn task_front_end()
 pub(crate) fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let (parameters, mut simulation) =
         parameters_from(task.plain_values()).map_err(TaskFailure::validation)?;
+    if let Some(reason) = simulation.output_format_refusal() {
+        return Err(TaskFailure::validation(reason).at("outformat"));
+    }
     if task.native_options().is_some() {
         let project = task.io_path(&simulation.project);
         for path in [&mut simulation.skymodel, &mut simulation.complist] {

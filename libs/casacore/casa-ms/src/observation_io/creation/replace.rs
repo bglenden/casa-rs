@@ -26,12 +26,13 @@
 //! function if that crate's dependency policy (ADR-0016) took this one's.
 
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use casa_observation::ObservationError;
 use casa_tables::{
     TableWriteLock,
-    publication::{exchange_directories, rename_without_replacing},
+    publication::{exchange_directories, open_directory_identity, rename_without_replacing},
 };
 
 use crate::observation_io::update::{request_error, storage};
@@ -109,6 +110,115 @@ impl Replacement {
             .is_err()
             .then(|| replacement.to_path_buf()))
     }
+}
+
+/// A specific MSv4 directory held for atomic replacement. The open handle
+/// keeps its identity from being reused if the pathname changes.
+pub struct Msv4Replacement {
+    destination: PathBuf,
+    original: fs::File,
+}
+
+impl Msv4Replacement {
+    /// Bind an existing MSv4 processing set before the new one is written.
+    ///
+    /// # Errors
+    /// The destination is absent, is not a whole MSv4 processing set, or
+    /// the filesystem cannot exchange directories.
+    pub fn hold(destination: &Path) -> Result<Self, ObservationError> {
+        let original = open_directory_identity(destination).map_err(storage)?;
+        if !matches_msv4(destination, &original.metadata().map_err(storage)?) {
+            return Err(request_error(format!(
+                "{} is not an MSv4 processing set to replace",
+                destination.display(),
+            )));
+        }
+        probe(destination)?;
+        Ok(Self {
+            destination: destination.to_path_buf(),
+            original,
+        })
+    }
+
+    /// Exchange the staged product with the bound MSv4 store. Delete only
+    /// the bound directory. Return its staged path if deletion fails.
+    ///
+    /// # Errors
+    /// The destination or staged product changed, or exchange failed. If a
+    /// foreign directory was displaced and rollback fails, preserve it at
+    /// the reported staging path.
+    pub fn publish(self, stage: Stage) -> Result<Option<PathBuf>, ObservationError> {
+        self.publish_using(stage, exchange_directories)
+    }
+
+    fn publish_using(
+        self,
+        stage: Stage,
+        mut exchange: impl FnMut(&Path, &Path) -> std::io::Result<()>,
+    ) -> Result<Option<PathBuf>, ObservationError> {
+        let exchanged = (|| {
+            let original = self.original.metadata().map_err(storage)?;
+            let candidate = open_directory_identity(stage.path()).map_err(storage)?;
+            if !matches_msv4(&self.destination, &original) {
+                return Err(self.changed());
+            }
+            exchange(stage.path(), &self.destination).map_err(storage)?;
+            Ok((original, candidate))
+        })();
+        let (original, candidate) = match exchanged {
+            Ok(pair) => pair,
+            Err(error) => {
+                stage.remove();
+                return Err(error);
+            }
+        };
+        if matches_msv4(stage.path(), &original) {
+            let leftover = fs::remove_dir_all(stage.path())
+                .is_err()
+                .then(|| stage.path().to_path_buf());
+            stage.release();
+            return Ok(leftover);
+        }
+        // A change in the last window before exchange may have displaced
+        // a foreign store. Roll back only while our new directory is still
+        // at the destination. Never clean up an unverified staged directory.
+        if let Ok(candidate) = candidate.metadata()
+            && same_directory(&self.destination, &candidate)
+            && exchange(stage.path(), &self.destination).is_ok()
+            && same_directory(stage.path(), &candidate)
+        {
+            stage.remove();
+            return Err(self.changed());
+        }
+        Err(ObservationError::Conflict {
+            reason: format!(
+                "{} changed during MSv4 replacement and could not be restored; any displaced directory was preserved at {}",
+                self.destination.display(),
+                stage.path().display(),
+            ),
+        })
+    }
+
+    fn changed(&self) -> ObservationError {
+        ObservationError::Conflict {
+            reason: format!(
+                "{} changed during MSv4 replacement",
+                self.destination.display(),
+            ),
+        }
+    }
+}
+
+fn matches_msv4(path: &Path, expected: &fs::Metadata) -> bool {
+    same_directory(path, expected)
+        && crate::observation_io::is_msv4_store(path)
+        && crate::observation_io::is_measurement_set(path)
+}
+
+fn same_directory(path: &Path, expected: &fs::Metadata) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|actual| {
+        actual.is_dir() && actual.dev() == expected.dev() && actual.ino() == expected.ino()
+    })
 }
 
 /// Refuse to replace what is at `destination` unless it is a whole
@@ -209,4 +319,71 @@ fn probe(destination: &Path) -> Result<(), ObservationError> {
     exchanged.map_err(|_| ObservationError::Unsupported {
         what: "replacing a MeasurementSet on a filesystem that cannot exchange directories",
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msv4(path: &Path, label: &str) {
+        fs::create_dir(path).unwrap();
+        fs::write(
+            path.join("zarr.json"),
+            r#"{"attributes":{"type":"processing_set"}}"#,
+        )
+        .unwrap();
+        fs::write(path.join("marker"), label).unwrap();
+    }
+
+    #[test]
+    fn exchange_checks_the_displaced_directory_and_preserves_it_if_rollback_fails() {
+        for rollback_fails in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let destination = root.path().join("result.ps.zarr");
+            let earlier = root.path().join("earlier.ps.zarr");
+            msv4(&destination, "original");
+            let replacement = Msv4Replacement::hold(&destination).unwrap();
+            let stage = Stage::reserve(&destination, "test").unwrap();
+            let staged = stage.path().to_owned();
+            msv4(&staged, "candidate");
+            let mut calls = 0;
+            let error = replacement
+                .publish_using(stage, |from, to| {
+                    calls += 1;
+                    if calls == 1 {
+                        fs::rename(to, &earlier)?;
+                        fs::create_dir(to)?;
+                        fs::write(to.join("table.info"), "Type = Measurement Set\n")?;
+                        fs::write(to.join("marker"), "late MSv2")?;
+                    } else if rollback_fails {
+                        return Err(std::io::Error::other("injected rollback failure"));
+                    }
+                    exchange_directories(from, to)
+                })
+                .unwrap_err();
+            assert!(matches!(error, ObservationError::Conflict { .. }));
+            assert_eq!(calls, 2);
+            assert_eq!(
+                fs::read_to_string(earlier.join("marker")).unwrap(),
+                "original"
+            );
+            if rollback_fails {
+                assert!(error.to_string().contains(&staged.display().to_string()));
+                assert_eq!(
+                    fs::read_to_string(staged.join("marker")).unwrap(),
+                    "late MSv2"
+                );
+                assert_eq!(
+                    fs::read_to_string(destination.join("marker")).unwrap(),
+                    "candidate"
+                );
+            } else {
+                assert_eq!(
+                    fs::read_to_string(destination.join("marker")).unwrap(),
+                    "late MSv2"
+                );
+                assert!(!staged.parent().unwrap().exists());
+            }
+        }
+    }
 }

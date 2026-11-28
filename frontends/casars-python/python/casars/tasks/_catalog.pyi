@@ -322,6 +322,8 @@ def simobserve(
     graphics: Literal['', 'both', 'file', 'none', 'screen'] = ...,
     verbose: bool = ...,
     overwrite: bool = ...,
+    *,
+    outformat: Literal['msv2', 'msv4'] = ...,
 ) -> Any:
     ...
 

@@ -9,6 +9,7 @@ in `.ps.zarr`.
 | Public Python parameter | Operation | MSv2 | MSv4 | End-to-end tests |
 | --- | --- | --- | --- | --- |
 | `tools.simulator.open(ms=…, outformat=…)` | Create a simulated observation at `close()` | Default or `outformat="msv2"` | `outformat="msv4"` with [simulation limits](#simulate-an-observation) | [CASA and XRADIO simulation checks][simulator-tests] |
+| `tasks.simobserve(project=…, outformat=…)` | Create the simulated observation in the project | Default or `outformat="msv2"` | `outformat="msv4"` for [interferometric projects](#simulate-a-project) | [CASA and XRADIO task checks][simobserve-tests] |
 | `tasks.importvla(vis=…, outformat=…)` | Create a MeasurementSet from a VLA archive | Default or `outformat="msv2"` | `outformat="msv4"` with [archive limits](#import-vla-archives) | [CASA and XRADIO archive checks][importvla-tests] |
 | `tasks.msconvert(vis=…)` | Read an existing MeasurementSet | Yes | Yes | [All four input/output pairings][format-tests] |
 | `tasks.msconvert(outputvis=…, outformat=…)` | Create a new MeasurementSet | `outformat="msv2"` | `outformat="msv4"` | [All four input/output pairings][format-tests] |
@@ -19,6 +20,7 @@ in `.ps.zarr`.
 | `tasks.listcal(vis=…)` | Read metadata for a CASA calibration listing | Yes | Fixed fields, terminal and file output | [Verify file output on both stores][listcal-tests] |
 
 [simulator-tests]: https://github.com/bglenden/casa-rs/blob/main/tools/simulation/sm_creation_oracle.py
+[simobserve-tests]: https://github.com/bglenden/casa-rs/blob/main/tools/simulation/simobserve_format_oracle.py
 [importvla-tests]: https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/importvla_oracle.py
 [format-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_msconvert_formats.py
 [rerefant-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_rerefant_formats.py
@@ -71,6 +73,16 @@ At close, MSv4 reports individual MSv2 columns it cannot carry, including
 target and interval.
 It folds any row flags into the element flags. Use `outformat="msv2"` when the
 original row flag or those metadata are required.
+
+## Simulate a project
+
+Set `outformat="msv4"` on `tasks.simobserve` with `obsmode="int"`,
+`thermalnoise=""`, `leakage=0`, and `graphics="none"`. The task writes
+`<project>.<configuration>.ps.zarr` inside the project and returns `None`.
+It stores the sky model's spectral reference frequency separately from
+the first channel and reports the [MSv4 simulation losses](#simulate-an-observation)
+in the task log. Use the default `outformat="msv2"` for single-dish
+simulation, noise, leakage, or plotting.
 
 ## Import VLA archives
 

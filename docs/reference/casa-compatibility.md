@@ -68,7 +68,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | setjy | setjy | yes | 23 | 23 | 0 | 0 | 0 | 0 |
 | simalma | simalma | yes | 31 | 31 | 0 | 0 | 0 | 0 |
 | simanalyze | simanalyze | yes | 32 | 32 | 0 | 1 | 0 | 0 |
-| simobserve | simobserve | yes | 38 | 38 | 0 | 0 | 0 | 0 |
+| simobserve | simobserve | yes | 38 | 38 | 0 | 0 | 1 | 0 |
 | smoothcal | smoothcal | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | split | split | yes | 19 | 19 | 0 | 0 | 1 | 0 |
 | statwt | statwt | yes | 25 | 25 | 0 | 0 | 0 | 0 |
@@ -4608,7 +4608,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `Exception`: The name of antenna list (antennalist/sdantlist) is not specified
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- casa-rs parameters CASA lacks: none
+- casa-rs parameters CASA lacks: `outformat`
 - Shared parameters: 38, in CASA's order: yes
 - Defaults that differ: none
 

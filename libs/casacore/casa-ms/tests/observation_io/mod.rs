@@ -12,6 +12,8 @@ mod channel_order;
 #[cfg(unix)]
 #[path = "creation.rs"]
 mod creation;
+#[cfg(unix)]
+mod geometry;
 #[path = "../common/layouts.rs"]
 mod layouts;
 #[cfg(unix)]

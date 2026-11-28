@@ -94,7 +94,8 @@ def compare_msv2(casa, result):
     print(comparison["data"])
 
 
-def compare_msv4(casa, result):
+def compare_msv4(casa, result, *, observer="TOPO", datasets=3, flagged_rows=36,
+                 offset_reference=False):
     from arcae.lib.arrow_tables import Table
     from astropy.time import Time
     from xradio.measurement_set import open_processing_set
@@ -111,6 +112,12 @@ def compare_msv4(casa, result):
         return Time(coordinate.values, format=coordinate.attrs["format"],
                     scale=coordinate.attrs["scale"])
 
+    def check_directions(actual, expected):
+        # Both [-pi, pi) and [0, 2*pi) describe the same longitude.
+        difference = np.asarray(actual) - expected
+        difference[..., 0] = (difference[..., 0] + np.pi) % (2 * np.pi) - np.pi
+        np.testing.assert_allclose(difference, 0, atol=1e-12, rtol=0)
+
     root = open_processing_set(str(result))
     issues = check_datatree(root)
     assert not issues, str(issues)
@@ -119,6 +126,7 @@ def compare_msv4(casa, result):
     field = open_table("FIELD")
     dd = open_table("DATA_DESCRIPTION")
     spw = open_table("SPECTRAL_WINDOW")
+    observation = open_table("OBSERVATION")
     pointing = open_table("POINTING")
     state = open_table("STATE")
     # XRADIO names ALMA antennas as NAME_STATION; validate both parts
@@ -132,6 +140,8 @@ def compare_msv4(casa, result):
     scans = main.getcol("SCAN_NUMBER")
     sky = main.getcol("FIELD_ID")
     data_desc = main.getcol("DATA_DESC_ID")
+    observation_ids = main.getcol("OBSERVATION_ID")
+    projects = observation.getcol("PROJECT")
     state_ids = main.getcol("STATE_ID")
     modes = state.getcol("OBS_MODE")
     first, second = main.getcol("ANTENNA1"), main.getcol("ANTENNA2")
@@ -140,15 +150,18 @@ def compare_msv4(casa, result):
     point_direction = pointing.getcol("DIRECTION").reshape(-1, 2)
     point_rows = {(time, ant): index for index, (time, ant) in
                   enumerate(zip(point_time, point_ant, strict=True))}
+    if offset_reference:
+        rest_frequencies = open_table("SOURCE").getcol("REST_FREQUENCY")
     rows_seen = np.zeros(len(times), dtype=bool)
     num_flagged = 0
     for node in root.children.values():
         ds = node.ds.load()
-        assert node.attrs["observation_info"]["project_UID"] == "CASA simulation"
         scan, = np.unique(ds.scan_name.values.astype(int))
         rows = np.flatnonzero(scans == scan)
         assert rows.size and not rows_seen[rows].any()
         rows_seen[rows] = True
+        project, = np.unique(projects[observation_ids[rows]])
+        assert node.attrs["observation_info"]["project_UID"] == project
         assert set(ds.scan_name.attrs["scan_intents"]) == set(modes[state_ids[rows]])
         time_index = np.searchsorted(np.unique(times[rows]), times[rows])
         baselines = {(a, b): index for index, (a, b) in
@@ -160,9 +173,15 @@ def compare_msv4(casa, result):
         window, = np.unique(dd.getcol("SPECTRAL_WINDOW_ID")[data_desc[rows]])
         assert ds.frequency.attrs["spectral_window_name"] == windows[window]
         np.testing.assert_array_equal(ds.polarization.values, ["XX", "YY"])
-        np.testing.assert_allclose(ds.frequency.values, spw.getcol("CHAN_FREQ", index=([window],))[0],
+        channels = spw.getcol("CHAN_FREQ", index=([window],))[0]
+        np.testing.assert_allclose(ds.frequency.values, channels, atol=0.01, rtol=0)
+        assert ds.frequency.attrs["observer"].upper() == observer
+        reference = spw.getcol("REF_FREQUENCY")[window]
+        np.testing.assert_allclose(ds.frequency.attrs["reference_frequency"]["data"], reference,
                                    atol=0.01, rtol=0)
-        assert ds.frequency.attrs["observer"].upper() == "TOPO"
+        if offset_reference:
+            assert reference != channels[0]
+            np.testing.assert_array_equal(rest_frequencies, reference)
         np.testing.assert_allclose(ds.frequency.attrs["channel_width"]["data"],
                                    spw.getcol("CHAN_WIDTH", index=([window],))[0], atol=0.01, rtol=0)
         data = main.getcol("DATA", index=(rows,))
@@ -187,7 +206,7 @@ def compare_msv4(casa, result):
         sky_reference = node["field_and_source_base_xds"].ds
         expected = field.getcol("PHASE_DIR").reshape(-1, 2)
         wanted = [expected[field_names.index(name)] for name in sky_reference.field_name.values]
-        np.testing.assert_allclose(sky_reference.FIELD_PHASE_CENTER_DIRECTION, wanted, atol=1e-12, rtol=0)
+        check_directions(sky_reference.FIELD_PHASE_CENTER_DIRECTION, wanted)
         ant_reference = node["antenna_xds"].ds
         ids = [list(ant_names).index(name) for name in ant_reference.antenna_name.values]
         np.testing.assert_array_equal(ant_reference.station_name, stations[ids])
@@ -200,15 +219,15 @@ def compare_msv4(casa, result):
                                    0.0, atol=2e-6, rtol=0)
         expected_points = [[point_direction[point_rows[time, ant_id]] for ant_id in point_ids]
                            for time in expected_point_times]
-        np.testing.assert_allclose(point_reference.POINTING_BEAM, expected_points, atol=1e-12, rtol=0)
+        check_directions(point_reference.POINTING_BEAM, expected_points)
         if row_flags.all():
             # The fully flagged scan deliberately moves the beam while
             # its phase centre remains the same field direction.
             assert not np.allclose(expected_points[0][0], wanted[0], atol=1e-7, rtol=0)
     assert rows_seen.all()
-    assert num_flagged == 36
-    assert len(root.children) == 3
-    print(f"XRADIO schema and {rows_seen.size} CASA acquisitions passed across 3 datasets")
+    assert num_flagged == flagged_rows
+    assert len(root.children) == datasets
+    print(f"XRADIO schema and {rows_seen.size} CASA acquisitions passed across {datasets} datasets")
 
 
 if __name__ == "__main__":

@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 975
+- Concepts: 976
 - Surfaces: 64 (64 task, 0 session)
-- Surface bindings: 1444
+- Surface bindings: 1445
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -20,7 +20,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 6 | <code>calibration</code> | 53 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 6 | <code>importvla</code> | 13 | scan or import old VLA export archives from disk |
 | [Tclean](#surface-tclean)<br><code>tclean</code> | task | 42 | <code>imager</code> | 114 | Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does. |
-| [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 8 | <code>simobserve</code> | 38 | Simulate an observation of a sky model: CASA's simobserve |
+| [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 9 | <code>simobserve</code> | 39 | Simulate an observation of a sky model: CASA's simobserve |
 | [Image Header](#surface-imhead)<br><code>imhead</code> | task | 40 | <code>image_analysis</code> | 5 | Inspect or update CASA image header metadata. |
 | [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 4 | <code>image_analysis</code> | 20 | Compute CASA image statistics over optional pixel, region, and channel selections. |
 | [Image Moments](#surface-immoments)<br><code>immoments</code> | task | 6 | <code>image_analysis</code> | 13 | Create CASA-style image moment maps |
@@ -384,7 +384,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## SimObserve (<code>simobserve</code>)
 
 - Kind: `task`
-- Contract version: `8`
+- Contract version: `9`
 - Category: Simulation
 - Provider family: `simobserve`
 - Summary: Simulate an observation of a sky model: CASA's simobserve
@@ -429,6 +429,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>graphics</code> | <code>parameter.graphics@r2</code> | <code>choice (5 values)</code> | <code>"both"</code>; optional | Output | Graphics output. |
 | <code>verbose</code> | <code>parameter.verbose@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Verbose logging. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Replace an existing output file |
+| <code>outformat</code> | <code>simobserve.outformat@r1</code> | <code>choice (2 values)</code> | <code>"msv2"</code>; optional | Output | MeasurementSet format produced by the simulation. |
 
 <a id="surface-imhead"></a>
 

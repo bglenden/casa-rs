@@ -18,9 +18,26 @@ use zarrs::array::{
 };
 use zarrs::filesystem::FilesystemStore;
 
-use super::metadata::{invalid, storage};
+use super::metadata::{chunk_bytes, invalid, storage};
 use super::read::{Dataset, GroupArrays, Msv4Observation};
 use crate::observation_io::grouping::GroupIndex;
+
+impl Msv4Observation {
+    /// Transient codec storage for a UVW chunk beyond the delivered batch.
+    pub(in crate::observation_io) fn stored_uvw_decode_bytes(
+        &self,
+        id: PartitionId,
+    ) -> Result<usize, ObservationError> {
+        let (dataset, partition) = self.dataset(id)?;
+        let (group, _) =
+            partition
+                .data_group("base")
+                .ok_or_else(|| ObservationError::InvalidRequest {
+                    reason: format!("partition {id:?} has no base data group"),
+                })?;
+        Ok(chunk_bytes(&dataset.groups[group].uvw)?.saturating_mul(2))
+    }
+}
 
 /// Reusable decode storage for what cannot be decoded in place: the flag
 /// bytes before their conversion to `bool`, the stored weights the flags

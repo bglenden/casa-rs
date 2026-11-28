@@ -275,7 +275,10 @@ fn write_spectral_windows(ms: &mut MeasurementSet, session: &Simulator) -> Simul
                 ("NAME", scalar_string(&window.name)),
                 ("NET_SIDEBAND", scalar_i32(1)),
                 ("NUM_CHAN", scalar_i32(channels as i32)),
-                ("REF_FREQUENCY", scalar_f64(window.reference_frequency_hz)),
+                (
+                    "REF_FREQUENCY",
+                    scalar_f64(session.output_reference_frequency(window.reference_frequency_hz)),
+                ),
                 ("RESOLUTION", f64_array(&[channels], widths)),
                 ("TOTAL_BANDWIDTH", scalar_f64(window.total_bandwidth_hz)),
             ],
@@ -395,6 +398,7 @@ fn write_fields_and_sources(ms: &mut MeasurementSet, session: &Simulator) -> Sim
             ("TIME", scalar_f64(field.source_time_s)),
         ];
         if let Some(rest_frequency_hz) = field.rest_frequency_hz {
+            let rest_frequency_hz = session.output_reference_frequency(rest_frequency_hz);
             source.extend([
                 ("REST_FREQUENCY", f64_array(&[1], vec![rest_frequency_hz])),
                 ("TRANSITION", string_array(&["X"])),

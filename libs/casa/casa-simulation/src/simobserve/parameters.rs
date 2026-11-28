@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! `simobserve`'s parameters, with CASA 6.7.6's names, types and defaults.
 
+use crate::SimulatorFormat;
 use crate::simutil::direction::Directions;
 
 /// CASA's `simobserve` parameters, as `casatasks.simobserve` takes them.
@@ -103,6 +104,34 @@ pub struct SimobserveParameters {
     /// replaces them without asking: the task writes only inside the
     /// project directory.
     pub overwrite: bool,
+    /// Format of a new observation, MSv2 by default.
+    pub outformat: SimulatorFormat,
+}
+
+impl SimobserveParameters {
+    /// Why the requested output format cannot carry this run, if any.
+    #[must_use]
+    pub fn output_format_refusal(&self) -> Option<&'static str> {
+        if self.outformat == SimulatorFormat::Msv2 {
+            return None;
+        }
+        if self.obsmode != "int" {
+            return Some(
+                "MSv4 simobserve creates an interferometric observation with obsmode='int' (#1055)",
+            );
+        }
+        if !self.thermalnoise.is_empty() || self.leakage > 0.0 {
+            return Some(
+                "MSv4 simobserve requires thermalnoise='' and leakage=0 until existing-store corruption is supported (#1055)",
+            );
+        }
+        if !matches!(self.graphics.as_str(), "" | "none") {
+            return Some(
+                "MSv4 simobserve requires graphics='none' until its observation plots support MSv4 (#1055)",
+            );
+        }
+        None
+    }
 }
 
 impl Default for SimobserveParameters {
@@ -147,6 +176,7 @@ impl Default for SimobserveParameters {
             graphics: "both".to_string(),
             verbose: false,
             overwrite: true,
+            outformat: SimulatorFormat::Msv2,
         }
     }
 }

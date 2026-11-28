@@ -12093,6 +12093,33 @@
       "persistence_class": "profile"
     },
     {
+      "id": "simobserve.outformat",
+      "semantic_revision": 1,
+      "casa_name": "outformat",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "msv2",
+          "msv4"
+        ]
+      },
+      "normalization": {
+        "kind": "lowercase"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "MeasurementSet format produced by the simulation.",
+        "details": "MSv2 is the default. MSv4 creates an XRADIO interferometric observation with thermal noise, leakage and graphics disabled.",
+        "examples": [
+          "msv2",
+          "msv4"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "msconvert.outformat",
       "semantic_revision": 1,
       "casa_name": "outformat",
