@@ -349,6 +349,29 @@ fn a_table_replaces_a_link_not_what_it_points_to() {
     assert!(!data(&project.join("p.tiny.noisier.ms")).is_empty());
 }
 
+#[cfg(unix)]
+#[test]
+fn an_invalid_schedule_keeps_the_existing_measurement_set_link() {
+    let fixture = Fixture::new();
+    let product = fixture.path("p/p.tiny.ms");
+    let outside = fixture.path("outside");
+    std::fs::create_dir(product.parent().unwrap()).unwrap();
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("sentinel"), "outside").unwrap();
+    std::os::unix::fs::symlink(&outside, &product).unwrap();
+    let error = simobserve(&fixture.request(fixture.parameters(|parameters| {
+        parameters.totaltime = "-1s".to_string();
+        parameters.overwrite = true;
+    })))
+    .unwrap_err();
+    assert_eq!(error.to_string(), "Negative totaltime is not allowed.");
+    assert_eq!(std::fs::read_link(product).unwrap(), outside);
+    assert_eq!(
+        std::fs::read_to_string(outside.join("sentinel")).unwrap(),
+        "outside"
+    );
+}
+
 #[test]
 fn failed_frequency_predictions_report_casas_cause_without_publishing_an_ms() {
     for (frame, message) in [

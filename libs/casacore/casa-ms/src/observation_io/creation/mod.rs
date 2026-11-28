@@ -68,6 +68,7 @@ pub use plan::CreationPlan;
 pub(crate) use plan::catalogue_subtables;
 #[cfg(feature = "msv4")]
 pub(super) use plan::prescribed_calibration_subtables;
+pub use replace::Msv4Replacement;
 pub use replace::Replacement;
 pub use replace::Stage;
 

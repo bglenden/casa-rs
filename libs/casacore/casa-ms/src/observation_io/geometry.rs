@@ -3,7 +3,11 @@
 
 use std::path::Path;
 
-use casa_tables::{ArrayShapeContract, ColumnType, SelectedArray1DCellsMut, Table, TableOptions};
+use casa_core::PrimitiveType;
+use casa_tables::{
+    ArrayShapeContract, ColumnType, LockMode, LockOptions, SelectedArray1DCellsMut, Table,
+    TableOptions,
+};
 
 use super::msv2::{catalogue::require_units, held::table_opening_bytes};
 use super::{ObservationError, is_msv4_store};
@@ -14,8 +18,9 @@ use crate::TARGET_BATCH_BYTES;
 /// unwritten cells. MSv2 reads MAIN's packed UVW cells without opening the
 /// subtables or assembling a time and baseline grid.
 ///
-/// `budget` bounds the opening and one batch. `reserve` grants cumulative
-/// workspace requests against the caller's current resource policy.
+/// `budget` bounds the opening and one batch. `reserve` grants the total
+/// bytes held in each phase against the caller's current policy. Requests
+/// can decrease once an opening or batch releases its transient workspace.
 ///
 /// # Errors
 /// A store cannot be read, its geometry does not match the supported layout,
@@ -62,7 +67,12 @@ fn msv2_uvw(
     let table_error = |error: casa_tables::TableError| ObservationError::Storage(Box::new(error));
     let opening = table_opening_bytes(path);
     grant(opening)?;
-    let table = Table::open(TableOptions::new(path)).map_err(table_error)?;
+    let table = Table::open_with_lock_attempts(
+        TableOptions::new(path),
+        LockOptions::new(LockMode::PermanentLocking).read_only(true),
+        1,
+    )
+    .map_err(table_error)?;
     if table.row_count() == 0 {
         return Ok(());
     }
@@ -70,11 +80,12 @@ fn msv2_uvw(
         .schema()
         .and_then(|schema| schema.column(COLUMN))
         .is_some_and(|column| {
-            matches!(column.column_type(), ColumnType::Array(ArrayShapeContract::Fixed { shape }) if shape == &[3])
+            column.data_type() == Some(PrimitiveType::Float64)
+                && matches!(column.column_type(), ColumnType::Array(ArrayShapeContract::Fixed { shape }) if shape == &[3])
         });
     if !supported_shape {
         return Err(ObservationError::InvalidStore {
-            reason: "MAIN.UVW must declare a fixed three-component cell".to_string(),
+            reason: "MAIN.UVW must declare a fixed Float64 triple".to_string(),
         });
     }
     let column = table.column_accessor(COLUMN).map_err(table_error)?;
@@ -129,16 +140,9 @@ fn msv4_uvw(
         ReadEvent, Roles, TimeSelection, WeightRequest,
     };
 
-    let mut held = 0;
-    let observation =
-        Msv4Observation::open_granted(path, &OpenOptions::default(), &mut |wanted| {
-            grant(wanted)?;
-            held = held.max(wanted);
-            Ok(())
-        })?;
-    held = held.max(observation.held_bytes());
-    let batch_bytes = budget.saturating_sub(held).min(TARGET_BATCH_BYTES);
-    grant(held.saturating_add(batch_bytes))?;
+    let observation = Msv4Observation::open_granted(path, &OpenOptions::default(), grant)?;
+    let held = observation.held_bytes();
+    grant(held)?;
     let mut request = AccessRequest {
         partitions: vec![PartitionId(0)],
         data_group: "base".into(),
@@ -158,10 +162,21 @@ fn msv4_uvw(
         fields: FieldSelection::All,
         correlations: CorrelationRequest::ALL,
         grouping: Grouping::None,
-        batch_bytes,
+        batch_bytes: 0,
     };
-    for index in 0..observation.catalogue().partitions.len() {
-        request.partitions[0] = PartitionId(index as u32);
+    for (index, partition) in observation.catalogue().partitions.iter().enumerate() {
+        let id = PartitionId(index as u32);
+        let fixed = held.saturating_add(observation.stored_uvw_decode_bytes(id)?);
+        // This request delivers UVW and its mandatory time/field header.
+        // Keep integrations whole, including those above the batch target.
+        let per_time = partition
+            .baselines
+            .len()
+            .saturating_mul(size_of::<[f64; 3]>())
+            .saturating_add(request.roles.time_bytes(0));
+        request.batch_bytes = uvw_batch_budget(budget, fixed, per_time)?;
+        grant(fixed.saturating_add(request.batch_bytes))?;
+        request.partitions[0] = id;
         let mut traversal = observation.bind_read(&request)?;
         let mut buffers = BatchBuffers::with_envelope(traversal.estimate.peak_buffer_bytes());
         while let Some(event) = traversal.next(&mut buffers)? {
@@ -174,4 +189,38 @@ fn msv4_uvw(
         }
     }
     Ok(())
+}
+
+#[cfg(feature = "msv4")]
+fn uvw_batch_budget(
+    budget: usize,
+    fixed: usize,
+    one_time: usize,
+) -> Result<usize, ObservationError> {
+    let required = fixed.saturating_add(one_time);
+    let residual = budget.saturating_sub(fixed);
+    if fixed > budget || one_time > residual {
+        return Err(over_budget(required, budget));
+    }
+    Ok(residual.min(TARGET_BATCH_BYTES.max(one_time)))
+}
+
+#[cfg(all(test, feature = "msv4"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_batch_target_allows_an_admitted_integration_larger_than_the_target() {
+        let one_time = TARGET_BATCH_BYTES + 308;
+        let fixed = 16 << 10;
+        let required = fixed + one_time;
+        assert_eq!(
+            uvw_batch_budget(required, fixed, one_time).unwrap(),
+            one_time
+        );
+        assert!(matches!(
+            uvw_batch_budget(required - 1, fixed, one_time),
+            Err(ObservationError::OverBudget { required: bytes, .. }) if bytes == required
+        ));
+    }
 }

@@ -9,8 +9,7 @@ use casa_core::measures::direction::MDirection;
 use casa_core::measures::frequency::FrequencyRef;
 use casa_core::quanta::Quantity;
 use casa_core::quanta::casacore::tos;
-use casa_ms::observation_io::creation::{Loss, Replacement, Stage};
-use casa_ms::observation_io::{is_measurement_set, is_msv4_store};
+use casa_ms::observation_io::creation::{Loss, Msv4Replacement, Stage};
 
 use super::antennas::Array;
 use super::pointings::Pointings;
@@ -55,14 +54,12 @@ pub(super) fn observe(
         Ok(losses)
     };
     let losses = if run.parameters.outformat == SimulatorFormat::Msv4 {
-        publish_msv4(&ms, |path| {
+        publish_msv4(&ms, run.parameters.overwrite, |path| {
             let losses = created(path)?;
             check_cancel(cancel)?;
             Ok(losses)
         })?
     } else {
-        // The legacy equivalent of CASA's overwrite rule lives here.
-        make_way(&ms)?;
         created(&ms)?
     };
     for loss in losses {
@@ -91,6 +88,9 @@ fn render(
     }
     let band = band_name(qa::value_in(&model.specrefval, "GHz")?);
     let schedule = schedule(run, pointings, calibrator.is_some())?;
+    if run.parameters.outformat == SimulatorFormat::Msv2 {
+        make_way(path)?;
+    }
     let mut sm = open_session(run, path);
     set_up(run, &mut sm, sky, array, &band)?;
     let integration_s = qa::value_in(&qa::read(&pointings.integration)?, "s")?;
@@ -115,40 +115,37 @@ fn render(
 /// publication as the common creation boundary.
 fn publish_msv4(
     destination: &Path,
+    overwrite: bool,
     create: impl FnOnce(&Path) -> Result<Vec<Loss>, SimobserveError>,
 ) -> Result<Vec<Loss>, SimobserveError> {
     let error = |value: casa_ms::observation_io::ObservationError| SimobserveError::Table {
         table: destination.to_path_buf(),
         reason: value.to_string(),
     };
-    let replacement = if entry_exists(destination) {
-        if !is_msv4_store(destination) || !is_measurement_set(destination) {
-            return Err(SimobserveError::raised(format!(
-                "{} is not an MSv4 processing set to replace",
-                destination.display()
-            )));
-        }
-        Some(Replacement::hold(destination).map_err(error)?)
+    let replacement = if overwrite && entry_exists(destination) {
+        Some(Msv4Replacement::hold(destination).map_err(error)?)
     } else {
         None
     };
     let stage = Stage::reserve(destination, "simobserve").map_err(error)?;
-    let result = create(stage.path()).and_then(|losses| {
-        if let Some(replacement) = replacement {
-            if let Some(leftover) = replacement.publish(stage.path()).map_err(error)? {
-                tracing::warn!(path = %leftover.display(), "the replaced processing set could not be removed");
-            }
-        } else {
-            stage.publish_new(destination).map_err(error)?;
+    let losses = match create(stage.path()) {
+        Ok(losses) => losses,
+        Err(error) => {
+            stage.remove();
+            return Err(error);
         }
-        Ok(losses)
-    });
-    if result.is_ok() {
-        stage.release();
-    } else {
+    };
+    if let Some(replacement) = replacement {
+        if let Some(leftover) = replacement.publish(stage).map_err(error)? {
+            tracing::warn!(path = %leftover.display(), "the replaced processing set could not be removed");
+        }
+    } else if let Err(cause) = stage.publish_new(destination) {
         stage.remove();
+        return Err(error(cause));
+    } else {
+        stage.release();
     }
-    result
+    Ok(losses)
 }
 
 /// `setconfig`, `setspwindow`, `setfeed`, `setlimits` (only when
@@ -465,4 +462,68 @@ fn check_baselines(
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs::{self, File};
+
+    use casa_ms::observation_io::{is_measurement_set, is_msv4_store};
+
+    use super::*;
+
+    fn install_fixture(destination: &Path, name: &str) {
+        let scratch = tempfile::tempdir().unwrap();
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../casacore/casa-ms/tests/fixtures/ms_trial")
+            .join(format!("{name}.tgz"));
+        tar::Archive::new(flate2::read::GzDecoder::new(File::open(source).unwrap()))
+            .unpack(scratch.path())
+            .unwrap();
+        fs::rename(scratch.path().join(name), destination).unwrap();
+        assert!(is_measurement_set(destination));
+    }
+
+    #[test]
+    fn no_overwrite_keeps_a_store_arriving_after_the_early_check() {
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("output.ps.zarr");
+        assert!(!entry_exists(&destination));
+        install_fixture(&destination, "ms_trial.ps.zarr");
+        fs::write(destination.join("sentinel"), "late MSv4").unwrap();
+        let result = publish_msv4(&destination, false, |stage| {
+            install_fixture(stage, "ms_trial.ps.zarr");
+            Ok(Vec::new())
+        });
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read_to_string(destination.join("sentinel")).unwrap(),
+            "late MSv4"
+        );
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn overwrite_keeps_an_msv2_that_replaces_the_held_msv4_during_render() {
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("output.ps.zarr");
+        let original = root.path().join("original.ps.zarr");
+        install_fixture(&destination, "ms_trial.ps.zarr");
+        let result = publish_msv4(&destination, true, |stage| {
+            fs::rename(&destination, &original).unwrap();
+            install_fixture(&destination, "ms_trial.ms");
+            fs::write(destination.join("sentinel"), "foreign MSv2").unwrap();
+            install_fixture(stage, "ms_trial.ps.zarr");
+            Ok(Vec::new())
+        });
+        assert!(result.is_err());
+        assert!(is_measurement_set(&destination));
+        assert!(!is_msv4_store(&destination));
+        assert_eq!(
+            fs::read_to_string(destination.join("sentinel")).unwrap(),
+            "foreign MSv2"
+        );
+        assert!(is_measurement_set(&original));
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
+    }
 }

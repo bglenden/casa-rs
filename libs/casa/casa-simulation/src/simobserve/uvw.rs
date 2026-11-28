@@ -23,13 +23,14 @@ pub(super) fn largest_signed_uv(
         path,
         budget,
         &mut |wanted| {
-            let extra = (wanted as u64).saturating_sub(reservation.memory());
-            if extra == 0 {
+            let wanted_bytes = wanted as u64;
+            if wanted_bytes <= reservation.memory() {
+                reservation.retain(wanted_bytes);
                 return Ok(());
             }
             let demand = Demand {
                 phase: "simobserve's stored UVW survey",
-                memory: extra,
+                memory: wanted_bytes - reservation.memory(),
             };
             match admit(host, policy, &demand) {
                 Ok(admitted) => {
