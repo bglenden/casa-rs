@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 use casa_observation::ObservationError;
 use casa_tables::{
     TableWriteLock,
-    publication::{exchange_directories, rename_without_replacing},
+    publication::{exchange_directories, open_directory_identity, rename_without_replacing},
 };
 
 use crate::observation_io::update::{request_error, storage};
@@ -126,7 +126,7 @@ impl Msv4Replacement {
     /// The destination is absent, is not a whole MSv4 processing set, or
     /// the filesystem cannot exchange directories.
     pub fn hold(destination: &Path) -> Result<Self, ObservationError> {
-        let original = fs::File::open(destination).map_err(storage)?;
+        let original = open_directory_identity(destination).map_err(storage)?;
         if !matches_msv4(destination, &original.metadata().map_err(storage)?) {
             return Err(request_error(format!(
                 "{} is not an MSv4 processing set to replace",
@@ -158,7 +158,7 @@ impl Msv4Replacement {
     ) -> Result<Option<PathBuf>, ObservationError> {
         let exchanged = (|| {
             let original = self.original.metadata().map_err(storage)?;
-            let candidate = fs::File::open(stage.path()).map_err(storage)?;
+            let candidate = open_directory_identity(stage.path()).map_err(storage)?;
             if !matches_msv4(&self.destination, &original) {
                 return Err(self.changed());
             }
