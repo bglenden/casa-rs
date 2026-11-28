@@ -573,6 +573,8 @@ pub(crate) struct SolveAccumulator {
     pub(super) baseline_correlation_counts: BTreeSet<usize>,
     /// A single parallel hand in channelized G solves occupies parameter zero.
     pub(crate) single_parallel_hand: bool,
+    /// Physical hands in an interval written with the legacy G slot layout.
+    pub(crate) legacy_parallel_hands: [bool; 2],
     pub(crate) polynomial: Option<polynomial::PolynomialAccumulation>,
     /// `[solution channel][receptor]`, filled by [`Self::finalize_for_solve`].
     pub(crate) channel_graphs: Vec<Vec<SolveGraph>>,
@@ -647,6 +649,7 @@ impl SolveAccumulator {
             solution_channels: 1,
             baseline_correlation_counts: BTreeSet::new(),
             single_parallel_hand: false,
+            legacy_parallel_hands: [false; 2],
             polynomial: None,
             channel_graphs: Vec::new(),
             solution_time: 0.0,
@@ -939,6 +942,9 @@ impl SolveAccumulator {
                     .input_rows
                     .receptors(correlation_types, corr_index, row.data_desc_id)?;
             let parallel_hand = receptors.0 == receptors.1;
+            if options.legacy_g_receptors && parallel_hand {
+                self.legacy_parallel_hands[receptors.0] = true;
+            }
             if no_weighted_data {
                 continue;
             }

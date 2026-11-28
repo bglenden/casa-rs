@@ -41,6 +41,7 @@ pub use crate::solve_stats::{AntennaSolveStats, SolveCounts, SolveStats, WindowS
 pub use fringe::{FringeControls, FringeCorrelation};
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 use std::path::PathBuf;
 
 use casa_core::{Complex32, ScalarValue, Value};
@@ -849,6 +850,7 @@ fn solve_gain_rows_with_settings(
     let kernel_phase = crate::timing::Phase::start("gain_solve");
     let mut solution_rows = Vec::new();
     let mut attempted_spw_ids = BTreeSet::new();
+    let mut legacy_refant_slots = LegacyRefantSlots::new();
     let mut solve_stats = SolveStatsBuilder::new(
         gather_only.map_or_else(
             || request.gain_type.polarizations(),
@@ -870,6 +872,7 @@ fn solve_gain_rows_with_settings(
         if group.attempted {
             attempted_spw_ids.insert(group.spw_id);
         }
+        record_legacy_refant_slots(&mut legacy_refant_slots, &group);
         group.finalize_for_solve(request.solve_mode, request.robustness.enabled());
         trace::trace_group(&base_key, &bucket_key, &group, request);
         let Some(group_rows) = solve_group_with_stats(
@@ -891,7 +894,13 @@ fn solve_gain_rows_with_settings(
         );
         solution_rows.extend(group_rows);
     }
-    apply_requested_reference(ms, &mut solution_rows, &request.refant, &context)?;
+    apply_requested_reference(
+        ms,
+        &mut solution_rows,
+        &request.refant,
+        &context,
+        &legacy_refant_slots,
+    )?;
     finish_gain_amplitudes(&mut solution_rows, request);
     tally_references(&solution_rows, &mut solve_stats);
     drop(kernel_phase);
@@ -977,6 +986,7 @@ fn apply_requested_reference(
     rows: &mut [kernel::SolutionRow],
     request: &RefAntSelector,
     context: &crate::session::CalibrationSolveContext,
+    legacy_refant_slots: &LegacyRefantSlots,
 ) -> Result<(), GainSolveError> {
     let preferred = context.refant_id;
     if preferred < 0 {
@@ -990,8 +1000,19 @@ fn apply_requested_reference(
         nearby.retain(|id| *id != preferred && !alternates.contains(id));
         alternates.extend(nearby);
     }
-    apply_reference_antenna(rows, preferred, &alternates, strict);
+    apply_reference_antenna(rows, preferred, &alternates, strict, legacy_refant_slots);
     Ok(())
+}
+
+type LegacyRefantSlots = BTreeMap<i32, [bool; 2]>;
+
+fn record_legacy_refant_slots(slots: &mut LegacyRefantSlots, group: &grouping::SolveAccumulator) {
+    if group.legacy_parallel_hands != [false; 2] {
+        let window = slots.entry(group.spw_id).or_default();
+        for (known, observed) in window.iter_mut().zip(group.legacy_parallel_hands) {
+            *known |= observed;
+        }
+    }
 }
 
 fn tally_references(rows: &[kernel::SolutionRow], stats: &mut SolveStatsBuilder) {
@@ -1122,7 +1143,8 @@ pub(crate) fn nearest_first(positions: &[[f64; 3]], refant_id: i32) -> Vec<i32> 
 /// of: the preferred antenna, the one used last, then the others nearest the
 /// preferred first, that has every receptor unflagged both here and in the
 /// last referred interval (only the first receptor when the window's second
-/// is never solved). Its phase change since that interval is removed from
+/// is never solved, or only the second for a legacy YY/LL-only window).
+/// Its phase change since that interval is removed from
 /// every antenna, so an alternate is held at constant phase. An interval
 /// with no such antenna is flagged entirely and leaves the last referred
 /// interval in place for the next.
@@ -1131,6 +1153,7 @@ pub(crate) fn apply_reference_antenna(
     preferred_refant_id: i32,
     alternates: &[i32],
     strict: bool,
+    legacy_refant_slots: &LegacyRefantSlots,
 ) {
     // CASA `applyRefAnt` iterates by window and exact caltable time, even
     // where separate solve intervals contributed rows at the same time.
@@ -1160,7 +1183,11 @@ pub(crate) fn apply_reference_antenna(
             previous = None;
             last_spw = Some(spw_id);
         }
-        let receptors = receptor_counts[&spw_id];
+        let receptors = if legacy_refant_slots.get(&spw_id) == Some(&[false, true]) {
+            1..2
+        } else {
+            0..receptor_counts[&spw_id]
+        };
         let previous_indices = previous.as_ref().unwrap_or(&current);
         let candidates = if strict { &choices[..1] } else { &choices[..] };
         let Some((current_ref_index, previous_ref_index)) =
@@ -1207,14 +1234,19 @@ fn find_flex_refant(
     choices: &[i32],
     current: &[usize],
     previous: &[usize],
-    receptors: usize,
+    receptors: Range<usize>,
 ) -> Option<(usize, usize)> {
     let usable = |indices: &[usize], antenna_id: i32| {
         indices
             .iter()
             .copied()
             .find(|&index| rows[index].antenna_id == antenna_id)
-            .filter(|&index| rows[index].flags.iter().take(receptors).all(|flag| !*flag))
+            .filter(|&index| {
+                rows[index]
+                    .flags
+                    .get(receptors.clone())
+                    .is_some_and(|flags| flags.iter().all(|flag| !*flag))
+            })
     };
     choices
         .iter()
@@ -1400,6 +1432,20 @@ mod solnorm_tests {
             snrs: vec![0.0; 2],
             weights: vec![1.0; 2],
         }
+    }
+
+    #[test]
+    fn reference_checks_the_legacy_physical_slots_without_relaxing_dual_receptor_solves() {
+        let mut rows = [
+            row(0, 0.0, [1.0, 2.0], [true, false]),
+            row(1, 0.0, [1.0, 2.0], [true, false]),
+        ];
+        let slots = LegacyRefantSlots::from([(0, [false, true]), (1, [true, true])]);
+        apply_reference_antenna(&mut rows, 0, &[], true, &slots);
+        assert_eq!(rows[0].flags, [true, false]);
+        assert_eq!(rows[0].refant_id, 0);
+        assert_eq!(rows[1].flags, [true, true]);
+        assert_eq!(rows[1].refant_id, -1);
     }
 
     /// CASA 6.7.6.14 normalizes a window's gains by one factor, the root

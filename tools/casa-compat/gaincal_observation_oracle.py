@@ -94,7 +94,11 @@ def legacy_yy_append(root, native, options):
     make_cal_ms(str(source), stokes='YY')
     options = options | dict(refant='', refantmode='flex', minblperant=2)
     expected = solve(casa, root, 'casa', source, **options)
-    solve(native, root, 'native', source, **options)
+    return append_legacy_yy(root, native, source, expected, options)
+
+
+def append_legacy_yy(root, native, vis, expected, options):
+    solve(native, root, 'native', vis, **options)
     destination = root/'native.cal'
     with editable(destination) as tool:
         # Older native G tables stored YY in slot one.
@@ -103,7 +107,7 @@ def legacy_yy_append(root, native, options):
             assert tool.putcol(column, tool.getcol(column)[::-1].copy())
 
     initial = contents(destination)
-    appended = solve(native, root, 'native', source, append=True, **options)
+    appended = solve(native, root, 'native', vis, append=True, **options)
     rows = initial['FLAG'].shape[-1]
     assert rows == 10
     assert appended['FLAG'].shape[-1] == 2 * rows
@@ -113,9 +117,28 @@ def legacy_yy_append(root, native, options):
         np.testing.assert_array_equal(appended[column][..., ::2], initial[column])
     legacy = {name: appended[name][..., 1::2] for name in (*IDENTITY_COLUMNS, 'FLAG', 'CPARAM')}
     np.testing.assert_array_equal(np.sum(~legacy['FLAG'], axis=(1, 2)), [0, rows])
+    if options['refant'] == '0':
+        np.testing.assert_array_equal(legacy['ANTENNA2'], np.zeros(rows, dtype=np.int32))
     for column in ('FLAG', 'CPARAM'):
         legacy[column] = legacy[column][::-1]
     return compare_gains(legacy, expected)
+
+
+def legacy_yy_reference(root, native, options):
+    source = root/'yy.ms'
+    make_cal_ms(str(source), stokes='YY')
+    converted = root/'yy.ps.zarr'
+    native.msconvert(vis=str(source), outputvis=str(converted), outformat='msv4', withpointing=False)
+    options = options | dict(refant='0', minblperant=2)
+    results = {}
+    for refantmode in ('strict', 'flex'):
+        settings = options | dict(refantmode=refantmode)
+        expected = solve(casa, root, f'casa-{refantmode}', source, **settings)
+        for fmt, vis in [('MSv2', source), ('MSv4', converted)]:
+            case = root/f'{fmt}-{refantmode}'
+            case.mkdir()
+            results[case.name] = append_legacy_yy(case, native, vis, expected, settings)
+    return results
 
 
 def observed_field_scan_pairs(root, native, options):
@@ -163,7 +186,7 @@ def phase_flags(root, native, options):
     return results
 
 
-CASES = (mixed_weights, legacy_yy_append, observed_field_scan_pairs, phase_flags)
+CASES = (mixed_weights, legacy_yy_append, legacy_yy_reference, observed_field_scan_pairs, phase_flags)
 
 
 def main():

@@ -249,6 +249,7 @@ pub(super) fn solve_sequential(
         refant,
         &alternates(catalogue, refant),
         false,
+        &BTreeMap::new(),
     );
     (solved, trace)
 }
@@ -384,6 +385,7 @@ pub(super) fn solve_concurrent(
         refant,
         &alternates(catalogue, refant),
         false,
+        &BTreeMap::new(),
     );
     (solved, trace)
 }
