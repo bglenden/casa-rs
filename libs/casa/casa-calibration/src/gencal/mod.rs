@@ -407,16 +407,8 @@ fn generate_prior(
     } else {
         open_measurement_set(path)?
     };
-    if manual_offsets
-        && ms.path().is_none()
-        && crate::antpos_vla::only_vla_observations(&ms)
-            .map_err(|source| observation_error(ObservationError::Storage(Box::new(source))))?
-    {
-        // The snapshot's integration span is not the observing session's stated
-        // extent, which determines whether CASA writes VLATrDelCorr.
-        return Err(observation_error(ObservationError::Unsupported {
-            what: "VLA antenna position offsets from MSv4 without a stated OBSERVATION.TIME_RANGE",
-        }));
+    if manual_offsets {
+        antpos_evla::validate_tropo_epoch(&ms).map_err(observation_error)?;
     }
     let switched_power = request
         .caltype

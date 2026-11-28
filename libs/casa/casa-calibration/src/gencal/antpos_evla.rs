@@ -4,7 +4,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use casa_core::{ArrayValue, ScalarValue, Value, quanta::time::MvTime};
-use casa_ms::{MeasurementSet, schema::SubtableId};
+use casa_ms::{MeasurementSet, observation_io::ObservationError, schema::SubtableId};
 
 use super::{GencalError, GencalRequest, get_string};
 
@@ -124,6 +124,20 @@ pub(super) fn observation_start(ms: &MeasurementSet) -> Result<MvTime, GencalErr
 pub(super) fn affected_tropo_epoch(time: MvTime) -> bool {
     let mjd = time.as_mjd_days();
     mjd > 57_609.0 && mjd < 57_707.0
+}
+
+pub(super) fn validate_tropo_epoch(ms: &MeasurementSet) -> Result<(), ObservationError> {
+    if ms.path().is_none()
+        && crate::antpos_vla::only_vla_observations(ms)
+            .map_err(|source| ObservationError::Storage(Box::new(source)))?
+    {
+        // The snapshot's integration span cannot supply the stated session
+        // extent that determines whether CASA writes VLATrDelCorr.
+        return Err(ObservationError::Unsupported {
+            what: "VLA antenna position offsets from MSv4 without a stated OBSERVATION.TIME_RANGE",
+        });
+    }
+    Ok(())
 }
 
 pub(super) fn tropo_keyword(ms: &MeasurementSet) -> Result<Option<Value>, GencalError> {
