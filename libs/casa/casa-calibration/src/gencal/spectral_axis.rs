@@ -130,13 +130,7 @@ pub(super) fn validate_prescribed_namespace(
             .zip(&replacement)
             .enumerate()
             .all(|(id, (old, new))| {
-                let original_name = match old.name.as_str() {
-                    "" | "none" => "spw",
-                    name => name,
-                };
-                // The MSv2 converter adds the source SPW row to the XRADIO name.
-                let same_name = old.name == new.name || new.name == format!("{original_name}_{id}");
-                same_name
+                new.matches_persisted_name(old, id)
                     && old.frame == new.frame
                     && old.frequencies_hz == new.frequencies_hz
                     && old.widths_hz == new.widths_hz

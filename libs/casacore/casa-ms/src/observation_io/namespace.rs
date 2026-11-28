@@ -69,6 +69,48 @@ pub struct NamespaceWindow {
     pub widths_hz: Vec<f64>,
 }
 
+impl NamespaceWindow {
+    /// Whether the persisted name is this window's name, including the
+    /// XRADIO converter's suffix for its source SPECTRAL_WINDOW row.
+    #[must_use]
+    pub fn matches_persisted_name(&self, persisted: &Self, row: usize) -> bool {
+        let base = match persisted.name.as_str() {
+            "" | "none" => "spw",
+            name => name,
+        };
+        self.name == persisted.name || self.name == format!("{base}_{row}")
+    }
+
+    /// Whether a calibration window holds this axis at the same frame:
+    /// the full channel grid, or one channel at its unweighted mean with
+    /// the sum of its widths. CASA can store decreasing-frequency channel
+    /// widths as positive. A relative tolerance of 1e-12 allows different
+    /// rounding when CASA sums the frequencies.
+    #[must_use]
+    pub fn describes_solution_axis(&self, calibration: &Self) -> bool {
+        if self.frame != calibration.frame {
+            return false;
+        }
+        let close = |a: f64, b: f64| (a - b).abs() <= 1e-12 * a.abs().max(b.abs());
+        let same = |a: &[f64], b: &[f64], value: fn(f64) -> f64| {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| close(value(*a), value(*b)))
+        };
+        if same(&self.frequencies_hz, &calibration.frequencies_hz, |hz| hz)
+            && same(&self.widths_hz, &calibration.widths_hz, f64::abs)
+        {
+            return true;
+        }
+        let channels = self.frequencies_hz.len();
+        if channels < 2 || calibration.frequencies_hz.len() != 1 || calibration.widths_hz.len() != 1
+        {
+            return false;
+        }
+        let mean = self.frequencies_hz.iter().sum::<f64>() / channels as f64;
+        let width = self.widths_hz.iter().map(|width| width.abs()).sum();
+        close(calibration.frequencies_hz[0], mean) && close(calibration.widths_hz[0].abs(), width)
+    }
+}
+
 /// The rows of a namespace's `ANTENNA`, `FIELD` and `SPECTRAL_WINDOW`
 /// subtables, in row order.
 #[derive(Clone, Debug)]
@@ -463,6 +505,14 @@ impl NamespaceRows {
         let table = Table::open(TableOptions::new(directory.join("ANTENNA")))
             .map_err(|error| storage(MsError::from(error)))?;
         antennas(&table)
+    }
+
+    /// Read physical identities in the row order of an open SPECTRAL_WINDOW table.
+    ///
+    /// # Errors
+    /// When the table's frequency metadata cannot be read or is invalid.
+    pub fn spectral_windows(table: &Table) -> Result<Vec<NamespaceWindow>, ObservationError> {
+        windows(table)
     }
 
     /// Read the physical spectral window identities of a persisted
