@@ -529,6 +529,8 @@ pub(super) fn mstransform_staged(
     } else {
         input_batch_rows
     };
+    #[cfg(feature = "transform-test-hooks")]
+    let batch_rows = test_hooks::limit_batch_rows(batch_rows);
     let mut write_session = MeasurementSetWriteSession::start(&request.output_ms, write_plan)
         .map_err(|error| MsTransformError::WriteMeasurementSet {
             path: request.output_ms.display().to_string(),
@@ -548,7 +550,7 @@ pub(super) fn mstransform_staged(
     let mut output_column_overrides = gather_selected_main_column_overrides(
         (input.main_table(), &output_main),
         scalar_input_rows,
-        &request.output_ms,
+        (&request.output_ms, options),
         batch_rows,
         &mut write_session,
         &row_id_maps,
@@ -612,6 +614,8 @@ pub(super) fn mstransform_staged(
     });
     for batch_start in (0..row_count).step_by(batch_rows.max(1)) {
         options.check_cancelled()?;
+        #[cfg(feature = "transform-test-hooks")]
+        test_hooks::notify(test_hooks::Checkpoint::VisibilityBatchStarted(batch_start));
         let batch_end = (batch_start + batch_rows.max(1)).min(row_count);
         let input_rows = &output_input_rows[batch_start..batch_end];
         let mut combined_scalars = Vec::new();
@@ -1447,13 +1451,8 @@ pub(super) fn mstransform_staged(
             }
             touched_spws.insert(spw_id);
         }
-        if batch_start == 0 {
-            maybe_log_transform_progress(
-                "first_visibility_batch",
-                stage_started_at.elapsed(),
-                started_at.elapsed(),
-            );
-        }
+        #[cfg(feature = "transform-test-hooks")]
+        test_hooks::notify(test_hooks::Checkpoint::VisibilityBatchStaged(batch_start));
     }
     options.check_cancelled()?;
     maybe_log_transform_progress(

@@ -13,6 +13,7 @@ name = "casars_python"
 crate-type = ["cdylib"]
 
 [features]
+transform-test-hooks = ["casa-mstransform/transform-test-hooks"]
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]

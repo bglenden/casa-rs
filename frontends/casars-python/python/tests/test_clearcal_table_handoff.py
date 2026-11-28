@@ -66,6 +66,44 @@ assert tool.done()
     assert tasks.clearcal(str(native_dataset), addmodel=True) is None
 
 
+@pytest.mark.skipif(os.name != "posix", reason="requires a POSIX table lock")
+def test_clearcal_debug_stderr_can_reenter_the_same_table(native_dataset, monkeypatch):
+    read_main = """
+import sys
+from casars import tools
+
+table = tools.table()
+assert table.open(sys.argv[1])
+assert table.nrows() > 0
+assert table.done()
+"""
+    stderr = sys.stderr
+    reads = []
+
+    class Terminal:
+        def write(self, line):
+            if not reads and f"opening CASA table path={native_dataset}\n" in line:
+                # clearcal opens MAIN after taking its write lock. A separate
+                # process waits for that lock, even while stderr is running.
+                try:
+                    result = subprocess.run(
+                        [sys.executable, "-c", read_main, str(native_dataset)],
+                        capture_output=True, text=True, timeout=15,
+                    )
+                    reads.append((result.returncode, result.stderr))
+                except subprocess.TimeoutExpired:
+                    reads.append(("timeout", "stderr delivery blocked MAIN lock release"))
+            return stderr.write(line)
+
+        def flush(self):
+            stderr.flush()
+
+    monkeypatch.setenv("CASA_RS_LOG_STDERR_PRIORITY", "DEBUG")
+    monkeypatch.setattr(sys, "stderr", Terminal())
+    assert tasks.clearcal(str(native_dataset), addmodel=True) is None
+    assert reads == [(0, "")]
+
+
 def test_clearcal_does_not_wait_for_an_unrelated_busy_table(native_dataset, tmp_path):
     pinned_casa()
     unrelated = tmp_path / "unrelated.ms"

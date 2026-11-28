@@ -20,6 +20,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 workspace = true
 
 [features]
+transform-test-hooks = []
 msv4 = ["casa-ms/msv4"]
 
 [dependencies]

@@ -40,9 +40,6 @@ pub struct NativeTaskOptions {
     pub table_writes: Option<std::sync::Arc<[casa_tables::DelegatedTableWrite]>>,
     /// Per-run token shared by native task adapters and their workers.
     pub cancel: TaskCancellation,
-    /// Imaging controls. Native runs use the invocation's shared cancellation token.
-    #[cfg(feature = "imaging")]
-    pub imaging: crate::imaging::ImagingExecutionOptions,
 }
 
 /// Run a built-in task with explicit overrides and no managed Last state.
@@ -135,12 +132,11 @@ fn execute(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         #[cfg(feature = "imaging")]
         "tclean" => {
-            let native = task.native_options().unwrap();
-            let options = crate::imaging::ImagingExecutionOptions {
-                cancel: native.cancel.clone(),
-                ..native.imaging.clone()
-            };
-            crate::imaging::run_task_with_options(task, &options)
+            let cancel = task.native_options().unwrap().cancel.clone();
+            crate::imaging::run_task_with_options(
+                task,
+                &crate::imaging::ImagingExecutionOptions::native(cancel),
+            )
         }
         #[cfg(feature = "imaging")]
         "tsdimaging" => {

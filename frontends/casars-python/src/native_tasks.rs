@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender, channel, sync_channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -22,6 +22,9 @@ use tracing_subscriber::{Registry, layer::SubscriberExt};
 use crate::convert::reply_value::reply_value;
 use crate::parameters::{parameter_values, reason_error, to_python};
 use crate::tasks::{TaskTableWrite, completion, decode_plot_documents};
+
+#[cfg(all(unix, feature = "transform-test-hooks"))]
+use crate::native_transform_test_hooks as transform_test_hooks;
 
 #[derive(FromPyObject)]
 #[pyo3(from_item_all)]
@@ -122,28 +125,22 @@ impl NativeTaskResult {
     }
 }
 
-enum WorkerMessage {
-    Log(String, Option<Sender<()>>),
+pub(crate) enum WorkerMessage {
+    Log(String),
+    #[cfg(all(unix, feature = "transform-test-hooks"))]
+    TestInterrupt(Sender<()>),
     Finished,
 }
 
-struct LogWriter {
-    sender: SyncSender<WorkerMessage>,
-    synchronize: bool,
-}
+struct LogWriter(Sender<WorkerMessage>);
 
 impl io::Write for LogWriter {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        // With verbose diagnostics enabled, let Python handle the log and
-        // any signal it triggers before the worker passes the checkpoint.
-        let (acknowledge, delivered) = self.synchronize.then(channel).unzip();
-        let line = String::from_utf8_lossy(bytes).into_owned();
-        self.sender
-            .send(WorkerMessage::Log(line, acknowledge))
+        self.0
+            .send(WorkerMessage::Log(
+                String::from_utf8_lossy(bytes).into_owned(),
+            ))
             .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?;
-        if let Some(delivered) = delivered {
-            let _ = delivered.recv();
-        }
         Ok(bytes.len())
     }
 
@@ -179,7 +176,7 @@ impl TaskLogging {
         })
     }
 
-    fn sink(self, sender: SyncSender<WorkerMessage>) -> Arc<dyn CasaLogSink> {
+    fn sink(self, sender: Sender<WorkerMessage>) -> Arc<dyn CasaLogSink> {
         let mut sinks: Vec<Arc<dyn CasaLogSink>> = Vec::new();
         if let Some((path, priority)) = self.table {
             sinks.push(Arc::new(CasaTableLogSink::new(
@@ -190,10 +187,7 @@ impl TaskLogging {
         }
         if let Some(priority) = self.stderr_priority {
             sinks.push(Arc::new(WriterSink::new(
-                Arc::new(Mutex::new(LogWriter {
-                    sender,
-                    synchronize: priority <= CasaPriority::Debug1,
-                })),
+                Arc::new(Mutex::new(LogWriter(sender))),
                 priority,
             )));
         }
@@ -221,12 +215,12 @@ pub(crate) fn run_native_task(
     let originals = parameter_values(originals)?;
     let sys = py.import("sys")?;
     let logging = TaskLogging::read(&workspace)?;
-    let (sender, mut receiver) = sync_channel(64);
+    let (sender, mut receiver) = channel();
     let diagnostic_lines = sender.clone();
     let execution = NativeTaskOptions {
         default_logs: logging.default_output,
         log_line: Some(Arc::new(move |line| {
-            let _ = diagnostic_lines.send(WorkerMessage::Log(format!("{line}\n"), None));
+            let _ = diagnostic_lines.send(WorkerMessage::Log(format!("{line}\n")));
         })),
         plot_payload: options.plot_payload,
         bandpass_completed_pages: options.bandpass_completed_pages,
@@ -240,12 +234,14 @@ pub(crate) fn run_native_task(
         ..NativeTaskOptions::default()
     };
     let cancel = execution.cancel.clone();
+    #[cfg(all(unix, feature = "transform-test-hooks"))]
+    let transform_test = transform_test_hooks::take(&surface);
     let worker = std::thread::Builder::new()
         .name(format!("casars-{surface}"))
         .spawn(move || {
             let sink = logging.sink(sender.clone());
             let subscriber = Registry::default().with(CasaLogLayer::filtered(sink.clone()));
-            let (reply, lines) = tracing::subscriber::with_default(subscriber, || {
+            let run = || {
                 run_task_in_process(
                     &surface,
                     values,
@@ -254,17 +250,19 @@ pub(crate) fn run_native_task(
                     &workspace,
                     &execution,
                 )
-            });
+            };
+            #[cfg(all(unix, feature = "transform-test-hooks"))]
+            let run = || transform_test_hooks::run(transform_test, &sender, run);
+            let (reply, lines) = tracing::subscriber::with_default(subscriber, run);
             for line in lines {
-                if sender.send(WorkerMessage::Log(line + "\n", None)).is_err() {
+                if sender.send(WorkerMessage::Log(line + "\n")).is_err() {
                     break;
                 }
             }
             if let Err(error) = sink.flush() {
-                let _ = sender.send(WorkerMessage::Log(
-                    format!("Error: failed to flush logging: {error}\n"),
-                    None,
-                ));
+                let _ = sender.send(WorkerMessage::Log(format!(
+                    "Error: failed to flush logging: {error}\n"
+                )));
             }
             let _ = sender.send(WorkerMessage::Finished);
             reply
@@ -297,7 +295,7 @@ fn collect_logs(
         }
         let receiver = &mut *receiver;
         match py.detach(move || receiver.recv_timeout(Duration::from_millis(20))) {
-            Ok(WorkerMessage::Log(line, acknowledge)) => {
+            Ok(WorkerMessage::Log(line)) => {
                 logs.push_str(&line);
                 if interrupted.is_none()
                     && let Err(error) = relay_log(sys, &line)
@@ -306,15 +304,17 @@ fn collect_logs(
                     cancel.cancel();
                     interrupted = Some(error);
                 }
-                if acknowledge.is_some()
-                    && let Err(error) = py.check_signals()
-                {
+            }
+            #[cfg(all(unix, feature = "transform-test-hooks"))]
+            Ok(WorkerMessage::TestInterrupt(resume)) => {
+                // SAFETY: a standard process signal handled by Python. This
+                // collector is the same Python thread running the public task.
+                assert_eq!(unsafe { libc::raise(libc::SIGINT) }, 0);
+                if let Err(error) = py.check_signals() {
                     cancel.cancel();
                     interrupted.get_or_insert(error);
                 }
-                // Closing the channel releases the worker even if log
-                // delivery or signal handling raised a Python exception.
-                drop(acknowledge);
+                drop(resume);
             }
             Err(RecvTimeoutError::Timeout) if !worker.is_finished() => {}
             Ok(WorkerMessage::Finished) | Err(_) => break,

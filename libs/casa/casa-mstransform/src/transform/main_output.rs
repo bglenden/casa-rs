@@ -134,7 +134,7 @@ pub(super) fn materialize_empty_main_table(
 pub(super) fn gather_selected_main_column_overrides(
     (table, output): (&Table, &Table),
     selected_rows: &[usize],
-    output_path: &Path,
+    (output_path, options): (&Path, &MsTransformTaskOptions),
     batch_rows: usize,
     write_session: &mut MeasurementSetWriteSession,
     row_id_maps: &selection_metadata::RowIdMaps,
@@ -150,6 +150,7 @@ pub(super) fn gather_selected_main_column_overrides(
         })?;
     let mut columns = ColumnOverrides::for_row_count(selected_rows.len());
     for column in schema.columns() {
+        options.check_cancelled()?;
         let column_started_at = Instant::now();
         let name = column.name();
         if is_deferred_visibility_column(name) {
@@ -170,6 +171,7 @@ pub(super) fn gather_selected_main_column_overrides(
                     let id_map = row_id_maps.for_column(name);
                     let array_selection = row_id_maps.array.as_ref().filter(|_| name == "ARRAY_ID");
                     for rows in selected_rows.chunks(batch_rows.max(1)) {
+                        options.check_cancelled()?;
                         let values = table
                             .column_accessor(name)
                             .and_then(|column| column.scalar_cells_owned_for_rows(rows))
@@ -208,6 +210,8 @@ pub(super) fn gather_selected_main_column_overrides(
                                     reason: source.to_string(),
                                 })?;
                         }
+                        #[cfg(feature = "transform-test-hooks")]
+                        test_hooks::notify(test_hooks::Checkpoint::ScalarChunkStaged);
                     }
                 } else {
                     let values = table
