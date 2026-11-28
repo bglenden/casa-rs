@@ -141,7 +141,7 @@ def legacy_yy_reference(root, native, options):
     return results
 
 
-def observed_field_scan_pairs(root, native, options):
+def field_scan_stores(root, native):
     source = extract_trial(root)
     for subtable, column, value in [('FIELD', 'NAME', 'second-field'),
                                     ('STATE', 'OBS_MODE', 'CALIBRATE_PHASE.ON_SOURCE')]:
@@ -161,12 +161,44 @@ def observed_field_scan_pairs(root, native, options):
 
     converted = root/'converted.ps.zarr'
     native.msconvert(vis=str(source), outputvis=str(converted), outformat='msv4', withpointing=False)
+    return source, converted
+
+
+def observed_field_scan_pairs(root, native, options):
+    source, converted = field_scan_stores(root, native)
     options = options | dict(solint='15s')
     expected = solve(casa, root, 'casa', source, **options)
     assert set(zip(expected['FIELD_ID'], expected['SCAN_NUMBER'])) == {(0, 1), (0, 2), (1, 1), (1, 2)}
     assert expected['TIME'].size == 60
     return {fmt: compare_gains(solve(native, root, fmt, vis, **options), expected)
             for fmt, vis in [('MSv2', source), ('MSv4', converted)]}
+
+
+def field_scan_selection(root, native, options):
+    source, converted = field_scan_stores(root, native)
+    cases = (
+        ('explicit', dict(field='trial*', scan='2'), {(0, 2)}, 15),
+        ('pattern', dict(field='second*', scan='>0&<2'), {(1, 1)}, 15),
+        ('scan-disabled', dict(field='1', scan='1', selectdata=False), {(1, 1), (1, 2)}, 30),
+        ('ranges', dict(field='0~1', scan='1,2'), {(0, 1), (0, 2), (1, 1), (1, 2)}, 60),
+    )
+    results = {}
+    for name, selectors, pairs, row_count in cases:
+        settings = options | dict(solint='15s') | selectors
+        def run(label, engine, vis):
+            path = root/f'{name}-{label}.cal'
+            reply = engine.gaincal(vis=str(vis), caltable=str(path), smodel=[1., 0., 0., 0.], **settings)
+            return contents(path), reply['selectvis']
+
+        expected, selection = run('CASA', casa, source)
+        assert set(zip(expected['FIELD_ID'], expected['SCAN_NUMBER'])) == pairs
+        assert expected['TIME'].size == row_count
+        results[name] = {}
+        for fmt, vis in [('MSv2', source), ('MSv4', converted)]:
+            actual, reported = run(fmt, native, vis)
+            np.testing.assert_equal(reported, selection)
+            results[name][fmt] = compare_gains(actual, expected)
+    return results
 
 
 def phase_flags(root, native, options):
@@ -186,7 +218,8 @@ def phase_flags(root, native, options):
     return results
 
 
-CASES = (mixed_weights, legacy_yy_append, legacy_yy_reference, observed_field_scan_pairs, phase_flags)
+CASES = (mixed_weights, legacy_yy_append, legacy_yy_reference, observed_field_scan_pairs,
+         phase_flags, field_scan_selection)
 
 
 def main():

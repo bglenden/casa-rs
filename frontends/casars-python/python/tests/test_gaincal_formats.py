@@ -107,6 +107,36 @@ def test_time_binned_gaincal_uses_casas_interval_origin(tmp_path, monkeypatch, s
     np.testing.assert_array_equal(result["solvestats"]["expected"], [12, 12])
 
 
+@pytest.mark.parametrize("store", ["ms_trial.ms", "ms_trial.ps.zarr"])
+def test_gaincal_resolves_field_and_scan_through_the_store(tmp_path, monkeypatch, store):
+    prepare_store(tmp_path, monkeypatch, store)
+    result = tasks.gaincal(
+        vis=store, caltable="solved.cal", gaintype="G", calmode="ap", solint="60s",
+        field="trial*", scan=">0&<2", refant="0", smodel=[1, 0, 0, 0],
+    )
+    np.testing.assert_array_equal(result["selectvis"]["field"], [0])
+    np.testing.assert_array_equal(result["selectvis"]["scan"], [1])
+    table = tools.table()
+    assert table.open("solved.cal")
+    try:
+        assert table.nrows() == 10
+        np.testing.assert_array_equal(table.getcol("FIELD_ID"), np.zeros(10))
+        np.testing.assert_array_equal(table.getcol("SCAN_NUMBER"), np.ones(10))
+    finally:
+        assert table.close()
+
+
+@pytest.mark.parametrize(("parameter", "value"), [("field", "missing-field*"), ("scan", "scan-A"), ("scan", "999")])
+def test_gaincal_reports_unavailable_msv4_selectors_before_output(tmp_path, monkeypatch, parameter, value):
+    store = "ms_trial.ps.zarr"
+    prepare_store(tmp_path, monkeypatch, store)
+    with pytest.raises(tasks.TaskParameterError, match=f"invalid {parameter} selector") as result:
+        tasks.gaincal(vis=store, caltable="solved.cal", solint="60s", smodel=[1, 0, 0, 0],
+                      **{parameter: value})
+    assert result.value.completion.parameter == parameter
+    assert not Path("solved.cal").exists()
+
+
 @pytest.mark.parametrize(
     ("gaintype", "solint", "diagnostic"),
     [

@@ -9,11 +9,13 @@ use casa_core::memory::btree_node_bytes;
 use casa_ms::observation_io::{
     CalibrationObservation, CalibrationPartition, is_msv4_store, with_calibration_observation,
 };
+use casa_ms::selection::syntax::parse_numeric_row_id_ranges;
+use casa_ms::selection::{FieldSelectorRow, resolve_field_selector_rows};
 use casa_ms::{MeasurementSet, MsSelection};
 use casa_observation::{
     AccessRequest, BatchBuffers, Catalogue, CorrelationRequest, FieldId, FieldSelection, GroupKey,
-    Grouping, ObservationError, ObservationId, PartitionId, ReadEvent, Roles, ScanId,
-    SigmaFallback, TimeSelection, VisibilityBatch, WeightRequest,
+    Grouping, ObservationError, ObservationId, PartitionEntry, PartitionId, ReadEvent, Roles,
+    ScanId, SigmaFallback, TimeSelection, VisibilityBatch, WeightRequest,
 };
 use ndarray::{ArrayView2, s};
 
@@ -36,7 +38,7 @@ pub(crate) fn supports(request: &GainSolveRequest) -> bool {
     matches!(request.solve_interval, GainSolveInterval::Seconds(seconds) if seconds.is_finite() && seconds > 0.0)
         && request.gain_type == GainType::G
         && request.combine == GainSolveCombine::default()
-        && only_cross_correlations(&request.selection)
+        && supported_selection(&request.selection)
         && request.preaverage_seconds <= 0.0
         && !request.correlation_dependent_flags
         && request.prior_calibration_tables.is_empty()
@@ -49,14 +51,157 @@ pub(crate) fn supports(request: &GainSolveRequest) -> bool {
         && request.smodel[1..] == [0.0; 3]
 }
 
-fn only_cross_correlations(selection: &MsSelection) -> bool {
+fn supported_selection(selection: &MsSelection) -> bool {
     let predicate = selection.msselect.as_deref();
     matches!(predicate, None | Some("ANTENNA1!=ANTENNA2"))
         && *selection
             == MsSelection {
+                field: selection.field.clone(),
+                scan: selection.scan.clone(),
                 msselect: selection.msselect.clone(),
                 ..MsSelection::default()
             }
+}
+
+#[derive(Default)]
+struct GainObservationSelection {
+    fields: FieldSelection,
+    scans: Option<Vec<ScanId>>,
+}
+
+impl GainObservationSelection {
+    fn resolve(
+        input: &CalibrationObservation<'_>,
+        request: &MsSelection,
+    ) -> Result<Self, GainSolveError> {
+        let catalogue = input.observation.catalogue();
+        let field = request
+            .field
+            .as_deref()
+            .filter(|text| !text.trim().is_empty());
+        let scan = request.scan.as_deref().filter(|text| !text.is_empty());
+        let required = selector_bytes(catalogue, field, scan);
+        if required > input.available_bytes {
+            return Err(ObservationError::OverBudget {
+                what: "gaincal field and scan selectors",
+                required,
+                budget: input.available_bytes,
+            }
+            .into());
+        }
+        let mut selection = Self::default();
+        if let Some(field) = field {
+            let rows = catalogue
+                .fields
+                .iter()
+                .map(|entry| FieldSelectorRow {
+                    name: &entry.name,
+                    code: entry.code.as_deref(),
+                    flagged: entry.flagged.unwrap_or(false),
+                })
+                .collect::<Vec<_>>();
+            let ids = resolve_field_selector_rows(&rows, field)
+                .map_err(|error| selector_error("field", error))?;
+            selection.fields =
+                FieldSelection::Only(ids.into_iter().map(|id| FieldId(id as u32)).collect());
+        }
+        if let Some(scan) = scan {
+            let ranges = parse_numeric_row_id_ranges(scan, "scan")
+                .map_err(|error| selector_error("scan", error))?;
+            let ids = catalogue
+                .scans
+                .iter()
+                .enumerate()
+                .filter_map(|(id, entry)| {
+                    let number = entry.number?;
+                    let index = ranges.partition_point(|&(_, end)| end < number);
+                    ranges
+                        .get(index)
+                        .filter(|&&(start, _)| start <= number)
+                        .map(|_| ScanId(id as u32))
+                })
+                .collect::<Vec<_>>();
+            if ids.is_empty() {
+                return Err(selector_error(
+                    "scan",
+                    format!("{scan:?} matches no observation scan"),
+                ));
+            }
+            selection.scans = Some(ids);
+        }
+        Ok(selection)
+    }
+
+    fn holds_scan(&self, scan: Option<ScanId>) -> bool {
+        self.scans
+            .as_ref()
+            .is_none_or(|ids| scan.is_some_and(|id| ids.binary_search(&id).is_ok()))
+    }
+
+    fn holds_partition(
+        &self,
+        partition: &PartitionEntry,
+        persisted: &CalibrationPartition<'_>,
+    ) -> bool {
+        let fields = matches!(self.fields, FieldSelection::All);
+        let scans = self.scans.is_none();
+        (fields || partition.fields.iter().any(|&id| self.fields.holds(id)))
+            && (scans || partition.scans.iter().any(|&id| self.holds_scan(Some(id))))
+            && (fields
+                || scans
+                || persisted.fields_and_scans.is_none_or(|(fields, scans)| {
+                    fields.iter().zip(scans).any(|(&field, &scan)| {
+                        self.fields.holds(field) && self.holds_scan(Some(scan))
+                    })
+                }))
+    }
+
+    fn retained_bytes(&self) -> usize {
+        let fields = match &self.fields {
+            // The active reader also receives its own copy of the field list.
+            FieldSelection::Only(ids) => 2 * ids.capacity() * size_of::<FieldId>(),
+            FieldSelection::All => 0,
+        };
+        fields
+            + self
+                .scans
+                .as_ref()
+                .map_or(0, |scans| scans.capacity() * size_of::<ScanId>())
+    }
+}
+
+fn selector_error(parameter: &'static str, reason: impl std::fmt::Display) -> GainSolveError {
+    GainSolveError::ObservationSelector {
+        parameter,
+        reason: reason.to_string(),
+    }
+}
+
+fn selector_bytes(catalogue: &Catalogue, field: Option<&str>, scan: Option<&str>) -> usize {
+    let fields = field.map_or(0, |selector| {
+        // Each term can collect all FIELD rows before duplicates are removed.
+        let ids_per_row = selector.split(',').count().saturating_mul(2).max(4);
+        catalogue.fields.len().saturating_mul(
+            size_of::<FieldSelectorRow<'_>>() + ids_per_row.saturating_mul(size_of::<i32>()),
+        )
+    });
+    let scans = scan.map_or(0, |selector| {
+        selector
+            .split(',')
+            .count()
+            .saturating_mul(2)
+            .max(4)
+            .saturating_mul(size_of::<(i32, i32)>())
+            .saturating_add(
+                catalogue
+                    .scans
+                    .len()
+                    .saturating_mul(2)
+                    .max(4)
+                    .saturating_mul(size_of::<ScanId>()),
+            )
+    });
+    fields.saturating_add(scans)
 }
 
 pub(crate) fn solve(
@@ -68,10 +213,18 @@ pub(crate) fn solve(
     let opening = crate::timing::Phase::start("gain_observation_open");
     let result = with_calibration_observation(path, admit_msv2, |input| {
         drop(opening);
+        let selection = match GainObservationSelection::resolve(&input, &request.selection) {
+            Err(GainSolveError::ObservationSelector { .. }) if !is_msv4 => return Ok(None),
+            result => result?,
+        };
+        let budget = input
+            .available_bytes
+            .saturating_sub(selection.retained_bytes());
         if let Some(what) = unrepresented_layout(
             input.observation.catalogue(),
             input.partitions,
-            input.available_bytes,
+            budget,
+            &selection,
         )? {
             return if is_msv4 {
                 Err(ObservationError::Unsupported { what }.into())
@@ -81,7 +234,15 @@ pub(crate) fn solve(
         }
         let gather = crate::timing::Phase::start("gain_observation_gather");
         let legacy_receptors = legacy_gain_receptors(request, mode)?;
-        let solved = read_solutions(&input, request, input.available_bytes, legacy_receptors)?;
+        let solved = match read_solutions(&input, request, budget, legacy_receptors, &selection) {
+            Err(GainSolveError::EmptySelection)
+                if !is_msv4
+                    && (request.selection.field.is_some() || request.selection.scan.is_some()) =>
+            {
+                return Ok(None);
+            }
+            result => result?,
+        };
         drop(gather);
         super::writer::write_gain_caltable_named(
             input.subtables,
@@ -120,10 +281,14 @@ fn unrepresented_layout(
     catalogue: &Catalogue,
     partitions: &[CalibrationPartition<'_>],
     budget: usize,
+    selection: &GainObservationSelection,
 ) -> Result<Option<&'static str>, ObservationError> {
     type SolveIdentity = (i32, u32, ObservationId, FieldId, ScanId);
     let mut owners = BTreeMap::<SolveIdentity, usize>::new();
     for (id, (partition, persisted)) in catalogue.partitions.iter().zip(partitions).enumerate() {
+        if !selection.holds_partition(partition, persisted) {
+            continue;
+        }
         let Some(array) = persisted.array else {
             return Ok(Some(
                 "multiple arrays in one calibration visibility partition",
@@ -150,6 +315,9 @@ fn unrepresented_layout(
             ));
         };
         for (&field, &scan) in fields.iter().zip(scans) {
+            if !selection.fields.holds(field) || !selection.holds_scan(Some(scan)) {
+                continue;
+            }
             let identity = (
                 array,
                 persisted.data_description,
@@ -205,6 +373,7 @@ fn read_solutions(
     request: &GainSolveRequest,
     batch_bytes: usize,
     legacy_receptors: bool,
+    selection: &GainObservationSelection,
 ) -> Result<SolvedGains, GainSolveError> {
     let GainSolveInterval::Seconds(width_s) = request.solve_interval else {
         return Err(GainSolveError::UnsupportedSolveInterval {
@@ -233,7 +402,12 @@ fn read_solutions(
         flags: Vec::new(),
     };
     for id in input.observation.catalogue().partition_ids() {
-        read_partition(input, id, batch_bytes, &mut state)?;
+        if selection.holds_partition(
+            input.observation.catalogue().partition(id),
+            &input.partitions[id.0 as usize],
+        ) {
+            read_partition(input, id, batch_bytes, selection, &mut state)?;
+        }
     }
 
     if preferred >= 0 {
@@ -275,11 +449,12 @@ fn read_partition(
     input: &CalibrationObservation<'_>,
     id: PartitionId,
     budget: usize,
+    selection: &GainObservationSelection,
     state: &mut GainAccumulator<'_>,
 ) -> Result<(), GainSolveError> {
     let partition = input.observation.catalogue().partition(id);
     let persisted = &input.partitions[id.0 as usize];
-    let request = partition_access(input, id, budget);
+    let request = partition_access(input, id, budget, selection.fields.clone());
     let mut traversal = input.observation.bind_read(&request)?;
     let mut buffers = BatchBuffers::default();
     let channels: Vec<_> = request.channels.clone().collect();
@@ -293,6 +468,9 @@ fn read_partition(
             ReadEvent::GroupEnd(key) => state.finish_group(key),
             ReadEvent::Batch(batch) => {
                 for fragment in batch.fragments {
+                    if !selection.holds_scan(fragment.key.scan) {
+                        continue;
+                    }
                     state.observe(
                         &batch,
                         fragment,
@@ -324,6 +502,7 @@ fn partition_access(
     input: &CalibrationObservation<'_>,
     id: PartitionId,
     budget: usize,
+    fields: FieldSelection,
 ) -> AccessRequest {
     let partition = input.observation.catalogue().partition(id);
     AccessRequest {
@@ -337,7 +516,7 @@ fn partition_access(
         channels: 0..partition.frequencies_hz.len(),
         correlations: CorrelationRequest::ALL,
         times: TimeSelection::All,
-        fields: FieldSelection::All,
+        fields,
         weights: WeightRequest::InverseSigmaSquared {
             fallback: SigmaFallback::StoredWeights,
         },
@@ -526,12 +705,13 @@ mod tests {
                 fields_and_scans: Some((&fields, scans)),
             };
             let disjoint = [partition(&scans), partition(&disjoint_scans)];
+            let all = GainObservationSelection::default();
             assert_eq!(
-                unrepresented_layout(&catalogue, &disjoint, 4096).unwrap(),
+                unrepresented_layout(&catalogue, &disjoint, 4096, &all).unwrap(),
                 None
             );
             assert!(matches!(
-                unrepresented_layout(&catalogue, &disjoint, 0),
+                unrepresented_layout(&catalogue, &disjoint, 0, &all),
                 Err(ObservationError::OverBudget {
                     what: "calibration partition group identities",
                     ..
@@ -539,8 +719,16 @@ mod tests {
             ));
             let overlaps = [partition(&scans), partition(&scans)];
             assert_eq!(
-                unrepresented_layout(&catalogue, &overlaps, 4096).unwrap(),
+                unrepresented_layout(&catalogue, &overlaps, 4096, &all).unwrap(),
                 Some("calibration solution groups spanning observation partitions"),
+            );
+            let unobserved = GainObservationSelection {
+                fields: FieldSelection::Only(vec![FieldId(1)]),
+                scans: Some(vec![ScanId(0)]),
+            };
+            assert_eq!(
+                unrepresented_layout(&catalogue, &overlaps, 0, &unobserved).unwrap(),
+                None
             );
         })
         .unwrap();
@@ -552,10 +740,11 @@ mod tests {
         let mut request = super::super::batch_trial::gain_request(root.path().join("unused.cal"));
         with_calibration_observation(&root.path().join("ms_trial.ms"), admit_msv2, |input| {
             let id = PartitionId(0);
-            let unlimited = partition_access(&input, id, input.available_bytes);
+            let unlimited =
+                partition_access(&input, id, input.available_bytes, FieldSelection::All);
             let estimate = input.observation.estimate(&unlimited).unwrap();
             let one_time_limit = estimate.partitions[0].held_bytes_per_time() * 2;
-            let split = partition_access(&input, id, one_time_limit);
+            let split = partition_access(&input, id, one_time_limit, FieldSelection::All);
             let mut reads = input.observation.bind_read(&split).unwrap();
             let mut buffers = BatchBuffers::default();
             let mut fragments = 0;
@@ -573,8 +762,11 @@ mod tests {
                 GainSolveMode::Amplitude,
             ] {
                 request.solve_mode = mode;
-                let whole = read_solutions(&input, &request, input.available_bytes, false).unwrap();
-                let fragmented = read_solutions(&input, &request, one_time_limit, false).unwrap();
+                let all = GainObservationSelection::default();
+                let whole =
+                    read_solutions(&input, &request, input.available_bytes, false, &all).unwrap();
+                let fragmented =
+                    read_solutions(&input, &request, one_time_limit, false, &all).unwrap();
                 assert_eq!(whole.selected_data, fragmented.selected_data, "{mode:?}");
                 assert_eq!(whole.solve_stats, fragmented.solve_stats, "{mode:?}");
                 assert_eq!(whole.rows.len(), 10, "{mode:?}");

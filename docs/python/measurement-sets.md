@@ -87,10 +87,12 @@ binding individual field identities across stores.
 For an MSv4 input, `tasks.gaincal` supports `gaintype="G"` with
 `calmode="ap"`, `calmode="p"` or `calmode="a"`. Give a positive duration
 such as `solint="60s"` and an explicit unpolarized point source such as
-`smodel=[1, 0, 0, 0]`. Use the default selection,
-no prior calibration tables, and the default averaging, flagging, and
-combination controls. Keep normalization and robust fitting at their
-defaults. Each MSv4 scan name must map to a distinct decimal scan number,
+`smodel=[1, 0, 0, 0]`. Select with `field` and numeric `scan` expressions.
+Use the field names in the input store. With `selectdata=False`, `field`
+applies and `scan` is ignored. Use defaults for the other selection controls,
+omit prior calibration tables, and keep averaging, flagging, combination,
+normalization, and robust fitting at their defaults. Each MSv4 scan name
+must map to a distinct decimal scan number,
 and each solution group must be contained in one observation partition.
 The task writes a CASA-format calibration table. MSv4 uses the processing
 set's stored weights. MSv2 uses weights derived from its stored sigmas,
