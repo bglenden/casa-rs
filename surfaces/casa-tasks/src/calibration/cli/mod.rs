@@ -105,20 +105,11 @@ pub(crate) fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFai
     {
         return jyperk::run(task);
     }
-    if task.surface() == "polcal" {
+    if task.surface() == "polcal"
+        || (task.surface() == "gaincal"
+            && matches!(task.required_text("gaintype")?.as_str(), "XY+QU" | "XYf+QU"))
+    {
         return polcal::run(task);
-    }
-    if task.surface() == "gaincal" {
-        let gain = task.required_text("gaintype")?;
-        if matches!(gain.as_str(), "XY+QU" | "XYf+QU") {
-            if casa_ms::observation_io::is_msv4_store(&task.path("vis")?) {
-                return Err(TaskFailure::validation(format!(
-                    "gaincal {gain} is unavailable for MSv4 MeasurementSets (#1055)"
-                ))
-                .at("vis"));
-            }
-            return polcal::run(task);
-        }
     }
     if task.surface() == "polfromgain" {
         return polfromgain::run(task);
