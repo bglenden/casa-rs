@@ -27,6 +27,10 @@ use casa_core::{
     ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
 use casa_ms::MeasurementSet;
+use casa_ms::observation_io::{
+    ObservationError, calibration_subtables, calibration_subtables_with_declared_telescopes,
+    is_msv4_store,
+};
 use casa_ms::schema::SubtableId;
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
@@ -365,19 +369,47 @@ fn generate_prior(
         .map_err(|error| GencalError::InvalidRequest(error.to_string()));
     }
     let path = &request.measurement_set;
-    let ms = if matches!(
+    let manual_offsets = request.caltype == GencalType::AntposVla
+        || (request.caltype == GencalType::Antpos
+            && infile.is_none()
+            && !request.antenna.trim().is_empty());
+    let observation_error = |source| {
+        let source = match source {
+            ObservationError::Storage(source) if manual_offsets && !is_msv4_store(path) => {
+                match source.downcast() {
+                    Ok(source) => {
+                        return GencalError::OpenMeasurementSet {
+                            path: path.display().to_string(),
+                            source,
+                        };
+                    }
+                    Err(source) => ObservationError::Storage(source),
+                }
+            }
+            source => source,
+        };
+        GencalError::Observation {
+            path: path.display().to_string(),
+            source: Box::new(source),
+        }
+    };
+    let ms = if manual_offsets {
+        calibration_subtables_with_declared_telescopes(path).map_err(observation_error)?
+    } else if matches!(
         request.caltype,
         GencalType::Amp | GencalType::Ph | GencalType::Sbd | GencalType::Mbd | GencalType::Opac
     ) {
-        casa_ms::observation_io::calibration_subtables(path).map_err(|source| {
-            GencalError::Observation {
-                path: path.display().to_string(),
-                source: Box::new(source),
-            }
-        })?
+        calibration_subtables(path).map_err(observation_error)?
+    } else if request.caltype == GencalType::Antpos && is_msv4_store(path) {
+        return Err(observation_error(ObservationError::Unsupported {
+            what: "automatic or file-based antenna position offsets from MSv4",
+        }));
     } else {
         open_measurement_set(path)?
     };
+    if manual_offsets {
+        antpos_evla::validate_tropo_epoch(&ms).map_err(observation_error)?;
+    }
     let switched_power = request
         .caltype
         .is_switched_power()
@@ -1050,7 +1082,7 @@ fn write_prior_caltable(
     );
 
     if matches!(request.caltype, GencalType::Antpos | GencalType::AntposVla)
-        && let Some(value) = antpos_evla::tropo_keyword(ms, request, mode)?
+        && let Some(value) = antpos_evla::tropo_keyword(ms)?
     {
         writer
             .table_mut()

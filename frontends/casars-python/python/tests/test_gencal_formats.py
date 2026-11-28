@@ -17,13 +17,37 @@ TRIAL = (
 )
 
 
+def extract_store(name, destination):
+    with tarfile.open(TRIAL / f"{name}.tgz") as archive:
+        kwargs = {"filter": "data"} if sys.version_info >= (3, 12) else {}
+        archive.extractall(destination, **kwargs)
+
+
 @pytest.fixture(params=["ms_trial.ms", "ms_trial.ps.zarr"])
 def store(request, tmp_path, monkeypatch):
-    with tarfile.open(TRIAL / f"{request.param}.tgz") as archive:
-        kwargs = {"filter": "data"} if sys.version_info >= (3, 12) else {}
-        archive.extractall(tmp_path, **kwargs)
+    extract_store(request.param, tmp_path)
     monkeypatch.chdir(tmp_path)
     return request.param
+
+
+@pytest.fixture
+def antpos_stores(tmp_path, monkeypatch):
+    ms_v2 = "ms_trial_lines.ms"
+    extract_store(ms_v2, tmp_path)
+    monkeypatch.chdir(tmp_path)
+    table = tools.table()
+    assert table.open(f"{ms_v2}/OBSERVATION", nomodify=False)
+    assert table.putcell("TELESCOPE_NAME", 0, "ALMA")
+    assert table.close()
+    ms_v4 = "paired.ps.zarr"
+    conversion = tasks.msconvert(vis=ms_v2, outputvis=ms_v4, outformat="msv4", withpointing=False)
+    assert conversion.successful, conversion.describe()
+    return ms_v2, ms_v4
+
+
+def calibration_bytes(directory):
+    return {path: path.read_bytes() for path in Path(directory).rglob("table.*")
+            if path.is_file() and path.name != "table.lock"}
 
 
 def read_parameters(path, column, source):
@@ -107,18 +131,14 @@ def test_specified_msv4_append_refuses_reordered_subtables(store, table, columns
         assert prior.putcell(column, 1, first)
     assert prior.close()
 
-    def scientific_files():
-        return {path: path.read_bytes() for path in Path("gain.cal").rglob("table.*")
-                if path.is_file() and path.name != "table.lock"}
-
-    before = scientific_files()
+    before = calibration_bytes("gain.cal")
     assert before
     with pytest.raises(tasks.TaskExecutionError, match=f"incompatible {table} identity"):
         tasks.gencal(
             vis=store, caltable="gain.cal", caltype="ph",
             antenna="1", spw="0", pol="X", parameter=[20.0],
         )
-    assert scientific_files() == before
+    assert calibration_bytes("gain.cal") == before
 
 
 @pytest.mark.parametrize("store", ["ms_trial_ephemeris.ps.zarr"], indirect=True)
@@ -154,3 +174,144 @@ def test_specified_prior_does_not_require_decimal_msv4_scan_names(store):
     with pytest.raises(tasks.TaskExecutionError, match="no casacore scan number"):
         tasks.msconvert(vis=store, outputvis="numbered.ms", outformat="msv2")
     assert not Path("numbered.ms").exists()
+
+
+@pytest.mark.parametrize(("mode", "initial", "updated"), [
+    ("antpos", [0.4, 0.59, 0.63], [0.41, 0.61, 0.66]),
+    ("antposvla", [0.44125542, -0.55981570, 0.63], [0.45729056, -0.57540011, 0.66]),
+])
+def test_manual_antenna_offsets_create_and_add(antpos_stores, mode, initial, updated):
+    def parameters(path, observation):
+        table = tools.table()
+        assert table.open(path)
+        try:
+            assert "VLATrDelCorr" not in table.keywordnames()
+            np.testing.assert_array_equal(table.getcol("ANTENNA1"), np.arange(3))
+            np.testing.assert_array_equal(table.getcol("SPECTRAL_WINDOW_ID"), np.zeros(3))
+            np.testing.assert_array_equal(table.getcol("OBSERVATION_ID"), np.full(3, observation))
+            np.testing.assert_array_equal(table.getcol("SCAN_NUMBER"), np.full(3, -1))
+            assert not table.getcol("FLAG").any()
+            return table.getcol("FPARAM")[:, 0, :]
+        finally:
+            assert table.close()
+
+    for index, vis in enumerate(antpos_stores):
+        output = f"offsets-{index}.cal"
+        assert tasks.gencal(
+            vis=vis, caltable=output, caltype=mode, antenna="1,0", spw="1",
+            parameter=[0.17, 0.28, 0.34, 0.4, 0.59, 0.63],
+        ) is None
+        before = parameters(output, 0)
+        np.testing.assert_allclose(before[:, 0], initial, rtol=1e-6)
+        np.testing.assert_array_equal(before[:, 2], np.zeros(3))
+        prior = tools.table()
+        assert prior.open(output, nomodify=False)
+        assert prior.putkeyword("VLATrDelCorr", 2.0)
+        assert prior.close()
+        assert tasks.gencal(
+            vis=vis, caltable=output, caltype=mode, antenna="0", parameter=[0.01, 0.02, 0.03],
+        ) is None
+        after = parameters(output, -1)
+        np.testing.assert_allclose(after[:, 0], updated, rtol=1e-6)
+        np.testing.assert_array_equal(after[:, 1:], before[:, 1:])
+
+
+@pytest.mark.parametrize(("subtable", "columns"), [
+    ("ANTENNA", ("NAME", "STATION", "POSITION")),
+    ("SPECTRAL_WINDOW", ("NAME", "CHAN_FREQ", "CHAN_WIDTH", "MEAS_FREQ_REF", "REF_FREQUENCY")),
+])
+def test_msv4_manual_antenna_offsets_refuse_reordered_update(antpos_stores, subtable, columns):
+    _, vis = antpos_stores
+    options = dict(vis=vis, caltable="offsets.cal", caltype="antpos", antenna="0")
+    assert tasks.gencal(**options, parameter=[2.0, 3.0, 4.0]) is None
+    table = tools.table()
+    assert table.open(f"offsets.cal/{subtable}", nomodify=False)
+    for column in columns:
+        first, second = (table.getcell(column, row) for row in (0, 1))
+        assert table.putcell(column, 0, second)
+        assert table.putcell(column, 1, first)
+    assert table.close()
+    before = calibration_bytes("offsets.cal")
+    assert before
+    with pytest.raises(tasks.TaskExecutionError, match=f"incompatible {subtable} identity"):
+        tasks.gencal(**options, parameter=[0.01, 0.02, 0.03])
+    assert calibration_bytes("offsets.cal") == before
+
+
+@pytest.mark.parametrize(("mode", "options", "reason"), [
+    ("antpos", {"antenna": "0"}, "stated OBSERVATION.TIME_RANGE"),
+    ("antposvla", {"antenna": "0"}, "stated OBSERVATION.TIME_RANGE"),
+    ("antpos", {}, "automatic or file-based antenna position offsets"),
+    ("antpos", {"infile": "offsets.txt"}, "automatic or file-based antenna position offsets"),
+])
+@pytest.mark.parametrize("store", ["ms_trial.ps.zarr"], indirect=True)
+def test_msv4_antenna_offsets_refuse_unrepresented_metadata(store, mode, options, reason):
+    Path("offsets.txt").write_text("A0 0.01 0.02 0.03\n")
+    with pytest.raises(tasks.TaskParameterError, match=reason) as failure:
+        tasks.gencal(vis=store, caltable="offsets.cal", caltype=mode,
+                     parameter=[0.01, 0.02, 0.03], **options)
+    assert failure.value.completion.parameter == "vis"
+    assert not Path("offsets.cal").exists()
+
+
+@pytest.mark.parametrize(("case", "reason"), [
+    ("declared-evla", "stated OBSERVATION.TIME_RANGE"),
+    ("constituent-vla", None),
+    ("missing", "declared overall_telescope_name"),
+    ("conflicting", "consistent declared overall_telescope_name"),
+])
+def test_msv4_antenna_offsets_require_the_declared_telescope(antpos_stores, case, reason):
+    _, vis = antpos_stores
+    headers = sorted(Path(vis).glob("*/antenna_xds/zarr.json"))
+    assert len(headers) == 2
+    for index, header in enumerate(headers):
+        metadata = json.loads(header.read_text())
+        attributes = metadata["attributes"]
+        assert attributes["overall_telescope_name"] == "ALMA"
+        if case == "missing":
+            del attributes["overall_telescope_name"]
+        elif case == "declared-evla" or (case == "conflicting" and index == 1):
+            attributes["overall_telescope_name"] = "EVLA"
+        header.write_text(json.dumps(metadata))
+        if case == "constituent-vla":
+            coordinate = header.parent / "telescope_name"
+            array_header = coordinate / "zarr.json"
+            array = json.loads(array_header.read_text())
+            assert array["shape"] == array["chunk_grid"]["configuration"]["chunk_shape"]
+            array["data_type"]["configuration"]["length_bytes"] = 16
+            array["codecs"] = array["codecs"][:1]
+            array_header.write_text(json.dumps(array))
+            names = np.full(array["shape"], "ALMA", dtype="<U4")
+            names[0] = "VLA"
+            (coordinate / "c/0").write_bytes(names.tobytes())
+
+    request = dict(vis=vis, caltable="offsets.cal", caltype="antpos",
+                   antenna="0", parameter=[0.1, 0.2, 0.3])
+    if reason:
+        with pytest.raises(tasks.TaskParameterError, match=reason) as failure:
+            tasks.gencal(**request)
+        assert failure.value.completion.parameter == "vis"
+        assert not Path("offsets.cal").exists()
+    else:
+        assert tasks.gencal(**request) is None
+        table = tools.table()
+        assert table.open("offsets.cal/OBSERVATION")
+        np.testing.assert_array_equal(table.getcol("TELESCOPE_NAME"), ["ALMA"])
+        assert table.close()
+        assert table.open("offsets.cal")
+        assert "VLATrDelCorr" not in table.keywordnames()
+        np.testing.assert_allclose(table.getcell("FPARAM", 0)[:, 0], [0.1, 0.2, 0.3])
+        assert table.close()
+
+
+def test_unreadable_msv2_manual_antenna_offsets_preserve_diagnostic(tmp_path):
+    ms = tmp_path / "unreadable.ms"
+    ms.mkdir()
+    caltable = tmp_path / "offsets.cal"
+    with pytest.raises(tasks.TaskExecutionError) as failure:
+        tasks.gencal(vis=str(ms), caltable=str(caltable), caltype="antpos",
+                     antenna="0", parameter=[0.01, 0.02, 0.03])
+    assert failure.value.completion.message.startswith(
+        f"failed to open measurement set {ms}: storage error: table control file is missing"
+    )
+    assert not caltable.exists()

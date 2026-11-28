@@ -20,6 +20,53 @@ pub(crate) const SCHEMA_VERSION: &str = "4.0.1";
 /// MJD of the Unix epoch, the origin of `format: unix` times.
 pub(crate) const UNIX_EPOCH_MJD: f64 = 40_587.0;
 
+#[cfg(unix)]
+impl super::Msv4Observation {
+    /// The declared telescope of each observing session, in catalogue order.
+    pub(in crate::observation_io) fn declared_telescopes(
+        &self,
+        grant: &mut dyn FnMut(usize) -> Result<(), ObservationError>,
+    ) -> Result<Vec<String>, ObservationError> {
+        const MISSING: ObservationError = ObservationError::Unsupported {
+            what: "MSv4 calibration requires a declared overall_telescope_name in each antenna_xds",
+        };
+        let mut retained = self
+            .catalogue
+            .observations
+            .len()
+            .saturating_mul(size_of::<String>());
+        grant(retained)?;
+        let mut names = vec![String::new(); self.catalogue.observations.len()];
+        for (dataset, partition) in self.datasets.iter().zip(&self.catalogue.partitions) {
+            let path = format!("{}/antenna_xds", dataset.path);
+            let directory = self.root.join(path.trim_start_matches('/'));
+            let header_bytes = super::held::group_metadata_bytes(&directory);
+            grant(retained.saturating_add(header_bytes))?;
+            let group = zarrs::group::Group::open(self.store.clone(), &path).map_err(storage)?;
+            let name = group
+                .attributes()
+                .get("overall_telescope_name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.trim().is_empty())
+                .ok_or(MISSING)?;
+            let known = &mut names[partition.observation.0 as usize];
+            if known.is_empty() {
+                retained = retained.saturating_add(name.len());
+                grant(retained.saturating_add(header_bytes))?;
+                *known = name.to_string();
+            } else if known != name {
+                return Err(ObservationError::Unsupported {
+                    what: "MSv4 calibration requires a consistent declared overall_telescope_name for each observation",
+                });
+            }
+        }
+        if names.is_empty() || names.iter().any(String::is_empty) {
+            return Err(MISSING);
+        }
+        Ok(names)
+    }
+}
+
 /// The metadata that all datasets of one spectral window must share.
 #[derive(Debug)]
 pub(super) struct WindowMetadata<'a> {
