@@ -193,7 +193,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--case', choices=[case.__name__ for case in CASES])
-    parser.add_argument('--calmode', choices=['ap', 'p'], default='ap')
+    parser.add_argument('--calmode', choices=['ap', 'p', 'a'], default='ap')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     from casars import tasks as native
