@@ -897,6 +897,7 @@ dependencies = [
  "casa-measures",
  "casa-ms",
  "casa-mstransform",
+ "casa-observation",
  "casa-tables",
  "ndarray",
  "schemars",

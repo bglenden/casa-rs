@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Native `importvla`-style MeasurementSet writer for disk archives.
 
-use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::f64::consts::PI;
 use std::fs::{File, OpenOptions, create_dir_all};
@@ -20,13 +19,14 @@ use casa_core::{
 };
 use casa_ms::MeasurementSet;
 use casa_ms::MeasurementSetBuilder;
+use casa_ms::observation_io::creation::{
+    Msv2CreationRow, Msv2MainWriter, msv2_array_columns, msv2_main_plan,
+};
 use casa_ms::schema::SubtableId;
 use casa_ms::{
-    MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
-    MeasurementSetWritePlan, MeasurementSetWriteResources, MeasurementSetWriteSession,
-    OptionalMainColumn, SubTable, standard_main_scalar_column_plans,
+    MeasurementSetArrayShapePlan, MeasurementSetWritePlan, MeasurementSetWriteResources,
+    OptionalMainColumn, SubTable,
 };
-use casa_tables::streamed_tiled::StreamedTiledShapeValueType;
 use casa_tables::{ColumnSchema, Table};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use schemars::JsonSchema;
@@ -38,7 +38,7 @@ use crate::record::{
     CdaId, DirectionEpoch, DopplerDefinition, FrequencyFrame, IfId, IfUsage, StokesProduct,
 };
 use crate::selection::ArchiveSelection;
-use crate::{AntennaNameScheme, ImportVlaOptions, VlaDiskReader, VlaError};
+use crate::{AntennaNameScheme, ImportVlaFormat, ImportVlaOptions, VlaDiskReader, VlaError};
 
 const DEFAULT_FLAG_CATEGORIES: usize = 6;
 const DEFAULT_TELESCOPE_NAME: &str = "VLA";
@@ -51,6 +51,7 @@ const FLAG_CATEGORY_NAMES: [&str; DEFAULT_FLAG_CATEGORIES] = [
     "ONLINE_1", "ONLINE_2", "ONLINE_4", "ONLINE_8", "SHADOW", "FLAG_CMD",
 ];
 mod archive;
+mod msv4;
 mod normalize;
 mod output_rows;
 mod products;
@@ -77,6 +78,9 @@ pub struct ImportReport {
     pub logical_records_skipped: usize,
     /// Number of rows written to the main table.
     pub main_rows_written: usize,
+    /// Features that the explicitly requested MSv4 output cannot carry.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub losses: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -368,21 +372,17 @@ pub fn import_archive_with_history(
     let mut perf_tracer = ImportPerfTracer::from_env();
     let selection = ArchiveSelection::new(options)?;
     let vis = options.effective_vis_for_import()?;
+    if options.outformat == ImportVlaFormat::Msv4 {
+        return msv4::import(options, &selection, vis, history.is_some());
+    }
     let output = ImportOutput::prepare(&vis, history.is_some())?;
     let (write_plan, flag_shapes) = plan_import_main_arrays(options, &selection, &vis)?;
 
-    let builder = MeasurementSetBuilder::new()
-        .with_main_column(OptionalMainColumn::Data)
-        .with_main_column(OptionalMainColumn::CorrectedData)
-        .with_main_column(OptionalMainColumn::ModelData)
-        .with_optional_subtable(SubtableId::Source)
-        .with_optional_subtable(SubtableId::Doppler);
     let create_started = Instant::now();
-    let ms = MeasurementSet::create(output.path(), builder).map_err(|error| {
-        VlaError::import(format!("create MeasurementSet {}: {error}", vis.display()))
-    })?;
-    let main_write_session = MeasurementSetWriteSession::start(output.path(), write_plan)
-        .map_err(|error| VlaError::import(error.to_string()))?;
+    let (ms, main_write_session) =
+        Msv2MainWriter::create(output.path(), import_builder(), write_plan).map_err(|error| {
+            VlaError::import(format!("create MeasurementSet {}: {error}", vis.display()))
+        })?;
 
     let mut writer =
         VlaImportState::new_with_write_session(options.clone(), ms, main_write_session)?;
@@ -395,35 +395,12 @@ pub fn import_archive_with_history(
         "radio synthesis array (operated by NRAO)".into(),
     ];
     writer.ms.main_table_mut().set_info(info);
-    for path in options.require_archivefiles()? {
-        let mut reader = open_import_archive(path)?;
-        let mut frequency_tolerance = options.frequencytol_hz;
-        while let Some(record) = reader.next_record()? {
-            writer.logical_records_seen += 1;
-            let normalize_started = Instant::now();
-            if let Some(normalized) = normalize_record(
-                &record,
-                options,
-                &selection,
-                writer.measures.as_ref(),
-                &mut frequency_tolerance,
-            )? {
-                writer.perf_summary.normalize_record_ns +=
-                    normalize_started.elapsed().as_nanos() as u64;
-                writer.logical_records_imported += 1;
-                writer.options.frequencytol_hz = frequency_tolerance;
-                let push_started = Instant::now();
-                writer.push_record(normalized)?;
-                writer.perf_summary.push_record_ns += push_started.elapsed().as_nanos() as u64;
-            } else {
-                writer.perf_summary.normalize_record_ns +=
-                    normalize_started.elapsed().as_nanos() as u64;
-                writer.logical_records_skipped += 1;
-                writer.note_skipped_record();
-            }
-        }
-        writer.finish_archive()?;
-    }
+    process_archive_records(
+        &mut writer,
+        options,
+        &selection,
+        VlaImportState::push_record,
+    )?;
     writer.finish()?;
     if let Some(history) = history {
         casa_mstransform::append_task_history(output.path(), history)
@@ -434,13 +411,7 @@ pub fn import_archive_with_history(
             .map_err(|error| VlaError::import(error.to_string()))?;
     }
     output.publish()?;
-    let report = ImportReport {
-        vis,
-        logical_records_seen: writer.logical_records_seen,
-        logical_records_imported: writer.logical_records_imported,
-        logical_records_skipped: writer.logical_records_skipped,
-        main_rows_written: writer.main_rows_written,
-    };
+    let report = writer.report(vis, Vec::new());
     perf_tracer.emit_import_completed(
         &report.vis,
         &report,
@@ -448,6 +419,65 @@ pub fn import_archive_with_history(
         total_started.elapsed().as_nanos() as u64,
     );
     Ok(report)
+}
+
+fn import_builder() -> MeasurementSetBuilder {
+    MeasurementSetBuilder::new()
+        .with_main_column(OptionalMainColumn::Data)
+        .with_main_column(OptionalMainColumn::CorrectedData)
+        .with_main_column(OptionalMainColumn::ModelData)
+        .with_optional_subtable(SubtableId::Source)
+        .with_optional_subtable(SubtableId::Doppler)
+}
+
+impl VlaImportState {
+    fn report(&self, vis: PathBuf, losses: Vec<String>) -> ImportReport {
+        ImportReport {
+            vis,
+            logical_records_seen: self.logical_records_seen,
+            logical_records_imported: self.logical_records_imported,
+            logical_records_skipped: self.logical_records_skipped,
+            main_rows_written: self.main_rows_written,
+            losses,
+        }
+    }
+}
+
+fn process_archive_records(
+    writer: &mut VlaImportState,
+    options: &ImportVlaOptions,
+    selection: &ArchiveSelection,
+    mut push: impl FnMut(&mut VlaImportState, NormalizedRecord) -> Result<(), VlaError>,
+) -> Result<(), VlaError> {
+    for path in options.require_archivefiles()? {
+        let mut reader = open_import_archive(path)?;
+        let mut frequency_tolerance = options.frequencytol_hz;
+        while let Some(record) = reader.next_record()? {
+            writer.logical_records_seen += 1;
+            let normalize_started = Instant::now();
+            let normalized = normalize_record(
+                &record,
+                options,
+                selection,
+                writer.measures.as_ref(),
+                &mut frequency_tolerance,
+            )?;
+            writer.perf_summary.normalize_record_ns +=
+                normalize_started.elapsed().as_nanos() as u64;
+            if let Some(normalized) = normalized {
+                writer.logical_records_imported += 1;
+                writer.options.frequencytol_hz = frequency_tolerance;
+                let push_started = Instant::now();
+                push(writer, normalized)?;
+                writer.perf_summary.push_record_ns += push_started.elapsed().as_nanos() as u64;
+            } else {
+                writer.logical_records_skipped += 1;
+                writer.note_skipped_record();
+            }
+        }
+        writer.finish_archive()?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

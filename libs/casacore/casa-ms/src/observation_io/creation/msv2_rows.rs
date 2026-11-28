@@ -7,29 +7,23 @@
 //! written as the output's through its [`RowMap`].
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use casa_core::ScalarValue;
 use casa_core::measures::MjdHighPrec;
 use casa_observation::{Catalogue, ObservationError, PartitionId, VisibilityBatch};
-use casa_tables::streamed_tiled::StreamedTiledShapeValueType;
-use casa_tables::{ColumnOverrides, StreamedScalarValues};
+use casa_tables::StreamedScalarValues;
 use ndarray::{ArrayView2, ArrayView3, Axis};
 use num_complex::Complex32;
 
-use super::PaddingRows;
 use super::msv2_tables::Layout;
+use super::{Msv2MainWriter, PaddingRows, msv2_array_columns, msv2_main_plan};
 use crate::observation_io::Msv2Observation;
 use crate::observation_io::update::{request_error, storage};
 use crate::write_session::{
-    MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
-    MeasurementSetWritePlan, MeasurementSetWriteSession, ScalarColumnId,
+    MeasurementSetArrayColumnPlan, MeasurementSetWritePlan, ScalarColumnId,
     standard_main_scalar_column_plans,
 };
 use crate::{MeasurementSet, initial_model_visibility};
-
-/// The array columns every created MSv2 holds besides its data columns.
-const ARRAY_COLUMNS: [&str; 5] = ["FLAG", "FLAG_CATEGORY", "UVW", "WEIGHT", "SIGMA"];
 
 /// The rows each output partition will hold, from its inputs' grids.
 pub(super) struct Occupancy {
@@ -279,7 +273,7 @@ struct Output {
 
 /// The creation session of a created MSv2's MAIN.
 pub(super) struct MainRows {
-    session: MeasurementSetWriteSession,
+    writer: Msv2MainWriter,
     layout: Layout,
     outputs: Vec<Output>,
     padding: PaddingRows,
@@ -293,13 +287,13 @@ pub(super) struct MainRows {
 }
 
 impl MainRows {
-    /// Start MAIN's writers at `staging` under `plan` ([`write_plan`]) for
+    /// Resolve MAIN's writers for
     /// the `occupancy` of `catalogue`'s (output) partitions, with
     /// `data_columns` (`DATA`, `CORRECTED_DATA`, `MODEL_DATA`), the
     /// subtables' `layout` and the `padding` policy the occupancy was
     /// counted under.
     pub(super) fn start(
-        (staging, plan): (&Path, MeasurementSetWritePlan),
+        writer: Msv2MainWriter,
         catalogue: &Catalogue,
         (data_columns, spectra): (Vec<&'static str>, Vec<&'static str>),
         occupancy: &Occupancy,
@@ -307,8 +301,7 @@ impl MainRows {
         padding: PaddingRows,
     ) -> Result<Self, ObservationError> {
         let planned = occupancy.rows.iter().sum();
-        let session = MeasurementSetWriteSession::start(staging, plan).map_err(storage)?;
-        let id = |name: &str| session.scalar_column(name).map_err(storage);
+        let id = |name: &str| writer.session.scalar_column(name).map_err(storage);
         let scalars = Scalars {
             antenna1: id("ANTENNA1")?,
             antenna2: id("ANTENNA2")?,
@@ -343,7 +336,7 @@ impl MainRows {
             })
             .collect();
         Ok(Self {
-            session,
+            writer,
             layout,
             outputs,
             padding,
@@ -448,7 +441,8 @@ impl MainRows {
                 (acquisition, map.weight_scale),
                 preserved,
             )?;
-            self.session
+            self.writer
+                .session
                 .push_f64_row("UVW", &[3], &uvw.metres_at(sample))
                 .map_err(storage)?;
             let scan = batch.scan(sample).ok_or_else(|| missing("scans"))?;
@@ -511,7 +505,8 @@ impl MainRows {
                 Some(values) => contiguous(values.index_axis(Axis(0), sample), &mut scratch.values),
                 None => &scratch.model,
             };
-            self.session
+            self.writer
+                .session
                 .push_complex32_row(column, &shape, cell)
                 .map_err(storage)?;
         }
@@ -524,10 +519,12 @@ impl MainRows {
             scratch.flags.resize(shape[0] * shape[1], true);
             &scratch.flags
         };
-        self.session
+        self.writer
+            .session
             .push_bool_row("FLAG", &shape, cell)
             .map_err(storage)?;
-        self.session
+        self.writer
+            .session
             .push_undefined_row("FLAG_CATEGORY")
             .map_err(storage)?;
         scratch.weights.clear();
@@ -556,10 +553,12 @@ impl MainRows {
                 .extend(scratch.weights.iter().map(|weight| sigma(*weight)));
         }
         let correlations = [shape[0]];
-        self.session
+        self.writer
+            .session
             .push_f32_row("WEIGHT", &correlations, &scratch.weights)
             .map_err(storage)?;
-        self.session
+        self.writer
+            .session
             .push_f32_row("SIGMA", &correlations, &scratch.sigmas)
             .map_err(storage)?;
         for column in &self.spectra {
@@ -577,9 +576,13 @@ impl MainRows {
                 }
             }
             if scratch.spectrum.is_empty() {
-                self.session.push_undefined_row(column).map_err(storage)?;
+                self.writer
+                    .session
+                    .push_undefined_row(column)
+                    .map_err(storage)?;
             } else {
-                self.session
+                self.writer
+                    .session
                     .push_f32_row(column, &shape, &scratch.spectrum)
                     .map_err(storage)?;
             }
@@ -618,7 +621,8 @@ impl MainRows {
                 StreamedScalarValues::Float64(&keys.exposure),
             ),
         ] {
-            self.session
+            self.writer
+                .session
                 .push_scalar_column(column, values)
                 .map_err(storage)?;
         }
@@ -633,7 +637,8 @@ impl MainRows {
             ScalarValue::Int32(placement.processor),
         ];
         for (column, value) in scalars.constant.iter().zip(constants) {
-            self.session
+            self.writer
+                .session
                 .push_repeated_scalar(*column, Some(value), count)
                 .map_err(storage)?;
         }
@@ -643,12 +648,13 @@ impl MainRows {
             StateIds::PerRow(_) => None,
         };
         match state {
-            Some(state) => self.session.push_repeated_scalar(
+            Some(state) => self.writer.session.push_repeated_scalar(
                 scalars.state,
                 Some(ScalarValue::Int32(state)),
                 count,
             ),
             None => self
+                .writer
                 .session
                 .push_scalar_column(scalars.state, StreamedScalarValues::Int32(&keys.state)),
         }
@@ -670,18 +676,7 @@ impl MainRows {
                 self.rows, self.planned
             )));
         }
-        let mut overrides = ColumnOverrides::for_row_count(self.rows);
-        for column in self
-            .data_columns
-            .iter()
-            .chain(&self.spectra)
-            .chain(&ARRAY_COLUMNS)
-        {
-            overrides.insert_deferred(*column);
-        }
-        self.session
-            .save_and_finish(ms, &overrides)
-            .map_err(storage)?;
+        self.writer.finish(ms)?;
         Ok(self.rows)
     }
 }
@@ -714,13 +709,7 @@ pub(super) fn write_plan(
         column_bytes,
     )
     .ok_or_else(|| request_error("the MAIN writers' memory overflows"))?;
-    MeasurementSetWritePlan::variable_array_creation(
-        occupancy.rows.iter().sum(),
-        columns,
-        scalars,
-        resources,
-    )
-    .map_err(storage)
+    msv2_main_plan(occupancy.rows.iter().sum(), columns, resources)
 }
 
 /// What one batch's rows hold in [`MainRows`] beside the writers: the keys
@@ -744,108 +733,17 @@ pub(super) fn array_columns(
     data_columns: &[&'static str],
     occupancy: &Occupancy,
 ) -> Result<Vec<MeasurementSetArrayColumnPlan>, ObservationError> {
-    let (rows, total) = (&occupancy.rows, occupancy.rows.iter().sum::<usize>());
-    if total == 0 {
-        return Err(request_error(
-            "the source holds nothing to write as an MSv2 row",
-        ));
-    }
     let telescope = catalogue
         .observations
         .first()
         .map_or("", |observation| observation.telescope.as_str());
     let mut by_shape = BTreeMap::<(usize, usize), usize>::new();
-    let mut by_correlations = BTreeMap::<usize, usize>::new();
-    for (entry, rows) in catalogue.partitions.iter().zip(rows) {
-        let correlations = entry.correlations.len();
+    for (entry, rows) in catalogue.partitions.iter().zip(&occupancy.rows) {
         *by_shape
-            .entry((correlations, entry.frequencies_hz.len()))
+            .entry((entry.correlations.len(), entry.frequencies_hz.len()))
             .or_default() += rows;
-        *by_correlations.entry(correlations).or_default() += rows;
     }
-    let visibility: Vec<_> = by_shape
-        .iter()
-        .map(|(&(correlations, channels), &rows)| {
-            MeasurementSetArrayShapePlan::visibility(correlations, channels, rows, telescope)
-        })
-        .collect();
-    let flag_category = by_shape
-        .iter()
-        .map(|(&(correlations, channels), &rows)| {
-            MeasurementSetArrayShapePlan::flag_category(correlations, channels, 1, rows, telescope)
-        })
-        .collect();
-    let weight: Vec<_> = by_correlations
-        .iter()
-        .map(|(&correlations, &rows)| {
-            MeasurementSetArrayShapePlan::weight(correlations, rows, telescope)
-        })
-        .collect();
-    let uvw = MeasurementSetArrayShapePlan {
-        cell_shape: vec![3],
-        row_count: total,
-        tile_shape: crate::ms::casa_uvw_tile_shape(&visibility[0].tile_shape),
-    };
-    let column = |name: &str,
-                  value_type: StreamedTiledShapeValueType,
-                  shapes: Vec<MeasurementSetArrayShapePlan>,
-                  storage_manager: MeasurementSetColumnStorage| {
-        MeasurementSetArrayColumnPlan {
-            name: name.to_string(),
-            value_type,
-            shapes,
-            storage_manager,
-        }
-    };
-    let shaped = MeasurementSetColumnStorage::TiledShape;
-    let mut columns: Vec<_> = data_columns
-        .iter()
-        .map(|name| {
-            column(
-                name,
-                if name.ends_with("_SPECTRUM") {
-                    StreamedTiledShapeValueType::Float32
-                } else {
-                    StreamedTiledShapeValueType::Complex32
-                },
-                visibility.clone(),
-                shaped,
-            )
-        })
-        .collect();
-    columns.extend([
-        column(
-            "FLAG",
-            StreamedTiledShapeValueType::Bool,
-            visibility,
-            shaped,
-        ),
-        column(
-            "FLAG_CATEGORY",
-            StreamedTiledShapeValueType::Bool,
-            flag_category,
-            shaped,
-        ),
-        column(
-            "UVW",
-            StreamedTiledShapeValueType::Float64,
-            vec![uvw],
-            MeasurementSetColumnStorage::TiledColumn,
-        ),
-        column(
-            "WEIGHT",
-            StreamedTiledShapeValueType::Float32,
-            weight.clone(),
-            shaped,
-        ),
-        column(
-            "SIGMA",
-            StreamedTiledShapeValueType::Float32,
-            weight,
-            shaped,
-        ),
-    ]);
-    Ok(columns)
+    msv2_array_columns(&by_shape, data_columns, telescope, 1)
 }
 
 #[cfg(test)]

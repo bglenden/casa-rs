@@ -26,7 +26,8 @@ workspace = true
 casa-flagging.workspace = true
 casa-mstransform.workspace = true
 casa-measures.workspace = true
-casa-ms.workspace = true
+casa-ms = { workspace = true, features = ["msv4"] }
+casa-observation.workspace = true
 casa-tables.workspace = true
 casa-core.workspace = true
 ndarray.workspace = true

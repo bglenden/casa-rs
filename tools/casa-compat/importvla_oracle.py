@@ -4,16 +4,20 @@
 
 import argparse
 import ast
+from contextlib import contextmanager, redirect_stderr
 import hashlib
+from io import StringIO
 from datetime import datetime, timedelta
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 from tempfile import TemporaryDirectory
+import os
 
 import casatasks
 from casatools import ms as casa_ms
-from casacore.tables import table
+from casatools import table as casa_table
 import numpy as np
 
 from casars import tasks
@@ -43,26 +47,56 @@ def mjd_seconds(seconds):
     return (datetime(1858, 11, 17) + timedelta(seconds=seconds)).strftime("%Y/%m/%d/%H:%M:%S")
 
 
+@contextmanager
+def table(path, readonly=True):
+    tab = casa_table()
+    assert tab.open(str(path), nomodify=readonly), path
+    try:
+        yield tab
+    finally:
+        tab.close()
+
+
 def paired_columns(reference, native, columns, label):
-    with table(str(reference), ack=False) as left, table(str(native), ack=False) as right:
+    with table(str(reference)) as left, table(str(native)) as right:
         assert left.nrows() == right.nrows(), (label, left.nrows(), right.nrows())
         for name in columns:
             if not left.nrows():
                 continue
-            expected, actual = map(np.asarray, (left.getcol(name), right.getcol(name)))
-            if expected.dtype.kind in "fc":
-                limits = (0, 1e-5) if name in ("TIME", "TIME_CENTROID", "TIME_RANGE", "RELEASE_DATE") else (1e-6, 1e-5)
-                if name in ("REF_FREQUENCY", "CHAN_FREQ", "CHAN_WIDTH", "EFFECTIVE_BW",
-                            "RESOLUTION", "TOTAL_BANDWIDTH"):
-                    limits = (0, 1e-2)
-                np.testing.assert_allclose(actual, expected, rtol=limits[0], atol=limits[1],
-                                           err_msg=f"{label} {name}")
-            else:
-                np.testing.assert_array_equal(actual, expected, err_msg=f"{label} {name}")
+            description = left.getcoldesc(name)
+            # CASA bulk reads require identically shaped cells. Compare
+            # variable columns across identical shape runs of at most 256.
+            if description.get("ndim", 0) != 0:
+                shapes = left.getcolshapestring(name)
+                np.testing.assert_array_equal(right.getcolshapestring(name), shapes)
+                if len(set(shapes)) > 1:
+                    start = 0
+                    while start < left.nrows():
+                        end = start + 1
+                        while end < min(left.nrows(), start + 256) and shapes[end] == shapes[start]:
+                            end += 1
+                        compare_values(name, left.getcol(name, start, end - start),
+                                       right.getcol(name, start, end - start), label)
+                        start = end
+                    continue
+            compare_values(name, left.getcol(name), right.getcol(name), label)
+
+
+def compare_values(name, expected, actual, label):
+    expected, actual = map(np.asarray, (expected, actual))
+    if expected.dtype.kind in "fc":
+        limits = (0, 1e-5) if name in ("TIME", "TIME_CENTROID", "TIME_RANGE", "RELEASE_DATE") else (1e-6, 1e-5)
+        if name in ("REF_FREQUENCY", "CHAN_FREQ", "CHAN_WIDTH", "EFFECTIVE_BW",
+                    "RESOLUTION", "TOTAL_BANDWIDTH"):
+            limits = (0, 1e-2)
+        np.testing.assert_allclose(actual, expected, rtol=limits[0], atol=limits[1],
+                                   err_msg=f"{label} {name}")
+    else:
+        np.testing.assert_array_equal(actual, expected, err_msg=f"{label} {name}")
 
 
 def history(ms):
-    with table(str(ms / "HISTORY"), ack=False) as tab:
+    with table(str(ms / "HISTORY")) as tab:
         rows = {column: tab.getcol(column) for column in (
             "APPLICATION", "ORIGIN", "PRIORITY", "CLI_COMMAND", "APP_PARAMS", "MESSAGE",
         )}
@@ -85,16 +119,17 @@ def flag_version(ms):
     return root / "flags.Original"
 
 
-def paired(root, archives, label, reference_options=None, **options):
+def paired(root, archives, label, reference_options=None, outformat=None, **options):
     expected, actual = (root / f"{label}-{side}.ms" for side in ("casa", "native"))
     files = [str(path) for path in archives]
     assert casatasks.importvla(archivefiles=files, vis=str(expected),
                               **(reference_options or options)) is None
-    assert tasks.importvla(archivefiles=files, vis=str(actual), **options) is None
+    explicit = {"outformat": outformat} if outformat else {}
+    assert tasks.importvla(archivefiles=files, vis=str(actual), **options, **explicit) is None
     paired_columns(expected, actual, MAIN, label)
     for name, columns in SUBTABLES.items():
         paired_columns(expected / name, actual / name, columns, f"{label} {name}")
-    with table(str(expected), ack=False) as left, table(str(actual), ack=False) as right:
+    with table(str(expected)) as left, table(str(actual)) as right:
         np.testing.assert_equal(right.info(), left.info(), err_msg=f"{label} table info")
         np.testing.assert_array_equal(right.getcolkeyword("SCAN_NUMBER", "LAST_SCAN"),
                                       left.getcolkeyword("SCAN_NUMBER", "LAST_SCAN"))
@@ -102,6 +137,11 @@ def paired(root, archives, label, reference_options=None, **options):
             for key in ("MEASINFO", "QuantumUnits"):
                 a, b = (ms.getcolkeywords(name).get(key) for ms in (left, right))
                 np.testing.assert_array_equal(a, b, err_msg=f"{label} {name} {key}")
+        expected_categories = ("ONLINE_1", "ONLINE_2", "ONLINE_4", "ONLINE_8", "SHADOW", "FLAG_CMD")
+        for tab in (left, right):
+            np.testing.assert_array_equal(
+                tab.getcolkeyword("FLAG_CATEGORY", "CATEGORY"), expected_categories
+            )
         count = right.nrows()
         first_antenna = left.getcell("ANTENNA1", 0)
     casa, native = (history(ms) for ms in (expected, actual))
@@ -123,13 +163,14 @@ def paired(root, archives, label, reference_options=None, **options):
         finally:
             reader.done()
         snapshot = flag_version(actual)
-        with table(str(actual), readonly=False, ack=False) as tab:
+        with table(str(actual), readonly=False) as tab:
             tab.putcell("FLAG", 0, ~tab.getcell("FLAG", 0))
         casatasks.flagmanager(vis=str(actual), mode="restore", versionname="Original")
         paired_columns(actual, snapshot, ["FLAG", "FLAG_ROW"], "CASA restored native Original")
     if label == "evla":
         assert count > 7722
     print(f"passed {label} ({count} rows)", flush=True)
+    return expected
 
 
 def failures(root, archive):
@@ -200,10 +241,80 @@ def failures(root, archive):
     print("passed rejected names and project, empty selection, missing and unreadable archives, same-path retry and protected output", flush=True)
 
 
+def mixed_shapes(root, continuum, spectral):
+    # Reuse the public sample's raw visibilities and flags. Set the
+    # continuum test record's direction tag to J2000 so both archive
+    # inputs can fill one synthetic product. The original archive is
+    # read only. Neither dataset's sky position is used in a science test.
+    scratch = bytearray(continuum.read_bytes())
+    sector = 2048
+    record = 13 * sector
+    start = 0
+    while start < len(scratch):
+        number, blocks, words = struct.unpack_from(">HHi", scratch, start)
+        if number != 1 or not 0 < blocks <= 39 or words <= 0:
+            start += sector
+            continue
+        # Physical header, RCA's SDA word offset, then SDA direction epoch.
+        offset = 2 * struct.unpack_from(">I", scratch, start + 4 + 2 * 12)[0]
+        epoch = start + 4 + offset + 2 * 161
+        assert struct.unpack_from(">h", scratch, epoch) == (1950,)
+        struct.pack_into(">h", scratch, epoch, 2000)
+        tail = 2 * words - (blocks - 1) * (record - 4)
+        start += (blocks - 1) * record + (tail + sector - 1) // sector * sector
+
+    amended = root / "test-continuum"
+    amended.write_bytes(scratch)
+    expected = paired(root, [amended, spectral], "variable-shapes", outformat="msv2")
+    with table(expected) as tab:
+        assert set(tab.getcolshapestring("DATA")) == {"[4, 1]", "[1, 127]"}
+        assert set(tab.getcolshapestring("FLAG_CATEGORY")) == {"[4, 1, 6]", "[1, 127, 6]"}
+
+
+def format_cases(root, continuum, spectral, xradio_python):
+    expected = paired(root, [spectral], "explicit-v2", outformat="msv2")
+    output = root / "explicit-v4.ms"
+    errors = StringIO()
+    with redirect_stderr(errors):
+        assert tasks.importvla(archivefiles=[spectral], vis=output, outformat="msv4") is None
+    assert (output / "zarr.json").is_file()
+    assert not (output / "table.dat").exists() and not Path(f"{output}.flagversions").exists()
+    for loss in ("FLAG_CATEGORY is not carried", "FLAG_ROW is folded into FLAG",
+                 "SIGMA is not carried", "Original flag-version snapshot is not carried"):
+        assert loss in errors.getvalue(), errors.getvalue()
+    compare = Path(__file__).resolve().parents[1] / "ms-trial" / "check_importvla.py"
+    # The pinned XRADIO interpreter uses its own dependencies and never
+    # loads the CASA/PyO3 modules installed for this interpreter.
+    child_env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    subprocess.run([str(xradio_python), str(compare), str(expected), str(output)],
+                   env=child_env, check=True)
+    original = (output / "zarr.json").read_bytes()
+    try:
+        tasks.importvla(archivefiles=[spectral], vis=output, outformat="msv4")
+    except RuntimeError as error:
+        assert "already exists" in str(error), str(error)
+    else:
+        raise AssertionError("the second import replaced an existing MSv4")
+    assert (output / "zarr.json").read_bytes() == original
+
+    refused = root / "b1950.ps.zarr"
+    try:
+        tasks.importvla(archivefiles=[continuum], vis=refused, outformat="msv4", bandname="C")
+    except tasks.TaskParameterError as error:
+        assert error.completion.parameter == "outformat", str(error)
+        assert "UVW frame" in str(error), str(error)
+    else:
+        raise AssertionError("this B1950_VLA archive unexpectedly published an MSv4")
+    assert not refused.exists() and not Path(f"{refused}.flagversions").exists()
+    assert not list(root.glob(".*.staging-*"))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("archive", type=Path, help="public casatestdata AT166_1 VLA archive")
     parser.add_argument("cases", nargs="*")
+    parser.add_argument("--spectral", type=Path, help="public AS758_C030425.xp1 VLA archive")
+    parser.add_argument("--xradio-python", type=Path, help="pinned XRADIO oracle interpreter")
     args = parser.parse_args()
     archive = args.archive.resolve(strict=True)
     assert casatasks.version() == [6, 7, 6, 14]
@@ -235,6 +346,15 @@ def main():
             second = root / "second-archive"
             shutil.copyfile(archive, second)
             paired(root, [archive, second], "multiple", bandname="C")
+    if selected("variable-shapes") and args.spectral:
+        with TemporaryDirectory(prefix="importvla-") as temporary:
+            mixed_shapes(Path(temporary), archive, args.spectral.resolve(strict=True))
+    if selected("formats") and args.spectral:
+        if args.xradio_python is None:
+            parser.error("--spectral requires --xradio-python")
+        with TemporaryDirectory(prefix="importvla-") as temporary:
+            format_cases(Path(temporary), archive, args.spectral.resolve(strict=True),
+                         args.xradio_python.absolute())
     if selected("failures"):
         with TemporaryDirectory(prefix="importvla-") as temporary:
             failures(Path(temporary), archive)

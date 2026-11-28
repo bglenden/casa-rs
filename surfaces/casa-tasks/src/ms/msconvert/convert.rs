@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::TaskFailure;
-use casa_core::quanta::MvTime;
+use casa_core::quanta::time::utc_now_iso8601;
 use casa_ms::observation_io::creation::Replacement;
 use casa_mstransform::convert::{
     ChunkShape, ConversionOptions, ConversionReport, LossKind, Msv4Conversion, to_msv2,
@@ -56,7 +56,7 @@ pub fn msconvert(request: &MsconvertRequest) -> Result<MsconvertTaskResult, Task
         codec: request.codec,
         padding: request.padding,
         creator: format!("casa-rs msconvert {}", env!("CARGO_PKG_VERSION")),
-        creation_date: utc_now(),
+        creation_date: utc_now_iso8601(),
     };
     let target = if replacing.is_some() {
         let target = unused_sibling(&request.outputvis)?;
@@ -209,22 +209,6 @@ fn replace(replacement: Replacement, converted: &Path) -> Result<(), TaskFailure
             converted.display()
         ))),
     }
-}
-
-/// The current time, UTC, ISO 8601 to the second.
-fn utc_now() -> String {
-    let unix_seconds = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
-    // The Unix epoch is MJD 40587.
-    let time = MvTime::from_mjd_seconds(40_587.0 * 86_400.0 + unix_seconds as f64);
-    format!(
-        "{:04}-{:02}-{:02}T{}+00:00",
-        time.year(),
-        time.month(),
-        time.month_day(),
-        time.format_time(0)
-    )
 }
 
 fn result(

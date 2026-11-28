@@ -102,6 +102,32 @@ impl FromStr for AntennaNameScheme {
     }
 }
 
+/// MeasurementSet format produced by a VLA archive import.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ImportVlaFormat {
+    /// Preserve the CASA MSv2 layout and flag metadata.
+    #[default]
+    Msv2,
+    /// Write an XRADIO processing set and report unrepresentable features.
+    Msv4,
+}
+
+impl FromStr for ImportVlaFormat {
+    type Err = VlaError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "msv2" => Ok(Self::Msv2),
+            "msv4" => Ok(Self::Msv4),
+            _ => Err(VlaError::InvalidArgument {
+                argument: "outformat",
+                message: "expected msv2 or msv4".into(),
+            }),
+        }
+    }
+}
+
 /// CASA task-style options for importing disk-based VLA archives.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ImportVlaOptions {
@@ -109,6 +135,9 @@ pub struct ImportVlaOptions {
     pub archivefiles: Vec<PathBuf>,
     /// Planned output MeasurementSet path.
     pub vis: Option<PathBuf>,
+    /// Output format, independent of the path suffix.
+    #[serde(default)]
+    pub outformat: ImportVlaFormat,
     /// Optional band selection. `None` means all bands.
     pub bandname: Option<BandName>,
     /// Spectral-window matching tolerance in Hz.
@@ -136,6 +165,7 @@ impl Default for ImportVlaOptions {
         Self {
             archivefiles: Vec::new(),
             vis: None,
+            outformat: ImportVlaFormat::default(),
             bandname: None,
             frequencytol_hz: 150_000.0,
             project: None,
@@ -213,7 +243,10 @@ impl ImportVlaOptions {
                 ),
             })?;
         let mut file_name = stem.to_os_string();
-        file_name.push(".ms");
+        file_name.push(match self.outformat {
+            ImportVlaFormat::Msv2 => ".ms",
+            ImportVlaFormat::Msv4 => ".ps.zarr",
+        });
         Ok(workspace.join(file_name))
     }
 }

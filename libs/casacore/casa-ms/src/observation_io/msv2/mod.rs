@@ -4,6 +4,8 @@
 //! MSv4 holds natively.
 
 pub(super) mod catalogue;
+#[cfg(feature = "msv4")]
+pub(super) mod creation_metadata;
 mod cursor;
 pub(super) mod held;
 mod index;

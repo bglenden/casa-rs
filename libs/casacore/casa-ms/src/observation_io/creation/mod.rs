@@ -41,6 +41,7 @@ mod msv2_pointing;
 mod msv2_rows;
 mod msv2_sources;
 mod msv2_tables;
+mod msv2_writer;
 mod occupancy;
 mod plan;
 pub mod pointing_plan;
@@ -55,8 +56,13 @@ use std::fmt;
 use std::path::PathBuf;
 
 #[cfg(feature = "msv4")]
+pub use super::msv2::creation_metadata::{
+    Msv2CreationPartition, catalogue_for_creation, name_msv4_entities,
+};
+#[cfg(feature = "msv4")]
 pub(super) use memory::subtables_bytes;
 pub use memory::{MemoryCharges, default_memory_bytes};
+pub use msv2_writer::{Msv2CreationRow, Msv2MainWriter, msv2_array_columns, msv2_main_plan};
 pub use plan::CreationPlan;
 #[cfg(feature = "msv4")]
 pub(crate) use plan::catalogue_subtables;

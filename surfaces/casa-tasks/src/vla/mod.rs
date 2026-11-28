@@ -35,10 +35,14 @@ pub(crate) fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFai
     let history = task_history(task, &options)?;
     let report = run(&options, Some(&history)).map_err(failure)?;
     let text = import_text(&report);
-    Ok(
+    let losses = report.losses.clone();
+    let mut success =
         TaskSuccess::new(crate::CasaValue::None, &ImportVlaTaskResult::Import(report))?
-            .with_text(text),
-    )
+            .with_text(text);
+    for loss in losses {
+        success = success.with_output_line(format!("importvla MSv4: {loss}"));
+    }
+    Ok(success)
 }
 
 fn task_history(
@@ -99,6 +103,7 @@ fn options_from(task: &TaskInvocation<'_>) -> Result<ImportVlaOptions, TaskFailu
     let mut options = ImportVlaOptions {
         archivefiles,
         vis: vis.pop(),
+        outformat: task.required_text("outformat")?.parse().map_err(failure)?,
         bandname: task
             .text("bandname")?
             .map(|text| text.parse())

@@ -31,7 +31,6 @@ pub(super) fn plan_import_main_arrays(
     vis: &Path,
 ) -> Result<(MeasurementSetWritePlan, Vec<MeasurementSetArrayShapePlan>), VlaError> {
     let mut visibility_shapes = BTreeMap::<(usize, usize), usize>::new();
-    let mut weight_shapes = BTreeMap::<usize, usize>::new();
     let mut row_count = 0usize;
     for path in options.require_archivefiles()? {
         let mut reader = open_import_archive(path)?;
@@ -63,7 +62,6 @@ pub(super) fn plan_import_main_arrays(
                 *visibility_shapes
                     .entry((correlation_count, descriptor.num_chan))
                     .or_default() += baselines;
-                *weight_shapes.entry(correlation_count).or_default() += baselines;
                 row_count = row_count
                     .checked_add(baselines)
                     .ok_or_else(|| VlaError::import("MAIN row count overflow"))?;
@@ -77,104 +75,19 @@ pub(super) fn plan_import_main_arrays(
             vis.display()
         )));
     }
-    let visibility = visibility_shapes
-        .iter()
-        .map(|(&(correlations, channels), &rows)| {
-            MeasurementSetArrayShapePlan::visibility(
-                correlations,
-                channels,
-                rows,
-                DEFAULT_TELESCOPE_NAME,
-            )
-        })
-        .collect::<Vec<_>>();
-    let flag_category = visibility_shapes
-        .iter()
-        .map(|(&(correlations, channels), &rows)| {
-            MeasurementSetArrayShapePlan::flag_category(
-                correlations,
-                channels,
-                DEFAULT_FLAG_CATEGORIES,
-                rows,
-                DEFAULT_TELESCOPE_NAME,
-            )
-        })
-        .collect::<Vec<_>>();
-    let weight = weight_shapes
-        .iter()
-        .map(|(&correlations, &rows)| {
-            MeasurementSetArrayShapePlan::weight(correlations, rows, DEFAULT_TELESCOPE_NAME)
-        })
-        .collect::<Vec<_>>();
-    let visibility_tile_elements = visibility
-        .first()
-        .map(|shape| shape.tile_shape.iter().product::<usize>())
-        .unwrap_or(3);
-    let uvw_tile_shape = vec![3, (visibility_tile_elements / 3).max(1)];
-    let columns = vec![
-        MeasurementSetArrayColumnPlan {
-            name: "DATA".to_string(),
-            value_type: StreamedTiledShapeValueType::Complex32,
-            shapes: visibility.clone(),
-            storage_manager: MeasurementSetColumnStorage::TiledShape,
-        },
-        MeasurementSetArrayColumnPlan {
-            name: "CORRECTED_DATA".to_string(),
-            value_type: StreamedTiledShapeValueType::Complex32,
-            shapes: visibility.clone(),
-            storage_manager: MeasurementSetColumnStorage::TiledShape,
-        },
-        MeasurementSetArrayColumnPlan {
-            name: "MODEL_DATA".to_string(),
-            value_type: StreamedTiledShapeValueType::Complex32,
-            shapes: visibility.clone(),
-            storage_manager: MeasurementSetColumnStorage::TiledShape,
-        },
-        MeasurementSetArrayColumnPlan {
-            name: "FLAG".to_string(),
-            value_type: StreamedTiledShapeValueType::Bool,
-            shapes: visibility.clone(),
-            storage_manager: MeasurementSetColumnStorage::TiledShape,
-        },
-        MeasurementSetArrayColumnPlan {
-            name: "FLAG_CATEGORY".to_string(),
-            value_type: StreamedTiledShapeValueType::Bool,
-            shapes: flag_category,
-            storage_manager: MeasurementSetColumnStorage::TiledShape,
-        },
-        MeasurementSetArrayColumnPlan {
-            name: "UVW".to_string(),
-            value_type: StreamedTiledShapeValueType::Float64,
-            shapes: vec![MeasurementSetArrayShapePlan {
-                cell_shape: vec![3],
-                row_count,
-                tile_shape: uvw_tile_shape,
-            }],
-            storage_manager: MeasurementSetColumnStorage::TiledColumn,
-        },
-        MeasurementSetArrayColumnPlan {
-            name: "WEIGHT".to_string(),
-            value_type: StreamedTiledShapeValueType::Float32,
-            shapes: weight.clone(),
-            storage_manager: MeasurementSetColumnStorage::TiledShape,
-        },
-        MeasurementSetArrayColumnPlan {
-            name: "SIGMA".to_string(),
-            value_type: StreamedTiledShapeValueType::Float32,
-            shapes: weight,
-            storage_manager: MeasurementSetColumnStorage::TiledShape,
-        },
-    ];
+    let columns = msv2_array_columns(
+        &visibility_shapes,
+        &["DATA", "CORRECTED_DATA", "MODEL_DATA"],
+        DEFAULT_TELESCOPE_NAME,
+        DEFAULT_FLAG_CATEGORIES,
+    )
+    .map_err(|error| VlaError::import(error.to_string()))?;
+    let visibility = columns[0].shapes.clone();
     let resources = MeasurementSetWriteResources::from_system_memory(2)
         .map_err(|error| VlaError::import(error.to_string()))?;
-    MeasurementSetWritePlan::variable_array_creation(
-        row_count,
-        columns,
-        standard_main_scalar_column_plans(),
-        resources,
-    )
-    .map(|plan| (plan, visibility))
-    .map_err(|error| VlaError::import(error.to_string()))
+    msv2_main_plan(row_count, columns, resources)
+        .map(|plan| (plan, visibility))
+        .map_err(|error| VlaError::import(error.to_string()))
 }
 
 #[cfg(test)]
@@ -183,83 +96,16 @@ pub(super) fn test_import_write_plan(
     correlation_count: usize,
     channel_count: usize,
 ) -> Result<MeasurementSetWritePlan, VlaError> {
-    let visibility = MeasurementSetArrayShapePlan::visibility(
-        correlation_count,
-        channel_count,
-        row_count,
+    let columns = msv2_array_columns(
+        &BTreeMap::from([((correlation_count, channel_count), row_count)]),
+        &["DATA", "CORRECTED_DATA", "MODEL_DATA"],
         DEFAULT_TELESCOPE_NAME,
-    );
-    let flag_category = MeasurementSetArrayShapePlan::flag_category(
-        correlation_count,
-        channel_count,
         1,
-        row_count,
-        DEFAULT_TELESCOPE_NAME,
-    );
-    let weight =
-        MeasurementSetArrayShapePlan::weight(correlation_count, row_count, DEFAULT_TELESCOPE_NAME);
-    let uvw_tile_shape = vec![
-        3,
-        (visibility.tile_shape.iter().product::<usize>() / 3).max(1),
-    ];
-    let columns = vec![
-        MeasurementSetArrayColumnPlan {
-            name: "DATA".to_string(),
-            value_type: StreamedTiledShapeValueType::Complex32,
-            shapes: vec![visibility.clone()],
-            storage_manager: MeasurementSetColumnStorage::TiledShape,
-        },
-        MeasurementSetArrayColumnPlan {
-            name: "CORRECTED_DATA".to_string(),
-            value_type: StreamedTiledShapeValueType::Complex32,
-            shapes: vec![visibility.clone()],
-            storage_manager: MeasurementSetColumnStorage::TiledShape,
-        },
-        MeasurementSetArrayColumnPlan {
-            name: "MODEL_DATA".to_string(),
-            value_type: StreamedTiledShapeValueType::Complex32,
-            shapes: vec![visibility.clone()],
-            storage_manager: MeasurementSetColumnStorage::TiledShape,
-        },
-        MeasurementSetArrayColumnPlan {
-            name: "FLAG".to_string(),
-            value_type: StreamedTiledShapeValueType::Bool,
-            shapes: vec![visibility],
-            storage_manager: MeasurementSetColumnStorage::TiledShape,
-        },
-        MeasurementSetArrayColumnPlan {
-            name: "FLAG_CATEGORY".to_string(),
-            value_type: StreamedTiledShapeValueType::Bool,
-            shapes: vec![flag_category],
-            storage_manager: MeasurementSetColumnStorage::TiledShape,
-        },
-        MeasurementSetArrayColumnPlan {
-            name: "UVW".to_string(),
-            value_type: StreamedTiledShapeValueType::Float64,
-            shapes: vec![MeasurementSetArrayShapePlan {
-                cell_shape: vec![3],
-                row_count,
-                tile_shape: uvw_tile_shape,
-            }],
-            storage_manager: MeasurementSetColumnStorage::TiledColumn,
-        },
-        MeasurementSetArrayColumnPlan {
-            name: "WEIGHT".to_string(),
-            value_type: StreamedTiledShapeValueType::Float32,
-            shapes: vec![weight.clone()],
-            storage_manager: MeasurementSetColumnStorage::TiledShape,
-        },
-        MeasurementSetArrayColumnPlan {
-            name: "SIGMA".to_string(),
-            value_type: StreamedTiledShapeValueType::Float32,
-            shapes: vec![weight],
-            storage_manager: MeasurementSetColumnStorage::TiledShape,
-        },
-    ];
-    MeasurementSetWritePlan::variable_array_creation(
+    )
+    .map_err(|error| VlaError::import(error.to_string()))?;
+    msv2_main_plan(
         row_count,
         columns,
-        standard_main_scalar_column_plans(),
         MeasurementSetWriteResources {
             available_bytes: 64 * 1024 * 1024,
             maximum_live_batches: 2,
