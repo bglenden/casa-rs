@@ -22,8 +22,8 @@ use super::grouping::{
     resolve_refants, time_bin, time_bin_origin,
 };
 use super::{
-    GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
-    GainSolveReport, GainSolveRequest, GainType, LegacyRefantSlots, RefAntSelector, SolvedGains,
+    GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveModelSource, GainSolveReport,
+    GainSolveRequest, GainType, LegacyRefantSlots, RefAntSelector, SolvedGains,
     apply_reference_antenna, finish_gain_amplitudes, legacy_gain_receptors, preaverage_span,
     record_legacy_refant_slots, refant_distance_order, solve_group_with_stats, spectral_window_ids,
     tally_references,
@@ -35,10 +35,6 @@ use crate::solve_stats::SolveStatsBuilder;
 pub(crate) fn supports(request: &GainSolveRequest) -> bool {
     matches!(request.solve_interval, GainSolveInterval::Seconds(seconds) if seconds.is_finite() && seconds > 0.0)
         && request.gain_type == GainType::G
-        && matches!(
-            request.solve_mode,
-            GainSolveMode::AmplitudePhase | GainSolveMode::Phase
-        )
         && request.combine == GainSolveCombine::default()
         && only_cross_correlations(&request.selection)
         && request.preaverage_seconds <= 0.0
@@ -494,6 +490,7 @@ impl GainAccumulator<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::solve::GainSolveMode;
 
     fn trial_ms() -> tempfile::TempDir {
         let root = tempfile::tempdir().unwrap();
@@ -570,7 +567,11 @@ mod tests {
             }
             assert!(fragments > 2);
 
-            for mode in [GainSolveMode::AmplitudePhase, GainSolveMode::Phase] {
+            for mode in [
+                GainSolveMode::AmplitudePhase,
+                GainSolveMode::Phase,
+                GainSolveMode::Amplitude,
+            ] {
                 request.solve_mode = mode;
                 let whole = read_solutions(&input, &request, input.available_bytes, false).unwrap();
                 let fragmented = read_solutions(&input, &request, one_time_limit, false).unwrap();

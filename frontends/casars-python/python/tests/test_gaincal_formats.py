@@ -25,7 +25,7 @@ def prepare_store(tmp_path, monkeypatch, store):
 
 
 @pytest.mark.parametrize("store", ["ms_trial.ms", "ms_trial.ps.zarr"])
-@pytest.mark.parametrize("calmode", ["ap", "p"])
+@pytest.mark.parametrize("calmode", ["ap", "p", "a"])
 def test_time_binned_point_source_gaincal(tmp_path, monkeypatch, store, calmode):
     prepare_store(tmp_path, monkeypatch, store)
     result = tasks.gaincal(
@@ -64,6 +64,10 @@ def test_time_binned_point_source_gaincal(tmp_path, monkeypatch, store, calmode)
     if calmode == "p":
         np.testing.assert_allclose(np.abs(gains), 1, atol=5e-7, rtol=0)
         referred /= np.abs(referred)
+    if calmode == "a":
+        np.testing.assert_array_equal(gains.imag, 0)
+        assert np.all(gains.real > 0)
+        referred = np.abs(referred)
     interval = np.searchsorted(np.unique(times), times)
     ratio = gains / referred[interval, antennas, :]
     # The fixture has a second faint source outside the supplied point model.
