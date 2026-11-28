@@ -17,12 +17,14 @@ pub(super) fn run(
     persist: bool,
 ) -> Result<FlagDataReport, FlaggingError> {
     let path = display_ms_path(table);
+    request.check_cancelled()?;
     let backup_version = (persist && request.flagbackup && request.mode != FlagDataMode::Summary)
         .then(|| save_next_casa_flag_backup(table, "flagdata"))
         .transpose()?;
     let (mut report, changes) = stage(table, request, !persist, false, None)?;
+    request.check_cancelled()?;
     if persist && !changes.changed_row_indices.is_empty() {
-        persist_changed_flags(table, &changes, &path)?;
+        persist_changed_flags(table, &changes, &path, request.cancellation.as_ref())?;
     }
     report.backup_version = backup_version;
     Ok(report)
@@ -40,6 +42,9 @@ pub(super) fn run_program(
     requests: &[FlagDataRequest],
     options: ProgramOptions<'_>,
 ) -> Result<Vec<Option<FlagDataReport>>, FlaggingError> {
+    let cancellation = requests
+        .iter()
+        .find_map(|request| request.cancellation.as_ref());
     let mut execution_order: Vec<_> = (0..requests.len()).collect();
     if !options.sequential {
         // In a combined CASA run the unflag agents clear their samples
@@ -49,6 +54,7 @@ pub(super) fn run_program(
     let mut reports: Vec<_> = (0..requests.len()).map(|_| None).collect();
     let mut touched = std::collections::BTreeSet::new();
     for index in execution_order {
+        check_cancelled(cancellation)?;
         reports[index] = match stage(
             table,
             &requests[index],
@@ -69,13 +75,14 @@ pub(super) fn run_program(
             Err(error) => return Err(error),
         };
     }
+    check_cancelled(cancellation)?;
     if options.write_flags && !touched.is_empty() {
         let path = display_ms_path(table);
         let changes = ChangeSet {
             changed_row_indices: touched.into_iter().collect(),
             ..ChangeSet::default()
         };
-        persist_changed_flags(table, &changes, &path)?;
+        persist_changed_flags(table, &changes, &path, cancellation)?;
     }
     Ok(reports)
 }
@@ -87,8 +94,15 @@ fn stage(
     local_selection: bool,
     base_rows: Option<&[usize]>,
 ) -> Result<(FlagDataReport, ChangeSet), FlaggingError> {
+    request.check_cancelled()?;
     let path = display_ms_path(table);
-    let selected = select(table, &request.selection, local_selection, base_rows)?;
+    let selected = select(
+        table,
+        &request.selection,
+        local_selection,
+        base_rows,
+        request.cancellation.as_ref(),
+    )?;
     let correlation = request.correlation.as_deref().unwrap_or_default();
     if request.mode == FlagDataMode::Summary {
         if !correlation.is_empty() {
@@ -100,6 +114,7 @@ fn stage(
             selected.channels.as_ref(),
             None,
             request.summary_options,
+            request.cancellation.as_ref(),
         )
         .map(|report| (report, ChangeSet::default()));
     }
@@ -150,6 +165,7 @@ fn stage(
         summary: None,
     };
     for rows in selected.rows.chunks(256) {
+        request.check_cancelled()?;
         let main = table.main_table();
         let flags = clip_time::read_flags_uncached(main, rows, &path)?;
         let data = clip
@@ -267,6 +283,7 @@ fn grouped_flags(
         channels,
         None,
         FlagSummaryOptions::default(),
+        request.cancellation.as_ref(),
     )?;
     report.mode = request.mode;
     report.changed_rows = changes.changed_rows;
@@ -613,7 +630,7 @@ pub(super) fn selected_rows(
     {
         return Err(unsupported_selection());
     }
-    select(table, selection, false, None).map(|selection| selection.rows)
+    select(table, selection, false, None, None).map(|selection| selection.rows)
 }
 
 fn unsupported_selection() -> FlaggingError {
@@ -627,6 +644,7 @@ fn select(
     input: &MsSelection,
     local_selection: bool,
     base_rows: Option<&[usize]>,
+    cancellation: Option<&Cancellation>,
 ) -> Result<SelectedFlagRows, FlaggingError> {
     if [
         input.array.as_deref(),
@@ -662,6 +680,7 @@ fn select(
     };
     let candidates = (0..unselected_count).chain(base_rows.into_iter().flatten().copied());
     for row in candidates {
+        check_cancelled(cancellation)?;
         let id = |column| table_i32(main, row, column, path);
         let includes = |values: &[i32], column| -> Result<bool, FlaggingError> {
             Ok(values.is_empty() || values.contains(&id(column)?))
@@ -709,7 +728,13 @@ fn select(
             })
             .map_err(selection_error)?;
         rows = if local_selection {
-            select_buffer_times(table, base_rows, rows, |seconds| selection.holds(seconds))?
+            select_buffer_times(
+                table,
+                base_rows,
+                rows,
+                |seconds| selection.holds(seconds),
+                cancellation,
+            )?
         } else {
             let mut selected = Vec::with_capacity(rows.len());
             for row in rows {
@@ -741,13 +766,21 @@ fn select_buffer_times(
     base_rows: Option<&[usize]>,
     mut rows: Vec<usize>,
     holds: impl Fn(f64) -> bool,
+    cancellation: Option<&Cancellation>,
 ) -> Result<Vec<usize>, FlaggingError> {
     let count = table.main_table().row_count();
     let all = base_rows.map_or_else(|| Cow::Owned((0..count).collect::<Vec<_>>()), Cow::Borrowed);
-    let timed =
-        clip_time::ordered_baseline_chunks(table, &all, None, false, &display_ms_path(table))?;
+    let timed = clip_time::ordered_baseline_chunks(
+        table,
+        &all,
+        None,
+        false,
+        &display_ms_path(table),
+        cancellation,
+    )?;
     let mut selected = vec![false; count];
     for chunk in timed.chunk_by(|left, right| left.chunk_key() == right.chunk_key()) {
+        check_cancelled(cancellation)?;
         let first = chunk
             .iter()
             .min_by_key(|row| row.row)

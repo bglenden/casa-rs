@@ -139,15 +139,14 @@ pub(super) fn apply_rflag_flags(
         RflagFitOutcome::default()
     };
     if request.extendflags && view.is_none() {
-        let fit_flags = loaded
-            .axes
-            .flags_by_bin
-            .as_ref()
-            .unwrap_or(&loaded.flags_by_row);
         if casa_rflag && channel_selections.is_some() && loaded.axes.channels_by_row.is_empty() {
-            for (_, group) in &groups {
-                extend_tfcrop_selected_channels(group, fit_flags, &mut modified);
-            }
+            extend_rflag_selected_channels(
+                &groups,
+                &loaded.axes,
+                &loaded.flags_by_row,
+                &mut modified,
+                request,
+            )?;
         } else {
             extend_autoflag_grouped(
                 groups.iter().map(|(_, samples)| samples.as_slice()),
@@ -212,6 +211,21 @@ pub(super) fn apply_rflag_flags(
         })
     });
     Ok(changes)
+}
+
+fn extend_rflag_selected_channels(
+    groups: &[(AutoflagChunk, Vec<Sample>)],
+    axes: &AveragedSampleAxes,
+    flags_by_row: &BTreeMap<usize, ArrayD<bool>>,
+    modified: &mut [bool],
+    request: &FlagDataRequest,
+) -> Result<(), FlaggingError> {
+    let fit_flags = axes.flags_by_bin.as_ref().unwrap_or(flags_by_row);
+    for (_, group) in groups {
+        request.check_cancelled()?;
+        extend_tfcrop_selected_channels(group, fit_flags, modified);
+    }
+    Ok(())
 }
 
 pub(super) struct AutomaticSampleSource<'a> {
@@ -279,8 +293,11 @@ pub(super) fn load_automatic_samples(
             })
         }),
         None,
-        false,
-        widths,
+        SampleLoadOptions {
+            widths,
+            cancellation: request.cancellation.as_ref(),
+            ..SampleLoadOptions::default()
+        },
     )
 }
 
@@ -398,6 +415,7 @@ pub(super) fn fit_rflag_chunks(
     // RFlag applies each buffer's own fitted thresholds. The calculate report
     // instead accumulates all buffers for each field/SPW.
     for chunk in groups.chunk_by(|(left, _), (right, _)| left == right) {
+        request.check_cancelled()?;
         let threshold_started = Instant::now();
         let chunk_thresholds =
             rflag_threshold_maps_with_roundoff(chunk, request, context, &mut roundoff_buf)?
@@ -508,6 +526,7 @@ pub(super) fn rflag_threshold_maps_with_roundoff(
     };
     let mut histograms = RFlagHistograms::default();
     for (chunk_key, group) in groups {
+        request.check_cancelled()?;
         let ddid = context.correlations.map(|_| chunk_key.0[4]);
         rflag_accumulate_group_histograms(
             ddid,

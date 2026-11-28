@@ -189,6 +189,7 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         Some(casa_calibration::models::flagdata_model),
     )
     .map_err(|error| match error {
+        FlaggingError::Interrupted => TaskFailure::interrupted(error.to_string()),
         FlaggingError::MissingCorrelationSummary => {
             TaskFailure::execution(error.to_string()).at("correlation")
         }
@@ -220,8 +221,12 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         }
         error => TaskFailure::execution(error.to_string()),
     })?;
-    if calculate && let Some(report) = &report.rflag_report {
-        rflag::write_files(task, report)?;
+    if calculate {
+        // Decide once before publishing threshold files or saved commands.
+        check_cancelled(task)?;
+        if let Some(report) = &report.rflag_report {
+            rflag::write_files(task, report)?;
+        }
     }
     if save_parameters && display_option.is_empty() {
         save_flag_parameters(
@@ -529,6 +534,16 @@ fn save_flag_parameters(
         task.flag("overwrite")?,
         matches!(action, "none" | ""),
     )
+}
+
+fn check_cancelled(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
+    if task
+        .cancellation()
+        .is_some_and(crate::TaskCancellation::is_cancelled)
+    {
+        return Err(TaskFailure::interrupted("flagdata interrupted"));
+    }
+    Ok(())
 }
 
 fn is_calibration_table(path: &Path) -> bool {
@@ -839,6 +854,7 @@ fn flagdata_request(
     };
     let (timedev, freqdev) = (&thresholds.time, &thresholds.frequency);
     Ok(FlagDataRequest {
+        cancellation: task.cancellation().cloned(),
         selection: selection(task, &spw)?,
         casa_row_selection: true,
         spw: (!spw.is_empty()).then_some(spw),

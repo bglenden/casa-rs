@@ -23,6 +23,8 @@ use crate::convert::reply_value::reply_value;
 use crate::parameters::{parameter_values, reason_error, to_python};
 use crate::tasks::{TaskTableWrite, completion, decode_plot_documents};
 
+#[cfg(all(unix, feature = "flagdata-test-hooks"))]
+use crate::native_flagdata_test_hooks as flagdata_test_hooks;
 #[cfg(all(unix, feature = "transform-test-hooks"))]
 use crate::native_transform_test_hooks as transform_test_hooks;
 
@@ -127,9 +129,27 @@ impl NativeTaskResult {
 
 pub(crate) enum WorkerMessage {
     Log(String),
-    #[cfg(all(unix, feature = "transform-test-hooks"))]
+    #[cfg(all(
+        unix,
+        any(feature = "transform-test-hooks", feature = "flagdata-test-hooks")
+    ))]
     TestInterrupt(Sender<()>),
     Finished,
+}
+
+#[cfg(all(
+    unix,
+    any(feature = "transform-test-hooks", feature = "flagdata-test-hooks")
+))]
+pub(crate) fn signal_test_worker(sender: &Sender<WorkerMessage>) {
+    // Only call from a test checkpoint with no shared table write lock.
+    // The Python collector sets the token before releasing the worker.
+    let (resume, wait) = channel();
+    sender.send(WorkerMessage::TestInterrupt(resume)).unwrap();
+    assert!(matches!(
+        wait.recv_timeout(Duration::from_secs(15)),
+        Err(RecvTimeoutError::Disconnected)
+    ));
 }
 
 struct LogWriter(Sender<WorkerMessage>);
@@ -234,6 +254,8 @@ pub(crate) fn run_native_task(
         ..NativeTaskOptions::default()
     };
     let cancel = execution.cancel.clone();
+    #[cfg(all(unix, feature = "flagdata-test-hooks"))]
+    let flagdata_test = flagdata_test_hooks::take(&surface);
     #[cfg(all(unix, feature = "transform-test-hooks"))]
     let transform_test = transform_test_hooks::take(&surface);
     let worker = std::thread::Builder::new()
@@ -253,6 +275,8 @@ pub(crate) fn run_native_task(
             };
             #[cfg(all(unix, feature = "transform-test-hooks"))]
             let run = || transform_test_hooks::run(transform_test, &sender, run);
+            #[cfg(all(unix, feature = "flagdata-test-hooks"))]
+            let run = || flagdata_test_hooks::run(flagdata_test, &sender, run);
             let (reply, lines) = tracing::subscriber::with_default(subscriber, run);
             for line in lines {
                 if sender.send(WorkerMessage::Log(line + "\n")).is_err() {
@@ -305,7 +329,10 @@ fn collect_logs(
                     interrupted = Some(error);
                 }
             }
-            #[cfg(all(unix, feature = "transform-test-hooks"))]
+            #[cfg(all(
+                unix,
+                any(feature = "transform-test-hooks", feature = "flagdata-test-hooks")
+            ))]
             Ok(WorkerMessage::TestInterrupt(resume)) => {
                 // SAFETY: a standard process signal handled by Python. This
                 // collector is the same Python thread running the public task.

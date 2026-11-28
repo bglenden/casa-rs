@@ -12,8 +12,8 @@ use casa_ms::{MeasurementSet, MsReadPlan, MsResult, MsSelectionIoBudget};
 use super::clip_time::{ClipTimedRow, read_clip_times, sort_iterator_rows};
 use super::geometry::apply_geometric_flags;
 use super::{
-    ChangeSet, CorrelationSelection, FLAG_COLUMN, FlaggingError, data_description_spw_map,
-    maximum_flag_elements,
+    Cancellation, ChangeSet, CorrelationSelection, FLAG_COLUMN, FlaggingError, check_cancelled,
+    data_description_spw_map, maximum_flag_elements,
 };
 
 /// Controls propagation from a reference antenna's baselines to its integrations.
@@ -44,9 +44,10 @@ pub(super) fn apply(
     channels: Option<&BTreeMap<i32, ChannelSelection>>,
     correlations: Option<&CorrelationSelection>,
     path: &str,
+    cancellation: Option<&Cancellation>,
 ) -> Result<ChangeSet, FlaggingError> {
-    let affected = affected_rows(ms, selected, options, path)?;
-    apply_affected(ms, affected, channels, correlations)
+    let affected = affected_rows(ms, selected, options, path, cancellation)?;
+    apply_affected(ms, affected, channels, correlations, cancellation)
 }
 
 pub(super) fn apply_affected(
@@ -54,9 +55,10 @@ pub(super) fn apply_affected(
     affected: Option<Vec<usize>>,
     channels: Option<&BTreeMap<i32, ChannelSelection>>,
     correlations: Option<&CorrelationSelection>,
+    cancellation: Option<&Cancellation>,
 ) -> Result<ChangeSet, FlaggingError> {
     if let Some(affected) = affected {
-        apply_geometric_flags(ms, &affected, channels, correlations)
+        apply_geometric_flags(ms, &affected, channels, correlations, cancellation)
     } else {
         Ok(ChangeSet {
             agent_skipped: true,
@@ -70,6 +72,7 @@ pub(super) fn affected_rows(
     selected: &[usize],
     options: &AntennaIntegrationOptions,
     path: &str,
+    cancellation: Option<&Cancellation>,
 ) -> Result<Option<Vec<usize>>, FlaggingError> {
     let fail = |reason: String| FlaggingError::MutateFlags {
         path: path.to_owned(),
@@ -93,10 +96,11 @@ pub(super) fn affected_rows(
     let windows = ms
         .spectral_window()
         .map_err(|error| fail(error.to_string()))?;
-    let mut timed = read_clip_times(ms, selected, path)?;
+    let mut timed = read_clip_times(ms, selected, path, cancellation)?;
     sort_iterator_rows(&mut timed);
     let mut channels_by_description = BTreeMap::new();
     for row in &timed {
+        check_cancelled(cancellation)?;
         let ddid = row.description();
         if let std::collections::btree_map::Entry::Vacant(slot) =
             channels_by_description.entry(ddid)
@@ -132,6 +136,7 @@ pub(super) fn affected_rows(
         options,
     }
     .affected_rows(plan.rows_per_block.max(1), fail, |indices| {
+        check_cancelled(cancellation)?;
         column
             .array_cells_owned_uncached(indices)
             .map_err(|error| fail(error.to_string()))

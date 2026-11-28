@@ -10,7 +10,7 @@ use casa_ms::selection::syntax::ChannelSelection;
 
 use super::clip_time::{read_clip_times, sort_iterator_rows};
 use super::geometry::{apply_geometric_flags, phase_center};
-use super::{ChangeSet, CorrelationSelection, FlaggingError};
+use super::{Cancellation, ChangeSet, CorrelationSelection, FlaggingError, check_cancelled};
 
 pub(super) fn apply(
     ms: &mut MeasurementSet,
@@ -19,9 +19,10 @@ pub(super) fn apply(
     channels: Option<&BTreeMap<i32, ChannelSelection>>,
     correlations: Option<&CorrelationSelection>,
     path: &str,
+    cancellation: Option<&Cancellation>,
 ) -> Result<ChangeSet, FlaggingError> {
-    let outside = rows_outside_limits(ms, selected, limits, path)?;
-    apply_geometric_flags(ms, &outside, channels, correlations)
+    let outside = rows_outside_limits(ms, selected, limits, path, cancellation)?;
+    apply_geometric_flags(ms, &outside, channels, correlations, cancellation)
 }
 
 fn rows_outside_limits(
@@ -29,6 +30,7 @@ fn rows_outside_limits(
     selected: &[usize],
     [lower, upper]: [f64; 2],
     path: &str,
+    cancellation: Option<&Cancellation>,
 ) -> Result<Vec<usize>, FlaggingError> {
     if selected.is_empty() {
         return Ok(Vec::new());
@@ -40,13 +42,14 @@ fn rows_outside_limits(
     let engine = MsCalEngine::new(ms)
         .and_then(|engine| engine.with_field_ephemerides(ms))
         .map_err(|error| fail(error.to_string()))?;
-    let mut ordered = read_clip_times(ms, selected, path)?;
+    let mut ordered = read_clip_times(ms, selected, path, cancellation)?;
     sort_iterator_rows(&mut ordered);
     let mut center: Option<(usize, MDirection)> = None;
     let mut cached_time = None;
     let mut elevations = BTreeMap::<usize, f64>::new();
     let mut outside = Vec::new();
     for row in ordered {
+        check_cancelled(cancellation)?;
         let field = usize::try_from(row.field())
             .map_err(|_| fail(format!("negative FIELD_ID at row {}", row.row)))?;
         let time = row.time();
