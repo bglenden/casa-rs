@@ -34,6 +34,32 @@ fn open_with_permanent_lock_acquires_immediately() {
 }
 
 #[test]
+fn flush_updates_the_descriptor_count_of_a_named_memory_append() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("memory");
+    let schema = TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)]).unwrap();
+    let mut table = Table::with_schema(schema)
+        .into_named_memory_manager(&path, "mem", LockOptions::new(LockMode::UserLocking))
+        .unwrap();
+    assert!(table.lock(LockType::Write, 1).unwrap());
+    table
+        .add_row(RecordValue::new(vec![RecordField::new(
+            "id",
+            Value::Scalar(ScalarValue::Int32(7)),
+        )]))
+        .unwrap();
+    table.flush().unwrap();
+    table.unlock().unwrap();
+    drop(table);
+    let fresh = Table::open(TableOptions::new(path)).unwrap();
+    assert_eq!(fresh.row_count(), 1);
+    assert_eq!(
+        fresh.get_scalar_cell(0, "id").unwrap(),
+        &ScalarValue::Int32(0)
+    );
+}
+
+#[test]
 fn open_with_user_lock_has_no_lock_until_explicit() {
     let tmp = tempfile::TempDir::new().unwrap();
     let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
@@ -461,6 +487,46 @@ fn dropping_a_handle_publishes_a_write_persisted_before_a_resync() {
     writer.resync().unwrap();
     drop(writer);
     assert_eq!(published_counter(&opts), before.wrapping_add(1));
+}
+
+#[test]
+fn dropping_a_write_lock_never_retries_an_unscoped_full_save() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StandardStMan);
+    let mut writer =
+        Table::open_with_lock(opts.clone(), LockOptions::new(LockMode::UserLocking)).unwrap();
+    assert!(writer.lock(LockType::Write, 1).unwrap());
+    // A schema edit has no selected-row persistence scope.
+    writer.rename_column("name", "other").unwrap();
+    set_id(&mut writer, 2);
+    let control = opts.path().join("table.dat");
+    let before = control.metadata().unwrap();
+    std::fs::set_permissions(&control, std::fs::Permissions::from_mode(0o444)).unwrap();
+    if std::fs::OpenOptions::new()
+        .write(true)
+        .open(&control)
+        .is_ok()
+    {
+        eprintln!("skipping mode-0444 law: process can write the descriptor");
+        return;
+    }
+    assert!(writer.unlock().is_err());
+    assert!(writer.has_lock(LockType::Write));
+    // Make a destructor retry observable even on branches where a full
+    // save preflights a read-only descriptor before touching the managers.
+    std::fs::set_permissions(&control, before.permissions()).unwrap();
+    drop(writer);
+    let reopened = Table::open(opts).unwrap();
+    let id = reopened.cell_accessor(0, "id").unwrap().scalar().unwrap();
+    let after = control.metadata().unwrap();
+    assert!(
+        id == &ScalarValue::Int32(1) && after.ino() == before.ino(),
+        "after failed release and drop: id {id:?}, descriptor inode {} -> {}",
+        before.ino(),
+        after.ino()
+    );
 }
 
 /// A writer that persists its own changes reloads the table after a

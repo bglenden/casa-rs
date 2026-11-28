@@ -124,9 +124,7 @@ impl Table {
         {
             return Ok(None);
         }
-        let stored_name = dm_name_from_blob(&manager.data);
-        let preserve_ssm_name = stored_name.as_deref() == Some(*group);
-        if !preserve_ssm_name && stored_name.as_deref() != Some("SSM") {
+        if dm_name_from_blob(&manager.data).is_none() {
             return Ok(None);
         }
         let data_path = path.join(format!(
@@ -145,7 +143,6 @@ impl Table {
                 .with_data_manager(DataManagerKind::StandardStMan)
                 .with_data_manager_group(*group)
                 .with_casacore_default_ssm(casacore_default)
-                .with_preserved_ssm_group_name(preserve_ssm_name)
                 .with_endian_format(format),
         ))
     }
@@ -177,8 +174,7 @@ mod tests {
             .save(
                 TableOptions::new(&path)
                     .with_data_manager(DataManagerKind::StandardStMan)
-                    .with_data_manager_group("StandardStMan")
-                    .with_preserved_ssm_group_name(true),
+                    .with_data_manager_group("StandardStMan"),
             )
             .expect("save");
 

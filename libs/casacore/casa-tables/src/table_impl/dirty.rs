@@ -11,13 +11,19 @@ pub(crate) struct DirtyChanges {
     pub(crate) metadata: bool,
     /// Row count/order or schema changed, or a raw mutable row slice escaped.
     pub(crate) whole: bool,
+    /// First row of a tracked append, with earlier rows still in disk order.
+    pub(crate) appended_from: Option<usize>,
     pub(crate) added_columns: BTreeSet<String>,
     pub(crate) cells: HashMap<String, BTreeSet<usize>>,
 }
 
 impl DirtyChanges {
     fn is_empty(&self) -> bool {
-        !self.metadata && !self.whole && self.added_columns.is_empty() && self.cells.is_empty()
+        !self.metadata
+            && !self.whole
+            && self.appended_from.is_none()
+            && self.added_columns.is_empty()
+            && self.cells.is_empty()
     }
 }
 
@@ -43,6 +49,20 @@ impl TableImpl {
 
     pub(crate) fn note_change(&mut self) {
         self.record_change(|dirty| dirty.whole = true);
+    }
+
+    pub(crate) fn note_row_append(&mut self, row: usize) {
+        self.record_change(|dirty| {
+            dirty.appended_from.get_or_insert(row);
+        });
+    }
+
+    pub(crate) fn note_append_saved(&mut self) {
+        if let Some(dirty) = &mut self.dirty {
+            let dirty = dirty.get_mut().unwrap_or_else(PoisonError::into_inner);
+            dirty.appended_from = None;
+            dirty.cells.clear();
+        }
     }
 
     pub(crate) fn note_column_added(&mut self, column: &str) {

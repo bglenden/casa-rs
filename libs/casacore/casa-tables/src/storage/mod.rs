@@ -74,8 +74,8 @@ pub(crate) use self::selected_cells::{cell_read_footprint, channel_read_footprin
 use self::standard_stman::{
     read_ssm_array_column_rows, read_ssm_file, read_ssm_file_columns,
     read_ssm_required_scalar_columns_rows, read_ssm_required_scalar_columns_rows_reusing,
-    read_ssm_scalar_column_rows, write_ssm_file, write_ssm_file_column_sources,
-    write_ssm_file_indexed, write_ssm_file_with_options,
+    read_ssm_scalar_column_rows, write_ssm_file_column_sources, write_ssm_file_indexed,
+    write_ssm_file_with_options,
 };
 use self::stman_aipsio::scalar_value_is_default;
 use self::stman_aipsio::{

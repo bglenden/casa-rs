@@ -764,6 +764,7 @@ mod tests {
                 &col_descs,
                 &ColumnSources::materialized(rows, &columns),
                 big_endian,
+                "SSM",
             )
             .expect("fixed scalar writer");
             assert_eq!(reference_blob, streamed_blob, "DM blob, {rows} rows");

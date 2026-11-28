@@ -145,7 +145,7 @@ pub(crate) use sparse::read_stman_scalar_column_rows;
 pub(crate) use sparse::save_stman_file_rows_in_place;
 use sparse::*;
 pub(crate) use write::scalar_value_is_default;
-pub(super) use write::write_named_stman_file;
+pub(crate) use write::write_named_stman_file;
 use write::*;
 
 pub(crate) fn read_stman_file(

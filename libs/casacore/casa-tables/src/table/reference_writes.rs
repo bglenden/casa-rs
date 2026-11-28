@@ -372,6 +372,7 @@ impl Table {
         &mut self,
         columns: &[&str],
         changed_rows: &[usize],
+        allow_rewrite: bool,
     ) -> Result<bool, TableError> {
         if !self.is_reference_table()? {
             return Ok(false);
@@ -427,7 +428,8 @@ impl Table {
         selected_rows.dedup();
         self.note_persisted_write(&root);
         let result = base.persist_selected_rows_in_place(&selected_columns, &selected_rows);
-        if matches!(&result, Err(TableError::Storage(message)) if message.starts_with("partial in-place save does not support"))
+        if allow_rewrite
+            && matches!(&result, Err(TableError::Storage(message)) if message.starts_with("partial in-place save does not support"))
             && let Some(options) = base.single_rewrite_options()?
         {
             base.save(options)?;

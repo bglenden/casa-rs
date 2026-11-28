@@ -377,28 +377,7 @@ fn same_hz(a: f64, b: f64) -> bool {
 /// window of decreasing frequency has a positive width, and its unsolved
 /// rows keep their sign; the frequencies give the order.
 fn solves(solved: &NamespaceWindow, window: &NamespaceWindow) -> bool {
-    let same = |a: &[f64], b: &[f64], value: fn(f64) -> f64| {
-        a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_hz(value(*a), value(*b)))
-    };
-    if solved.frame != window.frame {
-        return false;
-    }
-    if same(&solved.frequencies_hz, &window.frequencies_hz, |hz| hz)
-        && same(&solved.widths_hz, &window.widths_hz, f64::abs)
-    {
-        return true;
-    }
-    let channels = window.frequencies_hz.len();
-    if channels < 2 || solved.frequencies_hz.len() != 1 || solved.widths_hz.len() != 1 {
-        return false;
-    }
-    let frequency = solved.frequencies_hz[0];
-    // `PlainChannelAverageKernel`: unweighted, whatever the widths.
-    let mean = window.frequencies_hz.iter().sum::<f64>() / channels as f64;
-    same_hz(
-        solved.widths_hz[0].abs(),
-        window.widths_hz.iter().map(|width| width.abs()).sum(),
-    ) && same_hz(frequency, mean)
+    window.describes_solution_axis(solved)
 }
 
 /// Whether `solved`, one channel, lies within `window`'s band in its frame:

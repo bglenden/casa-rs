@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 mod array_shapes;
 mod dirty;
+pub(crate) use dirty::DirtyChanges;
 mod fixed_arrays;
 mod read_cache;
 
@@ -585,13 +586,14 @@ impl TableImpl {
     }
 
     pub(crate) fn add_row(&mut self, row: RecordValue) -> Result<(), TableError> {
-        self.note_change();
+        let first = self.row_count();
         let loaded = self.ensure_loaded_mut()?;
         loaded.rows.push(row);
         loaded.undefined_cells.push(HashSet::new());
         self.persisted_row_count = loaded.rows.len();
         self.lazy_rows = None;
         *self.rows_reshaped.get_mut() = true;
+        self.note_row_append(first);
         Ok(())
     }
 

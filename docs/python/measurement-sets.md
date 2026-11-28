@@ -14,12 +14,14 @@ in `.ps.zarr`.
 | `tasks.smoothcal(vis=…)` | Read field metadata for smoothing a calibration table | Yes | Yes | [Verify field-specific smoothing on both stores][smoothcal-tests] |
 | `tasks.gaincal(vis=…)` | Read visibilities for a time-binned per-receptor G gain solve | Yes | [Point-source mode below](#solve-time-binned-gains) | [Verify gains for both stores][gaincal-tests] |
 | `tasks.gencal(vis=…)` | Read metadata for explicit gain, phase, delay and opacity prescriptions | Yes | `amp`, `ph`, `sbd`, `mbd`, `opac` | [Create and accumulate priors on both stores][gencal-tests] |
+| `tasks.listcal(vis=…)` | Read window metadata for a CASA calibration listing | Yes | Default selectors with a listing file and `pagerows=0` | [Verify file output on both stores][listcal-tests] |
 
 [format-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_msconvert_formats.py
 [rerefant-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_rerefant_formats.py
 [smoothcal-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_smoothcal_formats.py
 [gaincal-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_gaincal_formats.py
 [gencal-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_gencal_formats.py
+[listcal-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_listcal_formats.py
 
 ## Choose the output format
 
@@ -108,3 +110,12 @@ MSv4 inputs must have metadata that the CASA calibration subtables can
 represent. The task refuses moving MSv4 fields and updates whose existing
 antenna or spectral-window IDs refer to different physical entities.
 Textual scan names are accepted because these prescriptions do not name a scan.
+
+## Write a calibration listing
+
+`tasks.listcal` accepts a fixed-field MSv4 observation with `listfile`,
+`pagerows=0`, and the default field and antenna selections. Leave `spw`
+empty or use `spw="*"`. The listing retains the supplied observation path
+and describes the solutions in the CASA calibration table. Its spectral-window
+IDs must agree with the MSv4 window identities and channel grids. The task
+refuses incompatible or missing windows before writing the listing.

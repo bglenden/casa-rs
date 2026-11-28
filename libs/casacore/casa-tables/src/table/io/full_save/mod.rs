@@ -133,7 +133,7 @@ impl Table {
 
 #[cfg(unix)]
 impl LockState {
-    fn admit_full_save(&self, path: &Path) -> Result<(), TableError> {
+    pub(in crate::table) fn admit_full_save(&self, path: &Path) -> Result<(), TableError> {
         if !self.lock_file.matches_table_path(path) {
             return Err(lock_error(
                 path,

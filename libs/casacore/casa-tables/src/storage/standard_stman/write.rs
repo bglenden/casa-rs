@@ -67,6 +67,7 @@ pub(crate) fn write_ssm_file_indexed(
     rows: &[casa_core::RecordValue],
     field_indices: &[usize],
     big_endian: bool,
+    manager_name: &str,
 ) -> Result<Vec<u8>, StorageError> {
     write_ssm_file_impl(
         file_path,
@@ -75,7 +76,7 @@ pub(crate) fn write_ssm_file_indexed(
         Some(field_indices),
         big_endian,
         false,
-        "SSM",
+        manager_name,
     )
 }
 
@@ -128,6 +129,7 @@ pub(crate) fn write_ssm_file_column_sources(
     col_descs: &[ColumnDescContents],
     sources: &ColumnSources<'_>,
     big_endian: bool,
+    manager_name: &str,
 ) -> Result<Vec<u8>, StorageError> {
     if sources.column_count() != col_descs.len() {
         return Err(StorageError::FormatMismatch(format!(
@@ -139,9 +141,22 @@ pub(crate) fn write_ssm_file_column_sources(
     if col_descs.iter().all(|desc| {
         !desc.is_array && !desc.is_record() && desc.data_type != CasacoreDataType::TpString
     }) {
-        return write_ssm_fixed_scalar_sources_streaming(file_path, col_descs, sources, big_endian);
+        return write_ssm_fixed_scalar_sources_streaming(
+            file_path,
+            col_descs,
+            sources,
+            big_endian,
+            manager_name,
+        );
     }
-    column_writer::write_ssm_file_columns(file_path, col_descs, sources, big_endian, false, "SSM")
+    column_writer::write_ssm_file_columns(
+        file_path,
+        col_descs,
+        sources,
+        big_endian,
+        false,
+        manager_name,
+    )
 }
 
 pub(super) fn write_ssm_file_impl(
@@ -193,6 +208,7 @@ pub(super) fn write_ssm_file_in_memory(
             col_descs,
             scalar_columns,
             big_endian,
+            "SSM",
         );
     }
 
@@ -505,6 +521,7 @@ pub(super) fn write_ssm_fixed_scalar_sources_streaming(
     col_descs: &[ColumnDescContents],
     scalar_columns: &ColumnSources<'_>,
     big_endian: bool,
+    manager_name: &str,
 ) -> Result<Vec<u8>, StorageError> {
     let nrrow = scalar_columns.row_count();
     let ncol = col_descs.len();
@@ -610,7 +627,7 @@ pub(super) fn write_ssm_fixed_scalar_sources_streaming(
         },
         big_endian,
     )?;
-    serialize_ssm_dm_blob("SSM", &column_offsets, ncol)
+    serialize_ssm_dm_blob(manager_name, &column_offsets, ncol)
 }
 
 pub(super) fn write_constant_scalar_column_to_bucket(
