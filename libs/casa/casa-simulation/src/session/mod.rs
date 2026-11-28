@@ -131,6 +131,16 @@ const _: () = {
     assert_send::<Simulator>();
 };
 
+/// The storage format of a new simulated observation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SimulatorFormat {
+    /// CASA MeasurementSet v2, the simulator's default.
+    #[default]
+    Msv2,
+    /// An XRADIO processing set.
+    Msv4,
+}
+
 /// A simulator session writing one new MeasurementSet.
 pub struct Simulator {
     /// The path given, which `name` reports.
@@ -140,6 +150,7 @@ pub struct Simulator {
     /// then, as CASA's simulator holds the table it opened.
     destination: PathBuf,
     options: SimulatorOptions,
+    format: SimulatorFormat,
     telescope: String,
     antennas: Vec<Antenna>,
     feeds: Vec<Feed>,
@@ -212,6 +223,16 @@ impl Simulator {
     /// `sm.open(ms)`: a session that will create `path`, replacing any table
     /// there, at [`close`](Self::close).
     pub fn open(path: impl AsRef<Path>, options: SimulatorOptions) -> Self {
+        Self::open_with_format(path, options, SimulatorFormat::Msv2)
+    }
+
+    /// Create a session for the requested format. The session publishes at
+    /// close. MSv4 creation requires a fresh destination.
+    pub fn open_with_format(
+        path: impl AsRef<Path>,
+        options: SimulatorOptions,
+        format: SimulatorFormat,
+    ) -> Self {
         let times = Times::defaults(options.now.clone());
         let path = path.as_ref().to_path_buf();
         Self {
@@ -219,6 +240,7 @@ impl Simulator {
             destination: std::path::absolute(&path).unwrap_or_else(|_| path.clone()),
             name: path,
             options,
+            format,
             // NewMSSimulator's telescope until setconfig.
             telescope: "Unknown".to_string(),
             antennas: Vec::new(),
@@ -627,18 +649,38 @@ impl Simulator {
     /// A failure to create, read or write the MeasurementSet or a
     /// calibration table.
     pub fn close(self) -> SimulatorResult<()> {
-        if self.opened.is_some() {
+        self.close_with_report().map(drop)
+    }
+
+    /// Close as in [Self::close], returning the information the requested
+    /// format could not persist.
+    ///
+    /// # Errors
+    ///
+    /// A failure to create, read or write the observation or a side table.
+    pub fn close_with_report(
+        self,
+    ) -> SimulatorResult<Vec<casa_ms::observation_io::creation::Loss>> {
+        let losses = if self.opened.is_some() {
             if self.scans.iter().any(|scan| scan.planned().is_some()) {
                 self.append_existing()?;
             } else {
                 write::patch_measurement_set(&self)?;
             }
+            Vec::new()
         } else {
-            write::write_measurement_set(&self)?;
-        }
+            match self.format {
+                SimulatorFormat::Msv2 => {
+                    write::write_measurement_set(&self)?;
+                    Vec::new()
+                }
+                SimulatorFormat::Msv4 => write::write_processing_set(&self)?,
+            }
+        };
         self.write_jones_tables()?;
         self.write_noise_tables()?;
-        self.write_offline_tables()
+        self.write_offline_tables()?;
+        Ok(losses)
     }
 
     pub(crate) fn noise_row_offset(&self) -> u64 {

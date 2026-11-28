@@ -301,6 +301,12 @@ needs `pkg-config casacore`: C++ casacore digests the MeasurementSets the
 session writes, and the digests must equal casa-rs's. Its counting law
 (`--test session_memory`) runs alone in a process of its own.
 
+`tools/simulation/sm_creation_oracle.py` exercises the installed simulator's
+output choices on the same unequal-window mosaic as CASA 6.7.6.14. Generate
+the reference with CASA, open the MSv2 result with CASA, and reopen the MSv4
+result with the pinned XRADIO environment. The comparisons cover predictions,
+folded row flags, weights, physical times and the field and pointing metadata.
+
 The C++ `tNewMSSimulator.cc` scenarios run natively in
 `cargo test -p casa-simulation --test api upstream_cpp::`: independent constructor
 lifetimes and antenna initialization for array sizes two through ten.

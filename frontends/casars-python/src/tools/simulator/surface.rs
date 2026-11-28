@@ -6,7 +6,7 @@
 //! The pyo3 declarations in [`super`] carry the same names and defaults.
 //! `python/tests/test_tools_simulator.py` keeps the three in step: it checks
 //! that `inspect.signature` of every method equals this table as the bundle
-//! publishes it, and equals the installed CASA binding
+//! publishes it and matches the CASA parameters of the installed binding
 //! (`python/tests/data/casa_simulator_signatures.json`).
 
 use crate::tools::surface::{
@@ -127,12 +127,15 @@ const OLDSETNOISE: [Parameter; 10] = [
 
 const MS: [Parameter; 1] = [param("ms", K::Text, Text(""))];
 
+const CREATE: [Parameter; 2] = [MS[0], param("outformat", K::Text, Text("msv2"))];
+
 /// Every public method of CASA's installed `simulator` binding, in its
 /// order.
 const METHODS: &[Method] = &[
     Method {
         mutating: true,
-        ..method("open", &MS, Implemented)
+        keyword_only: &["outformat"],
+        ..method("open", &CREATE, Implemented)
     },
     Method {
         mutating: true,

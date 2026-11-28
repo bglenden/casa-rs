@@ -7,9 +7,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use casa_simulation::{
-    BackendRequest, ExecutionControls, Simulator, SimulatorOptions, SimulatorResult,
+    BackendRequest, CasaOutcome, ExecutionControls, Simulator, SimulatorError, SimulatorFormat,
+    SimulatorOptions, SimulatorResult,
 };
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyNotImplementedError, PyValueError};
 use pyo3::prelude::*;
 
 use super::{LOGGER, PySimulator, Session, raised};
@@ -62,23 +63,33 @@ pub(super) fn execution_controls(
 /// create `ms` at `close`. CASA's reference time until `settimes` is the
 /// time of this call. The GIL is released while the previous session writes
 /// and the measures data loads.
-pub(super) fn open(tool: &PySimulator, py: Python<'_>, ms: &str) -> PyResult<bool> {
+pub(super) fn open(
+    tool: &PySimulator,
+    py: Python<'_>,
+    ms: &str,
+    outformat: &str,
+) -> PyResult<bool> {
+    let format = match outformat {
+        "msv2" => SimulatorFormat::Msv2,
+        "msv4" => SimulatorFormat::Msv4,
+        _ => return Err(PyValueError::new_err("outformat must be 'msv2' or 'msv4'")),
+    };
     let resources = tool.resources;
     let path = PathBuf::from(ms);
     py.detach(move || -> SimulatorResult<()> {
         let mut state = tool.lock();
         if let Some(previous) = state.take() {
-            previous.simulator.close()?;
+            close_session(previous.simulator)?;
         }
         let options = SimulatorOptions::from_system(resources)?;
         let measures = Arc::clone(&options.measures);
         *state = Some(Session {
-            simulator: Simulator::open(path, options),
+            simulator: Simulator::open_with_format(path, options, format),
             measures,
         });
         Ok(())
     })
-    .map_err(|error| raised(&error))?;
+    .map_err(close_error)?;
     Ok(true)
 }
 
@@ -93,7 +104,7 @@ pub(super) fn openfromms(tool: &PySimulator, py: Python<'_>, ms: &str) -> PyResu
     py.detach(move || -> SimulatorResult<()> {
         let mut state = tool.lock();
         if let Some(previous) = state.take() {
-            previous.simulator.close()?;
+            close_session(previous.simulator)?;
         }
         let options = SimulatorOptions::from_system(resources)?;
         let measures = Arc::clone(&options.measures);
@@ -103,8 +114,23 @@ pub(super) fn openfromms(tool: &PySimulator, py: Python<'_>, ms: &str) -> PyResu
         });
         Ok(())
     })
-    .map_err(|error| raised(&error))?;
+    .map_err(close_error)?;
     Ok(true)
+}
+
+fn close_session(simulator: Simulator) -> SimulatorResult<()> {
+    for loss in simulator.close_with_report()? {
+        eprintln!("simulator: MSv4: {loss}");
+    }
+    Ok(())
+}
+
+fn close_error(error: SimulatorError) -> PyErr {
+    if error.outcome() == CasaOutcome::NotYetImplemented {
+        PyNotImplementedError::new_err(error.to_string())
+    } else {
+        raised(&error)
+    }
 }
 
 /// `sm.close()` and `sm.done()`: write the MeasurementSet and end the session.
@@ -112,10 +138,10 @@ pub(super) fn openfromms(tool: &PySimulator, py: Python<'_>, ms: &str) -> PyResu
 /// released while writing.
 pub(super) fn close(tool: &PySimulator, py: Python<'_>) -> PyResult<bool> {
     py.detach(|| match tool.lock().take() {
-        Some(session) => session.simulator.close(),
+        Some(session) => close_session(session.simulator),
         None => Ok(()),
     })
-    .map_err(|error| raised(&error))?;
+    .map_err(close_error)?;
     Ok(true)
 }
 

@@ -86,8 +86,7 @@ pub(super) fn write(session: &Simulator) -> SimulatorResult<()> {
     let generated = subtables::subtable_overrides(session, &planned)?;
     let target = MeasurementSetCreateTarget::prepare(session.path(), true)
         .map_err(write_error("prepare the MeasurementSet"))?;
-    let mut ms = create_staged_ms(session, target.staging_path())?;
-    let mut writer = MainWriter::start(target.staging_path(), plan.clone())?;
+    let (mut ms, mut writer) = MainWriter::create(session, target.staging_path(), plan.clone())?;
     writer._reservation = reservation;
     let (mut first_scan, mut rows_seen) = (0, 0);
     for (rows, cell) in &runs.value {
@@ -112,7 +111,7 @@ pub(super) fn write(session: &Simulator) -> SimulatorResult<()> {
             resources,
             &shape,
             prediction.as_ref(),
-            plan.clone(),
+            plan.batch_rows(),
             Reservation::none(),
         )?;
         writer.variable = Some(*cell);
@@ -127,7 +126,7 @@ pub(super) fn write(session: &Simulator) -> SimulatorResult<()> {
         )?;
         first_scan = last_scan;
     }
-    let written = writer.finish(&mut ms, position, &generated)?;
+    let written = writer.finish(&mut ms, &generated)?;
     target
         .commit()
         .map_err(write_error("publish the MeasurementSet"))?;
@@ -155,7 +154,7 @@ fn empty(session: &Simulator, planned: &[PlannedScan<'_>]) -> SimulatorResult<()
     .map_err(SimulatorError::admission)?;
     let target = MeasurementSetCreateTarget::prepare(session.path(), true)
         .map_err(write_error("prepare the empty MeasurementSet"))?;
-    let mut ms = create_staged_ms(session, target.staging_path())?;
+    let mut ms = create_empty_ms(session, target.staging_path())?;
     let generated = subtables::subtable_overrides(session, planned)?;
     // The ordinary empty-table save preserves declared array dimensionality.
     // Streamed TiledShape columns need a populated shape to define a hypercube.
@@ -245,52 +244,4 @@ fn plan(
             tiled_column_buffer_bytes: STREAMING_TILED_COLUMN_BUFFER_BYTES,
         },
     )
-}
-
-pub(super) fn send(
-    writer: &mut MainWriter,
-    mut batch: VisibilityColumns,
-    (correlations, channels): (usize, usize),
-) -> SimulatorResult<()> {
-    let error = write_error("mixed-shape MAIN cells");
-    let samples = correlations * channels;
-    let mut flags = vec![false; samples];
-    let mut weights = vec![0.; correlations];
-    for row in 0..batch.row_count() {
-        writer
-            .session
-            .push_complex32_row(
-                "DATA",
-                &[correlations, channels],
-                &batch.data[row * samples..(row + 1) * samples],
-            )
-            .map_err(&error)?;
-        flags.fill(batch.flag_row[row]);
-        writer
-            .session
-            .push_bool_row("FLAG", &[correlations, channels], &flags)
-            .map_err(&error)?;
-        writer
-            .session
-            .push_undefined_row("FLAG_CATEGORY")
-            .map_err(&error)?;
-        writer
-            .session
-            .push_f64_row("UVW", &[3], &batch.uvw[row])
-            .map_err(&error)?;
-        for (name, values) in [("WEIGHT", &batch.weight), ("SIGMA", &batch.sigma)] {
-            weights.fill(values.get(row).copied().unwrap_or(1.));
-            writer
-                .session
-                .push_f32_row(name, &[correlations], &weights)
-                .map_err(&error)?;
-        }
-    }
-    batch.data.clear();
-    batch.flag_row.clear();
-    batch.uvw.clear();
-    batch.weight.clear();
-    batch.sigma.clear();
-    writer.recycled = Some(batch);
-    Ok(())
 }
