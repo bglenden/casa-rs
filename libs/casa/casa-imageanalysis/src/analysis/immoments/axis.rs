@@ -2,6 +2,7 @@
 //! World coordinates and integration scale of a collapsed image axis.
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_core::cancellation::Cancellation;
 use casa_core::measures::{
     MeasFrame,
     doppler::{DopplerRef, MDoppler},
@@ -10,6 +11,8 @@ use casa_core::quanta::Unit;
 
 use super::super::{MomentAxis as MomentAxisParam, SPEED_OF_LIGHT_KM_S};
 use casa_images::{ImageError, ImageInterface, ImagePixel};
+
+use super::{CHANNEL_BATCH_SIZE, check_cancelled};
 
 pub(super) fn resolve<T: ImagePixel>(
     image: &dyn ImageInterface<T>,
@@ -181,7 +184,11 @@ impl<'a> MomentAxis<'a> {
         self.position(local)
     }
 
-    pub(super) fn profiles(&self, shape: &[usize]) -> Result<ProfileCoordinates, ImageError> {
+    pub(super) fn profiles(
+        &self,
+        shape: &[usize],
+        cancellation: Option<&Cancellation>,
+    ) -> Result<ProfileCoordinates, ImageError> {
         let coupled: Vec<_> = self
             .pixel_axes
             .iter()
@@ -195,6 +202,7 @@ impl<'a> MomentAxis<'a> {
         let len = shape[self.index];
         let mut profiles = Vec::new();
         for number in 0..coupled.iter().map(|&(_, _, len)| len).product() {
+            check_cancelled(cancellation)?;
             let mut offset = number;
             for &(local, _, length) in coupled.iter().rev() {
                 pixels[local] = (offset % length) as f64;
@@ -202,6 +210,9 @@ impl<'a> MomentAxis<'a> {
             }
             let mut profile = Vec::with_capacity(len);
             for sample in 0..len {
+                if sample.is_multiple_of(CHANNEL_BATCH_SIZE) {
+                    check_cancelled(cancellation)?;
+                }
                 pixels[self.local] = sample as f64;
                 profile.push(self.position(&pixels)?);
             }

@@ -11,6 +11,7 @@ mod window;
 pub use tool::{ImageMomentOptions, ImageMomentProducts, make_image_moments, moment_output_names};
 
 use crate::analysis::MomentAxis;
+use casa_core::cancellation::Cancellation;
 use casa_core::{RecordValue, Value};
 use casa_images::{ImageHistoryEntry, image_history_entries};
 
@@ -20,13 +21,26 @@ use super::{combined_selection_mask, patch_saved_coords_keyword};
 use crate::{ImmomentsRequest, MomentImageSummary, MomentMapSummary};
 use casa_images::{ImageBeamSet, ImageError, ImageInterface, ImagePixel, PagedImage, TempImage};
 
+#[cfg(feature = "immoments-test-hooks")]
+use crate::immoments_test_hooks::{Checkpoint, observe};
+
 pub(super) use self::collapse::PixelClip;
 #[cfg(test)]
 pub(super) use self::{axis::ProfileCoordinates, collapse::collapse_moment};
 
+const CHANNEL_BATCH_SIZE: usize = 4096;
+
+pub(super) fn check_cancelled(cancellation: Option<&Cancellation>) -> Result<(), ImageError> {
+    if cancellation.is_some_and(Cancellation::is_cancelled) {
+        return Err(ImageError::Interrupted);
+    }
+    Ok(())
+}
+
 pub(super) fn run_paged<T>(
     image: &PagedImage<T>,
     request: &ImmomentsRequest,
+    cancellation: Option<&Cancellation>,
 ) -> Result<MomentMapSummary, ImageError>
 where
     T: ImagePixel + Into<f64> + From<f32> + Copy,
@@ -35,8 +49,9 @@ where
         Some(Value::Record(record)) => Some(record),
         _ => None,
     };
+    check_cancelled(cancellation)?;
     let history = image_history_entries(&request.imagename)?;
-    run(image, record, &history, request)
+    run(image, record, &history, request, cancellation)
 }
 
 pub(super) fn run<T>(
@@ -44,10 +59,12 @@ pub(super) fn run<T>(
     record: Option<&RecordValue>,
     history: &[ImageHistoryEntry],
     request: &ImmomentsRequest,
+    cancellation: Option<&Cancellation>,
 ) -> Result<MomentMapSummary, ImageError>
 where
     T: ImagePixel + Into<f64> + From<f32> + Copy,
 {
+    check_cancelled(cancellation)?;
     let clip = PixelClip::from_request(request)?;
     let destinations = output::destinations(request, clip)?;
     let selection = SubimageSelection::resolve(
@@ -58,10 +75,13 @@ where
         request.stokes.as_deref(),
     )?;
     let axis = axis::resolve(image, request.axis.as_ref(), &selection.shape)?;
+    check_cancelled(cancellation)?;
     let mut input = image.get_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?;
+    check_cancelled(cancellation)?;
     let mut mask =
         combined_selection_mask(image, &selection, request.mask.as_deref(), request.stretch)?;
     selection.apply_selection_masks(&mut mask);
+    check_cancelled(cancellation)?;
     let mut shape = selection.shape.clone();
     shape[axis] = 1;
     let coordinates = subimage_coordinates_with_stokes(
@@ -95,6 +115,7 @@ where
             &coordinates,
             image.units(),
             &info.beam_set,
+            || check_cancelled(cancellation),
         )?;
         info.beam_set = ImageBeamSet::new(target);
         brightness
@@ -107,7 +128,7 @@ where
         ));
     }
     let axis = axis::MomentAxis::new(&coordinates, axis)?;
-    let positions = axis.profiles(&selection.shape)?;
+    let positions = axis.profiles(&selection.shape, cancellation)?;
     let results = collapse::collapse_moments(
         &input,
         mask.as_ref(),
@@ -116,15 +137,18 @@ where
         axis.integrated_scale()?,
         clip,
         &request.moments,
-    );
+        cancellation,
+    )?;
     let misc = image.misc_info();
     let command = [
         concat!("version: casa-rs ", env!("CARGO_PKG_VERSION")).into(),
         task_history(request),
     ];
+    check_cancelled(cancellation)?;
     let stage = destinations.stage()?;
     let mut products = Vec::with_capacity(destinations.paths.len());
     for (i, (&moment, result)) in request.moments.iter().zip(results).enumerate() {
+        check_cancelled(cancellation)?;
         let units = moment_units(&brightness, &axis.unit, moment);
         let mut output = TempImage::<f32>::new(
             shape.clone(),
@@ -154,6 +178,11 @@ where
             valid_profiles: result.valid.iter().filter(|&&value| value).count(),
         });
     }
+    #[cfg(feature = "immoments-test-hooks")]
+    observe(Checkpoint::BeforePublication);
+    // The complete product set is committed together by the existing
+    // publication and rollback sequence once this check accepts the run.
+    check_cancelled(cancellation)?;
     destinations.publish(stage)?;
     Ok(MomentMapSummary {
         imagename: request.imagename.display().to_string(),

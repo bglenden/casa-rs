@@ -450,10 +450,12 @@ pub(crate) fn convolve_to_common_beam<T>(
     coordinates: &CoordinateSystem,
     units: &str,
     beams: &casa_images::ImageBeamSet,
+    check_cancelled: impl Fn() -> Result<(), ImageError>,
 ) -> Result<(GaussianBeam, String), ImageError>
 where
     T: Into<f64> + From<f32> + Copy,
 {
+    check_cancelled()?;
     let target = beams.common_beam()?;
     let (axes, direction) = direction_axes(coordinates)?;
     require_square_pixels(direction)?;
@@ -477,6 +479,7 @@ where
     let mut index = vec![0; shape.len()];
     let mut values = vec![0.0; plane[0] * plane[1]];
     for mut number in 0..count {
+        check_cancelled()?;
         for &i in &others {
             index[i] = number % shape[i];
             number /= shape[i];
@@ -514,6 +517,7 @@ where
         }
         let mut convolver = PlaneConvolver::new(plane, side, &weights)?;
         for j in 0..plane[1] {
+            check_cancelled()?;
             index[axes[1]] = j;
             for i in 0..plane[0] {
                 index[axes[0]] = i;
@@ -525,8 +529,10 @@ where
                 };
             }
         }
+        check_cancelled()?;
         let convolved = convolver.convolve(&values)?;
         for j in 0..plane[1] {
+            check_cancelled()?;
             index[axes[1]] = j;
             for i in 0..plane[0] {
                 index[axes[0]] = i;

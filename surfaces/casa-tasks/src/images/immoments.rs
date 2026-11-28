@@ -4,7 +4,8 @@
 
 use crate::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_contracts::ParameterValue;
-use casa_imageanalysis::{ImmomentsRequest, MomentAxis, immoments};
+use casa_imageanalysis::{ImmomentsRequest, MomentAxis, immoments_with_cancellation};
+use casa_images::ImageError;
 
 use super::front_end::{image_task_front_end, image_task_success};
 use super::task_contract::ImageAnalysisTaskResult;
@@ -37,7 +38,12 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         stretch: task.flag("stretch")?,
         overwrite: task.flag("overwrite")?,
     };
-    image_task_success(immoments(&request).map(ImageAnalysisTaskResult::Immoments))
+    let cancellation = task.native_options().map(|options| &options.cancel);
+    let result = immoments_with_cancellation(&request, cancellation);
+    if matches!(result, Err(ImageError::Interrupted)) {
+        return Err(TaskFailure::interrupted("immoments interrupted"));
+    }
+    image_task_success(result.map(ImageAnalysisTaskResult::Immoments))
 }
 
 fn moment_numbers(moments: &[i64]) -> Result<Vec<i32>, TaskFailure> {
