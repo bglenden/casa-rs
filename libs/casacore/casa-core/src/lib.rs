@@ -2,6 +2,7 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
 
+pub mod cancellation;
 pub mod correlation;
 pub mod measures;
 pub mod memory;

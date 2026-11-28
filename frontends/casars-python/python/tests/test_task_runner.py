@@ -192,11 +192,16 @@ def test_sigint_cleans_up_and_second_native_run_succeeds(native_dataset, monkeyp
     }
     with monkeypatch.context() as patch:
         patch.setenv("CASA_RS_LOG_STDERR_PRIORITY", "INFO")
+        patch.setenv("CASA_RS_LOG_TABLE", str(workspace / "imaging.logtable"))
         patch.setattr(sys, "stderr", Terminal())
         with pytest.raises(KeyboardInterrupt):
             tasks.run("tclean", workspace=workspace, imagename="cancelled", **imaging)
 
     assert sent
+    log = tools.table()
+    assert log.open(str(workspace / "imaging.logtable"))
+    assert any(message.startswith("tclean interrupted") for message in log.getcol("MESSAGE"))
+    assert log.done()
     assert not list(workspace.glob("cancelled.*"))
     for prefix in ("first", "second"):
         completion = tasks.run("tclean", workspace=workspace, imagename=prefix, **imaging)

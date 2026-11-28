@@ -2,6 +2,8 @@
 
 mod convert;
 mod native_tasks;
+#[cfg(all(unix, feature = "transform-test-hooks"))]
+mod native_transform_test_hooks;
 mod object_contract;
 mod parameters;
 mod plot;
@@ -98,6 +100,11 @@ fn _core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(native_tasks::run_native_task, module)?)?;
+    #[cfg(all(unix, feature = "transform-test-hooks"))]
+    module.add_function(wrap_pyfunction!(
+        native_transform_test_hooks::_arm_transform_test,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(tasks::prepare_task_table_write, module)?)?;
     module.add_function(wrap_pyfunction!(plot::build_measurement_set_plot, module)?)?;
     Ok(())

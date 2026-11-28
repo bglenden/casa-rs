@@ -32,13 +32,11 @@ pub use completion::{
     decode_task_completion,
 };
 pub use diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLevel, SourceLocation};
-#[cfg(feature = "imaging")]
-pub use front_end::TaskCancellation;
 pub use front_end::{
-    EnterWorkspace, FrontEndOutput, NativeTaskOptions, TaskCommandLine, TaskExit, TaskFailure,
-    TaskFrontEnd, TaskInvocation, TaskLogLineSink, TaskOutcome, TaskSuccess, classify_task_exit,
-    describe, display_value, format_profile_error, format_session_error, render_session,
-    run_task_in_process, task_command_line_help, validate_profile_text,
+    EnterWorkspace, FrontEndOutput, NativeTaskOptions, TaskCancellation, TaskCommandLine, TaskExit,
+    TaskFailure, TaskFrontEnd, TaskInvocation, TaskLogLineSink, TaskOutcome, TaskSuccess,
+    classify_task_exit, describe, display_value, format_profile_error, format_session_error,
+    render_session, run_task_in_process, task_command_line_help, validate_profile_text,
 };
 pub use invocation::{
     ProviderInvocationError, project_provider_invocation,

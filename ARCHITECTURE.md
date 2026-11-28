@@ -168,8 +168,13 @@ native Python route run without managed Last state.
 Python passes resolved values and an explicit workspace through
 `casars._core`. A worker thread runs the Rust provider in the interpreter's
 process. The binding forwards logs and returns them in the task completion
-alongside the typed value and products. Python interrupts signal native
-cancellation, and the binding joins the worker before raising the interrupt.
+alongside the typed value and products. Python interrupts request cancellation
+through a per-run `casa-core` token, and the binding joins the worker before
+raising the interrupt. The worker queues stderr diagnostics at every
+verbosity without waiting for Python. The native `mstransform` and `split`
+tasks poll between streamed scalar chunks, between visibility batches and
+before publication. Each invocation owns its staging reservation until
+cleanup and publishes the completed MeasurementSet with a no-replace rename.
 The workspace travels with the invocation so relative task paths resolve
 without changing the interpreter's working directory.
 
