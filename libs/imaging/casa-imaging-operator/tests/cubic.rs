@@ -80,6 +80,7 @@ fn placed(kernel: SpectralKernel, flags: &[bool]) -> Vec<(f64, Complex32, f32)> 
         }
     }
     let row = NativeRow {
+        selection_spacing_hz: None,
         uvw_m: [10.0, 10.0, 0.0],
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],
@@ -210,6 +211,7 @@ fn predict(
     let weights = vec![1.0; native.len() * 2];
     let flags = vec![false; native.len() * 2];
     let row = NativeRow {
+        selection_spacing_hz: None,
         uvw_m: UVW_M,
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],
@@ -327,6 +329,7 @@ fn a_cubic_residual_fits_a_flagged_channels_value_and_no_model_there() {
     flags[10] = true;
     flags[11] = true;
     let row = NativeRow {
+        selection_spacing_hz: None,
         uvw_m: UVW_M,
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],

@@ -49,7 +49,7 @@ use std::collections::BTreeMap;
 use casa_core::measures::PreparedFrequencyConversion;
 use casa_core::measures::direction::MDirection;
 use casa_core::measures::frequency::FrequencyRef;
-use casa_imaging_model::FrequencyBands;
+use casa_imaging_model::{FrequencyBands, LinearSpacingSelection};
 use casa_ms::{CubeSpectralSetup, derived::engine::MsCalEngine};
 use casa_observation::Catalogue;
 
@@ -246,6 +246,78 @@ impl EpochSelection {
         self.counts
             .get(channel)
             .is_some_and(|count| *count == self.epochs)
+    }
+}
+
+/// Match the physical selection at the edges of cube support. The numeric
+/// support brackets the image on the full catalogue, so when its outer
+/// channel is missing from a selection, retain the nearest selected
+/// partner outside that cut. Moving bands may need more than one choice.
+/// Keep the physical leading pair independently of the payload extent.
+pub(super) fn linear_read_support(
+    channel_count: usize,
+    (retained, (lower, upper)): (&mut Vec<usize>, (usize, usize)),
+    explicit: Option<&[usize]>,
+    by_band: Option<(&EpochSelection, &FrequencyBands)>,
+) -> Option<LinearSpacingSelection> {
+    let ever = |channel: usize| match by_band {
+        Some((epochs, _)) => epochs.ever(channel),
+        None => explicit.is_none_or(|channels| channels.contains(&channel)),
+    };
+    let always = |channel: usize| by_band.is_none_or(|(epochs, _)| epochs.always(channel));
+    let previous_len = retained.len();
+    let first = retained[0];
+    let last = *retained.last().expect("nonempty retained support");
+    if first > lower || !always(first) {
+        extend_support(
+            retained,
+            (0..first).rev().filter(|&index| ever(index)),
+            always,
+        );
+    }
+    if last < upper || !always(last) {
+        extend_support(
+            retained,
+            (last + 1..channel_count).filter(|&index| ever(index)),
+            always,
+        );
+    }
+    if retained.len() != previous_len {
+        retained.sort_unstable();
+    }
+    let mut possible = (0..channel_count).filter(|&channel| ever(channel));
+    let pair = [possible.next()?, possible.next()?];
+    if by_band.is_none_or(|(epochs, _)| pair.iter().all(|&channel| epochs.always(channel))) {
+        return (!retained.starts_with(&pair)).then(|| {
+            LinearSpacingSelection::Pair(
+                pair.map(|channel| u32::try_from(channel).expect("a CHAN_FREQ index fits u32")),
+            )
+        });
+    }
+    let (epochs, bands) = by_band.expect("the pair can move only with bands");
+    let mut always = 0;
+    for channel in pair.into_iter().chain(possible) {
+        if retained.binary_search(&channel).is_err() {
+            return Some(LinearSpacingSelection::Bands(bands.clone()));
+        }
+        always += usize::from(epochs.always(channel));
+        if always == 2 {
+            break;
+        }
+    }
+    None
+}
+
+fn extend_support(
+    retained: &mut Vec<usize>,
+    candidates: impl Iterator<Item = usize>,
+    always: impl Fn(usize) -> bool,
+) {
+    for candidate in candidates {
+        retained.push(candidate);
+        if always(candidate) {
+            break;
+        }
     }
 }
 

@@ -2,7 +2,7 @@
 //! The block layout of the selected observation's rows, and the budget
 //! that bounds what the source holds before the problem quotes its own.
 
-use casa_imaging_model::{CompiledProblem, SpectralWindowSelection};
+use casa_imaging_model::{CompiledProblem, LinearSpacingSelection, SpectralWindowSelection};
 use casa_imaging_operator::RowSpectrum;
 
 use crate::pass::BlockShape;
@@ -53,6 +53,23 @@ fn row_spectrum<'a>(windows: impl Iterator<Item = &'a SpectralWindowSelection>) 
     let mut spectrum = RowSpectrum::evenly_spaced(0);
     let mut known = true;
     for window in windows {
+        if let Some(selection) = window.linear_spacing() {
+            if let Some(catalog) = window.coordinate_catalog() {
+                match selection {
+                    LinearSpacingSelection::Pair([first, second]) => {
+                        let hz = catalog.channel_frequencies_hz();
+                        include_spacing(&mut spectrum, hz[*first as usize], hz[*second as usize]);
+                    }
+                    LinearSpacingSelection::Bands(_) => {
+                        for pair in catalog.channel_frequencies_hz().windows(2) {
+                            include_spacing(&mut spectrum, pair[0], pair[1]);
+                        }
+                    }
+                }
+            } else {
+                known = false;
+            }
+        }
         for channels in
             std::iter::once(window.channel_indices()).chain(window.prediction_channels())
         {
@@ -77,12 +94,7 @@ fn row_spectrum<'a>(windows: impl Iterator<Item = &'a SpectralWindowSelection>) 
                     known = false;
                     break;
                 };
-                let spacing = (right - left).abs() * (1.0 - FRAME_MARGIN);
-                if spacing > 0.0
-                    && (spectrum.first_spacing_hz == 0.0 || spacing < spectrum.first_spacing_hz)
-                {
-                    spectrum.first_spacing_hz = spacing;
-                }
+                include_spacing(&mut spectrum, left, right);
             }
             spectrum.span_hz = spectrum
                 .span_hz
@@ -93,6 +105,13 @@ fn row_spectrum<'a>(windows: impl Iterator<Item = &'a SpectralWindowSelection>) 
         spectrum
     } else {
         RowSpectrum::evenly_spaced(spectrum.channels)
+    }
+}
+
+fn include_spacing(spectrum: &mut RowSpectrum, left: f64, right: f64) {
+    let spacing = (right - left).abs() * (1.0 - FRAME_MARGIN);
+    if spacing > 0.0 && (spectrum.first_spacing_hz == 0.0 || spacing < spectrum.first_spacing_hz) {
+        spectrum.first_spacing_hz = spacing;
     }
 }
 
@@ -119,6 +138,22 @@ mod tests {
         assert_eq!(spectrum.channels, 4);
         assert!((spectrum.first_spacing_hz - 0.99e6).abs() < 1e-6);
         assert!((spectrum.span_hz - 2.02e8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn row_spectrum_charges_pruned_spacing_without_reading_the_pair() {
+        let catalogue = SpectralWindowCoordinateCatalog::new(
+            vec![1.0e9, 1.001e9, 1.080e9, 1.085e9, 1.090e9],
+            1.0e6,
+        )
+        .unwrap();
+        let window = SpectralWindowSelection::new(0, vec![2, 3, 4])
+            .with_coordinate_catalog(catalogue)
+            .with_linear_spacing(LinearSpacingSelection::Pair([0, 1]));
+        let spectrum = row_spectrum(std::iter::once(&window));
+        assert_eq!(spectrum.channels, 3);
+        assert_eq!(spectrum.first_spacing_hz, 990_000.0);
+        assert_eq!(spectrum.span_hz, 10_100_000.0);
     }
 
     /// The source and pass reserve for the wider final prediction as well

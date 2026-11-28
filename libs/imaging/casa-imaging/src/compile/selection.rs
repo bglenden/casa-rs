@@ -588,6 +588,9 @@ fn read_selection(
     if let Some(bands) = &read.bands {
         selection = selection.with_frequency_bands(bands.clone());
     }
+    if let Some(spacing) = &read.linear_spacing {
+        selection = selection.with_linear_spacing(spacing.clone());
+    }
     if read.density_only {
         selection = selection.with_density_only();
     }

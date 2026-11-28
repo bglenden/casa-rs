@@ -52,7 +52,9 @@ fn read_product(base: &Path, suffix: &str) -> (Vec<usize>, ArrayD<f32>) {
 
 /// A dirty cube imaged in waves equals the cube imaged in one resident
 /// pass, both when its waves read restricted channel windows, of all the
-/// channels or of a selection with a gap (`0:1~10;20~30`), and under
+/// channels or of a selection with a gap, including wider output planes
+/// whose wave's first delivered pair straddles the gap on both uniform
+/// and uneven native centres. Also under
 /// continuum subtraction, whose interior waves reach none of the fit-only
 /// channels (0 and 31) and so read whole rows for the fit. (Residual waves
 /// with a model are pinned by the runtime's pass laws.)
@@ -65,10 +67,36 @@ fn dirty_cubes_in_waves_equal_the_resident_cube() {
         ("windowed", json!({ "imsize": 128 })),
         ("gapped", json!({ "imsize": 128, "spw": "0:1~10;20~30" })),
         (
+            "gapped-wide-edge",
+            json!({ "imsize": 128, "spw": "0:1~2;30", "start": "44.0015GHz", "width": "2.5MHz", "weighting": "natural" }),
+        ),
+        (
             "continuum",
             json!({ "imsize": 128, "fitspw": "0:0;31", "fitorder": 1 }),
         ),
+        (
+            "uneven-wide-edge",
+            json!({ "imsize": 128, "spw": "0:1~2;30", "start": "44.0015GHz", "width": "3.1MHz", "weighting": "natural" }),
+        ),
     ] {
+        if label == "uneven-wide-edge" {
+            let mut ms = MeasurementSet::open(&measurement_set).expect("open MS");
+            let mut frequencies: Vec<_> = (0..32)
+                .map(|channel| 44.0e9 + f64::from(channel) * 1.0e6)
+                .collect();
+            // Leave CHAN_WIDTH at 1 MHz. The resident's 1.2 MHz selected
+            // spacing gives two fine samples, its nominal width three.
+            frequencies[2] += 0.2e6;
+            ms.spectral_window_mut()
+                .unwrap()
+                .set_array(
+                    0,
+                    "CHAN_FREQ",
+                    ArrayValue::Float64(ArrayD::from_shape_vec(vec![32], frequencies).unwrap()),
+                )
+                .unwrap();
+            ms.save().expect("save uneven native centres");
+        }
         let cube = |name: &str, memory: u64| {
             let image_name = root.path().join(format!("{label}-{name}"));
             let imaging = line_cube(&measurement_set, &image_name, overrides.clone());
@@ -97,6 +125,78 @@ fn dirty_cubes_in_waves_equal_the_resident_cube() {
             );
         }
     }
+}
+
+/// The physical cubedata iterator starts with channels 0 and 1 even
+/// though neither contributes a sample to the output image.
+#[test]
+fn cubedata_wide_planes_use_the_untuned_first_pair() {
+    let _execution_guard = EXECUTION_LOCK.lock().unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let epoch = 59_000.0 * 86_400.0;
+    let measurement_set =
+        spectral_spacing_measurement_set(root, "cubedata.ms", 128, 1e6, [epoch, epoch + 10.0]);
+    let cube = |name, memory| {
+        let image = root.join(name);
+        let request = request(
+            &measurement_set,
+            &image,
+            json!({"specmode":"cubedata", "outframe":"TOPO", "spw":"0:0~1;80;85;90;95;100",
+                   "start":"1.080GHz", "width":"3.1MHz", "channel_count":7,
+                   "interpolation":"linear", "imsize":192, "niter":0, "weighting":"natural"}),
+        );
+        let result = casa_imaging::execute(&request, context_with(memory_policy(memory))).unwrap();
+        (result.planes_per_wave, read_product(&image, ".sumwt").1)
+    };
+    let (resident, full) = cube("resident", 4 << 30);
+    let (waves, bounded) = cube("waves", 10 << 20);
+    assert_eq!(resident, None);
+    assert!(waves.is_some_and(|planes| planes < 7), "waves {waves:?}");
+    // CASA 6.7.6.14 grids three fine samples per row in each output plane.
+    assert_eq!(full.as_slice().unwrap(), &[6.0; 7]);
+    assert_eq!(bounded, full);
+}
+
+/// A restricted wave in a gap still needs both of each epoch's
+/// selected endpoints. The topocentric centres move by 1.11 kHz over
+/// the real VLA observation in LSRK, changing the gap's endpoints.
+#[test]
+fn lsrk_gapped_waves_keep_the_pairs_selected_at_each_epoch() {
+    let _execution_guard = EXECUTION_LOCK.lock().unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let epoch = 59_000.0 * 86_400.0;
+    let measurement_set = spectral_spacing_measurement_set(
+        root,
+        "drifting.ms",
+        24,
+        1000.0,
+        [epoch + 13.0 * 3600.0, epoch + 20.0 * 3600.0],
+    );
+    let cube = |name, memory| {
+        let image = root.join(name);
+        let request = request(
+            &measurement_set,
+            &image,
+            json!({"specmode":"cube", "outframe":"LSRK", "spw":"0:0~1;20~22",
+                   "start":"1000010981.6Hz", "width":"3kHz", "channel_count":8,
+                   "interpolation":"linear", "imsize":192, "niter":0, "weighting":"natural"}),
+        );
+        let result = casa_imaging::execute(&request, context_with(memory_policy(memory))).unwrap();
+        (result.planes_per_wave, read_product(&image, ".sumwt").1)
+    };
+    let (resident, full) = cube("resident", 4 << 30);
+    let (waves, bounded) = cube("waves", 10 << 20);
+    assert_eq!(resident, None);
+    assert!(waves.is_some_and(|planes| planes < 8), "waves {waves:?}");
+    // The selected channels are [0,1,2,20,21,22,23] and [0,1,19,20,21,22]
+    // at the two epochs. CASA 6.7.6.14 includes both rows in the gap.
+    assert_eq!(
+        full.as_slice().unwrap(),
+        &[3.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0]
+    );
+    assert_eq!(bounded, full);
 }
 
 /// The second view supplies the PSF for every wave, with the original

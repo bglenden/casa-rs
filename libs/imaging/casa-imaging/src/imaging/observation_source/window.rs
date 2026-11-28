@@ -99,6 +99,50 @@ pub(super) fn wave_window(
     window.map(|(first, last)| first..last + 1)
 }
 
+/// At each union ordinal, the endpoints of the adjacent pair that can
+/// straddle it after a real epoch's band selection. Only pairs separated
+/// by an omitted channel matter here: `wave_window` already considers
+/// adjacent channels of the union. The survey retains one bounded array
+/// per moving selection, independent of how many epochs it visits.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct InterpolationPartners {
+    endpoints: Vec<[usize; 2]>,
+}
+
+impl InterpolationPartners {
+    pub(super) fn new(channel_count: usize) -> Self {
+        Self {
+            endpoints: (0..channel_count).map(|index| [index; 2]).collect(),
+        }
+    }
+
+    pub(super) const fn bytes(channel_count: usize) -> usize {
+        channel_count * size_of::<[usize; 2]>()
+    }
+
+    pub(super) fn include_epoch(&mut self, selected: impl Iterator<Item = usize>) {
+        let mut previous = None;
+        for right in selected {
+            if let Some(left) = previous
+                && right > left + 1
+            {
+                for [low, high] in &mut self.endpoints[left..=right] {
+                    *low = (*low).min(left);
+                    *high = (*high).max(right);
+                }
+            }
+            previous = Some(right);
+        }
+    }
+
+    /// A pair that spans a wave intersects its initial union window:
+    /// either an endpoint meets the wave or a union pair between its
+    /// endpoints crosses it. Extend the two cuts to cover such pairs.
+    pub(super) fn extend(&self, window: Range<usize>) -> Range<usize> {
+        self.endpoints[window.start][0]..self.endpoints[window.end - 1][1] + 1
+    }
+}
+
 /// Runs of `channels`, as ordinals of it, each holding no more channels than
 /// `selected` and spanning no more native channels than `selected` does.
 pub(super) fn density_runs(channels: &[u32], selected: &[u32]) -> Vec<Range<usize>> {
@@ -121,7 +165,7 @@ pub(super) fn density_runs(channels: &[u32], selected: &[u32]) -> Vec<Range<usiz
 
 #[cfg(test)]
 mod tests {
-    use super::{FactorRange, density_runs, wave_window};
+    use super::{FactorRange, InterpolationPartners, density_runs, wave_window};
 
     /// A partition's runs of density channels hold every channel once, in
     /// order, and no run is wider than its selection, in channels or in span.
@@ -142,6 +186,27 @@ mod tests {
         // Two selected channels span six; a gap ends a run at the span.
         check(&[0, 1, 2, 9, 10], &[3, 8], &[0..2, 2..3, 3..5]);
         check(&[0, 5, 6, 7], &[0, 1, 2, 4], &[0..1, 1..4]);
+    }
+
+    #[test]
+    fn each_epochs_adjacent_pair_is_held_with_one_bound_per_channel() {
+        let mut partners = InterpolationPartners::new(4096);
+        let first = [0, 1, 2, 4, 5, 6, 7];
+        let later = [0, 1, 3, 4, 5, 6];
+        for i in 0..200 {
+            partners.include_epoch(
+                if i % 2 == 0 { &first[..] } else { &later[..] }
+                    .iter()
+                    .copied(),
+            );
+        }
+        assert_eq!(partners.extend(2..4), 1..5);
+        assert_eq!(partners.extend(0..1), 0..1);
+        assert_eq!(partners.extend(7..8), 7..8);
+        assert_eq!(
+            partners.endpoints.capacity() * size_of::<[usize; 2]>(),
+            InterpolationPartners::bytes(4096)
+        );
     }
 
     fn range(factors: &[f64]) -> FactorRange {

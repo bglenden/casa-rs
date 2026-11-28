@@ -106,6 +106,57 @@ pub(super) fn vla_spectral_line_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(root, "vla-line-input.ms", options)
 }
 
+pub(super) fn spectral_spacing_measurement_set(
+    root: &Path,
+    name: &str,
+    channels: usize,
+    width: f64,
+    epochs: [f64; 2],
+) -> PathBuf {
+    let path = measurement_set_fixture(
+        root,
+        name,
+        MeasurementSetFixtureOptions::new(false, false, channels, 1, 2, epochs.len(), false)
+            .with_vla_observation_metadata(),
+    );
+    let mut ms = MeasurementSet::open(&path).unwrap();
+    let mut spw = ms.spectral_window_mut().unwrap();
+    let frequencies = (0..channels).map(|i| 1.0e9 + i as f64 * width).collect();
+    spw.set_array(
+        0,
+        "CHAN_FREQ",
+        ArrayValue::Float64(ArrayD::from_shape_vec(vec![channels], frequencies).unwrap()),
+    )
+    .unwrap();
+    spw.set_f64(0, "REF_FREQUENCY", 1.0e9).unwrap();
+    spw.set_f64(0, "TOTAL_BANDWIDTH", width * channels as f64)
+        .unwrap();
+    for column in ["CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"] {
+        spw.set_array(
+            0,
+            column,
+            ArrayValue::Float64(ArrayD::from_elem(vec![channels], width)),
+        )
+        .unwrap();
+    }
+    let mut rows = ms.main_table_mut().row_accessor_mut();
+    for (row, epoch) in epochs.into_iter().enumerate() {
+        rows.set_cell(row, "TIME", float(epoch)).unwrap();
+        rows.set_cell(row, "TIME_CENTROID", float(epoch)).unwrap();
+        rows.set_cell(
+            row,
+            "DATA",
+            Value::Array(ArrayValue::Complex32(ArrayD::from_elem(
+                vec![1, channels],
+                Complex32::new(1.0, 0.0),
+            ))),
+        )
+        .unwrap();
+    }
+    ms.save().unwrap();
+    path
+}
+
 pub(super) fn thirty_two_channel_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,

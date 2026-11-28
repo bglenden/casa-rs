@@ -31,7 +31,7 @@ mod write;
 use std::ops::Range;
 
 use casa_imaging_model::{
-    BatchGeometry, CompiledProblem, FrequencyBands, GeometryPlan, GeometryTraversal,
+    BatchGeometry, CompiledProblem, FrequencyBands, GeometryPlan, GeometryTraversal, SpectralKernel,
 };
 use casa_imaging_operator::PlaneRange;
 use casa_imaging_runtime::pass::{
@@ -43,7 +43,7 @@ use casa_observation::{AccessRequest, BatchBuffers, Observation, ReadEvent, Trav
 
 pub(crate) use admission::{Batching, StoreBatches, admit_batches};
 pub(crate) use keys::StoreKeys;
-use pack::{Layout, PackScratch, Packer, select_samples};
+use pack::{Layout, PackInput, PackScratch, Packer, select_samples};
 use pointing::PointingCache;
 pub(crate) use pointing::pointing_direction;
 pub(crate) use selection::{PartitionSelection, SelectedPartition};
@@ -161,19 +161,7 @@ impl BatchRoute {
         let route = &self.stores[key.store];
         let partition = &route.selection.partitions[key.partition];
         let entry = route.observation().catalogue().partition(partition.id);
-        let channels = if prediction {
-            partition
-                .prediction_channels
-                .as_ref()
-                .unwrap_or(&partition.channels)
-        } else if !values {
-            partition
-                .density_channels
-                .as_ref()
-                .unwrap_or(&partition.channels)
-        } else {
-            &partition.channels
-        };
+        let channels = partition.channels_for(values, prediction);
         let layout = Layout::new(partition, entry, &channels[window])?;
         let probe = requests::payload(
             (&route.selection, &route.plan),
@@ -407,9 +395,8 @@ impl<'a> ObservationSource<'a> {
             .map(|key| {
                 let store = &route.stores[key.store];
                 let partition = &store.selection.partitions[key.partition];
-                let factors = surveys[key.store][key.partition]
-                    .factors
-                    .expect("factors surveyed");
+                let survey = &surveys[key.store][key.partition];
+                let factors = survey.factors.expect("factors surveyed");
                 let entry = store.observation().catalogue().partition(partition.id);
                 let native = partition
                     .channels
@@ -418,7 +405,11 @@ impl<'a> ObservationSource<'a> {
                     .collect::<Vec<_>>();
                 let window = (!factors.is_empty())
                     .then(|| wave_window(&native, factors, bounds))
-                    .flatten();
+                    .flatten()
+                    .map(|window| match &survey.partners {
+                        Some(partners) => partners.extend(window),
+                        None => window,
+                    });
                 (key, window)
             })
             .collect())
@@ -498,12 +489,15 @@ impl<'a> ObservationSource<'a> {
                     .all(|survey| survey.factors.is_some())
         });
         if !current {
+            self.surveys = None;
             let survey_bytes = self.route.batching.survey_bytes();
+            let linear = self.packer.problem.science().spectral().sampling().kernel()
+                == SpectralKernel::Linear;
             self.surveys = Some(
                 self.route
                     .stores
                     .iter()
-                    .map(|store| survey(store, survey_bytes, factors))
+                    .map(|store| survey(store, survey_bytes, factors, linear))
                     .collect::<Result<_, _>>()?,
             );
         }
@@ -665,7 +659,15 @@ impl<'a> ObservationSource<'a> {
             let input_layout = &*layout;
             let layout = compact.as_ref().unwrap_or(input_layout);
             self.packer.pack(
-                (&batch, key.store, partition, layout, input_layout),
+                PackInput {
+                    batch: &batch,
+                    store: key.store,
+                    partition,
+                    layout,
+                    input_layout,
+                    selection_bands: bands,
+                    selection_rule: rule,
+                },
                 &self.geometry,
                 &self.keep,
                 (

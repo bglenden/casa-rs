@@ -14,8 +14,8 @@ use casa_core::measures::{
 use casa_core::quanta::Quantity;
 use casa_imaging_model::{
     DirectionCoordinateSpec, DopplerConvention, Epoch, FrequencyBands, FrequencyFrame,
-    ItrfPosition, ReconstructionBasis, RestFrequency, SourceLsrkGrid, SpectralCoordinateSpec,
-    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, TimeScale,
+    ItrfPosition, LinearSpacingSelection, ReconstructionBasis, RestFrequency, SourceLsrkGrid,
+    SpectralCoordinateSpec, SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, TimeScale,
 };
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{
@@ -89,6 +89,8 @@ pub(super) struct WindowRead {
     /// Its per-time frequency selection, for a time that reads only some of
     /// its channels ([`frequency_bands`]).
     pub(super) bands: Option<FrequencyBands>,
+    /// Physical linear spacing metadata discarded by cube support.
+    pub(super) linear_spacing: Option<LinearSpacingSelection>,
     /// Whether it's read only to count its samples in the density and to
     /// write them, if the source's test over its rows agrees that no channel
     /// reaches the axis.
@@ -658,6 +660,7 @@ fn store_reads(
                 )?
                 .indices
         };
+        let support = channels.first().copied().zip(channels.last().copied());
         let selection = match &bands {
             Some(bands) => bands.epoch_selection((catalogue, engine), survey, window)?,
             None => None,
@@ -685,6 +688,30 @@ fn store_reads(
                 channels = (0..window.frequencies_hz.len())
                     .filter(|&channel| selection.ever(channel))
                     .collect();
+            }
+            if setup.interpolation == CubeInterpolation::Linear && request.fitspw.is_none() {
+                let frequency_selection = selection.as_ref().zip(
+                    bands
+                        .as_ref()
+                        .and_then(|bands| bands.frequency_bands(window.spw_id)),
+                );
+                let explicitly_selected = if tuned {
+                    None
+                } else {
+                    explicit.map(Vec::as_slice)
+                };
+                if let Some(spacing) = frequency_bands::linear_read_support(
+                    window.frequencies_hz.len(),
+                    (&mut channels, support.expect("nonempty support")),
+                    explicitly_selected,
+                    frequency_selection,
+                ) {
+                    reads
+                        .windows
+                        .entry(window.spw_id)
+                        .or_default()
+                        .linear_spacing = Some(spacing);
+                }
             }
             if let (Some(bands), Some(selection)) = (&bands, &selection)
                 && channels.iter().any(|channel| !selection.always(*channel))

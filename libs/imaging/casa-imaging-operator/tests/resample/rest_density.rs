@@ -23,6 +23,7 @@ fn rest_aw_density_accumulates_rest_and_looks_up_stored_wavelengths() {
     );
     let cell_metres = C / (1024.0 * cell * frequency);
     let row = NativeRow {
+        selection_spacing_hz: None,
         uvw_m: [49.8 * cell_metres * ratio, 0.0, 0.0],
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],
@@ -54,6 +55,7 @@ fn rest_aw_density_accumulates_rest_and_looks_up_stored_wavelengths() {
     let mut out = SampleBuffer::new(2);
     // The image-wavelength baseline rounds into the neighboring cell.
     let query = NativeRow {
+        selection_spacing_hz: None,
         uvw_m: [48.9 * cell_metres * ratio, 0.0, 0.0],
         ..row
     };

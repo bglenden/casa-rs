@@ -204,6 +204,7 @@ impl<'o> BatchSource<'o> {
         for sample in 0..batch.samples() {
             let coordinate = batch.sample(sample);
             let header = NativeRowHeader {
+                selection_spacing_hz: None,
                 // Row flags do not exist at this boundary: MSv2 FLAG_ROW is
                 // folded into the flags, which the validity rule reads.
                 row_flag: false,

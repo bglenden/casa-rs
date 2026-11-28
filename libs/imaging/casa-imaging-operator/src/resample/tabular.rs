@@ -205,15 +205,17 @@ mod tests {
     #[test]
     fn interpolation_uses_centres_directly_or_clips_the_first_interval_fine_grid() {
         let axis = SpectralAxis::tabular(&[140.0, 120.0, 107.0, 100.0], -20.0).unwrap();
-        let mut direct = FineGrid::compile(&axis, &[90.0, 115.0, 140.0], Order::Linear).unwrap();
+        let mut direct =
+            FineGrid::compile(&axis, &[90.0, 115.0, 140.0], Order::Linear, None).unwrap();
         let doubles: Vec<_> = (0..direct.count())
             .map(|i| direct.frequency_hz(i))
             .collect();
         assert_eq!(doubles, [100.0, 107.0, 120.0, 140.0]);
-        let mut fine = FineGrid::compile(&axis, &[108.0, 119.0, 130.0], Order::Linear).unwrap();
+        let mut fine =
+            FineGrid::compile(&axis, &[108.0, 119.0, 130.0], Order::Linear, None).unwrap();
         let doubles: Vec<_> = (0..fine.count()).map(|i| fine.frequency_hz(i)).collect();
         assert_eq!(doubles, [87.0, 107.0, 127.0, 147.0]);
-        assert!(FineGrid::compile(&axis, &[160.0, 170.0], Order::Linear).is_none());
+        assert!(FineGrid::compile(&axis, &[160.0, 170.0], Order::Linear, None).is_none());
     }
 
     #[test]
@@ -225,7 +227,7 @@ mod tests {
         ];
         let axis = SpectralAxis::tabular(&centres, centres[1] - centres[0]).unwrap();
         let native = [999_000_000.0, 999_300_000.0, 1_003_000_000.0];
-        let mut fine = FineGrid::compile(&axis, &native, Order::Linear).unwrap();
+        let mut fine = FineGrid::compile(&axis, &native, Order::Linear, None).unwrap();
         assert_eq!(fine.frequency_hz(7), 1_001_666_666.735_633_5);
     }
 

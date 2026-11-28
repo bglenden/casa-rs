@@ -33,7 +33,7 @@ fn reporting_axis() -> (SpectralAxis, PreparedFrequencyConversion) {
 fn direct_sampling_converts_each_reported_centre() {
     let (axis, to_lsrk) = reporting_axis();
     let native = [0.0, axis.increment_hz()];
-    let mut grid = FineGrid::compile(&axis, &native, Order::Linear).expect("equal width");
+    let mut grid = FineGrid::compile(&axis, &native, Order::Linear, None).expect("equal width");
     let expected = to_lsrk.convert_hz(1_525_000_000.0);
     assert_eq!(grid.frequency_hz(3), expected);
 }
@@ -68,8 +68,8 @@ fn width_tie_uses_fewer_samples_without_rounding_a_nonintegral_ratio() {
         (native_step.next_down(), 4),
     ] {
         for sign in [1.0, -1.0] {
-            let grid =
-                FineGrid::compile(&axis, &[0.0, spacing * sign], Order::Linear).expect("fine grid");
+            let grid = FineGrid::compile(&axis, &[0.0, spacing * sign], Order::Linear, None)
+                .expect("fine grid");
             assert_eq!(grid.count(), expected, "spacing {spacing}, sign {sign}");
         }
     }
@@ -86,6 +86,7 @@ fn the_first_lsrk_fine_point_must_be_in_the_native_span() {
     for (edge, expected) in [(first, &[0, 1][..]), (first.next_up(), &[1][..])] {
         let frequencies = [edge, 1_499_983_125.580_886_1, 1_999_977_500.774_515];
         let row = NativeRow {
+            selection_spacing_hz: None,
             uvw_m: [10.0, 10.0, 0.0],
             phase_shift_m: 0.0,
             pointing_offset_rad: [0.0; 2],

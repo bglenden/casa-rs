@@ -588,6 +588,17 @@ impl FrequencyBands {
     }
 }
 
+/// The physical leading channels linear interpolation needs when cube
+/// support prunes them from the channels read for gridding.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LinearSpacingSelection {
+    /// The same two native channel indices are first at every epoch.
+    Pair([u32; 2]),
+    /// The leading channels depend on the epoch. Apply these bands to the
+    /// native frequency catalogue before obtaining the first two centres.
+    Bands(FrequencyBands),
+}
+
 /// Exact channels selected from one spectral window.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpectralWindowSelection {
@@ -596,6 +607,7 @@ pub struct SpectralWindowSelection {
     coordinate_catalog: Option<SpectralWindowCoordinateCatalog>,
     first_buffer_beam_factors: Option<[f64; 2]>,
     frequency_bands: Option<FrequencyBands>,
+    linear_spacing: Option<LinearSpacingSelection>,
     density_only: bool,
     density_channels: Option<Vec<u32>>,
     density_bands: Option<FrequencyBands>,
@@ -617,6 +629,7 @@ impl SpectralWindowSelection {
             coordinate_catalog: None,
             first_buffer_beam_factors: None,
             frequency_bands: None,
+            linear_spacing: None,
             density_only: false,
             density_channels: None,
             density_bands: None,
@@ -639,6 +652,20 @@ impl SpectralWindowSelection {
     #[must_use]
     pub const fn frequency_bands(&self) -> Option<&FrequencyBands> {
         self.frequency_bands.as_ref()
+    }
+
+    /// Preserve the physical leading selection when it is pruned from the
+    /// cube's read support. These channels set the linear fine-grid spacing.
+    #[must_use]
+    pub fn with_linear_spacing(mut self, selection: LinearSpacingSelection) -> Self {
+        self.linear_spacing = Some(selection);
+        self
+    }
+
+    /// The leading selection used for spacing before read support prunes it.
+    #[must_use]
+    pub const fn linear_spacing(&self) -> Option<&LinearSpacingSelection> {
+        self.linear_spacing.as_ref()
     }
 
     /// Mark a window compile finds no channel of reaching the image's axis:
@@ -856,11 +883,16 @@ impl ObservationSelection {
                     spectral_window_id: selection.spectral_window_id,
                 });
             }
+            let leading = match selection.linear_spacing {
+                Some(LinearSpacingSelection::Pair(ref pair)) => pair.as_slice(),
+                _ => &[],
+            };
             if let Some(catalog) = &selection.coordinate_catalog
                 && selection
                     .channel_indices
                     .iter()
                     .chain(selection.prediction_channels.iter().flatten())
+                    .chain(leading)
                     .any(|channel| {
                         usize::try_from(*channel)
                             .ok()
