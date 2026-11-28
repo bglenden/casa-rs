@@ -724,6 +724,19 @@ int32_t cpp_table_keyword_table_name(const char* path, const char* column,
     } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
     } catch (...) { *out_error = make_error("unknown exception"); return -1; }
 }
+int32_t cpp_table_column_manager_name(const char* path, const char* column,
+                                      char* buf, int32_t bufsize, char** out_error) {
+    try {
+        casacore::Table table(path, casacore::Table::Old);
+        const auto descriptor = table.actualTableDesc();
+        const auto& name = descriptor.columnDesc(column).dataManagerGroup();
+        if (name.size() >= static_cast<size_t>(bufsize))
+            throw std::runtime_error("manager name exceeds the output buffer");
+        std::memcpy(buf, name.c_str(), name.size() + 1);
+        return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception"); return -1; }
+}
 int32_t cpp_table_keyword_double_array(const char* path, const char* keyword,
                                        int64_t* shape, int32_t max_ndim, int32_t* out_ndim,
                                        double* values, int64_t max_values,

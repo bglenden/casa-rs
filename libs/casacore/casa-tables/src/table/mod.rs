@@ -327,7 +327,6 @@ pub struct TableOptions {
     data_manager: DataManagerKind,
     data_manager_group: Option<String>,
     casacore_default_ssm: bool,
-    preserve_ssm_group_name: bool,
     endian_format: EndianFormat,
     tile_shape: Option<Vec<usize>>,
 }
@@ -342,7 +341,6 @@ impl TableOptions {
             data_manager: DataManagerKind::default(),
             data_manager_group: None,
             casacore_default_ssm: false,
-            preserve_ssm_group_name: false,
             endian_format: EndianFormat::default(),
             tile_shape: None,
         }
@@ -371,18 +369,9 @@ impl TableOptions {
         self
     }
 
-    /// Uses casacore's zero-argument `StandardStMan` 32-row bucket sizing and
-    /// binds the manager name from the group instead of `"SSM"`.
+    /// Uses casacore's zero-argument `StandardStMan` 32-row bucket sizing.
     pub fn with_casacore_default_ssm(mut self, enabled: bool) -> Self {
         self.casacore_default_ssm = enabled;
-        self.preserve_ssm_group_name = enabled;
-        self
-    }
-
-    /// Binds a `StandardStMan` manager's stored name from `data_manager_group`
-    /// while preserving `casacore_default_ssm` bucket sizing independently.
-    pub(crate) fn with_preserved_ssm_group_name(mut self, enabled: bool) -> Self {
-        self.preserve_ssm_group_name = enabled;
         self
     }
 
@@ -1334,8 +1323,8 @@ impl Drop for Table {
                         && state.has_unflushed_changes(&self.inner)
                 });
 
-                if has_changes_to_flush && let Err(error) = self.flush_locked_changes() {
-                    tracing::warn!(%error, "could not flush changes while dropping locked table");
+                if has_changes_to_flush && let Err(error) = self.flush_locked_changes(false) {
+                    tracing::warn!(%error, "discarding unwritten changes while dropping locked table");
                 }
 
                 // Whatever part of this save, or of an earlier write under

@@ -332,7 +332,12 @@ fn assign_fields(
             .cell_accessor_mut(row, ID_COLUMN)?
             .set(Value::Scalar(ScalarValue::Int32(id)))?;
     }
-    table.flush()?;
+    if !selected.is_empty() {
+        let rows: Vec<_> = selected.iter().copied().collect();
+        table
+            .prepare_write()
+            .save_selected_rows(&["TIME", ID_COLUMN], &rows)?;
+    }
     lock.release()?;
     Ok(())
 }

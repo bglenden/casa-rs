@@ -426,10 +426,7 @@ impl Table {
     /// that fails holding the write lock, releases it all the same: the
     /// changes not yet written are discarded, the table reloaded as it is on
     /// disk where it can be, and the lock released again, publishing
-    /// whatever reached the disk. A table dropped while it holds the write
-    /// lock with unwritten changes is written in full with its lock's
-    /// storage manager; a writer that keeps the table's managers releases
-    /// through this instead. Returns the first release's error.
+    /// whatever reached the disk. Returns the first release's error.
     ///
     /// A table held with permanent locking keeps its lock, as `unlock`
     /// keeps it, and with it its unwritten changes.
@@ -451,8 +448,8 @@ impl Table {
     /// full. Returns the reload's error.
     ///
     /// A writer that persists its changes itself (`save_metadata_only`,
-    /// `save_selected_rows`) calls this after a failure, to leave nothing
-    /// for the full write of a drop to find.
+    /// `save_selected_rows`) calls this after a failure, to suppress any
+    /// further attempts to write unwritten changes on close.
     #[cfg(unix)]
     pub fn resync_or_discard(&mut self) -> Result<(), TableError> {
         let reloaded = self.resync();
@@ -543,7 +540,7 @@ impl Table {
             } else if metadata_only {
                 self.save_metadata_only(save_opts)?;
             } else {
-                self.flush_locked_changes()?;
+                self.flush_locked_changes(true)?;
             }
         }
 
@@ -568,7 +565,7 @@ impl Table {
 
     /// Flush the outstanding scope while preserving the persisted layout.
     #[cfg(unix)]
-    pub(super) fn flush_locked_changes(&mut self) -> Result<(), TableError> {
+    pub(super) fn flush_locked_changes(&mut self, allow_rewrite: bool) -> Result<(), TableError> {
         let Some(state) = &self.lock_state else {
             return Ok(());
         };
@@ -576,19 +573,134 @@ impl Table {
             .source_path
             .clone()
             .unwrap_or_else(|| state.path.clone());
-        let Some(dirty) = self.inner.dirty_changes() else {
-            return self.flush_full_locked_layout();
-        };
+        let root = super::reference_writes::reference_lock_path(&path)?;
+        if !same_directory(&root, &state.path) {
+            return Err(TableError::Storage(
+                "the table's lock path changed; reopen it".into(),
+            ));
+        }
+        state.admit_full_save(&root)?;
+        self.flush_changes(&path, allow_rewrite, None)
+    }
+
+    pub(super) fn flush_source(&mut self, path: &Path) -> Result<(), TableError> {
+        let root = super::reference_writes::reference_lock_path(path)?;
+        #[cfg(unix)]
+        let mut attempts = 1;
+        #[cfg(not(unix))]
+        let attempts = 1;
+        #[cfg(unix)]
+        if let Some(state) = &self.lock_state {
+            if !same_directory(&root, &state.path) {
+                return Err(TableError::Storage(
+                    "the table's lock path changed; reopen it".into(),
+                ));
+            }
+            state.admit_full_save(&root)?;
+            if state.lock_file.has_lock(LockType::Write) {
+                return self.flush_changes(path, true, None);
+            }
+            attempts = 0;
+        }
+        match self.inner.has_dirty_changes() {
+            Some(false) => return Ok(()),
+            None if !self.is_named_memory_manager() => {
+                return Err(TableError::Storage(
+                    "flush requires a table opened with its rows".into(),
+                ));
+            }
+            _ => {}
+        }
+
+        let mut guard = crate::TableWriteLock::acquire(&root, attempts)?;
+        #[cfg(unix)]
+        if let Some(state) = &self.lock_state
+            && guard.modify_counter()?.unwrap_or(0) != state.observed_modify_counter()
+        {
+            return Err(TableError::LockFailed {
+                path: path.display().to_string(),
+                message: "table changed since this handle last synchronized; reacquire its write lock and retry".into(),
+            });
+        }
+        let result = self.flush_changes(path, true, Some(&mut guard));
+        let sync = guard.sync_recorded_write();
+        #[cfg(unix)]
+        if sync.is_ok()
+            && let Some(state) = &self.lock_state
+            && let Ok(counter) = guard.modify_counter()
+        {
+            state.observe_modify_counter(counter.unwrap_or(0));
+        }
+        result.and(sync).and(guard.release())
+    }
+
+    fn flush_changes(
+        &mut self,
+        path: &Path,
+        allow_rewrite: bool,
+        mut external: Option<&mut crate::TableWriteLock>,
+    ) -> Result<(), TableError> {
+        let dirty = self.inner.dirty_changes();
         if self.is_named_memory_manager() {
-            return self.finish_memory_manager_write(
-                dirty.metadata || dirty.whole || !dirty.added_columns.is_empty(),
-            );
+            let metadata = dirty.as_ref().is_none_or(|dirty| {
+                dirty.metadata
+                    || dirty.whole
+                    || dirty.appended_from.is_some()
+                    || !dirty.added_columns.is_empty()
+            });
+            if metadata {
+                use crate::storage::full_save::check_private_write_access;
+                let info = path.join(crate::storage::TABLE_INFO_FILE);
+                if info.exists() {
+                    check_private_write_access(&info)?;
+                }
+            }
+            self.finish_memory_manager_write(metadata)?;
+            if metadata && let Some(lock) = external {
+                lock.record_write();
+            }
+            return Ok(());
         }
+        let Some(mut dirty) = dirty else {
+            return self.flush_full_layout(allow_rewrite, external.as_deref());
+        };
         if dirty.whole || !dirty.added_columns.is_empty() {
-            return self.flush_full_locked_layout();
+            return self.flush_full_layout(allow_rewrite, external.as_deref());
         }
-        for column in dirty.cells.keys() {
-            self.require_writable_column(column)?;
+        if dirty.metadata || !dirty.cells.is_empty() || dirty.appended_from.is_some() {
+            let root = super::reference_writes::reference_lock_path(path)?;
+            self.check_flush_targets(path, &root, &dirty)?;
+        }
+        if dirty.metadata && !self.virtual_columns.is_empty() {
+            self.check_flush_virtual_keywords(path, external.as_deref())?;
+        }
+        if self.schema().is_some_and(|schema| {
+            dirty.cells.keys().any(|name| {
+                schema
+                    .column(name)
+                    .is_some_and(|column| matches!(column.column_type(), ColumnType::Record))
+            })
+        }) {
+            return self.flush_full_layout(allow_rewrite, external.as_deref());
+        }
+        if let Some(first) = dirty.appended_from {
+            if dirty
+                .cells
+                .values()
+                .any(|rows| rows.first().is_some_and(|&row| row < first))
+            {
+                return self.flush_full_layout(allow_rewrite, external.as_deref());
+            }
+            self.persist_buffered_append(path, first)?;
+            if let Some(lock) = external.as_deref_mut() {
+                lock.record_write();
+            }
+            dirty.cells.clear();
+        }
+        if (dirty.metadata || !dirty.cells.is_empty())
+            && let Some(lock) = external
+        {
+            lock.record_write();
         }
         let mut groups = std::collections::BTreeMap::<Vec<usize>, Vec<String>>::new();
         for (column, rows) in dirty.cells {
@@ -600,15 +712,7 @@ impl Table {
         for (rows, mut columns) in groups {
             columns.sort_unstable();
             let columns: Vec<_> = columns.iter().map(String::as_str).collect();
-            if let Err(error) = self.persist_selected_rows_in_place(&columns, &rows) {
-                if matches!(&error, TableError::Storage(message)
-                    if message.starts_with("partial in-place save does not support"))
-                    && let Some(options) = self.single_rewrite_options()?
-                {
-                    return self.save(options);
-                }
-                return Err(error);
-            }
+            self.persist_selected_rows(&columns, &rows, allow_rewrite)?;
         }
         if dirty.metadata {
             self.save_metadata_only(TableOptions::new(path))?;
@@ -616,13 +720,138 @@ impl Table {
         Ok(())
     }
 
-    #[cfg(unix)]
-    fn flush_full_locked_layout(&self) -> Result<(), TableError> {
-        if let Some(options) = self.single_rewrite_options()? {
-            return self.save(options);
+    fn check_flush_virtual_keywords(
+        &self,
+        path: &Path,
+        external: Option<&crate::TableWriteLock>,
+    ) -> Result<(), TableError> {
+        let peer_open = external.is_some_and(crate::TableWriteLock::is_multi_used);
+        #[cfg(unix)]
+        let peer_open = peer_open || self.is_multi_used();
+        let persisted = Self::open(TableOptions::new(path))?;
+        // Flushing reuses the on-disk engine objects. A raw column keyword
+        // edit can change their binding without updating an open engine.
+        if self
+            .virtual_columns
+            .iter()
+            .any(|name| self.column_keywords(name) != persisted.column_keywords(name))
+        {
+            return Err(TableError::Storage(
+                "changing virtual manager keywords requires an explicit save of the binding".into(),
+            ));
+        }
+        if peer_open && self.keywords() != persisted.keywords() {
+            return Err(TableError::Storage(
+                "flush would change table keywords used by an open virtual manager".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn check_flush_targets(
+        &self,
+        path: &Path,
+        root: &Path,
+        dirty: &crate::table_impl::DirtyChanges,
+    ) -> Result<(), TableError> {
+        use crate::storage::full_save::check_private_write_access as access;
+        use crate::storage::{TABLE_CONTROL_FILE, TABLE_INFO_FILE};
+        access(&root.join(TABLE_CONTROL_FILE))?;
+        if dirty.metadata && path.join(TABLE_INFO_FILE).exists() {
+            access(&path.join(TABLE_INFO_FILE))?;
+        }
+        let mut affected = HashSet::new();
+        if dirty.appended_from.is_some() {
+            affected.extend(self.dm_info.iter().map(|manager| manager.seq_nr));
+        }
+        let mut tiled = Vec::new();
+        for (column, rows) in &dirty.cells {
+            let manager = self.require_flush_manager(column)?;
+            affected.insert(manager.seq_nr);
+            if matches!(
+                manager.dm_type.as_str(),
+                "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan"
+            ) && self
+                .schema()
+                .and_then(|schema| schema.column(column))
+                .is_some_and(|schema| matches!(schema.column_type(), ColumnType::Array(_)))
+            {
+                tiled.push((column, rows));
+            }
+        }
+        if !affected.is_empty() {
+            crate::storage::full_save::check_manager_write_access(root, &affected)?;
+        }
+        if !tiled.is_empty() {
+            let persisted = Self::open(TableOptions::new(path))?;
+            for (column, rows) in tiled {
+                for &row in rows {
+                    if dirty.appended_from.is_some_and(|first| row >= first) {
+                        continue;
+                    }
+                    let shape = match self.get_array_cell(row, column) {
+                        Ok(cell) => Some(cell.shape().to_vec()),
+                        Err(TableError::ColumnNotFound { .. }) => None,
+                        Err(error) => return Err(error),
+                    };
+                    if shape != persisted.array_shape_uncached(row, column)? {
+                        return Err(TableError::Storage(format!(
+                            "flush cannot change the shape of tiled column '{column}' at row {row}"
+                        )));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn require_flush_manager(
+        &self,
+        column: &str,
+    ) -> Result<&crate::storage::DataManagerInfo, TableError> {
+        self.require_writable_column(column)?;
+        if self.virtual_columns.contains(column) || !self.virtual_bindings.is_empty() {
+            return Err(TableError::Storage(
+                "flush takes physical column values".into(),
+            ));
+        }
+        let manager = self
+            .dm_info
+            .iter()
+            .find(|manager| manager.columns.iter().any(|name| name == column))
+            .ok_or_else(|| {
+                TableError::Storage(format!("column '{column}' has no persisted manager"))
+            })?;
+        if !matches!(
+            manager.dm_type.as_str(),
+            "StManAipsIO"
+                | "StandardStMan"
+                | "IncrementalStMan"
+                | "TiledColumnStMan"
+                | "TiledShapeStMan"
+                | "TiledCellStMan"
+                | "TiledDataStMan"
+        ) {
+            return Err(TableError::Storage(format!(
+                "flush does not support edits to {}",
+                manager.dm_type
+            )));
+        }
+        Ok(manager)
+    }
+
+    fn flush_full_layout(
+        &mut self,
+        allow_rewrite: bool,
+        external: Option<&crate::TableWriteLock>,
+    ) -> Result<(), TableError> {
+        if allow_rewrite && let Some(options) = self.single_rewrite_options()? {
+            let path = options.path.clone();
+            self.save_with_write_lock(options, external)?;
+            return self.reload_disk_state_at(&path);
         }
         Err(TableError::Storage(
-            "locked table has unscoped changes that require an explicit in-place write plan".into(),
+            "unscoped table changes require an explicit write that preserves its layout".into(),
         ))
     }
 
