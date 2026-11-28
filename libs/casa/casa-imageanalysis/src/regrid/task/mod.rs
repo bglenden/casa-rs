@@ -10,6 +10,7 @@ use casa_coordinates::{
     SpectralCoordinate, StokesCoordinate,
 };
 use casa_core::ArrayD;
+use casa_core::cancellation::Cancellation;
 use casa_core::measures::{
     MeasFrame,
     doppler::{DopplerRef, MDoppler},
@@ -20,7 +21,9 @@ use ndarray::{Axis, IxDyn, ShapeBuilder};
 
 use super::{
     DirectionSampling, Plane, RegridMethod, RegridPixel, RegridTemplate, Regridded,
-    direction_affine, jy_per_pixel_scale, positions, same_axes, sample_direction_planes,
+    direction_affine, jy_per_pixel_scale, positions,
+    progress::{self, check, coordinate_positions},
+    same_axes_with_cancellation, sample_direction_planes,
     spectral::SpectralPlan,
 };
 use casa_images::{ImageError, ImageInterface, ImagePixel};
@@ -33,6 +36,7 @@ pub(crate) struct TaskRegridOptions<'a> {
     pub(crate) replicate: bool,
     pub(crate) method: RegridMethod,
     pub(crate) image_tool: Option<ImageToolSampling>,
+    pub(crate) cancellation: Option<&'a Cancellation>,
 }
 
 #[derive(Clone, Copy)]
@@ -59,6 +63,7 @@ pub(crate) fn regrid_task<T: RegridPixel>(
     template: &RegridTemplate,
     options: TaskRegridOptions<'_>,
 ) -> Result<Regridded<T>, ImageError> {
+    check(options.cancellation)?;
     let input_shape = input.shape();
     let frame = frame::observation_frame(input.coordinates());
     let resized = requested_shape(options.shape, input_shape)?;
@@ -67,8 +72,10 @@ pub(crate) fn regrid_task<T: RegridPixel>(
         requested_axis_selection(input, template, &options, &shape, resized.is_none())?;
     let ordered = index_coordinates(input.coordinates());
     let target_order = index_coordinates(&template.coordinates);
+    let data = input.get()?;
+    check(options.cancellation)?;
     let mut result = Regridded {
-        data: input.get()?,
+        data,
         mask: input
             .get_mask_slice(
                 &vec![0; input_shape.len()],
@@ -80,11 +87,12 @@ pub(crate) fn regrid_task<T: RegridPixel>(
         template_coordinates: false,
         scale: 1.0,
     };
-    if !result.mask.iter().any(|&bit| bit) {
+    if !progress::any_valid(&result.mask, options.cancellation)? {
         return Err(invalid("All selected pixels are masked"));
     }
     let mut found = false;
     for (index, (placement, ours)) in ordered.iter().enumerate() {
+        check(options.cancellation)?;
         let ours = *ours;
         let axes: Vec<_> = placement.iter().copied().flatten().collect();
         let n_axes = axes.len();
@@ -224,7 +232,7 @@ pub(crate) fn regrid_task<T: RegridPixel>(
                 [input_lengths[0], lengths[0]],
                 (ours, theirs),
                 &options,
-            ),
+            )?,
             _ => {
                 return Err(invalid(
                     "regridding this multi-axis coordinate is unsupported (#977)",
@@ -236,7 +244,7 @@ pub(crate) fn regrid_task<T: RegridPixel>(
     if options.image_tool.is_none() && all_axes && !found {
         return Err(invalid("Found no axes to regrid"));
     }
-    if !result.mask.iter().any(|&bit| bit) {
+    if !progress::any_valid(&result.mask, options.cancellation)? {
         return Err(invalid("All output pixels are masked"));
     }
     Ok(result)
@@ -271,23 +279,22 @@ fn regrid_one_axis<T: RegridPixel>(
     [input_length, length]: [usize; 2],
     (input, target): (&CoordinateModel, &CoordinateModel),
     options: &TaskRegridOptions<'_>,
-) -> CoordinateModel {
-    let positions = (0..length)
-        .map(|pixel| {
-            if options.replicate {
-                Some(replicated_position(pixel, input_length, length))
-            } else {
-                target
-                    .to_world(&[pixel as f64])
-                    .and_then(|world| input.to_pixel(&world))
-                    .ok()
-                    .and_then(|pixel| pixel.first().copied())
-                    .filter(|pixel| pixel.is_finite())
-            }
-        })
-        .collect();
-    apply_one_axis(result, axis, length, positions, options.method);
-    target.clone()
+) -> Result<CoordinateModel, ImageError> {
+    let pixels = (0..length).map(|pixel| {
+        if options.replicate {
+            Some(replicated_position(pixel, input_length, length))
+        } else {
+            target
+                .to_world(&[pixel as f64])
+                .and_then(|world| input.to_pixel(&world))
+                .ok()
+                .and_then(|pixel| pixel.first().copied())
+                .filter(|pixel| pixel.is_finite())
+        }
+    });
+    let positions = coordinate_positions(length, pixels, options.cancellation)?;
+    apply_one_axis(result, axis, length, positions, options)?;
+    Ok(target.clone())
 }
 
 fn regrid_omitted_coordinate<T: RegridPixel>(
@@ -339,8 +346,9 @@ fn regrid_omitted_coordinate<T: RegridPixel>(
                 options.replicate,
                 None,
                 None,
+                options.cancellation,
             )?;
-            apply_one_axis(result, axis, length, positions, options.method);
+            apply_one_axis(result, axis, length, positions, options)?;
         }
     }
     Ok(())
@@ -480,7 +488,7 @@ fn regrid_spectral_coordinate<T: RegridPixel>(
     let target: CoordinateModel = coordinate.clone().into();
     if options.force()
         || old_length != length
-        || !same_axes(&source, &target, &[length])
+        || !same_axes_with_cancellation(&source, &target, &[length], options.cancellation)?
         || ours.world_frequency_ref() != theirs.world_frequency_ref()
     {
         let positions = spectral_positions(
@@ -489,8 +497,9 @@ fn regrid_spectral_coordinate<T: RegridPixel>(
             options.replicate,
             velocity,
             options.convert_reference().then_some(frame),
+            options.cancellation,
         )?;
-        apply_one_axis(result, axis, length, positions, options.method);
+        apply_one_axis(result, axis, length, positions, options)?;
     }
     Ok(target)
 }
@@ -751,6 +760,7 @@ fn spectral_positions(
     replicate: bool,
     velocity: Option<[VelocityGrid; 2]>,
     frame: Option<&MeasFrame>,
+    cancellation: Option<&Cancellation>,
 ) -> Result<Vec<Option<f64>>, ImageError> {
     if input_count > 1 && velocity.is_none() {
         let bounds = |coordinate: &SpectralCoordinate, count: usize| {
@@ -764,38 +774,37 @@ fn spectral_positions(
             ));
         }
     }
-    (0..output_count)
-        .map(|channel| {
-            if input_count == 1 {
-                return Ok(Some(0.0));
-            }
-            if replicate {
-                return Ok(Some(replicated_position(
-                    channel,
-                    input_count,
-                    output_count,
-                )));
-            }
-            if let Some([source, target]) = velocity {
-                let value =
-                    target.reference + (channel as f64 - target.reference_pixel) * target.increment;
-                let pixel = source.reference_pixel + (value - source.reference) / source.increment;
-                return Ok(pixel.is_finite().then_some(pixel));
-            }
-            let frequency = target.world_frequency_hz(channel as f64)?;
-            let input_frequency = match frame {
-                Some(frame) => MFrequency::new(frequency, target.world_frequency_ref())
-                    .convert_to(input.world_frequency_ref(), frame)
-                    .map_err(|error| invalid(error.to_string()))?
-                    .hz(),
-                None => frequency,
-            };
-            Ok(input
-                .pixel_at_frequency_hz(input_frequency)
-                .ok()
-                .filter(|pixel| pixel.is_finite()))
-        })
-        .collect()
+    let positions = (0..output_count).map(|channel| {
+        if input_count == 1 {
+            return Ok(Some(0.0));
+        }
+        if replicate {
+            return Ok(Some(replicated_position(
+                channel,
+                input_count,
+                output_count,
+            )));
+        }
+        if let Some([source, target]) = velocity {
+            let value =
+                target.reference + (channel as f64 - target.reference_pixel) * target.increment;
+            let pixel = source.reference_pixel + (value - source.reference) / source.increment;
+            return Ok(pixel.is_finite().then_some(pixel));
+        }
+        let frequency = target.world_frequency_hz(channel as f64)?;
+        let input_frequency = match frame {
+            Some(frame) => MFrequency::new(frequency, target.world_frequency_ref())
+                .convert_to(input.world_frequency_ref(), frame)
+                .map_err(|error| invalid(error.to_string()))?
+                .hz(),
+            None => frequency,
+        };
+        Ok(input
+            .pixel_at_frequency_hz(input_frequency)
+            .ok()
+            .filter(|pixel| pixel.is_finite()))
+    });
+    progress::try_coordinate_positions(output_count, positions, cancellation)
 }
 
 fn apply_one_axis<T: RegridPixel>(
@@ -803,12 +812,14 @@ fn apply_one_axis<T: RegridPixel>(
     axis: usize,
     length: usize,
     positions: Vec<Option<f64>>,
-    method: RegridMethod,
-) {
+    options: &TaskRegridOptions<'_>,
+) -> Result<(), ImageError> {
     let mut shape = result.data.shape().to_vec();
     shape[axis] = length;
-    let plan = SpectralPlan::from_positions(axis, positions, method);
-    (result.data, result.mask) = plan.apply_precise(&result.data, &result.mask, &shape);
+    let plan = SpectralPlan::from_positions(axis, positions, options.method);
+    (result.data, result.mask) =
+        plan.apply_precise(&result.data, &result.mask, &shape, options.cancellation)?;
+    Ok(())
 }
 
 fn validate_decimation(
@@ -849,7 +860,7 @@ fn apply_direction<T: RegridPixel>(
     let scale = jy_per_pixel_scale(units, input, target);
     let input_shape = axes.map(|axis| result.data.shape()[axis]);
     let grid = if options.replicate && options.image_tool.is_none() {
-        replicated_grid(input_shape, shape)
+        replicated_grid(input_shape, shape, options.cancellation)?
     } else {
         let projected = direction_grid(input, target, shape, options, frame)?;
         if options.image_tool.is_some()
@@ -865,13 +876,12 @@ fn apply_direction<T: RegridPixel>(
             ));
         }
         if options.replicate {
-            replicated_grid(input_shape, shape)
+            replicated_grid(input_shape, shape, options.cancellation)?
         } else {
             projected
         }
     };
-    apply_plane(result, axes, shape, &grid, options.method, scale);
-    Ok(())
+    apply_plane(result, axes, shape, &grid, options, scale)
 }
 
 fn direction_grid(
@@ -927,7 +937,7 @@ fn direction_grid(
     };
     let decimate = options.decimate.max(0) as usize;
     if decimate <= 1 && from == to {
-        return Ok(positions(input, target, shape));
+        return positions(input, target, shape, options.cancellation);
     }
     let project = |pixel| {
         let world = target.pixel_to_world(pixel).ok()?;
@@ -940,20 +950,23 @@ fn direction_grid(
     // Report a missing measures frame before treating projection failures as masks.
     let world = target.reference_value();
     frame::convert_angles([world[0], world[1]], from, to, frame)?;
-    Ok(coarse_positions(shape, decimate, project))
+    coarse_positions(shape, decimate, project, options.cancellation)
 }
 
-fn replicated_grid(input: [usize; 2], output: [usize; 2]) -> Vec<Option<[f64; 2]>> {
-    (0..output[1])
-        .flat_map(|y| {
-            (0..output[0]).map(move |x| {
-                Some([
-                    replicated_position(x, input[0], output[0]),
-                    replicated_position(y, input[1], output[1]),
-                ])
-            })
+fn replicated_grid(
+    input: [usize; 2],
+    output: [usize; 2],
+    cancellation: Option<&Cancellation>,
+) -> Result<Vec<Option<[f64; 2]>>, ImageError> {
+    let positions = (0..output[1]).flat_map(|y| {
+        (0..output[0]).map(move |x| {
+            Some([
+                replicated_position(x, input[0], output[0]),
+                replicated_position(y, input[1], output[1]),
+            ])
         })
-        .collect()
+    });
+    coordinate_positions(output[0] * output[1], positions, cancellation)
 }
 
 fn linear_axis_unit_factor(input: &str, target: &str, axis: usize) -> Result<f64, ImageError> {
@@ -1003,23 +1016,22 @@ fn apply_linear_axes<T: RegridPixel>(
         // The coordinate transform uses the full local model. Keep its other
         // axes at their reference pixels for this one-axis pass.
         let reference_pixel = target_pixel[local];
-        let positions = (0..length)
-            .map(|pixel| {
-                if options.replicate {
-                    return Some(replicated_position(pixel, old_length, length));
-                }
-                target_pixel[local] = pixel as f64;
-                let mut world = target.to_world(&target_pixel).ok()?;
-                world
-                    .iter_mut()
-                    .zip(&factors)
-                    .for_each(|(value, factor)| *value *= factor);
-                let pixel = input.to_pixel(&world).ok()?[local];
-                pixel.is_finite().then_some(pixel)
-            })
-            .collect();
+        let pixels = (0..length).map(|pixel| {
+            if options.replicate {
+                return Some(replicated_position(pixel, old_length, length));
+            }
+            target_pixel[local] = pixel as f64;
+            let mut world = target.to_world(&target_pixel).ok()?;
+            world
+                .iter_mut()
+                .zip(&factors)
+                .for_each(|(value, factor)| *value *= factor);
+            let pixel = input.to_pixel(&world).ok()?[local];
+            pixel.is_finite().then_some(pixel)
+        });
+        let positions = coordinate_positions(length, pixels, options.cancellation)?;
         target_pixel[local] = reference_pixel;
-        apply_one_axis(result, axis, length, positions, options.method);
+        apply_one_axis(result, axis, length, positions, options)?;
     }
     Ok(())
 }
@@ -1039,7 +1051,11 @@ fn apply_linear_plane<T: RegridPixel>(
         linear_axis_unit_factor(&input_units[1], &target_units[1], axes[1])?,
     ];
     let grid = if options.replicate {
-        replicated_grid(axes.map(|axis| result.data.shape()[axis]), shape)
+        replicated_grid(
+            axes.map(|axis| result.data.shape()[axis]),
+            shape,
+            options.cancellation,
+        )?
     } else {
         let project = |pixel: [f64; 2]| {
             let mut world = target.to_world(&pixel).ok()?;
@@ -1055,11 +1071,11 @@ fn apply_linear_plane<T: RegridPixel>(
         };
         let decimate = options.decimate.max(0) as usize;
         if decimate > 1 {
-            coarse_positions(shape, decimate, project)
+            coarse_positions(shape, decimate, project, options.cancellation)?
         } else {
-            (0..shape[1])
-                .flat_map(|y| (0..shape[0]).map(move |x| project([x as f64, y as f64])))
-                .collect()
+            let positions = (0..shape[1])
+                .flat_map(|y| (0..shape[0]).map(move |x| project([x as f64, y as f64])));
+            coordinate_positions(shape[0] * shape[1], positions, options.cancellation)?
         }
     };
     let scale = if brightness.eq_ignore_ascii_case("Jy/pixel") {
@@ -1069,8 +1085,7 @@ fn apply_linear_plane<T: RegridPixel>(
     } else {
         1.0
     };
-    apply_plane(result, axes, shape, &grid, options.method, scale);
-    Ok(())
+    apply_plane(result, axes, shape, &grid, options, scale)
 }
 
 fn apply_plane<T: RegridPixel>(
@@ -1078,15 +1093,16 @@ fn apply_plane<T: RegridPixel>(
     axes: [usize; 2],
     shape: [usize; 2],
     positions: &[Option<[f64; 2]>],
-    method: RegridMethod,
+    options: &TaskRegridOptions<'_>,
     scale: f64,
-) {
+) -> Result<(), ImageError> {
     let sampling = DirectionSampling {
         axes: [axes; 2],
         shape,
         positions,
-        method,
+        method: options.method,
         scale,
+        cancellation: options.cancellation,
     };
     (result.data, result.mask) = sample_direction_planes(
         &result.data,
@@ -1095,15 +1111,17 @@ fn apply_plane<T: RegridPixel>(
         T::COMPONENTS,
         T::component,
         T::with_component,
-    );
+    )?;
     result.scale = scale;
+    Ok(())
 }
 
 fn coarse_positions(
     shape: [usize; 2],
     decimate: usize,
     project: impl Fn([f64; 2]) -> Option<[f64; 2]>,
-) -> Vec<Option<[f64; 2]>> {
+    cancellation: Option<&Cancellation>,
+) -> Result<Vec<Option<[f64; 2]>>, ImageError> {
     let step = if decimate <= 1 {
         [1, 1]
     } else {
@@ -1120,18 +1138,24 @@ fn coarse_positions(
             .map(|step| step.max(1))
     };
     if step == [1, 1] {
-        return (0..shape[1])
+        let positions = (0..shape[1])
             .flat_map(|y| (0..shape[0]).map(move |x| [x as f64, y as f64]))
-            .map(project)
-            .collect();
+            .map(project);
+        return coordinate_positions(shape[0] * shape[1], positions, cancellation);
     }
     let sparse = [shape[0].div_ceil(step[0]), shape[1].div_ceil(step[1])];
     let mut projected_x = Vec::with_capacity(sparse[0] * sparse[1]);
     let mut projected_y = Vec::with_capacity(projected_x.capacity());
     let mut valid = Vec::with_capacity(projected_x.capacity());
-    for y in (0..shape[1]).step_by(step[1]) {
-        for x in (0..shape[0]).step_by(step[0]) {
-            let pixel = project([x as f64, y as f64]);
+    let sparse_pixels = (0..shape[1]).step_by(step[1]).flat_map(|y| {
+        (0..shape[0])
+            .step_by(step[0])
+            .map(move |x| [x as f64, y as f64])
+    });
+    let mut sparse_pixels = sparse_pixels.map(project);
+    for _ in (0..sparse[0] * sparse[1]).step_by(progress::BATCH_SIZE) {
+        check(cancellation)?;
+        for pixel in sparse_pixels.by_ref().take(progress::BATCH_SIZE) {
             valid.push(pixel.is_some());
             let [x, y] = pixel.unwrap_or([0.0, 0.0]);
             projected_x.push(x);
@@ -1148,7 +1172,7 @@ fn coarse_positions(
         mask: Some(&valid),
         shape: sparse,
     };
-    (0..shape[1])
+    let positions = (0..shape[1])
         .flat_map(|j| {
             (0..shape[0]).map(move |i| [i as f64 / step[0] as f64, j as f64 / step[1] as f64])
         })
@@ -1157,8 +1181,8 @@ fn coarse_positions(
                 x.sample(RegridMethod::Linear, p)?,
                 y.sample(RegridMethod::Linear, p)?,
             ])
-        })
-        .collect()
+        });
+    coordinate_positions(shape[0] * shape[1], positions, cancellation)
 }
 
 fn invalid(message: impl Into<String>) -> ImageError {

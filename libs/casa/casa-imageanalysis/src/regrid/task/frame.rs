@@ -2,6 +2,7 @@
 //! CASA's direction-reference template mode.
 
 use casa_coordinates::{Coordinate, CoordinateSystem, DirectionCoordinate, ProjectionType};
+use casa_core::cancellation::Cancellation;
 use casa_core::measures::{
     MeasFrame,
     direction::{DirectionRef, MDirection},
@@ -10,8 +11,8 @@ use casa_core::{ArrayD, PrimitiveType};
 use ndarray::{Axis, IxDyn, ShapeBuilder, Slice};
 
 use super::{
-    RegridMethod, RegridPixel, Regridded, TaskRegridOptions, apply_direction, invalid,
-    validate_decimation,
+    RegridMethod, RegridPixel, Regridded, TaskRegridOptions, apply_direction, check, invalid,
+    progress, validate_decimation,
 };
 use casa_images::{ImageError, ImageInterface, ImagePixel};
 
@@ -69,6 +70,7 @@ pub(crate) fn regrid_direction_frame<T: RegridPixel>(
     reference: DirectionRef,
     method: RegridMethod,
     decimate: i64,
+    cancellation: Option<&Cancellation>,
 ) -> Result<(Regridded<T>, f64), ImageError> {
     let coordinates = image.coordinates();
     let (index, axes) = super::super::direction_of(coordinates)
@@ -86,8 +88,10 @@ pub(crate) fn regrid_direction_frame<T: RegridPixel>(
         return Err(invalid("This method only supports Float valued images"));
     }
     let shape = image.shape();
+    let data = image.get()?;
+    check(cancellation)?;
     let mut result = Regridded {
-        data: image.get()?,
+        data,
         mask: image
             .default_mask()?
             .unwrap_or_else(|| ArrayD::from_elem(IxDyn(shape).f(), true)),
@@ -127,6 +131,7 @@ pub(crate) fn regrid_direction_frame<T: RegridPixel>(
     )
     .with_world_units([&units[0], &units[1]])?;
     if pad > 0 {
+        check(cancellation)?;
         result.data = pad_direction(&result.data, axes, pad, T::default_value());
         result.mask = pad_direction(&result.mask, axes, pad, false);
     }
@@ -145,10 +150,11 @@ pub(crate) fn regrid_direction_frame<T: RegridPixel>(
             replicate: false,
             method,
             image_tool: None,
+            cancellation,
         },
         &frame,
     )?;
-    let lower = crop_direction(&mut result, axes)?;
+    let lower = crop_direction(&mut result, axes, cancellation)?;
     result.coordinates.replace_coordinate(
         index,
         output.with_reference_pixel([center[0] - lower[0] as f64, center[1] - lower[1] as f64]),
@@ -211,14 +217,19 @@ fn pad_direction<T: Copy>(data: &ArrayD<T>, axes: [usize; 2], pad: usize, zeros:
 fn crop_direction<T: ImagePixel + Copy>(
     result: &mut Regridded<T>,
     axes: [usize; 2],
+    cancellation: Option<&Cancellation>,
 ) -> Result<[usize; 2], ImageError> {
     let mut lower = [usize::MAX; 2];
     let mut upper = [0; 2];
-    for (index, &valid) in result.mask.indexed_iter() {
-        if valid {
-            for i in 0..2 {
-                lower[i] = lower[i].min(index[axes[i]]);
-                upper[i] = upper[i].max(index[axes[i]]);
+    let mut pixels = result.mask.indexed_iter();
+    for _ in (0..result.mask.len()).step_by(progress::BATCH_SIZE) {
+        check(cancellation)?;
+        for (index, &valid) in pixels.by_ref().take(progress::BATCH_SIZE) {
+            if valid {
+                for i in 0..2 {
+                    lower[i] = lower[i].min(index[axes[i]]);
+                    upper[i] = upper[i].max(index[axes[i]]);
+                }
             }
         }
     }

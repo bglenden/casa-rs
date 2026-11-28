@@ -19,10 +19,14 @@
 //! tclean model): only the mask says they were not sampled.
 
 use casa_coordinates::{CoordinateModel, CoordinateType};
+use casa_core::cancellation::Cancellation;
 use ndarray::{ArrayD, Axis, IxDyn, NdFloat, ShapeBuilder, Zip};
 
-use super::{RegridMethod, RegridPixel};
-use casa_images::ImagePixel;
+use super::{
+    RegridMethod, RegridPixel,
+    progress::{BATCH_SIZE, check},
+};
+use casa_images::{ImageError, ImagePixel};
 
 /// How the spectral axis is regridded: its pixel axis and the input pixel
 /// at each output channel, `None` where the conversion fails.
@@ -109,7 +113,7 @@ impl SpectralPlan {
         data: &ArrayD<T>,
         mask: &ArrayD<bool>,
         shape: &[usize],
-    ) -> (ArrayD<T>, ArrayD<bool>)
+    ) -> Result<(ArrayD<T>, ArrayD<bool>), ImageError>
     where
         T: ImagePixel + Into<f64> + From<f32> + Copy,
     {
@@ -119,6 +123,7 @@ impl SpectralPlan {
             shape,
             |value| Into::<f64>::into(value) as f32,
             T::from,
+            None,
         )
     }
 
@@ -127,8 +132,16 @@ impl SpectralPlan {
         data: &ArrayD<T>,
         mask: &ArrayD<bool>,
         shape: &[usize],
-    ) -> (ArrayD<T>, ArrayD<bool>) {
-        self.apply_with(data, mask, shape, |value| value, |value| value)
+        cancellation: Option<&Cancellation>,
+    ) -> Result<(ArrayD<T>, ArrayD<bool>), ImageError> {
+        self.apply_with(
+            data,
+            mask,
+            shape,
+            |value| value,
+            |value| value,
+            cancellation,
+        )
     }
 
     fn apply_with<T: ImagePixel + Copy, V: RegridPixel>(
@@ -138,35 +151,51 @@ impl SpectralPlan {
         shape: &[usize],
         read: impl Fn(T) -> V,
         write: impl Fn(V) -> T,
-    ) -> (ArrayD<T>, ArrayD<bool>) {
+        cancellation: Option<&Cancellation>,
+    ) -> Result<(ArrayD<T>, ArrayD<bool>), ImageError> {
         let mut out_data = ArrayD::<T>::from_elem(IxDyn(shape).f(), T::default_value());
         let mut out_mask = ArrayD::<bool>::from_elem(IxDyn(shape).f(), false);
         let axis = Axis(self.axis);
-        Zip::from(out_data.lanes_mut(axis))
+        let completed = Zip::from(out_data.lanes_mut(axis))
             .and(out_mask.lanes_mut(axis))
             .and(data.lanes(axis))
             .and(mask.lanes(axis))
-            .for_each(|mut out, mut good, line, line_mask| {
-                let at = |k| (read(line[k]), line_mask[k]);
-                let derivatives = (self.method == RegridMethod::Cubic && line.len() > 1)
-                    .then(|| second_derivatives(|k| at(k).0, line.len()));
-                for (channel, position) in self.positions.iter().enumerate() {
-                    let Some(position) = position.and_then(cast::<V::Real>) else {
-                        continue;
+            .all(|mut out, mut good, line, line_mask| {
+                let mut run = || -> Result<(), ImageError> {
+                    check(cancellation)?;
+                    let at = |k| (read(line[k]), line_mask[k]);
+                    let derivatives = if self.method == RegridMethod::Cubic && line.len() > 1 {
+                        Some(second_derivatives(|k| at(k).0, line.len(), cancellation)?)
+                    } else {
+                        None
                     };
-                    let (value, valid) = match (self.method, &derivatives) {
-                        _ if line.len() == 1 => at(0),
-                        (RegridMethod::Nearest, _) => nearest(position, at, line.len()),
-                        (RegridMethod::Cubic, Some(derivatives)) => {
-                            spline(position, at, derivatives)
+                    for (batch, positions) in self.positions.chunks(BATCH_SIZE).enumerate() {
+                        check(cancellation)?;
+                        let start = batch * BATCH_SIZE;
+                        for (offset, position) in positions.iter().enumerate() {
+                            let Some(position) = position.and_then(cast::<V::Real>) else {
+                                continue;
+                            };
+                            let (value, valid) = match (self.method, &derivatives) {
+                                _ if line.len() == 1 => at(0),
+                                (RegridMethod::Nearest, _) => nearest(position, at, line.len()),
+                                (RegridMethod::Cubic, Some(derivatives)) => {
+                                    spline(position, at, derivatives)
+                                }
+                                _ => linear(position, at, line.len()),
+                            };
+                            out[start + offset] = write(value);
+                            good[start + offset] = valid;
                         }
-                        _ => linear(position, at, line.len()),
-                    };
-                    out[channel] = write(value);
-                    good[channel] = valid;
-                }
+                    }
+                    Ok(())
+                };
+                run().is_ok()
             });
-        (out_data, out_mask)
+        if !completed {
+            return Err(ImageError::Interrupted);
+        }
+        Ok((out_data, out_mask))
     }
 }
 
@@ -180,20 +209,28 @@ fn nearest<F: NdFloat, V>(x: F, at: impl Fn(usize) -> (V, bool), count: usize) -
 fn second_derivatives<F: NdFloat, V: RegridPixel<Real = F>>(
     at: impl Fn(usize) -> V,
     count: usize,
-) -> Vec<V> {
+    cancellation: Option<&Cancellation>,
+) -> Result<Vec<V>, ImageError> {
     let mut coefficients = vec![F::zero(); count];
     let mut result = vec![V::default_value(); count];
-    for i in 1..count - 1 {
-        let diagonal = number::<F>(4.0) - coefficients[i - 1];
-        let difference = (at(i + 1) - at(i)) - (at(i) - at(i - 1));
-        coefficients[i] = F::one() / diagonal;
-        result[i] = (difference * number::<F>(6.0) - result[i - 1]) / diagonal;
+    let end = count - 1;
+    for start in (1..end).step_by(BATCH_SIZE) {
+        check(cancellation)?;
+        for i in start..(start + BATCH_SIZE).min(end) {
+            let diagonal = number::<F>(4.0) - coefficients[i - 1];
+            let difference = (at(i + 1) - at(i)) - (at(i) - at(i - 1));
+            coefficients[i] = F::one() / diagonal;
+            result[i] = (difference * number::<F>(6.0) - result[i - 1]) / diagonal;
+        }
     }
     // InterpolateArray1D back-substitutes down through index 2.
-    for i in (2..count - 1).rev() {
-        result[i] = result[i] - result[i + 1] * coefficients[i];
+    for last in (2..end).rev().step_by(BATCH_SIZE) {
+        check(cancellation)?;
+        for i in (last.saturating_sub(BATCH_SIZE - 1).max(2)..=last).rev() {
+            result[i] = result[i] - result[i + 1] * coefficients[i];
+        }
     }
-    result
+    Ok(result)
 }
 
 fn spline<F: NdFloat, V: RegridPixel<Real = F>>(

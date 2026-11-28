@@ -43,6 +43,20 @@ impl ImregridTemplate {
 /// Returns an error for unreadable images, incompatible templates, unsupported
 /// pixel or coordinate types, and failed output publication.
 pub fn imregrid(request: &ImregridRequest) -> Result<ImregridOutcome, ImageError> {
+    imregrid_with_cancellation(request, None)
+}
+
+/// Regrid cooperatively until the staged image is accepted for publication.
+///
+/// # Errors
+/// Returns the same errors as [`imregrid`], or [`ImageError::Interrupted`]
+/// when cancellation is observed before publication.
+pub fn imregrid_with_cancellation(
+    request: &ImregridRequest,
+    cancellation: Option<&casa_core::cancellation::Cancellation>,
+) -> Result<ImregridOutcome, ImageError> {
+    use crate::regrid::progress::check;
+    check(cancellation)?;
     let input = AnyPagedImage::open(&request.imagename)?;
     if matches!(&request.template, ImregridTemplate::Image(path) if path.as_os_str().eq_ignore_ascii_case("get"))
     {
@@ -68,14 +82,15 @@ pub fn imregrid(request: &ImregridRequest) -> Result<ImregridOutcome, ImageError
             casa_core::RecordField::new("csys", Value::Record(coordinates)),
             casa_core::RecordField::new("shap", Value::Array(ArrayValue::from_i32_vec(shape))),
         ]));
+        check(cancellation)?;
         return Ok(ImregridOutcome::Template(template));
     }
     let template = read_template(&request.template)?;
     match input {
-        AnyPagedImage::Float32(image) => write_product(&image, request, &template),
-        AnyPagedImage::Float64(image) => write_product(&image, request, &template),
-        AnyPagedImage::Complex32(image) => write_product(&image, request, &template),
-        AnyPagedImage::Complex64(image) => write_product(&image, request, &template),
+        AnyPagedImage::Float32(image) => write_product(&image, request, &template, cancellation),
+        AnyPagedImage::Float64(image) => write_product(&image, request, &template, cancellation),
+        AnyPagedImage::Complex32(image) => write_product(&image, request, &template, cancellation),
+        AnyPagedImage::Complex64(image) => write_product(&image, request, &template, cancellation),
     }
     .map(ImregridOutcome::Product)
 }
@@ -136,7 +151,9 @@ fn write_product<T: RegridPixel>(
     input: &PagedImage<T>,
     request: &ImregridRequest,
     template: &Template,
+    cancellation: Option<&casa_core::cancellation::Cancellation>,
 ) -> Result<ImageRegridSummary, ImageError> {
+    use crate::regrid::progress::{self, check};
     let output = match (&request.template, request.output.as_os_str().is_empty()) {
         (ImregridTemplate::Image(_), true) => {
             let mut name = request.imagename.as_os_str().to_os_string();
@@ -190,13 +207,14 @@ fn write_product<T: RegridPixel>(
                         replicate: request.replicate,
                         method,
                         image_tool: None,
+                        cancellation,
                     },
                 )?,
                 0.0,
             )
         }
         Template::Frame(reference) => {
-            regrid_direction_frame(input, *reference, method, request.decimate)?
+            regrid_direction_frame(input, *reference, method, request.decimate, cancellation)?
         }
     };
     let Regridded {
@@ -206,7 +224,7 @@ fn write_product<T: RegridPixel>(
         ..
     } = regridded;
     let shape = data.shape().to_vec();
-    let valid_pixels = mask.iter().filter(|&&bit| bit).count();
+    let valid_pixels = progress::count_valid(&mask, cancellation)?;
     if let Some(destination) = destination {
         let input_info = input.image_info()?;
         let info = output_image_info(
@@ -228,7 +246,9 @@ fn write_product<T: RegridPixel>(
             image.set_image_info(&info)?;
         }
         image.set_misc_info(input.misc_info())?;
+        check(cancellation)?;
         image.put_slice(&data, &vec![0; shape.len()])?;
+        check(cancellation)?;
         if valid_pixels < data.len() {
             image.put_mask("mask0", &mask)?;
             image.set_default_mask("mask0")?;
@@ -244,8 +264,22 @@ fn write_product<T: RegridPixel>(
                 ),
             ],
         )?;
+        check(cancellation)?;
         image.save()?;
         drop(image);
+        #[cfg(feature = "imregrid-test-hooks")]
+        crate::imregrid_test_hooks::observe(
+            crate::imregrid_test_hooks::Checkpoint::BeforePublication,
+        );
+
+        // Cancellation before acceptance only drops the private image. Once
+        // accepted, finish the established rename or locked exchange.
+        check(cancellation)?;
+        #[cfg(feature = "imregrid-test-hooks")]
+        crate::imregrid_test_hooks::observe(
+            crate::imregrid_test_hooks::Checkpoint::PublicationAccepted,
+        );
+
         match rename_without_replacing(&product, &destination) {
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists && overwrite => {
                 check_output(request, &destination, overwrite)?;
@@ -254,6 +288,8 @@ fn write_product<T: RegridPixel>(
             }
             result => result.map_err(output_io)?,
         }
+    } else {
+        check(cancellation)?;
     }
     Ok(ImageRegridSummary {
         imagename: request.imagename.display().to_string(),
