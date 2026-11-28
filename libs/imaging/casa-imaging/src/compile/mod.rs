@@ -231,7 +231,7 @@ pub(crate) fn prepare_with_view_hooks(
         (&stores, reference),
         continuum.as_ref(),
         &frame,
-        moving_rest_frame.as_ref(),
+        moving_rest_frame.as_ref().zip(centre.ephemeris.as_ref()),
         request.reffreq,
     )?;
     let surveyed_observation = Surveyed {

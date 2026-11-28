@@ -138,7 +138,7 @@ impl ImageSpectrum {
                 .map(|[_, start, count, step]| [start as usize, count as usize, step as usize]),
         );
         let native = NativeRow {
-            selection_spacing_hz: None,
+            selection_centres_hz: None,
             uvw_m: row.uvw,
             phase_shift_m: 0.,
             pointing_offset_rad: [0.; 2],
@@ -239,7 +239,7 @@ mod tests {
             .prediction
             .resize(CHANNELS * CORRELATIONS, Complex32::default());
         let native = NativeRow {
-            selection_spacing_hz: None,
+            selection_centres_hz: None,
             uvw_m: [0.; 3],
             phase_shift_m: 0.,
             pointing_offset_rad: [0.; 2],
@@ -283,7 +283,7 @@ mod tests {
             Complex32::new(31.5, 1.)
         );
         let flagged = NativeRow {
-            selection_spacing_hz: None,
+            selection_centres_hz: None,
             row_flag: true,
             ..native
         };

@@ -43,8 +43,8 @@ pub struct DomainProjection {
 /// Values of one native row shared by every image domain.
 #[derive(Clone, Copy, Debug)]
 pub struct NativeRowHeader {
-    /// The actual selection spacing retained across wave restriction.
-    pub selection_spacing_hz: Option<f64>,
+    /// The first two selected centres retained across wave restriction.
+    pub selection_centres_hz: Option<[f64; 2]>,
     /// Row flag (MAIN `FLAG_ROW`, or a row CASA excludes from imaging).
     pub row_flag: bool,
     /// Per-row context for kernel-set cell selection.
@@ -442,7 +442,7 @@ impl NativeBlock {
         // Shared rows all read the one row of samples the block keeps.
         let samples = if self.shared { 0 } else { index };
         NativeRow {
-            selection_spacing_hz: header.selection_spacing_hz,
+            selection_centres_hz: header.selection_centres_hz,
             uvw_m: projection.uvw_m,
             phase_shift_m: projection.phase_shift_m,
             pointing_offset_rad: projection.pointing_offset_rad,
@@ -478,7 +478,7 @@ mod tests {
 
     fn header(antennas: [u32; 2], row: u64) -> NativeRowHeader {
         NativeRowHeader {
-            selection_spacing_hz: None,
+            selection_centres_hz: None,
             row_flag: false,
             context: RowContext {
                 native_frequency_ratio: 1.0,
@@ -606,7 +606,7 @@ mod tests {
         for index in 0..shape.rows {
             let mut row = header([0, 1], index as u64);
             row.context.native_frequency_ratio = 1.0 + index as f64 * 1.0e-6;
-            row.selection_spacing_hz = Some(1.0e6 + index as f64);
+            row.selection_centres_hz = Some([1.0e9, 1.0e9 + 1.0e6 + index as f64]);
             block.push_row(
                 row,
                 &[projection],
@@ -622,9 +622,9 @@ mod tests {
                 block.row(0, index).context.native_frequency_ratio,
                 1.0 + index as f64 * 1.0e-6
             );
-            let spacing = Some(1.0e6 + index as f64);
-            assert_eq!(block.row(0, index).selection_spacing_hz, spacing);
-            assert_eq!(block.prediction_row(0, index).selection_spacing_hz, spacing);
+            let spacing = Some([1.0e9, 1.0e9 + 1.0e6 + index as f64]);
+            assert_eq!(block.row(0, index).selection_centres_hz, spacing);
+            assert_eq!(block.prediction_row(0, index).selection_centres_hz, spacing);
         }
         assert!(
             block.capacity_bytes() <= shape.bytes(),

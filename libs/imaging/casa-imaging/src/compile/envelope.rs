@@ -269,6 +269,54 @@ fn fold_over_epochs(
     Ok(converted)
 }
 
+/// The row's observatory frame with the radial velocity of the same
+/// ephemeris the compiled geometry tracks.
+fn tracked_epoch_frame(
+    services: (&Catalogue, &MsCalEngine),
+    ephemeris: &PhaseCentreEphemeris,
+    epoch: Epoch,
+) -> Result<MeasFrame, PrepareError> {
+    let velocity = services.1.ephemeris_radial_velocity(
+        epoch.time_mjd_seconds,
+        epoch.field_id as usize,
+        ephemeris,
+    )?;
+    Ok(epoch_frame(services, epoch)?.with_radial_velocity(velocity))
+}
+
+/// The stored band a linear REST cube can reach over all selected epochs.
+/// Fold the Doppler factors into one interval without retaining a time-sized
+/// array. These outward-rounded bounds restrict reads, not fine-grid samples.
+pub(super) fn tracked_read_band(
+    services: (&Catalogue, &MsCalEngine),
+    survey: &Survey,
+    ephemeris: &PhaseCentreEphemeris,
+    (first, increment, count): (f64, f64, usize),
+) -> Result<Option<[f64; 2]>, PrepareError> {
+    let last = first + (count - 1) as f64 * increment;
+    let half = increment.abs() / 2.0;
+    let mut scale = [f64::INFINITY, 0.0_f64];
+    for window in &survey.spectral_windows {
+        for &epoch in survey.window_epochs(window.spw_id) {
+            let frame = tracked_epoch_frame(services, ephemeris, epoch)?;
+            let factor = PreparedFrequencyConversion::new(
+                window.frequency_reference,
+                FrequencyRef::REST,
+                Some(&frame),
+                Some(&frame),
+            )?
+            .convert_hz(1.0);
+            scale = [scale[0].min(factor), scale[1].max(factor)];
+        }
+    }
+    Ok((scale[1] > 0.0).then(|| {
+        [
+            ((first.min(last) - half) / scale[1]).next_down(),
+            ((first.max(last) + half) / scale[0]).next_up(),
+        ]
+    }))
+}
+
 /// Each selected window's beam frequency conversion at the first
 /// visibility buffer CASA's tclean iterates of it, by window number.
 ///
@@ -298,13 +346,7 @@ pub(super) fn first_buffer_beam_factors(
             });
         let scales = match (first, tracking) {
             (Some(epoch), Some(ephemeris)) => {
-                let frame = epoch_frame((catalogue, engine), epoch)?.with_radial_velocity(
-                    engine.ephemeris_radial_velocity(
-                        epoch.time_mjd_seconds,
-                        epoch.field_id as usize,
-                        ephemeris,
-                    )?,
-                );
+                let frame = tracked_epoch_frame((catalogue, engine), ephemeris, epoch)?;
                 let factor = |output| {
                     PreparedFrequencyConversion::new(source, output, Some(&frame), Some(&frame))
                         .map(|conversion| conversion.convert_hz(1.0))

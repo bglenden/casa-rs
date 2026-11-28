@@ -146,7 +146,7 @@ impl Rows {
     pub fn native(&self, domain: usize, index: usize) -> NativeRow<'_> {
         let row = &self.rows[index];
         NativeRow {
-            selection_spacing_hz: None,
+            selection_centres_hz: None,
             uvw_m: row.projections[domain].uvw_m,
             phase_shift_m: row.projections[domain].phase_shift_m,
             pointing_offset_rad: row.projections[domain].pointing_offset_rad,
@@ -240,7 +240,7 @@ impl BoundedSource for Rows {
             let zeros = vec![Complex32::default(); row.values.len()];
             block.push_row(
                 NativeRowHeader {
-                    selection_spacing_hz: None,
+                    selection_centres_hz: None,
                     row_flag: false,
                     context: context(self.next + index),
                     address: RowAddress {
@@ -827,7 +827,7 @@ pub fn prediction_block(rows: &Rows, range: std::ops::Range<usize>) -> NativeBlo
         }
         block.push_row(
             NativeRowHeader {
-                selection_spacing_hz: None,
+                selection_centres_hz: None,
                 row_flag: row_kind(index) == RowKind::Flagged,
                 context: row_context,
                 address: RowAddress {

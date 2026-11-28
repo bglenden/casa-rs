@@ -617,7 +617,7 @@ impl ModelPredictor {
         workspace.values.resize(cells, Complex32::new(0.0, 0.0));
         workspace.weights.resize(cells, 1.0);
         let native = NativeRow {
-            selection_spacing_hz: None,
+            selection_centres_hz: None,
             uvw_m: row.uvw_m,
             phase_shift_m: row.phase_shift_m,
             pointing_offset_rad: [0.0; 2],

@@ -79,7 +79,7 @@ fn predict(
     let values = vec![Complex32::new(1.0, 0.0); frequencies_hz.len() * 2];
     let weights = vec![1.0; frequencies_hz.len() * 2];
     let row = NativeRow {
-        selection_spacing_hz: None,
+        selection_centres_hz: None,
         uvw_m: UVW_M,
         phase_shift_m,
         pointing_offset_rad: [0.0; 2],
@@ -140,7 +140,7 @@ fn direct_prediction_is_the_degridded_value_at_each_native_channel() {
         let values = vec![Complex32::default(); 2];
         let mut buffer = SampleBuffer::new(2);
         let row = NativeRow {
-            selection_spacing_hz: None,
+            selection_centres_hz: None,
             uvw_m: UVW_M,
             phase_shift_m: 0.013,
             pointing_offset_rad: [0.0; 2],
@@ -426,7 +426,7 @@ fn linear_prediction_preserves_the_selected_spacing_across_a_gap() {
         (&values[2..], &weights[2..], &flags[2..]),
     );
     let restricted = NativeRow {
-        selection_spacing_hz: Some(native[1] - native[0]),
+        selection_centres_hz: Some([native[0], native[1]]),
         ..delivered
     };
     let resident = predict_one(&resampler, &operator, &model, &resident);
@@ -449,6 +449,123 @@ fn linear_prediction_preserves_the_selected_spacing_across_a_gap() {
             assert_eq!(restricted[cell], resident[cell + 2]);
             assert!((actual - widen(lost_spacing[cell])).norm() > 0.1);
         }
+    }
+}
+
+/// Both interpolation stencils retain the integer model samples under a
+/// one-ULP perturbation of the native pair that sets the fine-grid count.
+#[test]
+fn source_frame_prediction_uses_the_same_stable_integer_count() {
+    let first = 1.0e9_f64;
+    let axis = SpectralAxis::new(first, 3.0, 3).expect("axis");
+    let shifted = [
+        first - 1.0,
+        first.next_up(),
+        first + 1.0,
+        first + 2.0,
+        first + 3.0,
+        first + 4.0,
+        first + 5.0,
+        first + 6.0,
+    ];
+    let mut exact = shifted;
+    exact[1] = first;
+    for kernel in [SpectralKernel::Linear, SpectralKernel::Cubic] {
+        let resolved = SpectralResampler::channel_local(
+            axis.clone().with_integral_width_at_coordinate_precision(),
+            kernel,
+        );
+        let raw_floor = SpectralResampler::channel_local(axis.clone(), kernel);
+        let operator = operator(GridPrecision::F64, resolved.basis(), &XX_YY, &STOKES_I);
+        let model = point_model(&operator, &[1.0, 4.0, 10.0]);
+        let sample = |resampler, native: &[f64]| {
+            predict(
+                resampler,
+                &operator,
+                &model,
+                native,
+                &[false; 16],
+                false,
+                0.0,
+            )[4]
+        };
+        // The tested channel is unchanged. Only the represented spacing
+        // used to choose the interpolation grid has changed.
+        let resolved_shifted = sample(&resolved, &shifted);
+        let resolved_exact = sample(&resolved, &exact);
+        let unresolved = sample(&raw_floor, &shifted);
+        assert_eq!(resolved_shifted, resolved_exact, "{kernel:?}");
+        assert!((unresolved - resolved_exact).norm() > 0.1, "{kernel:?}");
+    }
+}
+
+/// Trimming the complete selected pair across 2^30 Hz changes the ULP
+/// of the wave's first pair. Gridding and prediction must still use the
+/// width and precision of the original pair together.
+#[test]
+fn tracked_wave_keeps_the_selected_pair_in_gridding_and_prediction() {
+    let axis = SpectralAxis::new(1_065_741_824.0, 2_999_999.999_998_569_5, 16)
+        .unwrap()
+        .with_integral_width_at_coordinate_precision();
+    let native = (0..80)
+        .map(|channel| 1_041_741_824.0 + 1.0e6 * f64::from(channel))
+        .collect::<Vec<_>>();
+    let values = vec![Complex32::new(1.0, 0.0); 2 * native.len()];
+    let weights = vec![1.0; values.len()];
+    let flags = vec![false; values.len()];
+    let complete = row_on(UVW_M, [0, 1], &native, (&values, &weights, &flags));
+    let restricted = NativeRow {
+        selection_centres_hz: Some([native[0], native[1]]),
+        frequencies_hz: &native[40..],
+        values: &values[80..],
+        weights: &weights[80..],
+        flags: &flags[80..],
+        ..complete
+    };
+    let wrong_pair = NativeRow {
+        selection_centres_hz: None,
+        ..restricted
+    };
+    for kernel in [SpectralKernel::Linear, SpectralKernel::Cubic] {
+        let resampler = SpectralResampler::channel_local(axis.clone(), kernel);
+        let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
+        let model = point_model(
+            &operator,
+            &std::array::from_fn::<_, 16, _>(|plane| (plane % 4) as f32),
+        );
+        let place = |row: &NativeRow<'_>| {
+            let mut samples = SampleBuffer::new(2);
+            resampler
+                .place(
+                    &operator,
+                    &WeightingGeneration::Natural { taper: None },
+                    row,
+                    &mut samples,
+                )
+                .unwrap();
+            samples
+                .placements()
+                .iter()
+                .filter(|sample| (7..13).contains(&sample.plane))
+                .map(|sample| (sample.plane, sample.u, sample.v))
+                .collect::<Vec<_>>()
+        };
+        let resident = place(&complete);
+        assert!(!resident.is_empty());
+        assert_eq!(place(&restricted), resident, "{kernel:?}");
+        assert_ne!(place(&wrong_pair), resident, "{kernel:?}");
+        let resident = predict_one(&resampler, &operator, &model, &complete);
+        let waved = predict_one(&resampler, &operator, &model, &restricted);
+        let wrong = predict_one(&resampler, &operator, &model, &wrong_pair);
+        // These interior cells stay clear of either row's prediction halo.
+        assert_eq!(&waved[12..36], &resident[92..116], "{kernel:?}");
+        assert!(
+            waved[12..36]
+                .iter()
+                .zip(&wrong[12..36])
+                .any(|(a, b)| (*a - *b).norm() > 0.05),
+            "{kernel:?}"
+        );
     }
 }
 
@@ -558,7 +675,7 @@ fn row_on<'a>(
     cells: (&'a [Complex32], &'a [f32], &'a [bool]),
 ) -> NativeRow<'a> {
     NativeRow {
-        selection_spacing_hz: None,
+        selection_centres_hz: None,
         uvw_m,
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],
@@ -825,7 +942,7 @@ fn a_batch_predicts_each_row_as_alone_within_what_it_charges() {
             let weights = widths.map(|channels| vec![1.0; channels * 2]);
             let flags = widths.map(|channels| vec![false; channels * 2]);
             let rows = std::array::from_fn::<_, 3, _>(|index| NativeRow {
-                selection_spacing_hz: None,
+                selection_centres_hz: None,
                 uvw_m: UVW_M,
                 phase_shift_m: 0.0,
                 pointing_offset_rad: [0.0; 2],

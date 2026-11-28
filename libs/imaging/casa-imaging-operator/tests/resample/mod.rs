@@ -73,7 +73,7 @@ fn placed_with(
     let weights = vec![1.0; frequencies.len() * 2];
     let flags = vec![false; frequencies.len() * 2];
     let row = NativeRow {
-        selection_spacing_hz: None,
+        selection_centres_hz: None,
         uvw_m: [10.0, 10.0, 0.0],
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],
@@ -115,7 +115,7 @@ fn the_standard_density_bins_the_measurement_set_uvw() {
     let flags = [false; 2];
     let stored = [500.0, 120.0, 7.0];
     let row = |rotated: [f64; 3]| NativeRow {
-        selection_spacing_hz: None,
+        selection_centres_hz: None,
         uvw_m: rotated,
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],
@@ -180,7 +180,7 @@ fn the_uv_taper_weighs_each_channel_at_its_own_frequency_after_the_density() {
     let flags = [false; 4];
     let uvw_m = [600.0, -350.0, 7.0];
     let row = NativeRow {
-        selection_spacing_hz: None,
+        selection_centres_hz: None,
         uvw_m,
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],
@@ -257,7 +257,7 @@ fn a_per_field_density_weighs_each_field_by_its_own_samples() {
     let weights = [1.0; 2];
     let flags = [false; 2];
     let row = |field: u32, uvw_m: [f64; 3]| NativeRow {
-        selection_spacing_hz: None,
+        selection_centres_hz: None,
         uvw_m,
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],
@@ -346,7 +346,7 @@ fn the_cube_density_bins_and_looks_up_the_rotated_uvw() {
     let flags = [false; 4];
     let rotated = [300.0, -150.0, 20.0];
     let row = |stored: [f64; 3]| NativeRow {
-        selection_spacing_hz: None,
+        selection_centres_hz: None,
         uvw_m: rotated,
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],
@@ -415,7 +415,7 @@ fn cube_density_lookup_narrows_the_reporting_wavelength() {
         &STOKES_I,
     );
     let row = NativeRow {
-        selection_spacing_hz: None,
+        selection_centres_hz: None,
         uvw_m: [-470.246_429_233_412_47, -499.326_663_238_139_76, 0.0],
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],
@@ -436,7 +436,7 @@ fn cube_density_lookup_narrows_the_reporting_wavelength() {
     for (v_cell, weight) in [(619.0, 2.0), (620.0, 3.0)] {
         let v_metres = -(v_cell - 512.0) * C / (1024.0 * cell * frequency);
         let donor = NativeRow {
-            selection_spacing_hz: None,
+            selection_centres_hz: None,
             uvw_m: [row.uvw_m[0], v_metres, 0.0],
             weights: &[weight; 2],
             ..row
@@ -472,7 +472,7 @@ fn direct_sampling_places_every_unflagged_channel_on_plane_zero() {
     let weights = [2.0, 4.0, 1.0, 1.0, 8.0, 8.0];
     let flags = [false, false, true, false, false, false];
     let row = NativeRow {
-        selection_spacing_hz: None,
+        selection_centres_hz: None,
         uvw_m: [300.0, -150.0, 20.0],
         phase_shift_m: 0.25,
         pointing_offset_rad: [0.0; 2],
@@ -512,7 +512,7 @@ fn direct_sampling_places_every_unflagged_channel_on_plane_zero() {
     assert_eq!(block.weights_of(1), &[8.0, 8.0]);
 
     let flagged_row = NativeRow {
-        selection_spacing_hz: None,
+        selection_centres_hz: None,
         row_flag: true,
         ..row
     };
@@ -539,7 +539,7 @@ fn samples_whose_support_leaves_the_grid_are_dropped() {
     let far = 39.0 * 625.0 * C / 1.0e9;
     for (u, expected) in [(0.0, 1), (far, 0), (-far, 0), (35.0 * 625.0 * C / 1.0e9, 1)] {
         let row = NativeRow {
-            selection_spacing_hz: None,
+            selection_centres_hz: None,
             uvw_m: [u, 0.0, 0.0],
             phase_shift_m: 0.0,
             pointing_offset_rad: [0.0; 2],
@@ -571,7 +571,7 @@ fn taylor_basis_sets_the_spectral_variable() {
     let weights = [1.0; 4];
     let flags = [false; 4];
     let row = NativeRow {
-        selection_spacing_hz: None,
+        selection_centres_hz: None,
         uvw_m: [10.0, 10.0, 0.0],
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],
@@ -622,7 +622,7 @@ fn linear_mapping_interpolates_values_and_channel_weights_and_ors_flags() {
     let weights = [2.0, 2.0, 4.0, 4.0, 8.0, 8.0];
     let flags = [false; 6];
     let row = NativeRow {
-        selection_spacing_hz: None,
+        selection_centres_hz: None,
         uvw_m: [10.0, 0.0, 0.0],
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],
@@ -774,7 +774,7 @@ fn cube_briggs_weights_come_from_the_nearest_native_channel_on_the_padded_axis()
         flags: &'a [bool],
     ) -> NativeRow<'a> {
         NativeRow {
-            selection_spacing_hz: None,
+            selection_centres_hz: None,
             uvw_m: [10.0, 0.0, 0.0],
             phase_shift_m: 0.0,
             pointing_offset_rad: [0.0; 2],
@@ -896,7 +896,7 @@ fn a_density_axis_padded_below_zero_hertz_still_numbers_its_planes() {
     let weights = vec![1.0_f32; 6];
     let flags = vec![false; 6];
     let row = NativeRow {
-        selection_spacing_hz: None,
+        selection_centres_hz: None,
         uvw_m: [10.0, 0.0, 0.0],
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],
@@ -944,7 +944,7 @@ fn an_end_point_sample_takes_its_own_channel_value() {
     values[3] = Complex32::new(f32::NAN, 0.0);
     let flags = [false, false, true, true, false, false];
     let row = NativeRow {
-        selection_spacing_hz: None,
+        selection_centres_hz: None,
         uvw_m: [10.0, 10.0, 0.0],
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],
@@ -997,7 +997,7 @@ fn a_one_step_out_of_band_channel_is_not_extrapolated() {
                 frequencies[4] = frequencies[4].next_up();
             }
             let row = NativeRow {
-                selection_spacing_hz: None,
+                selection_centres_hz: None,
                 uvw_m: [10.0, 10.0, 0.0],
                 phase_shift_m: 0.0,
                 pointing_offset_rad: [0.0; 2],
@@ -1087,7 +1087,7 @@ fn density_pass_carries_the_unpolarized_weight_without_a_support_test() {
     let flags = [false; 2];
     let far = 39.0 * 625.0 * C / 1.0e9;
     let row = NativeRow {
-        selection_spacing_hz: None,
+        selection_centres_hz: None,
         uvw_m: [far, 0.0, 0.0],
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],
@@ -1136,7 +1136,7 @@ fn cube_density_samples_interpolate_native_weights_linearly() {
     let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
     let frequencies = [1.0e9, 1.1e9];
     let row = NativeRow {
-        selection_spacing_hz: None,
+        selection_centres_hz: None,
         uvw_m: [10.0, 10.0, 0.0],
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],
@@ -1180,7 +1180,7 @@ fn the_cube_density_counts_each_unflagged_parallel_hand() {
     let weights = [2.0, 6.0];
     let density = |flags: &[bool], rule| {
         let row = NativeRow {
-            selection_spacing_hz: None,
+            selection_centres_hz: None,
             uvw_m: [10.0, 10.0, 0.0],
             phase_shift_m: 0.0,
             pointing_offset_rad: [0.0; 2],
@@ -1233,7 +1233,7 @@ fn autocorrelations_reach_the_density_but_not_the_grid() {
     let resampler = SpectralResampler::direct(Basis::Constant).expect("resampler");
     let frequencies = [1.0e9];
     let row = NativeRow {
-        selection_spacing_hz: None,
+        selection_centres_hz: None,
         uvw_m: [0.0; 3],
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],
@@ -1307,7 +1307,7 @@ fn standard_density_cells_use_casa_single_precision_coordinates() {
     let weights = [1.0; 2];
     let flags = [false; 2];
     let row = NativeRow {
-        selection_spacing_hz: None,
+        selection_centres_hz: None,
         uvw_m,
         phase_shift_m: 0.0,
         pointing_offset_rad: [0.0; 2],
@@ -1369,7 +1369,7 @@ fn a_row_past_the_last_w_plane_is_not_placed() {
     let flags = [false; 2];
     for (root, placed) in [(2.0_f64, 1), (4.0, 0)] {
         let row = NativeRow {
-            selection_spacing_hz: None,
+            selection_centres_hz: None,
             uvw_m: [10.0, 10.0, root * root / w_scale * wavelength_m],
             phase_shift_m: 0.0,
             pointing_offset_rad: [0.0; 2],
