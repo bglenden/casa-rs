@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use casa_test_support::table_sync::{persisted_table_shape, published_table_sync};
+use casa_test_support::taql_interop::TaqlOracle;
 use casa_test_support::{
     CppTableFixture, HeldCppTableReader, TableOracle, casacore_oracle_available,
 };
@@ -602,6 +603,291 @@ fn full_save_refuses_read_only_descriptor_without_changing_table() {
     writer.save(options).expect("retry full save");
     assert_eq!(reader.read_id(), 2);
     assert_eq!(fresh.read_id(), 2);
+}
+
+#[test]
+fn implicit_close_leaves_a_failed_unscoped_write_unpublished() {
+    if !casacore_oracle_available() {
+        eprintln!("skipping close readback: C++ casacore not available");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    let opts = TableOptions::new(path)
+        .with_data_manager(DataManagerKind::StandardStMan)
+        .with_data_manager_group("ScalarData");
+    build_lock_test_table().save(opts.clone()).unwrap();
+    let original = files_and_inodes(path, &["table.dat", "table.f0", "table.info", "table.lock"]);
+    let mut writer =
+        Table::open_with_lock(opts.clone(), LockOptions::new(LockMode::UserLocking)).unwrap();
+    assert!(writer.lock(LockType::Write, 1).unwrap());
+    let edit = |table: &mut Table| {
+        table.rename_column("name", "renamed").unwrap();
+        set_id(table, 52);
+    };
+    edit(&mut writer);
+    let control = path.join("table.dat");
+    let Some(permissions) = make_read_only(&control) else {
+        return;
+    };
+    assert!(writer.unlock().is_err());
+    assert!(writer.has_lock(LockType::Write));
+    std::fs::set_permissions(control, permissions).unwrap();
+    drop(writer);
+
+    assert_eq!(
+        files_and_inodes(path, &["table.dat", "table.f0", "table.info", "table.lock"]),
+        original
+    );
+    let rust = Table::open(opts.clone()).unwrap();
+    assert_eq!(cell(&rust, "id"), ScalarValue::Int32(42));
+    assert!(rust.schema().unwrap().column("name").is_some());
+    assert_eq!(
+        TableOracle::column_manager_name(path, "name").unwrap(),
+        "ScalarData"
+    );
+    assert_eq!(
+        HeldCppTableReader::open(path).unwrap().read_id().unwrap(),
+        42
+    );
+
+    let mut writer = Table::open(opts.clone()).unwrap();
+    edit(&mut writer);
+    writer.flush().unwrap();
+    assert_eq!(
+        cell(&Table::open(opts).unwrap(), "id"),
+        ScalarValue::Int32(52)
+    );
+    assert_eq!(
+        HeldCppTableReader::open(path).unwrap().read_id().unwrap(),
+        52
+    );
+    assert_eq!(
+        TableOracle::column_manager_name(path, "renamed").unwrap(),
+        "ScalarData"
+    );
+}
+
+fn make_read_only(path: &Path) -> Option<std::fs::Permissions> {
+    let original = std::fs::metadata(path).unwrap().permissions();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o444)).unwrap();
+    match std::fs::OpenOptions::new().write(true).open(path) {
+        Ok(_) => {
+            eprintln!("skipping permission assertion: process can write a mode 0444 file");
+            std::fs::set_permissions(path, original).unwrap();
+            None
+        }
+        Err(error) => {
+            assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+            Some(original)
+        }
+    }
+}
+
+fn files_and_inodes(path: &Path, files: &[&str]) -> Vec<(u64, Vec<u8>)> {
+    files
+        .iter()
+        .map(|name| {
+            let file = path.join(name);
+            (file.metadata().unwrap().ino(), std::fs::read(file).unwrap())
+        })
+        .collect()
+}
+
+#[test]
+fn explicit_flush_keeps_mixed_managers_after_failure() {
+    if !casacore_oracle_available() {
+        eprintln!("skipping flush readback: C++ casacore not available");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mixed");
+    let opts = TableOptions::new(&path).with_data_manager(DataManagerKind::StandardStMan);
+    let mut table = build_lock_test_table();
+    table
+        .add_column(
+            ColumnSchema::scalar("flag", PrimitiveType::Bool),
+            Some(Value::Scalar(ScalarValue::Bool(false))),
+        )
+        .unwrap();
+    let bindings = HashMap::from([(
+        "flag".to_owned(),
+        ColumnBinding {
+            data_manager: DataManagerKind::StManAipsIO,
+            tile_shape: None,
+        },
+    )]);
+    table.save_with_bindings(opts.clone(), &bindings).unwrap();
+    let files = [
+        "table.dat",
+        "table.f0",
+        "table.f1",
+        "table.info",
+        "table.lock",
+    ];
+    let snapshot = files_and_inodes(&path, &files);
+    let mut writer = Table::open(opts.clone()).unwrap();
+    let managers = writer.data_manager_info().to_vec();
+    assert_eq!(
+        TableOracle::column_manager_name(&path, "id").unwrap(),
+        "StandardStMan"
+    );
+    set_id(&mut writer, 52);
+    writer
+        .row_accessor_mut()
+        .set_cell(0, "flag", Value::Scalar(ScalarValue::Bool(true)))
+        .unwrap();
+
+    let assert_readback = |id, flag, cpp_flag| {
+        let read = Table::open(opts.clone()).unwrap();
+        assert_eq!(read.data_manager_info(), managers);
+        assert_eq!(cell(&read, "id"), ScalarValue::Int32(id));
+        assert_eq!(cell(&read, "flag"), ScalarValue::Bool(flag));
+        assert_eq!(cell(&read, "name"), ScalarValue::String("from_rust".into()));
+        let cpp =
+            TaqlOracle::query(&path, "SELECT id, iif(flag,1,0) AS flag_num, name FROM $1").unwrap();
+        assert_eq!(
+            cpp.grid.rows,
+            [vec![
+                id.to_string(),
+                String::from(cpp_flag),
+                "from_rust".to_owned()
+            ]]
+        );
+    };
+    for file in ["table.dat", "table.f1"] {
+        let read_only = path.join(file);
+        let Some(permissions) = make_read_only(&read_only) else {
+            return;
+        };
+        assert!(writer.flush().is_err(), "flush accepted a read-only {file}");
+        assert_eq!(files_and_inodes(&path, &files), snapshot);
+        assert_readback(42, false, "0");
+        std::fs::set_permissions(read_only, permissions).unwrap();
+    }
+
+    let mut held = HeldCppReaderProcess::open(&path);
+    assert_eq!(held.read_id(), 42);
+    writer.flush().unwrap();
+    assert_eq!(held.read_id(), 52);
+    assert_readback(52, true, "1");
+    for (file, (inode, _)) in files.iter().zip(&snapshot).skip(1) {
+        assert_eq!(path.join(file).metadata().unwrap().ino(), *inode, "{file}");
+    }
+}
+
+#[test]
+fn explicit_flush_keeps_a_held_forward_engine_bound_until_it_closes() {
+    if !casacore_oracle_available() {
+        eprintln!("skipping forward-column readback: C++ casacore not available");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("target");
+    build_lock_test_table()
+        .save(TableOptions::new(&target))
+        .unwrap();
+    let path = dir.path().join("forward");
+    let opts = TableOptions::new(&path).with_data_manager(DataManagerKind::StandardStMan);
+    let mut table = build_lock_test_table();
+    table.bind_forward_column("name", &target).unwrap();
+    table.save(opts.clone()).unwrap();
+    let mut writer = Table::open(opts.clone()).unwrap();
+    let managers = writer.data_manager_info().to_vec();
+    let mut held = HeldCppReaderProcess::open(&path);
+    assert_eq!(held.read_id(), 42);
+    set_id(&mut writer, 52);
+    writer.flush().unwrap();
+    assert_eq!(held.read_id(), 52);
+    let read_name = || {
+        let reopened = Table::open(opts.clone()).unwrap();
+        assert_eq!(reopened.data_manager_info(), managers);
+        let cpp = TaqlOracle::query(&path, "SELECT name FROM $1").unwrap();
+        let name = cpp.grid.rows[0][0].clone();
+        assert_eq!(cell(&reopened, "name"), ScalarValue::String(name.clone()));
+        name
+    };
+    assert_eq!(read_name(), "from_rust");
+
+    // A held engine caches its forward target. A flush of the raw binding
+    // keyword must honor the same compatibility boundary as a full save.
+    let alternate = dir.path().join("alternate");
+    let mut replacement = build_lock_test_table();
+    replacement
+        .row_accessor_mut()
+        .set_cell(
+            0,
+            "name",
+            Value::Scalar(ScalarValue::String("alternate".into())),
+        )
+        .unwrap();
+    replacement.save(TableOptions::new(&alternate)).unwrap();
+    let mut keywords = writer.column_keywords("name").unwrap().clone();
+    keywords.upsert(
+        "_ForwardColumn_TableName",
+        Value::Scalar(ScalarValue::String(alternate.display().to_string())),
+    );
+    writer.set_column_keywords("name", keywords);
+    let files = ["table.dat", "table.f0", "table.info", "table.lock"];
+    let flushed = files_and_inodes(&path, &files);
+    assert!(
+        writer
+            .flush()
+            .unwrap_err()
+            .to_string()
+            .contains("virtual manager keywords")
+    );
+    assert_eq!(files_and_inodes(&path, &files), flushed);
+    assert_eq!(read_name(), "from_rust");
+    drop(held);
+    writer.flush().unwrap();
+    assert_eq!(read_name(), "alternate");
+}
+
+#[test]
+fn existing_cpp_standard_manager_name_survives_a_failed_flush_and_row_retry() {
+    if !casacore_oracle_available() {
+        eprintln!("skipping StandardStMan readback: C++ casacore not available");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("existing");
+    let fixture = CppTableFixture::SsmScalarPrimitives;
+    TableOracle::table_write(fixture, &path).unwrap();
+    assert_eq!(
+        TableOracle::column_manager_name(&path, "col_i32").unwrap(),
+        "SSM"
+    );
+    let opts = TableOptions::new(&path);
+    let mut table = Table::open(opts.clone()).unwrap();
+    let managers = table.data_manager_info().to_vec();
+    assert_eq!(managers[0].name, "SSM");
+    let files = ["table.dat", "table.f0", "table.info", "table.lock"];
+    let initial = files_and_inodes(&path, &files);
+    table.remove_rows(&[1]).unwrap();
+    let control = path.join("table.dat");
+    let Some(permissions) = make_read_only(&control) else {
+        return;
+    };
+    assert!(table.flush().is_err());
+    assert_eq!(files_and_inodes(&path, &files), initial);
+    assert_eq!(Table::open(opts.clone()).unwrap().row_count(), 3);
+    TableOracle::table_verify(fixture, &path).unwrap();
+    std::fs::set_permissions(control, permissions).unwrap();
+
+    table.flush().unwrap();
+    let fresh = Table::open(opts).unwrap();
+    assert_eq!(fresh.data_manager_info(), managers);
+    assert_eq!(fresh.row_count(), 2);
+    assert_eq!(
+        TableOracle::column_manager_name(&path, "col_i32").unwrap(),
+        "SSM"
+    );
+    let cpp = TaqlOracle::query(&path, "SELECT col_i32 FROM $1").unwrap();
+    assert_eq!(cpp.grid.rows, [vec!["42"], vec!["0"]]);
+    for (file, (inode, _)) in files.iter().zip(&initial).skip(1) {
+        assert_eq!(path.join(file).metadata().unwrap().ino(), *inode, "{file}");
+    }
 }
 
 #[test]

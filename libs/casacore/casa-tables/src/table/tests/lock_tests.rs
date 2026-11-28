@@ -463,6 +463,46 @@ fn dropping_a_handle_publishes_a_write_persisted_before_a_resync() {
     assert_eq!(published_counter(&opts), before.wrapping_add(1));
 }
 
+#[test]
+fn dropping_a_write_lock_never_retries_an_unscoped_full_save() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StandardStMan);
+    let mut writer =
+        Table::open_with_lock(opts.clone(), LockOptions::new(LockMode::UserLocking)).unwrap();
+    assert!(writer.lock(LockType::Write, 1).unwrap());
+    // A schema edit has no selected-row persistence scope.
+    writer.rename_column("name", "other").unwrap();
+    set_id(&mut writer, 2);
+    let control = opts.path().join("table.dat");
+    let before = control.metadata().unwrap();
+    std::fs::set_permissions(&control, std::fs::Permissions::from_mode(0o444)).unwrap();
+    if std::fs::OpenOptions::new()
+        .write(true)
+        .open(&control)
+        .is_ok()
+    {
+        eprintln!("skipping mode-0444 law: process can write the descriptor");
+        return;
+    }
+    assert!(writer.unlock().is_err());
+    assert!(writer.has_lock(LockType::Write));
+    // Make a destructor retry observable even on branches where a full
+    // save preflights a read-only descriptor before touching the managers.
+    std::fs::set_permissions(&control, before.permissions()).unwrap();
+    drop(writer);
+    let reopened = Table::open(opts).unwrap();
+    let id = reopened.cell_accessor(0, "id").unwrap().scalar().unwrap();
+    let after = control.metadata().unwrap();
+    assert!(
+        id == &ScalarValue::Int32(1) && after.ino() == before.ino(),
+        "after failed release and drop: id {id:?}, descriptor inode {} -> {}",
+        before.ino(),
+        after.ino()
+    );
+}
+
 /// A writer that persists its own changes reloads the table after a
 /// failure so that nothing is left to flush. When the reload fails too,
 /// `resync_or_discard` still leaves nothing for the drop to write: the

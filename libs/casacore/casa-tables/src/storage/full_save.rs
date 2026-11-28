@@ -67,7 +67,11 @@ pub(crate) fn prepare(
 
     let edit = StagedEdit::new(table)?;
     let staged = edit.stage_path();
-    write(StagedTableDat::for_save_stage(staged, table)?)?;
+    write(StagedTableDat::for_save_stage(
+        staged,
+        table,
+        previous.as_ref(),
+    )?)?;
     if let Some(dat) = &previous
         && has_open_readers()
         && !compatible_with_open_managers(table, staged, dat, &original_files)?
@@ -101,6 +105,20 @@ fn manager_files(table: &Path, dat: &TableDatContents) -> Result<BTreeSet<OsStri
         }
     }
     Ok(files)
+}
+
+/// Preflight all of the selected managers before flushing any of them.
+pub(crate) fn check_manager_write_access(
+    table: &Path,
+    affected: &std::collections::HashSet<u32>,
+) -> Result<(), StorageError> {
+    let dat = read_table_dat(&table.join(TABLE_CONTROL_FILE))?;
+    for name in manager_files(table, &dat)? {
+        if table_manager_file_sequence(&name).is_some_and(|seq| affected.contains(&seq)) {
+            crate::publication::check_write_access(&table.join(name))?;
+        }
+    }
+    Ok(())
 }
 
 fn owns_file(manager: &DataManagerEntry, name: &OsStr) -> bool {

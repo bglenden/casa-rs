@@ -227,19 +227,28 @@ impl Table {
     ///
     /// `changed_rows` may be empty, in which case the save falls back to
     /// column-only invalidation semantics.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "predates the function-length limit; #705"
-    )]
     pub(crate) fn persist_selected_rows_in_place(
         &mut self,
         changed_columns: &[&str],
         changed_rows: &[usize],
     ) -> Result<(), TableError> {
+        self.persist_selected_rows(changed_columns, changed_rows, true)
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
+    pub(in crate::table) fn persist_selected_rows(
+        &mut self,
+        changed_columns: &[&str],
+        changed_rows: &[usize],
+        allow_reference_rewrite: bool,
+    ) -> Result<(), TableError> {
         if changed_columns.is_empty() {
             return Ok(());
         }
-        if self.try_save_reference_cells(changed_columns, changed_rows)? {
+        if self.try_save_reference_cells(changed_columns, changed_rows, allow_reference_rewrite)? {
             return Ok(());
         }
         if self.kind != TableKind::Plain {
@@ -489,14 +498,11 @@ impl Table {
                             .and_then(|entry| {
                                 crate::storage::standard_stman::dm_name_from_blob(&entry.data)
                             });
-                        let dm_name = stored_name
-                            .as_deref()
-                            .filter(|name| !name.is_empty())
-                            .unwrap_or(if group.name.is_empty() {
-                                "SSM"
-                            } else {
-                                group.name.as_str()
-                            });
+                        let dm_name = stored_name.as_deref().unwrap_or(if group.name.is_empty() {
+                            "SSM"
+                        } else {
+                            group.name.as_str()
+                        });
                         let dm_data = crate::storage::standard_stman::rewrite_ssm_rows(
                             &data_path,
                             &data_path,

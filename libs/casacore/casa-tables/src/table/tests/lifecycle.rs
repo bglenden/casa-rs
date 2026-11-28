@@ -141,8 +141,53 @@ fn flush_writes_changes_to_disk() {
 
 #[test]
 fn flush_without_path_fails() {
-    let table = Table::new();
+    let mut table = Table::new();
     assert!(table.flush().is_err());
+}
+
+#[test]
+fn flush_keeps_mixed_manager_assignments_and_values() {
+    let dir = tempfile::tempdir().unwrap();
+    let opts = TableOptions::new(dir.path()).with_data_manager(DataManagerKind::StandardStMan);
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::scalar("flag", PrimitiveType::Bool),
+    ])
+    .unwrap();
+    let mut table = Table::with_schema(schema);
+    table
+        .add_row(RecordValue::new(vec![
+            RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
+            RecordField::new("flag", Value::Scalar(ScalarValue::Bool(false))),
+        ]))
+        .unwrap();
+    let bindings = HashMap::from([(
+        "flag".to_owned(),
+        ColumnBinding {
+            data_manager: DataManagerKind::StManAipsIO,
+            tile_shape: None,
+        },
+    )]);
+    table.save_with_bindings(opts.clone(), &bindings).unwrap();
+    let mut table = Table::open(opts.clone()).unwrap();
+    let managers = table.data_manager_info().to_vec();
+    table
+        .set_cell(0, "id", Value::Scalar(ScalarValue::Int32(2)))
+        .unwrap();
+    table
+        .set_cell(0, "flag", Value::Scalar(ScalarValue::Bool(true)))
+        .unwrap();
+    table.flush().unwrap();
+    let fresh = Table::open(opts).unwrap();
+    assert_eq!(fresh.data_manager_info(), managers);
+    assert_eq!(
+        fresh.get_scalar_cell(0, "id").unwrap(),
+        &ScalarValue::Int32(2)
+    );
+    assert_eq!(
+        fresh.get_scalar_cell(0, "flag").unwrap(),
+        &ScalarValue::Bool(true)
+    );
 }
 
 #[test]

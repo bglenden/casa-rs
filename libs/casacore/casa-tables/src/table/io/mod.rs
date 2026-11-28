@@ -109,7 +109,7 @@ impl Table {
         }
         let virtual_cols = snapshot.virtual_columns;
         let info = snapshot.table_info;
-        let table = Self {
+        let mut table = Self {
             inner: TableImpl::with_lazy_rows_keywords_and_schema(
                 snapshot.row_count.max(row_hint),
                 snapshot.keywords,
@@ -130,6 +130,7 @@ impl Table {
             #[cfg(unix)]
             lock_state: None,
         };
+        table.inner.track_dirty_changes();
         if profile_open {
             tracing::debug!(target: crate::storage::TABLE_OPEN_PROFILE,
                 "table_open_profile path={} stage=done row_hint={} rows={} elapsed_s={:.3}",
@@ -282,7 +283,6 @@ impl Table {
                 options.data_manager,
                 options.data_manager_group.as_deref(),
                 options.casacore_default_ssm,
-                options.preserve_ssm_group_name,
                 options.endian_format.is_big_endian(),
                 options.tile_shape.as_deref(),
             )?;
@@ -855,25 +855,25 @@ impl Table {
     // Lifecycle operations
     // -------------------------------------------------------------------
 
-    /// Writes the current in-memory state back to the table's source path.
+    /// Writes buffered changes back to the source table, preserving its
+    /// existing storage managers and column bindings.
     ///
-    /// The table must have been loaded with [`open`](Table::open) or
-    /// previously saved with [`save`](Table::save) so that
-    /// [`path`](Table::path) is `Some`. Returns an error if no source path
-    /// is set.
+    /// The table must have been loaded with [`open`](Table::open).
+    /// Unscoped changes require a layout the writer can reproduce.
     ///
     /// On a table opened with locking that holds the write lock, the write
     /// is published in the lock file's sync data when the lock is released
     /// (see [`unlock`](Table::unlock)).
     ///
     /// This is the Rust equivalent of the C++ `Table::flush()` call.
-    pub fn flush(&self) -> Result<(), TableError> {
+    pub fn flush(&mut self) -> Result<(), TableError> {
         let path = self
             .source_path
             .as_ref()
-            .ok_or_else(|| TableError::Storage("cannot flush: table has no source path".into()))?;
-        let opts = TableOptions::new(path);
-        self.save(opts)
+            .ok_or_else(|| TableError::Storage("cannot flush: table has no source path".into()))?
+            .clone();
+        self.require_full_save_destination(&path)?;
+        self.flush_source(&path)
     }
 
     /// Discards all in-memory changes and reloads the table from disk.
@@ -902,10 +902,7 @@ impl Table {
     pub(super) fn reload_disk_state_at(&mut self, path: &Path) -> Result<(), TableError> {
         let mut reloaded = Table::open(TableOptions::new(path))?;
         self.inner = std::mem::take(&mut reloaded.inner);
-        #[cfg(unix)]
-        if self.lock_state.is_some() {
-            self.inner.track_dirty_changes();
-        }
+        self.inner.track_dirty_changes();
         self.virtual_columns = std::mem::take(&mut reloaded.virtual_columns);
         self.virtual_bindings = std::mem::take(&mut reloaded.virtual_bindings);
         self.table_info = std::mem::take(&mut reloaded.table_info);
@@ -1096,7 +1093,6 @@ impl Table {
                 opts.data_manager,
                 opts.data_manager_group.as_deref(),
                 opts.casacore_default_ssm,
-                opts.preserve_ssm_group_name,
                 opts.endian_format.is_big_endian(),
                 opts.tile_shape.as_deref(),
             )?;
