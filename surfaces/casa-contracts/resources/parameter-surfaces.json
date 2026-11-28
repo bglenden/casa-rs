@@ -7171,7 +7171,7 @@
     {
       "kind": "task",
       "id": "importvla",
-      "contract_version": 5,
+      "contract_version": 6,
       "display_name": "ImportVLA",
       "category": "Import",
       "summary": "scan or import old VLA export archives from disk",
@@ -7798,6 +7798,55 @@
               "label": "Use EVLA Bands",
               "group": "Selection",
               "advanced": true,
+              "hidden": false
+            }
+          },
+          "reviewed_homonym": null
+        },
+        {
+          "name": "outformat",
+          "concept": {
+            "id": "importvla.outformat",
+            "semantic_revision": 1
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "msv2"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--outformat"
+              ],
+              "false_flags": [],
+              "metavar": "FORMAT"
+            },
+            "provider": {
+              "field": "outformat",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "outformat",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Output Format",
+              "group": "Output",
+              "advanced": false,
               "hidden": false
             }
           },
@@ -34214,7 +34263,10 @@
               "hidden": false
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "importvla writes an archive to a chosen format and defaults to MSv2, whereas msconvert can infer the opposite of an input MeasurementSet format."
+          }
         },
         {
           "name": "datagroups",

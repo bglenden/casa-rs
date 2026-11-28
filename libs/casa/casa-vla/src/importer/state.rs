@@ -9,6 +9,17 @@ pub(super) struct ArchiveObservation {
     pub(super) end: f64,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct Integration {
+    pub(super) array: i32,
+    pub(super) observation: i32,
+    pub(super) data_description: i32,
+    pub(super) field: i32,
+    pub(super) scan: i32,
+    pub(super) time: f64,
+    pub(super) interval: f64,
+}
+
 pub(super) struct VlaImportState {
     pub(super) options: ImportVlaOptions,
     pub(super) ms: MeasurementSet,
@@ -37,7 +48,7 @@ pub(super) struct VlaImportState {
     pub(super) current_scan_by_array: HashMap<i32, i32>,
     pub(super) last_field_by_array: HashMap<i32, i32>,
     pub(super) last_data_desc_ids_by_array: HashMap<i32, Vec<i32>>,
-    pub(super) main_write_session: Option<MeasurementSetWriteSession>,
+    pub(super) main_write_session: Option<Msv2MainWriter>,
 }
 
 impl VlaImportState {
@@ -52,23 +63,23 @@ impl VlaImportState {
             .path()
             .ok_or_else(|| VlaError::import("test importer requires a disk-backed MS"))?;
         let write_plan = test_import_write_plan(row_count, 4, channel_count)?;
-        let main_write_session = MeasurementSetWriteSession::start(output, write_plan)
+        let main_write_session = Msv2MainWriter::start(output, write_plan)
             .map_err(|error| VlaError::import(error.to_string()))?;
-        Self::new_inner(options, ms, main_write_session)
+        Self::new_inner(options, ms, Some(main_write_session))
     }
 
     pub(super) fn new_with_write_session(
         options: ImportVlaOptions,
         ms: MeasurementSet,
-        main_write_session: MeasurementSetWriteSession,
+        main_write_session: Msv2MainWriter,
     ) -> Result<Self, VlaError> {
-        Self::new_inner(options, ms, main_write_session)
+        Self::new_inner(options, ms, Some(main_write_session))
     }
 
-    fn new_inner(
+    pub(super) fn new_inner(
         options: ImportVlaOptions,
         ms: MeasurementSet,
-        main_write_session: MeasurementSetWriteSession,
+        main_write_session: Option<Msv2MainWriter>,
     ) -> Result<Self, VlaError> {
         let measures = casa_measures::MeasuresRuntime::open_discovered(Default::default())
             .map(Arc::new)
@@ -101,7 +112,7 @@ impl VlaImportState {
             current_scan_by_array: HashMap::new(),
             last_field_by_array: HashMap::new(),
             last_data_desc_ids_by_array: HashMap::new(),
-            main_write_session: Some(main_write_session),
+            main_write_session,
         };
         writer.initialize_epoch_measure_references()?;
         writer.initialize_vla_spectral_window_columns()?;
@@ -172,6 +183,35 @@ impl VlaImportState {
     }
 
     pub(super) fn push_record(&mut self, record: NormalizedRecord) -> Result<(), VlaError> {
+        self.visit_integrations(record, |writer, integration, antennas, baselines| {
+            for baseline in baselines {
+                writer.add_main_row(
+                    antennas[baseline.antenna1_archive],
+                    antennas[baseline.antenna2_archive],
+                    integration.field,
+                    integration.observation,
+                    integration.data_description,
+                    integration.scan,
+                    integration.array,
+                    integration.time,
+                    integration.interval,
+                    baseline,
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    pub(super) fn visit_integrations(
+        &mut self,
+        record: NormalizedRecord,
+        mut visit: impl FnMut(
+            &mut Self,
+            Integration,
+            &[i32],
+            Vec<NormalizedBaselineRow>,
+        ) -> Result<(), VlaError>,
+    ) -> Result<(), VlaError> {
         let mut new_scan = self.new_scan_pending;
         self.new_scan_pending = false;
         self.pending_record_freq_group = None;
@@ -266,22 +306,20 @@ impl VlaImportState {
         };
 
         for (baselines, data_desc_id) in group_rows {
-            for baseline in baselines {
-                let antenna1_id = antenna_ids[baseline.antenna1_archive];
-                let antenna2_id = antenna_ids[baseline.antenna2_archive];
-                self.add_main_row(
-                    antenna1_id,
-                    antenna2_id,
-                    field_id,
-                    observation_id,
-                    data_desc_id,
-                    scan_number,
-                    array_id,
-                    time_seconds,
-                    integration_seconds,
-                    baseline,
-                )?;
-            }
+            visit(
+                self,
+                Integration {
+                    array: array_id,
+                    observation: observation_id,
+                    data_description: data_desc_id,
+                    field: field_id,
+                    scan: scan_number,
+                    time: time_seconds,
+                    interval: integration_seconds,
+                },
+                &antenna_ids,
+                baselines,
+            )?;
         }
         self.last_antenna_rows = antenna_ids;
 
@@ -311,21 +349,8 @@ impl VlaImportState {
             .main_write_session
             .take()
             .ok_or_else(|| VlaError::import("MAIN write session was already finalized"))?;
-        let mut overrides = casa_tables::ColumnOverrides::for_row_count(self.main_rows_written);
-        for column in [
-            "DATA",
-            "CORRECTED_DATA",
-            "MODEL_DATA",
-            "FLAG",
-            "FLAG_CATEGORY",
-            "WEIGHT",
-            "SIGMA",
-        ] {
-            overrides.insert_deferred(column);
-        }
-        overrides.insert_deferred("UVW");
         let write_telemetry = main_write_session
-            .save_and_finish(&mut self.ms, &overrides)
+            .finish(&mut self.ms)
             .map_err(|error| VlaError::import(error.to_string()))?;
         self.perf_summary.write_producer_ns = seconds_to_nanos(write_telemetry.producer_seconds);
         self.perf_summary.write_queue_wait_ns =
@@ -1053,29 +1078,25 @@ impl VlaImportState {
                 .as_mut()
                 .ok_or_else(|| VlaError::import("MAIN write session is unavailable"))?;
             let append_started = Instant::now();
-            push_import_complex32_row(writer, "DATA", &row_data)?;
-            push_import_complex32_row(writer, "CORRECTED_DATA", &row_corrected)?;
-            push_import_complex32_row(writer, "MODEL_DATA", &row_model)?;
-            push_import_bool_row(writer, "FLAG", &row_flag)?;
-            push_import_bool_row(writer, "FLAG_CATEGORY", &row_flag_category)?;
-            push_import_f32_row(writer, "WEIGHT", &row_weight)?;
-            push_import_f32_row(writer, "SIGMA", &row_sigma)?;
             writer
-                .push_f64_row("UVW", &[3], &row_uvw)
+                .push_acquisition(Msv2CreationRow {
+                    antennas: [row_ant1, row_ant2],
+                    array: array_id,
+                    data_description: data_desc_id,
+                    field: field_id,
+                    observation: observation_id,
+                    scan: scan_number,
+                    time: time_seconds,
+                    integration: integration_seconds,
+                    flagged: row_flag_row,
+                    uvw: row_uvw,
+                    visibilities: [&row_data, &row_corrected, &row_model],
+                    flags: &row_flag,
+                    categories: &row_flag_category,
+                    weight: &row_weight,
+                    sigma: &row_sigma,
+                })
                 .map_err(|error| VlaError::import(error.to_string()))?;
-            push_import_scalar_row(
-                writer,
-                row_ant1,
-                row_ant2,
-                array_id,
-                data_desc_id,
-                integration_seconds,
-                field_id,
-                row_flag_row,
-                observation_id,
-                scan_number,
-                time_seconds,
-            )?;
             self.perf_summary.append_main_row_ns += append_started.elapsed().as_nanos() as u64;
         }
         self.main_rows_written += 1;

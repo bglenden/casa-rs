@@ -30,6 +30,7 @@ fn import_perf_tracer_from_env_writes_jsonl_and_summary_log() {
         logical_records_imported: 9,
         logical_records_skipped: 1,
         main_rows_written: 42,
+        losses: Vec::new(),
     };
     tracer.emit_import_completed(
         &report.vis,

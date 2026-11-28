@@ -7,6 +7,22 @@
 //! formatting. The initial Rust implementation focuses on the subset currently
 //! needed by MeasurementSet summary/reporting code.
 
+/// The current time, UTC, ISO 8601 to the second.
+pub fn utc_now_iso8601() -> String {
+    let unix_seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    // The Unix epoch is MJD 40587.
+    let time = MvTime::from_mjd_seconds(40_587.0 * 86_400.0 + unix_seconds as f64);
+    format!(
+        "{:04}-{:02}-{:02}T{}+00:00",
+        time.year(),
+        time.month(),
+        time.month_day(),
+        time.format_time(0)
+    )
+}
+
 /// A calendar/time value stored as Modified Julian Date days.
 ///
 /// This is the Rust counterpart to C++ `casacore::MVTime`. It intentionally

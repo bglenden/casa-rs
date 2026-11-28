@@ -55,6 +55,7 @@ fn sample_report() -> ImportReport {
         logical_records_imported: 8,
         logical_records_skipped: 2,
         main_rows_written: 16,
+        losses: Vec::new(),
     }
 }
 

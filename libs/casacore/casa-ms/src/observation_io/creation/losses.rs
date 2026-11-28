@@ -483,6 +483,17 @@ fn main_keys(
 /// into an MSv4 (an MSv2 destination writes them from the catalogue)
 /// `SOURCE` rows, a `PROCESSOR` of more than one row or of another type
 /// than a correlator, and `STATE` rows that say more than their `OBS_MODE`.
+/// Name the subtable information an MSv4 writer will leave out of a
+/// producer's in-memory metadata. No MAIN payload is required.
+#[cfg(feature = "msv4")]
+pub fn msv4_subtable_losses(
+    metadata: &crate::MeasurementSet,
+) -> Result<Vec<Loss>, ObservationError> {
+    let mut losses = Vec::new();
+    subtables(metadata, Store::Msv4, &mut losses)?;
+    Ok(losses)
+}
+
 fn subtables(
     ms: &crate::MeasurementSet,
     destination: Store,

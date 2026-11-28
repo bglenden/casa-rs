@@ -171,6 +171,7 @@ def importvla(
     antnamescheme: Literal['new', 'old'] = 'new',
     keepblanks: bool = False,
     evlabands: bool = False,
+    outformat: Literal['msv2', 'msv4'] = 'msv2',
 ) -> Any:
     """scan or import old VLA export archives from disk
 

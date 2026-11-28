@@ -10,15 +10,15 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 974
+- Concepts: 975
 - Surfaces: 64 (64 task, 0 session)
-- Surface bindings: 1443
+- Surface bindings: 1444
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 7 | <code>msexplore</code> | 66 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 6 | <code>calibration</code> | 53 | apply, inspect, and solve CASA-style calibration workflows |
-| [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 5 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
+| [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 6 | <code>importvla</code> | 13 | scan or import old VLA export archives from disk |
 | [Tclean](#surface-tclean)<br><code>tclean</code> | task | 42 | <code>imager</code> | 114 | Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does. |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 8 | <code>simobserve</code> | 38 | Simulate an observation of a sky model: CASA's simobserve |
 | [Image Header](#surface-imhead)<br><code>imhead</code> | task | 40 | <code>image_analysis</code> | 5 | Inspect or update CASA image header metadata. |
@@ -231,7 +231,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## ImportVLA (<code>importvla</code>)
 
 - Kind: `task`
-- Contract version: `5`
+- Contract version: `6`
 - Category: Import
 - Provider family: `importvla`
 - Summary: scan or import old VLA export archives from disk
@@ -250,6 +250,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>antnamescheme</code> | <code>parameter.antnamescheme@r1</code> | <code>choice (2 values)</code> | <code>"new"</code>; optional | Selection | Use CASA `new` or `old` antenna names |
 | <code>keepblanks</code> | <code>parameter.keepblanks@r1</code> | <code>bool</code> | <code>false</code>; optional | Selection | Preserve blank source names |
 | <code>evlabands</code> | <code>parameter.evlabands@r1</code> | <code>bool</code> | <code>false</code>; optional | Selection | Use EVLA band centers and bandwidths for band selection |
+| <code>outformat</code> | <code>importvla.outformat@r1</code> | <code>choice (2 values)</code> | <code>"msv2"</code>; optional | Output | MeasurementSet format produced by the VLA archive import. |
 
 <a id="surface-tclean"></a>
 

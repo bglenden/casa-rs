@@ -36,6 +36,7 @@ mod pointing;
 mod set;
 
 pub use fields::{check_fields, kept_samples};
+pub use payload::Msv4WriteScratch;
 pub use set::Msv4ProcessingSetWriter;
 
 use std::collections::HashMap;
@@ -147,7 +148,7 @@ pub struct Msv4Writer {
     written: Vec<bool>,
     chunk_times: usize,
     options: CodecOptions,
-    scratch: payload::Scratch,
+    scratch: Msv4WriteScratch,
     /// Times held toward a chunk a batch covered only partly.
     held: chunks::Held,
     counters: Msv4WriteCounters,
@@ -496,7 +497,7 @@ impl Msv4Writer {
             chunk_times,
             target,
             options: super::codec_options(),
-            scratch: payload::Scratch::default(),
+            scratch: Msv4WriteScratch::default(),
             held: chunks::Held::default(),
             counters: Msv4WriteCounters::default(),
         };

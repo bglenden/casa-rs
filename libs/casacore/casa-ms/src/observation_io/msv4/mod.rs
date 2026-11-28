@@ -63,7 +63,8 @@ pub(super) fn codec_options() -> zarrs::array::CodecOptions {
         .with_chunk_concurrent_minimum(1)
 }
 pub use write::{
-    Msv4Codec, Msv4ProcessingSetWriter, Msv4StorageOptions, Msv4WriteCounters, Msv4Writer,
+    Msv4Codec, Msv4ProcessingSetWriter, Msv4StorageOptions, Msv4WriteCounters, Msv4WriteScratch,
+    Msv4Writer,
 };
 
 #[cfg(test)]

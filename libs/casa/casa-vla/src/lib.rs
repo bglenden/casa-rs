@@ -40,7 +40,7 @@ pub use error::VlaError;
 pub use importer::{
     ImportReport, import_archive_files_to_measurement_set_from_options, import_archive_with_history,
 };
-pub use options::{AntennaNameScheme, BandName, ImportVlaOptions};
+pub use options::{AntennaNameScheme, BandName, ImportVlaFormat, ImportVlaOptions};
 pub use record::{
     AntennaDataArea, BaselineRecord, CdaId, CircularPolarization, ContinuumBaselineRecord,
     CorrelatorDataArea, CorrelatorMode, DirectionEpoch, DopplerDefinition, FrequencyFrame, IfId,

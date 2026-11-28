@@ -13,8 +13,8 @@ use casa_observation::{
 
 use super::{ConversionOptions, ConversionReport, Loss};
 use casa_ms::observation_io::creation::pointing_plan::{self, PointingPlan};
-use casa_ms::observation_io::creation::{lockstep, losses};
-use casa_ms::observation_io::{STATION_NAMED, check_fields, kept_samples, unix_times};
+use casa_ms::observation_io::creation::{lockstep, losses, name_msv4_entities};
+use casa_ms::observation_io::{check_fields, kept_samples, unix_times};
 
 use casa_ms::observation_io::{
     Msv2Observation, Msv4Observation, Msv4ProcessingSetWriter, Msv4StorageOptions,
@@ -306,7 +306,8 @@ fn open_named(source: &Path, partition_scheme: PartitionScheme) -> Result<Named,
                 .map_err(|error| ObservationError::Storage(Box::new(error)))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let named = xradio_names(observation.catalogue(), &windows, &sources);
+    let mut named = observation.catalogue().as_ref().clone();
+    name_msv4_entities(&mut named, &windows, &sources);
     let datasets = dataset_names(source, &first_rows);
     Ok(Named {
         observation: Box::new(observation),
@@ -340,38 +341,6 @@ fn dataset_names(source: &Path, first_rows: &[Option<u32>]) -> Vec<String> {
         names[index] = format!("{stem}_{number:0width$}");
     }
     names
-}
-
-/// `catalogue` with XRADIO's names, as its converter names an MSv2's:
-/// antennas `NAME_STATION` for the telescopes it names so
-/// ([`STATION_NAMED`]), fields `NAME_ID`, sources `NAME_SOURCEID` by each
-/// field's `SOURCE_ID` (`sources`), and spectral windows `NAME_ID`
-/// (`spw_ID` unnamed) by the `SPECTRAL_WINDOW` row of each partition
-/// (`windows`).
-fn xradio_names(catalogue: &Catalogue, windows: &[u32], sources: &[i32]) -> Catalogue {
-    let mut named = catalogue.clone();
-    let telescope = catalogue
-        .observations
-        .first()
-        .map_or("", |observation| observation.telescope.as_str());
-    if STATION_NAMED.contains(&telescope) {
-        for antenna in &mut named.antennas {
-            antenna.name = format!("{}_{}", antenna.name, antenna.station);
-        }
-    }
-    for ((index, field), source) in named.fields.iter_mut().enumerate().zip(sources) {
-        field.name = format!("{}_{index}", field.name);
-        if let Some(name) = &mut field.source_name {
-            *name = format!("{name}_{source}");
-        }
-    }
-    for (partition, window) in named.partitions.iter_mut().zip(windows) {
-        partition.spectral_window = match partition.spectral_window.as_str() {
-            "" | "none" => format!("spw_{window}"),
-            name => format!("{name}_{window}"),
-        };
-    }
-    named
 }
 
 /// What every partition is written into: the processing set, the

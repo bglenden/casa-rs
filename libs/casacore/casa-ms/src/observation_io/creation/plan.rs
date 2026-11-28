@@ -5,7 +5,6 @@
 //! partitions in output-partition order and each partition's rows in time
 //! and baseline order.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use casa_core::measures::EpochRef;
@@ -27,10 +26,12 @@ use super::{
     CreationInput, CreationOptions, CreationReport, Destination, HistoryRow, Loss, PaddingRows,
     lockstep, losses, msv2_ephemeris, msv2_tables, occupancy, writing,
 };
+#[cfg(feature = "msv4")]
+use crate::MeasurementSet;
+use crate::OptionalMainColumn;
 use crate::observation_io::Msv2Observation;
 use crate::observation_io::update::{request_error, storage};
 use crate::write_session::MeasurementSetWritePlan;
-use crate::{MeasurementSet, OptionalMainColumn};
 
 /// A new MeasurementSet v2 planned from observations, checked before
 /// anything is written ([`CreationPlan::new`]) and then written
@@ -428,9 +429,7 @@ impl CreationPlan {
         let optional: Vec<OptionalMainColumn> =
             self.columns.iter().map(|(column, _)| *column).collect();
         let builder = msv2_tables::builder(catalogue, &optional);
-        let mut ms = MeasurementSet::create(staging, builder).map_err(storage)?;
-        // The MAIN writers write into the directory before the save.
-        fs::create_dir_all(staging).map_err(storage)?;
+        let (mut ms, writer) = super::Msv2MainWriter::create(staging, builder, self.main.clone())?;
         for (column, unit) in &self.columns {
             if let Some(unit) = unit {
                 TableQuantumDesc::with_unit(column.name(), unit)
@@ -482,7 +481,7 @@ impl CreationPlan {
             .map(|column| column.name())
             .partition(|name| name.ends_with("_SPECTRUM"));
         let mut main = MainRows::start(
-            (staging, self.main.clone()),
+            writer,
             catalogue,
             (data, spectra),
             &self.occupancy,

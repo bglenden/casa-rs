@@ -20,7 +20,7 @@ use crate::observation_io::msv4::metadata::{UNIX_EPOCH_MJD, invalid, storage};
 /// the time centroids re-expressed from the Unix epoch, the exposures per
 /// sample, and a weight shared by every channel written for each channel.
 #[derive(Default)]
-pub(super) struct Scratch {
+pub struct Msv4WriteScratch {
     weights: Vec<f32>,
     centroid: Vec<f64>,
     exposure: Vec<f64>,
@@ -106,6 +106,23 @@ impl Msv4Writer {
         &mut self,
         batches: &[VisibilityBatch<'_>],
     ) -> Result<(), ObservationError> {
+        let mut scratch = std::mem::take(&mut self.scratch);
+        let result = self.write_groups_reusing(batches, &mut scratch);
+        self.scratch = scratch;
+        result
+    }
+
+    /// Write the checked batches with caller-owned packing buffers. A
+    /// producer writing several datasets in turn can pass the same
+    /// scratch to all of them. Each writer still owns any unfinished chunk.
+    ///
+    /// # Errors
+    /// As [`Self::write_groups`].
+    pub fn write_groups_reusing(
+        &mut self,
+        batches: &[VisibilityBatch<'_>],
+        scratch: &mut Msv4WriteScratch,
+    ) -> Result<(), ObservationError> {
         let Checked {
             values,
             flags,
@@ -121,15 +138,14 @@ impl Msv4Writer {
             .map(|values| contiguous(values, "visibilities"))
             .collect::<Result<Vec<_>, _>>()?;
         let flags = contiguous(flags, "flags")?;
-        self.gather_times(centroid, exposure, samples_per_time);
+        self.gather_times(centroid, exposure, samples_per_time, scratch);
         if !weights.is_standard_layout() {
-            self.scratch.weights.clear();
-            self.scratch.weights.extend(weights.iter());
-            self.counters.packed_elements += self.scratch.weights.len();
+            scratch.weights.clear();
+            scratch.weights.extend(weights.iter());
+            self.counters.packed_elements += scratch.weights.len();
         }
         let metres = uvw.metres();
         let metres = metres.as_standard_layout();
-        let scratch = &self.scratch;
         let columns = Columns {
             values,
             flags,
@@ -370,10 +386,10 @@ impl Msv4Writer {
         centroid: EpochView<'_>,
         exposure: Shared<'_, f64>,
         samples_per_time: usize,
+        scratch: &mut Msv4WriteScratch,
     ) {
         let unix = MjdHighPrec::new(UNIX_EPOCH_MJD, 0.0);
         let in_place = centroid.origin() == unix && matches!(exposure, Shared::PerSample(_));
-        let scratch = &mut self.scratch;
         let samples = centroid.len();
         scratch.centroid.clear();
         scratch.exposure.clear();

@@ -12066,6 +12066,33 @@
       "persistence_class": "profile"
     },
     {
+      "id": "importvla.outformat",
+      "semantic_revision": 1,
+      "casa_name": "outformat",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "msv2",
+          "msv4"
+        ]
+      },
+      "normalization": {
+        "kind": "lowercase"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "MeasurementSet format produced by the VLA archive import.",
+        "details": "MSv2 keeps the archive flag categories, row flags and metadata. MSv4 writes an XRADIO processing set and reports information the format cannot carry.",
+        "examples": [
+          "msv2",
+          "msv4"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "msconvert.outformat",
       "semantic_revision": 1,
       "casa_name": "outformat",

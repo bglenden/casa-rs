@@ -3,6 +3,10 @@
 use super::*;
 
 impl MeasurementSetWritePlan {
+    pub(crate) const fn row_count(&self) -> usize {
+        self.row_count
+    }
+
     /// Return the ordered MAIN row numbers admitted by this mutation plan.
     pub fn selected_rows(&self) -> &[usize] {
         &self.selected_rows

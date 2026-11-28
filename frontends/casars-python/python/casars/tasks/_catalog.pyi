@@ -160,6 +160,7 @@ def importvla(
     antnamescheme: Literal['new', 'old'] = ...,
     keepblanks: bool = ...,
     evlabands: bool = ...,
+    outformat: Literal['msv2', 'msv4'] = ...,
 ) -> Any:
     ...
 

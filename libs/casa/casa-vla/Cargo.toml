@@ -26,13 +26,15 @@ workspace = true
 casa-flagging.workspace = true
 casa-mstransform.workspace = true
 casa-measures.workspace = true
-casa-ms.workspace = true
+casa-ms = { workspace = true, features = ["msv4"] }
+casa-observation.workspace = true
 casa-tables.workspace = true
 casa-core.workspace = true
 ndarray.workspace = true
 schemars = { version = "0.8", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2.workspace = true
 tempfile = "3"
 thiserror.workspace = true
 
