@@ -855,6 +855,12 @@ impl Msv2Observation {
         }
     }
 
+    #[cfg(unix)]
+    pub(super) fn calibration_fields_and_scans(&self, id: PartitionId) -> (&[FieldId], &[ScanId]) {
+        let grid = &self.partitions[id.0 as usize].grid;
+        (&grid.field_per_time, &grid.scan_per_time)
+    }
+
     /// What `request` costs on partition `id`, from the grid and the tile
     /// shape: every MSv2 role is a required column, so binding refuses
     /// nothing the request can ask for beyond the request's own

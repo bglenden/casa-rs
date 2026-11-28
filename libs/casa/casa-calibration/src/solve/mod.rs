@@ -671,7 +671,16 @@ pub(crate) fn solve_gain_rows(
     if request.gain_type.is_delay() {
         return delay::solve(ms, request, activity, false);
     }
-    let legacy_g_receptors = if request.gain_type == GainType::G
+    let legacy_g_receptors = legacy_gain_receptors(request, mode)?;
+    solve_gain_rows_with_settings(ms, request, activity, None, None, legacy_g_receptors)
+        .map(|(solved, _)| solved)
+}
+
+fn legacy_gain_receptors(
+    request: &GainSolveRequest,
+    mode: CalibrationOutputMode,
+) -> Result<bool, GainSolveError> {
+    if request.gain_type == GainType::G
         && mode == CalibrationOutputMode::Append
         && request.output_table.exists()
     {
@@ -681,16 +690,14 @@ pub(crate) fn solve_gain_rows(
                 reason: error.to_string(),
             }
         })?;
-        matches!(
+        Ok(matches!(
             output.keywords().get(crate::constants::KEY_CASA_VERSION),
             Some(Value::Scalar(ScalarValue::String(tag)))
                 if tag == crate::constants::LEGACY_NATIVE_G_VERSION
-        )
+        ))
     } else {
-        false
-    };
-    solve_gain_rows_with_settings(ms, request, activity, None, None, legacy_g_receptors)
-        .map(|(solved, _)| solved)
+        Ok(false)
+    }
 }
 
 pub(crate) struct GatherOnlySolveSettings {

@@ -24,9 +24,9 @@ use std::sync::Arc;
 use casa_core::measures::direction::MDirection;
 use casa_core::measures::frequency::FrequencyRef;
 use casa_core::{ArrayValue, ScalarValue};
-#[cfg(unix)]
-use casa_observation::Observation;
 use casa_observation::{Catalogue, ObservationError, PartitionId};
+#[cfg(unix)]
+use casa_observation::{FieldId, Observation, ScanId};
 use casa_tables::{Table, TableOptions};
 
 use super::msv2::catalogue::{measure_reference, phase_frames, require_units};
@@ -151,7 +151,7 @@ impl PersistedNamespace {
 /// A visibility partition's IDs for CASA calibration-table products and
 /// solution boundaries. The store-local partition index is not an SPW ID.
 #[cfg(unix)]
-pub struct CalibrationPartition {
+pub struct CalibrationPartition<'a> {
     /// The persisted `SPECTRAL_WINDOW` row.
     pub window: u32,
     /// The underlying polarization and SPW combination.
@@ -159,6 +159,9 @@ pub struct CalibrationPartition {
     /// The partition's common MSv2 `ARRAY_ID`, or zero for MSv4. `None`
     /// means more than one array occurs in the partition.
     pub array: Option<i32>,
+    /// Field and scan IDs by time for the base data group, when it has scans.
+    /// The slices have the same length and represent only pairs in the grid.
+    pub fields_and_scans: Option<(&'a [FieldId], &'a [ScanId])>,
 }
 
 /// The single observation opening used by a calibration solve and the
@@ -171,7 +174,7 @@ pub struct CalibrationObservation<'a> {
     pub subtables: &'a MeasurementSet,
     /// The legacy IDs used for solution grouping and publication, in
     /// catalogue partition order.
-    pub partitions: &'a [CalibrationPartition],
+    pub partitions: &'a [CalibrationPartition<'a>],
     /// The observation budget remaining once its reader and subtables are held.
     pub available_bytes: usize,
 }
@@ -179,6 +182,8 @@ pub struct CalibrationObservation<'a> {
 /// Run a caltable consumer using one admitted observation opening. An MSv2
 /// supplies its stored subtable row numbers. An MSv4 supplies the same
 /// namespace an MSv2 conversion would persist.
+/// `admit_msv2` may refuse an MSv2 from its retained table descriptions before
+/// the observation indexes rows or reads subtables.
 ///
 /// # Errors
 /// When the observation is unreadable, the namespace cannot be represented
@@ -186,6 +191,7 @@ pub struct CalibrationObservation<'a> {
 #[cfg(unix)]
 pub fn with_calibration_observation<T>(
     source: &Path,
+    admit_msv2: impl FnOnce(&MeasurementSet) -> Result<(), ObservationError>,
     query: impl FnOnce(CalibrationObservation<'_>) -> T,
 ) -> Result<T, ObservationError> {
     let budget = super::creation::default_memory_bytes()?;
@@ -210,14 +216,19 @@ pub fn with_calibration_observation<T>(
                 .held_bytes()
                 .saturating_add(super::creation::subtables_bytes(catalogue))
                 .saturating_add(calibration_partition_bytes(catalogue));
-            grant(held)?;
+            let scan_bytes = casa_core::memory::btree_node_bytes::<i32, ()>(catalogue.scans.len());
+            grant(held.saturating_add(scan_bytes))?;
+            validate_calibration_scan_numbers(catalogue)?;
             let (subtables, indices) = super::creation::catalogue_subtables(&observation)?;
             let partitions = indices
                 .into_iter()
-                .map(|(window, data_description)| CalibrationPartition {
+                .enumerate()
+                .map(|(index, (window, data_description))| CalibrationPartition {
                     window: window as u32,
                     data_description: data_description as u32,
                     array: Some(0),
+                    fields_and_scans: observation
+                        .calibration_fields_and_scans(PartitionId(index as u32)),
                 })
                 .collect::<Vec<_>>();
             return Ok(query(CalibrationObservation {
@@ -235,6 +246,7 @@ pub fn with_calibration_observation<T>(
     let described = Msv2Observation::opening_table_bytes(source);
     grant(described)?;
     let ms = MeasurementSet::open_retained_read(source).map_err(storage)?;
+    admit_msv2(&ms)?;
     let catalogue_rows = super::msv2::held::read_bytes(&ms);
     grant(described.saturating_add(catalogue_rows.saturating_mul(2)))?;
     super::msv2::held::prefetch_catalogue_rows(&ms);
@@ -251,6 +263,7 @@ pub fn with_calibration_observation<T>(
             window: observation.spectral_window_id(partition),
             data_description: observation.data_description_id(partition),
             array: observation.array_id(partition),
+            fields_and_scans: Some(observation.calibration_fields_and_scans(partition)),
         })
         .collect::<Vec<_>>();
     Ok(query(CalibrationObservation {
@@ -263,7 +276,25 @@ pub fn with_calibration_observation<T>(
 
 #[cfg(unix)]
 fn calibration_partition_bytes(catalogue: &Catalogue) -> usize {
-    catalogue.partitions.len() * (size_of::<CalibrationPartition>() + size_of::<PartitionId>())
+    catalogue.partitions.len() * (size_of::<CalibrationPartition<'_>>() + size_of::<PartitionId>())
+}
+
+#[cfg(all(unix, feature = "msv4"))]
+fn validate_calibration_scan_numbers(catalogue: &Catalogue) -> Result<(), ObservationError> {
+    let mut numbers = std::collections::BTreeSet::new();
+    for scan in &catalogue.scans {
+        let Some(number) = scan.number else {
+            return Err(ObservationError::Unsupported {
+                what: "MSv4 gaincal requires every scan_name to be a decimal scan number",
+            });
+        };
+        if !numbers.insert(number) {
+            return Err(ObservationError::Unsupported {
+                what: "MSv4 gaincal cannot bind distinct scan_name values to the same CASA scan number",
+            });
+        }
+    }
+    Ok(())
 }
 
 /// The namespace of the store at `source` as [`super::open`] opens it with

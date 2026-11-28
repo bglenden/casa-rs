@@ -79,13 +79,54 @@ def test_time_binned_gaincal_uses_casas_interval_origin(tmp_path, monkeypatch, s
     np.testing.assert_array_equal(result["solvestats"]["expected"], [12, 12])
 
 
-def test_gaincal_refuses_an_unavailable_msv4_mode_before_publication(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("gaintype", "solint", "diagnostic"),
+    [
+        ("G", "int", "outside the time-binned G"),
+        ("GSPLINE", "60s", "GSPLINE gaincal on an MSv4"),
+        ("XY+QU", "60s", "XY\\+QU is unavailable for MSv4"),
+        ("XYf+QU", "60s", "XYf\\+QU is unavailable for MSv4"),
+    ],
+)
+def test_gaincal_refuses_an_unavailable_msv4_mode_before_publication(
+    tmp_path, monkeypatch, gaintype, solint, diagnostic,
+):
     store = "ms_trial.ps.zarr"
     prepare_store(tmp_path, monkeypatch, store)
 
-    with pytest.raises(tasks.TaskParameterError, match="outside the time-binned G") as failure:
+    with pytest.raises(tasks.TaskParameterError, match=diagnostic) as failure:
         tasks.gaincal(
-            vis=store, caltable="solved.cal", gaintype="G", calmode="ap", solint="int",
+            vis=store, caltable="solved.cal", gaintype=gaintype, calmode="ap", solint=solint,
+            refant="0", smodel=[1.0, 0.0, 0.0, 0.0],
+        )
+
+    assert failure.value.completion.parameter == "vis"
+    assert not Path("solved.cal").exists()
+
+
+@pytest.mark.parametrize(
+    ("scan_names", "diagnostic"),
+    [
+        (["1", "01"] * 6, "distinct scan_name values to the same CASA scan number"),
+        (["AB"] * 12, "every scan_name to be a decimal scan number"),
+    ],
+)
+def test_gaincal_refuses_unrepresentable_msv4_scans(tmp_path, monkeypatch, scan_names, diagnostic):
+    store = "ms_trial.ps.zarr"
+    prepare_store(tmp_path, monkeypatch, store)
+    scan = Path(store) / "ms_trial_0/scan_name"
+    header = scan / "zarr.json"
+    metadata = json.loads(header.read_text())
+    assert metadata["shape"] == [len(scan_names)]
+    assert metadata["chunk_grid"]["configuration"]["chunk_shape"] == metadata["shape"]
+    width = metadata["data_type"]["configuration"]["length_bytes"] // 4
+    metadata["codecs"] = metadata["codecs"][:1]
+    header.write_text(json.dumps(metadata))
+    (scan / "c/0").write_bytes(np.asarray(scan_names, dtype=f"<U{width}").tobytes())
+
+    with pytest.raises(tasks.TaskParameterError, match=diagnostic) as failure:
+        tasks.gaincal(
+            vis=store, caltable="solved.cal", gaintype="G", calmode="ap", solint="60s",
             refant="0", smodel=[1.0, 0.0, 0.0, 0.0],
         )
 

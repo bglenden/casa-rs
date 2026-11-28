@@ -198,6 +198,16 @@ pub(crate) fn solve_calibration_with_activity(
     }
     match dataset {
         CalibrationDataset::Path(path) => {
+            if matches!(request, CalibrationSolveRequest::GainSpline { .. })
+                && casa_ms::observation_io::is_msv4_store(&path)
+            {
+                return Err(GainSolveError::from(
+                    casa_observation::ObservationError::Unsupported {
+                        what: "GSPLINE gaincal on an MSv4 MeasurementSet (#1055)",
+                    },
+                )
+                .into());
+            }
             #[cfg(unix)]
             if let CalibrationSolveRequest::Gain(gain) = &request
                 && activity.is_none()

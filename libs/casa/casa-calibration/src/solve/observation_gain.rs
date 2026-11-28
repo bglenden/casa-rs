@@ -5,14 +5,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use casa_core::measures::MjdHighPrec;
-use casa_ms::MsSelection;
+use casa_core::memory::btree_node_bytes;
 use casa_ms::observation_io::{
-    CalibrationObservation, is_msv4_store, with_calibration_observation,
+    CalibrationObservation, CalibrationPartition, is_msv4_store, with_calibration_observation,
 };
+use casa_ms::{MeasurementSet, MsSelection};
 use casa_observation::{
-    AccessRequest, BatchBuffers, CorrelationRequest, FieldSelection, GroupKey, Grouping,
-    ObservationError, PartitionId, ReadEvent, Roles, SigmaFallback, TimeSelection, VisibilityBatch,
-    WeightRequest,
+    AccessRequest, BatchBuffers, Catalogue, CorrelationRequest, FieldId, FieldSelection, GroupKey,
+    Grouping, ObservationError, ObservationId, PartitionId, ReadEvent, Roles, ScanId,
+    SigmaFallback, TimeSelection, VisibilityBatch, WeightRequest,
 };
 use ndarray::{ArrayView2, s};
 
@@ -23,8 +24,8 @@ use super::grouping::{
 use super::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
     GainSolveReport, GainSolveRequest, GainType, RefAntSelector, SolvedGains,
-    apply_reference_antenna, preaverage_span, refant_distance_order, solve_group_with_stats,
-    spectral_window_ids, tally_references,
+    apply_reference_antenna, legacy_gain_receptors, preaverage_span, refant_distance_order,
+    solve_group_with_stats, spectral_window_ids, tally_references,
 };
 use crate::output::CalibrationOutputMode;
 use crate::selected_data::SelectedDataBuilder;
@@ -65,9 +66,13 @@ pub(crate) fn solve(
 ) -> Result<Option<GainSolveReport>, GainSolveError> {
     let is_msv4 = is_msv4_store(path);
     let opening = crate::timing::Phase::start("gain_observation_open");
-    let result = with_calibration_observation(path, |input| {
+    let result = with_calibration_observation(path, admit_msv2, |input| {
         drop(opening);
-        if let Some(what) = unrepresented_layout(&input) {
+        if let Some(what) = unrepresented_layout(
+            input.observation.catalogue(),
+            input.partitions,
+            input.available_bytes,
+        )? {
             return if is_msv4 {
                 Err(ObservationError::Unsupported { what }.into())
             } else {
@@ -75,7 +80,8 @@ pub(crate) fn solve(
             };
         }
         let gather = crate::timing::Phase::start("gain_observation_gather");
-        let solved = read_solutions(&input, request, input.available_bytes)?;
+        let legacy_receptors = legacy_gain_receptors(request, mode)?;
+        let solved = read_solutions(&input, request, input.available_bytes, legacy_receptors)?;
         drop(gather);
         super::writer::write_gain_caltable_named(
             input.subtables,
@@ -97,12 +103,31 @@ pub(crate) fn solve(
     }
 }
 
-fn unrepresented_layout(input: &CalibrationObservation<'_>) -> Option<&'static str> {
-    let catalogue = input.observation.catalogue();
-    let mut groups = BTreeSet::new();
-    for (partition, persisted) in catalogue.partitions.iter().zip(input.partitions) {
+fn admit_msv2(ms: &MeasurementSet) -> Result<(), ObservationError> {
+    // CASA probes jointly present spectral weights and sigmas per visibility
+    // buffer. The observation weight policy is per partition.
+    if ms.main_table().schema().is_some_and(|schema| {
+        schema.contains_column("WEIGHT_SPECTRUM") && schema.contains_column("SIGMA_SPECTRUM")
+    }) {
+        return Err(ObservationError::Unsupported {
+            what: "per-buffer spectral weights and sigmas in MSv2 gaincal",
+        });
+    }
+    Ok(())
+}
+
+fn unrepresented_layout(
+    catalogue: &Catalogue,
+    partitions: &[CalibrationPartition<'_>],
+    budget: usize,
+) -> Result<Option<&'static str>, ObservationError> {
+    type SolveIdentity = (i32, u32, ObservationId, FieldId, ScanId);
+    let mut owners = BTreeMap::<SolveIdentity, usize>::new();
+    for (id, (partition, persisted)) in catalogue.partitions.iter().zip(partitions).enumerate() {
         let Some(array) = persisted.array else {
-            return Some("multiple arrays in one calibration visibility partition");
+            return Ok(Some(
+                "multiple arrays in one calibration visibility partition",
+            ));
         };
         if partition.scans.is_empty()
             || partition
@@ -110,32 +135,55 @@ fn unrepresented_layout(input: &CalibrationObservation<'_>) -> Option<&'static s
                 .iter()
                 .any(|id| catalogue.scans[id.0 as usize].number.is_none())
         {
-            return Some("a calibration partition without numeric scan identities");
+            return Ok(Some(
+                "a calibration partition without numeric scan identities",
+            ));
         }
         if partition.data_group("base").is_none() {
-            return Some("a calibration partition without a base visibility data group");
+            return Ok(Some(
+                "a calibration partition without a base visibility data group",
+            ));
         }
-        for &field in &partition.fields {
-            for &scan in &partition.scans {
-                if !groups.insert((
-                    array,
-                    persisted.data_description,
-                    partition.observation,
-                    field,
-                    scan,
-                )) {
-                    return Some("calibration solution groups spanning observation partitions");
+        let Some((fields, scans)) = persisted.fields_and_scans else {
+            return Ok(Some(
+                "a calibration data group without per-time field and scan identities",
+            ));
+        };
+        for (&field, &scan) in fields.iter().zip(scans) {
+            let identity = (
+                array,
+                persisted.data_description,
+                partition.observation,
+                field,
+                scan,
+            );
+            if let Some(&owner) = owners.get(&identity) {
+                if owner != id {
+                    return Ok(Some(
+                        "calibration solution groups spanning observation partitions",
+                    ));
                 }
+                continue;
             }
+            let required = btree_node_bytes::<SolveIdentity, usize>(owners.len() + 1);
+            if required > budget {
+                return Err(ObservationError::OverBudget {
+                    what: "calibration partition group identities",
+                    required,
+                    budget,
+                });
+            }
+            owners.insert(identity, id);
         }
     }
-    None
+    Ok(None)
 }
 
 struct GainAccumulator<'a> {
     request: &'a GainSolveRequest,
     groups: BTreeMap<GroupKey, ScanAccumulator>,
     width_s: f64,
+    legacy_receptors: bool,
     rows: Vec<super::kernel::SolutionRow>,
     stats: SolveStatsBuilder,
     available_antennas: BTreeSet<i32>,
@@ -155,6 +203,7 @@ fn read_solutions(
     input: &CalibrationObservation<'_>,
     request: &GainSolveRequest,
     batch_bytes: usize,
+    legacy_receptors: bool,
 ) -> Result<SolvedGains, GainSolveError> {
     let GainSolveInterval::Seconds(width_s) = request.solve_interval else {
         return Err(GainSolveError::UnsupportedSolveInterval {
@@ -168,6 +217,7 @@ fn read_solutions(
         request,
         groups: BTreeMap::new(),
         width_s,
+        legacy_receptors,
         rows: Vec::new(),
         stats: SolveStatsBuilder::new(
             request.gain_type.polarizations(),
@@ -320,7 +370,7 @@ impl GainAccumulator<'_> {
             rotate_model: false,
             solve_interval: self.request.solve_interval,
             combine: self.request.combine,
-            legacy_g_receptors: false,
+            legacy_g_receptors: self.legacy_receptors,
             channelized: false,
             polynomial_bandpass: false,
             preaverage_max_span: preaverage_span(
@@ -431,16 +481,65 @@ impl GainAccumulator<'_> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn gaincal_keeps_time_bins_across_physical_batch_boundaries() {
+    fn trial_ms() -> tempfile::TempDir {
         let root = tempfile::tempdir().unwrap();
         let archive =
             include_bytes!("../../../../casacore/casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz");
         tar::Archive::new(flate2::read::GzDecoder::new(&archive[..]))
             .unpack(root.path())
             .unwrap();
+        root
+    }
+
+    #[test]
+    fn layout_checks_only_observed_field_scan_pairs_and_charges_their_index() {
+        let root = trial_ms();
+        with_calibration_observation(&root.path().join("ms_trial.ms"), admit_msv2, |input| {
+            let mut catalogue = Catalogue::clone(input.observation.catalogue());
+            catalogue.scans.push(casa_observation::ScanEntry {
+                name: "2".to_owned(),
+                number: Some(2),
+                intents: vec![],
+            });
+            catalogue.fields.push(catalogue.fields[0].clone());
+            catalogue.partitions[0].fields = vec![FieldId(0), FieldId(1)];
+            catalogue.partitions[0].scans = vec![ScanId(0), ScanId(1)];
+            catalogue.partitions.push(catalogue.partitions[0].clone());
+            let fields = [FieldId(0), FieldId(1), FieldId(0)];
+            let scans = [ScanId(0), ScanId(1), ScanId(0)];
+            let disjoint_scans = [ScanId(1), ScanId(0), ScanId(1)];
+            let partition = |scans| CalibrationPartition {
+                window: 0,
+                data_description: 0,
+                array: Some(0),
+                fields_and_scans: Some((&fields, scans)),
+            };
+            let disjoint = [partition(&scans), partition(&disjoint_scans)];
+            assert_eq!(
+                unrepresented_layout(&catalogue, &disjoint, 4096).unwrap(),
+                None
+            );
+            assert!(matches!(
+                unrepresented_layout(&catalogue, &disjoint, 0),
+                Err(ObservationError::OverBudget {
+                    what: "calibration partition group identities",
+                    ..
+                })
+            ));
+            let overlaps = [partition(&scans), partition(&scans)];
+            assert_eq!(
+                unrepresented_layout(&catalogue, &overlaps, 4096).unwrap(),
+                Some("calibration solution groups spanning observation partitions"),
+            );
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn gaincal_keeps_time_bins_across_physical_batch_boundaries() {
+        let root = trial_ms();
         let request = super::super::batch_trial::gain_request(root.path().join("unused.cal"));
-        with_calibration_observation(&root.path().join("ms_trial.ms"), |input| {
+        with_calibration_observation(&root.path().join("ms_trial.ms"), admit_msv2, |input| {
             let id = PartitionId(0);
             let unlimited = partition_access(&input, id, input.available_bytes);
             let estimate = input.observation.estimate(&unlimited).unwrap();
@@ -457,8 +556,8 @@ mod tests {
             }
             assert!(fragments > 2);
 
-            let whole = read_solutions(&input, &request, input.available_bytes).unwrap();
-            let fragmented = read_solutions(&input, &request, one_time_limit).unwrap();
+            let whole = read_solutions(&input, &request, input.available_bytes, false).unwrap();
+            let fragmented = read_solutions(&input, &request, one_time_limit, false).unwrap();
             assert_eq!(whole.selected_data, fragmented.selected_data);
             assert_eq!(whole.solve_stats, fragmented.solve_stats);
             assert_eq!(whole.rows.len(), 10);
