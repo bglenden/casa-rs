@@ -13,7 +13,7 @@ in `.ps.zarr`.
 | `tasks.rerefant(vis=…)` | Read antenna metadata for re-referencing a calibration table | Yes | Yes | [Read and verify the output calibration table][rerefant-tests] |
 | `tasks.smoothcal(vis=…)` | Read field metadata for smoothing a calibration table | Yes | Yes | [Verify field-specific smoothing on both stores][smoothcal-tests] |
 | `tasks.gaincal(vis=…)` | Read visibilities for a time-binned per-receptor G gain solve | Yes | [Point-source mode below](#solve-time-binned-gains) | [Verify gains for both stores][gaincal-tests] |
-| `tasks.gencal(vis=…)` | Read metadata for explicit gain, phase, delay and opacity prescriptions | Yes | `amp`, `ph`, `sbd`, `mbd`, `opac` | [Create and accumulate priors on both stores][gencal-tests] |
+| `tasks.gencal(vis=…)` | Read metadata for explicit calibration prescriptions | Yes | `amp`, `ph`, `sbd`, `mbd`, `opac`, [manual antenna offsets](#prescribe-calibration-values) | [Create and accumulate priors on both stores][gencal-tests] |
 | `tasks.listcal(vis=…)` | Read metadata for a CASA calibration listing | Yes | Fixed fields, terminal and file output | [Verify file output on both stores][listcal-tests] |
 
 [format-tests]: https://github.com/bglenden/casa-rs/blob/main/frontends/casars-python/python/tests/test_msconvert_formats.py
@@ -110,6 +110,16 @@ MSv4 inputs must have metadata that the CASA calibration subtables can
 represent. The task refuses moving MSv4 fields and updates whose existing
 antenna or spectral-window IDs refer to different physical entities.
 Textual scan names are accepted because these prescriptions do not name a scan.
+
+For manual antenna offsets, supply `caltype="antpos"`, an explicit `antenna`
+selection, and three offset coordinates per selected antenna in `parameter`.
+`caltype="antposvla"` rotates offsets from VLA coordinates into ITRF. Both
+modes add offsets to an existing, physically compatible calibration table.
+MSv4 accepts manual offsets when the observation does not require the VLA
+tropospheric correction check. For observations consisting entirely of VLA
+or EVLA sessions, the task requires the stated `OBSERVATION.TIME_RANGE` that
+determines CASA's `VLATrDelCorr` keyword. MSv4 lacks that field and the task
+reports a typed `vis` error. Automatic and file-based `antpos` require MSv2.
 
 ## Write a calibration listing
 

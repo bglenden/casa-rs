@@ -27,6 +27,7 @@ use casa_core::{
     ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
 use casa_ms::MeasurementSet;
+use casa_ms::observation_io::{ObservationError, calibration_subtables, is_msv4_store};
 use casa_ms::schema::SubtableId;
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
@@ -365,19 +366,54 @@ fn generate_prior(
         .map_err(|error| GencalError::InvalidRequest(error.to_string()));
     }
     let path = &request.measurement_set;
-    let ms = if matches!(
-        request.caltype,
-        GencalType::Amp | GencalType::Ph | GencalType::Sbd | GencalType::Mbd | GencalType::Opac
-    ) {
-        casa_ms::observation_io::calibration_subtables(path).map_err(|source| {
-            GencalError::Observation {
-                path: path.display().to_string(),
-                source: Box::new(source),
+    let manual_offsets = request.caltype == GencalType::AntposVla
+        || (request.caltype == GencalType::Antpos
+            && infile.is_none()
+            && !request.antenna.trim().is_empty());
+    let observation_error = |source| {
+        let source = match source {
+            ObservationError::Storage(source) if manual_offsets && !is_msv4_store(path) => {
+                match source.downcast() {
+                    Ok(source) => {
+                        return GencalError::OpenMeasurementSet {
+                            path: path.display().to_string(),
+                            source,
+                        };
+                    }
+                    Err(source) => ObservationError::Storage(source),
+                }
             }
-        })?
+            source => source,
+        };
+        GencalError::Observation {
+            path: path.display().to_string(),
+            source: Box::new(source),
+        }
+    };
+    let ms = if manual_offsets
+        || matches!(
+            request.caltype,
+            GencalType::Amp | GencalType::Ph | GencalType::Sbd | GencalType::Mbd | GencalType::Opac
+        ) {
+        calibration_subtables(path).map_err(observation_error)?
+    } else if request.caltype == GencalType::Antpos && is_msv4_store(path) {
+        return Err(observation_error(ObservationError::Unsupported {
+            what: "automatic or file-based antenna position offsets from MSv4",
+        }));
     } else {
         open_measurement_set(path)?
     };
+    if manual_offsets
+        && ms.path().is_none()
+        && crate::antpos_vla::only_vla_observations(&ms)
+            .map_err(|source| observation_error(ObservationError::Storage(Box::new(source))))?
+    {
+        // The snapshot's integration span is not the observing session's stated
+        // extent, which determines whether CASA writes VLATrDelCorr.
+        return Err(observation_error(ObservationError::Unsupported {
+            what: "VLA antenna position offsets from MSv4 without a stated OBSERVATION.TIME_RANGE",
+        }));
+    }
     let switched_power = request
         .caltype
         .is_switched_power()
