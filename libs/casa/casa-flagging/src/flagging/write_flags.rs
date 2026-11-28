@@ -66,6 +66,7 @@ pub(super) fn set_selected_flags(
     correlations: Option<&CorrelationSelection>,
     flag: bool,
     row_policy: SelectedFlagRowPolicy,
+    cancellation: Option<&Cancellation>,
 ) -> Result<ChangeSet, FlaggingError> {
     let row_policy = if is_calibration_table(ms) {
         SelectedFlagRowPolicy::Preserve
@@ -78,14 +79,19 @@ pub(super) fn set_selected_flags(
         channel_selections,
         None,
         correlations,
-        false,
-        None,
+        SampleLoadOptions {
+            cancellation,
+            ..SampleLoadOptions::default()
+        },
     )?;
     let mut updates = loaded.flags_by_row;
     let mut changed = ChangeSet::default();
     let mut touched_rows = std::collections::BTreeSet::new();
     let mut coverage = BTreeMap::<usize, usize>::new();
-    for sample in loaded.samples {
+    for (index, sample) in loaded.samples.into_iter().enumerate() {
+        if index % 1024 == 0 {
+            check_cancelled(cancellation)?;
+        }
         if row_policy == SelectedFlagRowPolicy::FullySelectedRows {
             *coverage.entry(sample.row).or_default() += 1;
         }
@@ -122,7 +128,7 @@ pub(super) fn set_selected_flags(
                 .filter_map(|(row, row_flag)| (row_flag != flag).then_some(row)),
         );
     }
-    write_touched_flag_updates(
+    stage_touched_flag_updates(
         ms,
         updates,
         touched_rows,
@@ -132,6 +138,7 @@ pub(super) fn set_selected_flags(
             _ => true,
         },
         &mut changed,
+        cancellation,
     )?;
     Ok(changed)
 }
@@ -197,15 +204,29 @@ pub(super) fn stage_flag_coordinates(
 
 pub(super) fn write_touched_flag_updates(
     ms: &mut MeasurementSet,
-    mut updates: std::collections::BTreeMap<usize, ArrayD<bool>>,
+    updates: BTreeMap<usize, ArrayD<bool>>,
     touched_rows: std::collections::BTreeSet<usize>,
     update_flag_row: impl Fn(usize) -> bool,
     changed: &mut ChangeSet,
 ) -> Result<(), FlaggingError> {
+    stage_touched_flag_updates(ms, updates, touched_rows, update_flag_row, changed, None)
+}
+
+fn stage_touched_flag_updates(
+    ms: &mut MeasurementSet,
+    mut updates: std::collections::BTreeMap<usize, ArrayD<bool>>,
+    touched_rows: std::collections::BTreeSet<usize>,
+    update_flag_row: impl Fn(usize) -> bool,
+    changed: &mut ChangeSet,
+    cancellation: Option<&Cancellation>,
+) -> Result<(), FlaggingError> {
     let path = display_ms_path(ms);
     let row_flags = !is_calibration_table(ms);
     let mut prepared = Vec::with_capacity(touched_rows.len());
-    for row in touched_rows {
+    for (index, row) in touched_rows.into_iter().enumerate() {
+        if index % FLAG_BATCH_ROWS == 0 {
+            check_cancelled(cancellation)?;
+        }
         let Some(flags) = updates.remove(&row) else {
             continue;
         };
@@ -249,28 +270,45 @@ pub(super) fn write_touched_flag_updates(
             .column_index(FLAG_COLUMN)
             .expect("prepared FLAG slot");
         let flag_row_slot = writer.column_index(FLAG_ROW_COLUMN);
-        for (row, flags) in &prepared {
-            writer
-                .seek(*row)
-                .and_then(|()| {
-                    writer.set_value_at(flag_slot, Value::Array(ArrayValue::Bool(flags.clone())))
-                })
-                .map_err(|source| FlaggingError::MutateFlags {
-                    path: path.clone(),
-                    reason: format!("write FLAG row {row}: {source}"),
-                })?;
+        let batch_rows = FLAG_BATCH_ROWS;
+        #[cfg(feature = "flagdata-test-hooks")]
+        let batch_rows = test_hooks::flag_stage_batch_rows(batch_rows);
+        for batch in prepared.chunks(batch_rows) {
+            check_cancelled(cancellation)?;
+            #[cfg(feature = "flagdata-test-hooks")]
+            test_hooks::observe(test_hooks::Checkpoint::FlagStageStarted(batch.len()));
+            for (row, flags) in batch {
+                writer
+                    .seek(*row)
+                    .and_then(|()| {
+                        writer
+                            .set_value_at(flag_slot, Value::Array(ArrayValue::Bool(flags.clone())))
+                    })
+                    .map_err(|source| FlaggingError::MutateFlags {
+                        path: path.clone(),
+                        reason: format!("write FLAG row {row}: {source}"),
+                    })?;
+            }
+            #[cfg(feature = "flagdata-test-hooks")]
+            test_hooks::observe(test_hooks::Checkpoint::FlagStageFinished(batch.len()));
         }
-        for (row, flag_row) in &flag_row_updates {
+        for batch in flag_row_updates.chunks(batch_rows) {
+            check_cancelled(cancellation)?;
             let flag_row_slot = flag_row_slot.expect("prepared FLAG_ROW slot");
-            writer
-                .seek(*row)
-                .and_then(|()| {
-                    writer.set_value_at(flag_row_slot, Value::Scalar(ScalarValue::Bool(*flag_row)))
-                })
-                .map_err(|source| FlaggingError::MutateFlags {
-                    path: path.clone(),
-                    reason: format!("write FLAG_ROW row {row}: {source}"),
-                })?;
+            for (row, flag_row) in batch {
+                writer
+                    .seek(*row)
+                    .and_then(|()| {
+                        writer.set_value_at(
+                            flag_row_slot,
+                            Value::Scalar(ScalarValue::Bool(*flag_row)),
+                        )
+                    })
+                    .map_err(|source| FlaggingError::MutateFlags {
+                        path: path.clone(),
+                        reason: format!("write FLAG_ROW row {row}: {source}"),
+                    })?;
+            }
         }
     }
     changed.changed_flag_row_rows += flag_row_updates.len();

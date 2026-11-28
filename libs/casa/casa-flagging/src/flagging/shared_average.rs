@@ -125,6 +125,7 @@ impl SharedAgentSelection<'_> {
 }
 
 pub(super) struct SharedFlagView {
+    cancellation: Option<Cancellation>,
     input_rows: Vec<usize>,
     rows: Vec<SharedFlagRow>,
     flags: BTreeMap<usize, ArrayD<bool>>,
@@ -246,13 +247,16 @@ impl SharedFlagView {
         time_chunk: Option<f64>,
         combinescans: bool,
         path: &str,
+        cancellation: Option<&Cancellation>,
     ) -> Result<Self, FlaggingError> {
         if let Some(widths) = config.widths {
             check_channel_bins(ms, widths, path)?;
         }
         let selected = (0..ms.row_count()).collect::<Vec<_>>();
         let ddid_to_spw = data_description_spw_map(ms)?;
-        let timed = ordered_baseline_chunks(ms, &selected, time_chunk, combinescans, path)?;
+        let timed =
+            ordered_baseline_chunks(ms, &selected, time_chunk, combinescans, path, cancellation)?;
+        check_cancelled(cancellation)?;
         let flags = selected
             .iter()
             .copied()
@@ -263,6 +267,7 @@ impl SharedFlagView {
             .map(|source| AveragedUvw::read(ms, &selected, source, path))
             .transpose()?;
         let mut view = Self {
+            cancellation: cancellation.cloned(),
             input_rows: selected,
             rows: Vec::new(),
             flags,
@@ -274,10 +279,12 @@ impl SharedFlagView {
         };
         if let Some(seconds) = config.seconds {
             for members in clip_time_groups(&timed, seconds) {
+                check_cancelled(cancellation)?;
                 view.add_row(members, config.widths, uvw.as_ref(), path)?;
             }
         } else {
             for row in &timed {
+                check_cancelled(cancellation)?;
                 view.add_row(std::slice::from_ref(row), config.widths, uvw.as_ref(), path)?;
             }
         }
@@ -385,6 +392,7 @@ impl SharedFlagView {
         let mut output = Vec::with_capacity(self.rows.len());
         let mut groups = self.rows.as_slice();
         while let Some((first, tail)) = groups.split_first() {
+            check_cancelled(self.cancellation.as_ref())?;
             let mut rows = first.members.len();
             let mut end = 1;
             for next in tail {
@@ -400,6 +408,7 @@ impl SharedFlagView {
             if rows > capacity {
                 let mut accumulator = None;
                 for members in first.members.chunks(capacity) {
+                    check_cancelled(self.cancellation.as_ref())?;
                     let batch = self.input_batch(members.iter());
                     let values = columns.read(
                         ms,
@@ -589,6 +598,7 @@ impl SharedFlagView {
         let mut samples = Vec::new();
         let mut model_roundoff = Vec::new();
         for (index, group) in self.rows.iter().enumerate() {
+            check_cancelled(self.cancellation.as_ref())?;
             if !selection.holds(group) {
                 continue;
             }
@@ -783,6 +793,7 @@ impl SharedFlagView {
         let mut samples = Vec::new();
         let mut coordinates = Vec::new();
         for (index, group) in self.rows.iter().enumerate() {
+            check_cancelled(self.cancellation.as_ref())?;
             if !selection.holds(group) {
                 continue;
             }
@@ -860,6 +871,7 @@ impl SharedFlagView {
         let mut samples = loaded.samples;
         let mut grown = Vec::with_capacity(samples.len());
         for group in samples.chunk_by_mut(|a, b| baseline(a) == baseline(b)) {
+            check_cancelled(self.cancellation.as_ref())?;
             for (index, sample) in group.iter_mut().enumerate() {
                 sample.index = index;
             }

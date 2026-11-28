@@ -2,6 +2,7 @@
 
 use std::{collections::BTreeMap, mem::size_of};
 
+use casa_core::cancellation::Cancellation;
 use casa_core::measures::direction::MDirection;
 
 use casa_ms::columns::direction_columns::DirectionColumn;
@@ -20,6 +21,7 @@ pub(super) fn apply_geometric_flags(
     rows: &[usize],
     channels: Option<&BTreeMap<i32, ChannelSelection>>,
     correlations: Option<&CorrelationSelection>,
+    cancellation: Option<&Cancellation>,
 ) -> Result<ChangeSet, FlaggingError> {
     let mut changed = ChangeSet::default();
     if rows.is_empty() {
@@ -32,7 +34,15 @@ pub(super) fn apply_geometric_flags(
         selected_flag_row_policy(correlations, SelectedFlagRowPolicy::AllSelectedRows)
     };
     for rows in rows.chunks(plan.rows_per_block.max(1)) {
-        let block = set_selected_flags(ms, rows, channels, correlations, true, row_policy)?;
+        let block = set_selected_flags(
+            ms,
+            rows,
+            channels,
+            correlations,
+            true,
+            row_policy,
+            cancellation,
+        )?;
         changed.changed_rows += block.changed_rows;
         changed.changed_samples += block.changed_samples;
         changed.changed_flag_row_rows += block.changed_flag_row_rows;

@@ -14,6 +14,8 @@ mod lock_file;
 mod sync_data;
 mod write_lock;
 
+#[cfg(all(test, unix))]
+pub(crate) use lock_file::inject_short_sync_write;
 #[cfg(unix)]
 pub(crate) use lock_file::read_sync_data_from_table_dir;
 #[cfg(unix)]

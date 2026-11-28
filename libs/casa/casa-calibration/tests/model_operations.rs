@@ -594,9 +594,8 @@ fn attached_mutation_rereads_selection_with_main_locked() {
             ms.main_table_mut()
                 .cell_accessor_mut(row.row_index, "MODEL_DATA")?
                 .set(Value::Array(cell))?;
-            lock.record_write();
             ms.main_table()
-                .save(casa_tables::TableOptions::new(lock.path()))?;
+                .save_with_write_lock(casa_tables::TableOptions::new(lock.path()), Some(lock))?;
             Ok(())
         })
         .unwrap_or_else(|error: AttachmentError| panic!("{error}"));

@@ -102,10 +102,17 @@ pub(super) fn apply_clip_flags(
             correlations,
             options,
             path: &path,
+            cancellation: request.cancellation.as_ref(),
         }
         .apply(ms, selected_rows, &mut columns, &ddid_to_spw, read_plan);
     }
-    for rows in selected_rows.chunks(read_plan.rows_per_block.max(1)) {
+    let batch_rows = read_plan.rows_per_block.max(1);
+    #[cfg(feature = "flagdata-test-hooks")]
+    let batch_rows = test_hooks::clip_batch_rows(batch_rows);
+    for rows in selected_rows.chunks(batch_rows) {
+        request.check_cancelled()?;
+        #[cfg(feature = "flagdata-test-hooks")]
+        test_hooks::observe(test_hooks::Checkpoint::ClipBatchStarted);
         let table = ms.main_table();
         let mut updates = BTreeMap::<usize, ArrayD<bool>>::new();
         let mut touched_rows = std::collections::BTreeSet::<usize>::new();
@@ -197,6 +204,8 @@ pub(super) fn apply_clip_flags(
         }
         // CASA's clip agent writes the per-sample FLAG column.
         write_touched_flag_updates(ms, updates, touched_rows, |_| false, &mut changed)?;
+        #[cfg(feature = "flagdata-test-hooks")]
+        test_hooks::observe(test_hooks::Checkpoint::ClipBatchStaged);
     }
     changed.summary = Some(FlagSummary {
         flagged_samples,
@@ -328,6 +337,7 @@ pub(super) fn apply_quack_flags(
     let mut scan_times = Vec::with_capacity(selected_rows.len());
     let mut edges = BTreeMap::<i32, f64>::new();
     for &row in selected_rows {
+        request.check_cancelled()?;
         let scan = table_i32(table, row, "SCAN_NUMBER", ms.path())?;
         let time = table_f64(table, row, "TIME", ms.path())?;
         scan_times.push((row, scan, time));
@@ -377,5 +387,6 @@ pub(super) fn apply_quack_flags(
         correlations,
         request.action.value(),
         row_policy,
+        request.cancellation.as_ref(),
     )
 }

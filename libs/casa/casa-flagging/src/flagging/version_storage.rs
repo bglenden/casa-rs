@@ -352,7 +352,7 @@ fn merge_flags_into_existing_version(
     version_path: &Path,
     merge: FlagMerge,
 ) -> Result<(), FlaggingError> {
-    let mut lock =
+    let lock =
         lock_existing_flag_version(version_path).map_err(|source| FlaggingError::FlagVersion {
             path: path.display().to_string(),
             reason: format!("lock existing flag version: {source}"),
@@ -408,11 +408,8 @@ fn merge_flags_into_existing_version(
                 })?;
         }
     }
-    // Recorded before the save, so an interrupted save still tells other
-    // processes to re-read the version.
-    lock.record_write();
     table
-        .save(TableOptions::new(version_path))
+        .save_with_write_lock(TableOptions::new(version_path), Some(&lock))
         .map_err(|source| FlaggingError::FlagVersion {
             path: path.display().to_string(),
             reason: format!("save existing flag version: {source}"),

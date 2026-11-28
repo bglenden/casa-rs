@@ -85,19 +85,18 @@ pub(super) fn write(
 }
 
 fn save_subtable(table: &Table, path: &Path) -> Result<(), String> {
-    let mut lock = path
+    let lock = path
         .is_dir()
         .then(|| TableWriteLock::acquire_to_reread(path, 1))
         .transpose()
         .map_err(message)?;
-    if let Some(lock) = lock.as_mut() {
-        lock.record_write();
-    }
     // Use CASA's writable layout so casacore bulk column edits survive reopening.
     let options = TableOptions::new(path)
         .with_data_manager(DataManagerKind::StandardStMan)
         .with_casacore_default_ssm(true);
-    table.save(options).map_err(message)?;
+    table
+        .save_with_write_lock(options, lock.as_ref())
+        .map_err(message)?;
     if let Some(lock) = lock {
         lock.release().map_err(message)?;
     }

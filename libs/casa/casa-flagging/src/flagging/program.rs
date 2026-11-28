@@ -20,7 +20,7 @@ use super::{
     AveragedAgentInput, ChangeSet, CorrelationSelection, FlagDataAction, FlagDataMode,
     FlagDataModelFactory, FlagDataReport, FlagDataRequest, FlagTimeSelection, FlaggingError,
     SelectedFlagRowPolicy, antint, apply_clip_flags, apply_quack_flags, apply_rflag_flags,
-    apply_tfcrop_flags, display_ms_path, elevation, extend, flagging_channels,
+    apply_tfcrop_flags, check_cancelled, display_ms_path, elevation, extend, flagging_channels,
     is_calibration_table, load_i32_cells, persist_changed_flags, report_after,
     save_next_casa_flag_backup, save_next_flag_backup, selected_flag_row_policy, selected_rows,
     set_selected_flags, shadow, summary,
@@ -127,6 +127,7 @@ pub(super) fn run_ms_single(
         action = ?request.action,
         "flagdata started"
     );
+    request.check_cancelled()?;
     // The CASA controller saves the working flags before selection. Typed
     // callers keep their existing selection-first backup behavior.
     let early_backup = persist
@@ -136,6 +137,7 @@ pub(super) fn run_ms_single(
     let mut backup_version = early_backup
         .then(|| save_next_casa_flag_backup(ms, "flagdata"))
         .transpose()?;
+    request.check_cancelled()?;
     let time_selection = FlagTimeSelection::Global;
     let selection = selected_rows(ms, request, time_selection)?;
     let selected = selection.rows;
@@ -154,9 +156,11 @@ pub(super) fn run_ms_single(
             channel_selections.as_ref(),
             correlations.as_ref(),
             request.summary_options,
+            request.cancellation.as_ref(),
         );
     }
     if persist && request.flagbackup && !early_backup && !selected.is_empty() {
+        request.check_cancelled()?;
         backup_version = Some(save_next_flag_backup(ms, "flagdata")?);
     }
     let selection = AgentSelection {
@@ -168,18 +172,20 @@ pub(super) fn run_ms_single(
     };
     let changes =
         stage_selected_ms_request(ms, &selection, request, !persist, model_factory, None)?;
+    request.check_cancelled()?;
+    let mut report_cancellation = request.cancellation.as_ref();
     if persist && !changes.changed_row_indices.is_empty() {
-        persist_changed_flags(ms, &changes, &ms_path)?;
+        persist_changed_flags(ms, &changes, &ms_path, report_cancellation)?;
+        report_cancellation = None;
     }
-    let thresholds = changes.thresholds;
     let report = report_after(
         ms,
         request,
         &selection.rows,
         changes,
         backup_version,
-        thresholds,
         time_selection,
+        report_cancellation,
     )?;
     tracing::info!(
         path = %ms_path,
@@ -200,6 +206,7 @@ pub(super) fn run_ms_single(
 /// the end. When `local_selection` is `true` (multiple commands in CASA's
 /// `mode='list'`), an agent whose local selection fails is skipped (`None`)
 /// rather than aborting the list; single-command runs propagate selection errors.
+/// Use the same cancellation token for the program's requests.
 pub fn flagdata_ms_program(
     mut ms: MeasurementSet,
     requests: &[FlagDataRequest],
@@ -207,6 +214,10 @@ pub fn flagdata_ms_program(
     local_selection: bool,
     model_factory: Option<FlagDataModelFactory>,
 ) -> Result<Vec<Option<FlagDataReport>>, FlaggingError> {
+    let cancellation = requests
+        .iter()
+        .find_map(|request| request.cancellation.as_ref());
+    check_cancelled(cancellation)?;
     if is_calibration_table(&ms) {
         return Err(FlaggingError::MutateFlags {
             path: display_ms_path(&ms),
@@ -250,6 +261,7 @@ pub fn flagdata_ms_program(
             time_chunk,
             combinescans,
             &ms_path,
+            cancellation,
         )?)
     } else {
         None
@@ -260,18 +272,20 @@ pub fn flagdata_ms_program(
         .iter()
         .enumerate()
         .map(|(index, request)| {
-            (shared.is_none()
+            check_cancelled(cancellation)?;
+            Ok((shared.is_none()
                 && index > 0
                 && local_selection
                 && request.casa_row_selection
                 && request.mode == FlagDataMode::Antint)
-                .then(|| plan_antint(&ms, request, &ms_path, time_selection))
+                .then(|| plan_antint(&ms, request, &ms_path, time_selection)))
         })
-        .collect();
+        .collect::<Result<_, FlaggingError>>()?;
     let mut reports = Vec::with_capacity(requests.len());
     let mut touched = BTreeSet::new();
     let mut changed_flag_row_rows = 0usize;
     for (request, antint_plan) in requests.iter().zip(antint_plans) {
+        check_cancelled(cancellation)?;
         match stage_ms_program_request(
             &mut ms,
             request,
@@ -299,6 +313,7 @@ pub fn flagdata_ms_program(
             Err(error) => return Err(error),
         }
     }
+    check_cancelled(cancellation)?;
     if let Some(view) = shared
         && write_flags
     {
@@ -306,13 +321,14 @@ pub fn flagdata_ms_program(
         touched.extend(std::mem::take(&mut changes.changed_row_indices));
         changed_flag_row_rows += changes.changed_flag_row_rows;
     }
+    check_cancelled(cancellation)?;
     if write_flags && !touched.is_empty() {
         let changes = ChangeSet {
             changed_row_indices: touched.into_iter().collect(),
             changed_flag_row_rows,
             ..ChangeSet::default()
         };
-        persist_changed_flags(&mut ms, &changes, &ms_path)?;
+        persist_changed_flags(&mut ms, &changes, &ms_path, cancellation)?;
     }
     Ok(reports)
 }
@@ -333,7 +349,13 @@ fn plan_antint(
     {
         return Ok(None);
     }
-    let affected = antint::affected_rows(ms, &selection.rows, &request.antint, path)?;
+    let affected = antint::affected_rows(
+        ms,
+        &selection.rows,
+        &request.antint,
+        path,
+        request.cancellation.as_ref(),
+    )?;
     Ok(Some(AntintPlan {
         selection,
         affected,
@@ -476,6 +498,7 @@ fn stage_ms_program_request(
             selection.channels.as_ref(),
             selection.correlations.as_ref(),
             request.summary_options,
+            request.cancellation.as_ref(),
         )
         .map(|report| Some((report, Vec::new(), 0)));
     }
@@ -492,6 +515,7 @@ fn stage_ms_program_request(
             affected,
             selection.channels.as_ref(),
             selection.correlations.as_ref(),
+            request.cancellation.as_ref(),
         )?
     } else {
         stage_selected_ms_request(
@@ -524,15 +548,14 @@ fn stage_ms_program_request(
     }
     let changed_rows = std::mem::take(&mut changes.changed_row_indices);
     let changed_flag_rows = changes.changed_flag_row_rows;
-    let thresholds = changes.thresholds;
     let report = report_after(
         ms,
         request,
         &selection.rows,
         changes,
         None,
-        thresholds,
         time_selection,
+        request.cancellation.as_ref(),
     )?;
     Ok(Some((report, changed_rows, changed_flag_rows)))
 }
@@ -604,6 +627,7 @@ fn stage_selected_ms_request(
     model_factory: Option<FlagDataModelFactory>,
     shared: Option<&mut SharedFlagView>,
 ) -> Result<ChangeSet, FlaggingError> {
+    request.check_cancelled()?;
     let selected_rows = &selection.rows;
     let channel_selections = selection.channels.as_ref();
     let correlations = selection.correlations.as_ref();
@@ -642,6 +666,7 @@ fn stage_selected_ms_request(
             correlations,
             request.action.value(),
             selected_flag_row_policy(correlations, SelectedFlagRowPolicy::ChangedSamples),
+            request.cancellation.as_ref(),
         ),
         FlagDataMode::Clip => apply_clip_flags(
             ms,
@@ -662,6 +687,7 @@ fn stage_selected_ms_request(
             channel_selections,
             correlations,
             &ms_path,
+            request.cancellation.as_ref(),
         ),
         FlagDataMode::Shadow => shadow::apply(
             ms,
@@ -670,6 +696,7 @@ fn stage_selected_ms_request(
             channel_selections,
             correlations,
             &ms_path,
+            request.cancellation.as_ref(),
         ),
         FlagDataMode::Antint => antint::apply(
             ms,
@@ -678,6 +705,7 @@ fn stage_selected_ms_request(
             channel_selections,
             correlations,
             &ms_path,
+            request.cancellation.as_ref(),
         ),
         FlagDataMode::Tfcrop => apply_tfcrop_flags(
             ms,

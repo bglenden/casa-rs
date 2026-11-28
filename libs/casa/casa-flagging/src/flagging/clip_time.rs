@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::{AddAssign, DivAssign, Mul};
 
+use casa_core::cancellation::Cancellation;
 use casa_core::{
     ArrayValue, ScalarValue,
     quanta::{Quantity, Unit, casacore::convert},
@@ -18,8 +19,8 @@ use super::clip_columns::{ClipColumns, subtract_model};
 use super::correlation::CorrelationSelection;
 use super::{
     ChangeSet, ChannelSelection, FLAG_COLUMN, FlagDataColumn, FlagSummary, FlaggingError,
-    MeasurementSet, MsReadPlan, MsSelectionIoBudget, clip_channel_selection, load_i32_cells,
-    write_touched_flag_updates,
+    MeasurementSet, MsReadPlan, MsSelectionIoBudget, check_cancelled, clip_channel_selection,
+    load_i32_cells, write_touched_flag_updates,
 };
 
 // These are the visibility iterator's chunk keys, followed by the ordered
@@ -115,6 +116,7 @@ pub(super) fn read_clip_times(
     ms: &MeasurementSet,
     selected: &[usize],
     path: &str,
+    cancellation: Option<&Cancellation>,
 ) -> Result<Vec<ClipTimedRow>, FlaggingError> {
     let fail = |reason: String| FlaggingError::MutateFlags {
         path: path.to_string(),
@@ -131,6 +133,7 @@ pub(super) fn read_clip_times(
     let mut timed = Vec::with_capacity(selected.len());
     let calibration = super::is_calibration_table(ms);
     for rows in selected.chunks(plan.rows_per_block.max(1)) {
+        check_cancelled(cancellation)?;
         let begin = timed.len();
         for (&row, value) in rows.iter().zip(
             time.scalar_cells_owned_for_rows(rows)
@@ -149,6 +152,7 @@ pub(super) fn read_clip_times(
             }
         }
         for (slot, name) in GROUP_COLUMNS.into_iter().enumerate() {
+            check_cancelled(cancellation)?;
             if calibration && name == "ARRAY_ID" {
                 for row in &mut timed[begin..] {
                     row.group[slot] = -1;
@@ -177,8 +181,9 @@ pub(super) fn ordered_baseline_chunks(
     interval: Option<f64>,
     combine_scans: bool,
     path: &str,
+    cancellation: Option<&Cancellation>,
 ) -> Result<Vec<ClipTimedRow>, FlaggingError> {
-    let mut timed = read_clip_times(ms, selected, path)?;
+    let mut timed = read_clip_times(ms, selected, path, cancellation)?;
     // The calibration iterator fixes its chunks by observation, scan,
     // field and window. MeasurementSet iterator controls apply to MSes.
     let calibration = super::is_calibration_table(ms);
@@ -306,6 +311,7 @@ pub(super) struct TimeClip<'a> {
     pub(super) correlations: Option<&'a CorrelationSelection>,
     pub(super) options: ClipOptions<'a>,
     pub(super) path: &'a str,
+    pub(super) cancellation: Option<&'a Cancellation>,
 }
 
 impl TimeClip<'_> {
@@ -317,7 +323,7 @@ impl TimeClip<'_> {
         ddid_to_spw: &BTreeMap<i32, i32>,
         read_plan: MsReadPlan,
     ) -> Result<ChangeSet, FlaggingError> {
-        let mut timed = read_clip_times(ms, selected, self.path)?;
+        let mut timed = read_clip_times(ms, selected, self.path, self.cancellation)?;
         if columns.uses_weight_spectrum() {
             // Fallback belongs to the first selected row in each original
             // window. Baseline ordering is only for time-bin membership.
@@ -356,8 +362,15 @@ impl TimeClip<'_> {
         let mut matched = Vec::new();
         let mut selected = 0;
         for members in self.averaging.groups(&timed) {
-            let (average, before, last_unflagged) =
-                collect_time_bin(ms, members, rows_per_block, columns, ddid_to_spw, self.path)?;
+            let (average, before, last_unflagged) = collect_time_bin(
+                ms,
+                members,
+                rows_per_block,
+                columns,
+                ddid_to_spw,
+                self.path,
+                self.cancellation,
+            )?;
             if !self.averaging.holds(members, last_unflagged) {
                 continue;
             }
@@ -403,6 +416,7 @@ impl TimeClip<'_> {
                 &changes_in_group,
                 self.path,
                 &mut changes,
+                self.cancellation,
             )?;
             counts.flagged_samples += changed;
             changes.changed_samples += changed;
@@ -507,9 +521,11 @@ fn apply_time_bin_flags(
     matched: &[(usize, usize)],
     path: &str,
     changes: &mut ChangeSet,
+    cancellation: Option<&Cancellation>,
 ) -> Result<usize, FlaggingError> {
     let mut changed_samples = 0;
     for block in members.chunks(block_size) {
+        check_cancelled(cancellation)?;
         let rows = block.iter().map(|entry| entry.row).collect::<Vec<_>>();
         let flags = read_flags(ms.main_table(), &rows, path)?;
         let mut partial = BTreeMap::new();
@@ -547,6 +563,7 @@ pub(super) fn collect_time_bin(
     columns: &mut ClipColumns,
     ddid_to_spw: &BTreeMap<i32, i32>,
     path: &str,
+    cancellation: Option<&Cancellation>,
 ) -> Result<(ClipTimeAccumulator, FlagSummary, Option<f64>), FlaggingError> {
     let mut result = None;
     let mut last_unflagged = None;
@@ -556,6 +573,7 @@ pub(super) fn collect_time_bin(
     };
     let table = ms.main_table();
     for block in members.chunks(block_size) {
+        check_cancelled(cancellation)?;
         let rows = block.iter().map(|entry| entry.row).collect::<Vec<_>>();
         let ddids = block
             .iter()

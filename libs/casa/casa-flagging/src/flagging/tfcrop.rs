@@ -213,6 +213,7 @@ pub(super) fn fit_tfcrop_groups(
         vec![0.0; masks.modified.len()]
     };
     for (description, group) in groups {
+        request.check_cancelled()?;
         let planes = samples_by_corr(group);
         let selection = correlations.zip(*description);
         let default_projections;
@@ -520,6 +521,7 @@ pub(super) fn ordered_autoflag_groups(
         request.time_chunk,
         request.combinescans,
         &display_ms_path(ms),
+        request.cancellation.as_ref(),
     )?;
     let runs: HashMap<_, _> = sample_row_runs(samples)
         .into_iter()

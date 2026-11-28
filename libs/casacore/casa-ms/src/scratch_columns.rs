@@ -392,17 +392,21 @@ pub(crate) fn change_in_place(
     let Some(path) = table.path().map(Path::to_path_buf) else {
         return change(table);
     };
-    let written = |table: &mut Table| -> MsResult<()> {
+    let written = |table: &mut Table, lock: Option<&TableWriteLock>| -> MsResult<()> {
         change(table)?;
         match write {
-            Write::Full => table.save(measurement_set_table_options(&path))?,
+            Write::Full => {
+                table.save_with_write_lock(measurement_set_table_options(&path), lock)?
+            }
             Write::Metadata => table.save_metadata_only(TableOptions::new(&path))?,
         }
         Ok(())
     };
     if let Some(lock) = held {
-        lock.record_write();
-        let result = written(table);
+        if matches!(write, Write::Metadata) {
+            lock.record_write();
+        }
+        let result = written(table, Some(lock));
         if result.is_err() {
             let _ = table.resync();
         }
@@ -412,12 +416,12 @@ pub(crate) fn change_in_place(
     if table.lock_options().is_some() {
         if holds_write_lock(table) {
             // Published when the caller releases its lock.
-            return written(table);
+            return written(table, None);
         }
         if !table.lock(casa_tables::LockType::Write, attempts)? {
             return Err(lock_refused(&path));
         }
-        let result = written(table);
+        let result = written(table, None);
         if result.is_err() {
             let _ = table.resync();
         }
@@ -425,8 +429,10 @@ pub(crate) fn change_in_place(
         return result.and(released.map_err(MsError::from));
     }
     let mut lock = TableWriteLock::acquire(&path, attempts)?;
-    lock.record_write();
-    let result = written(table);
+    if matches!(write, Write::Metadata) {
+        lock.record_write();
+    }
+    let result = written(table, Some(&lock));
     if result.is_err() {
         let _ = table.resync();
     }
