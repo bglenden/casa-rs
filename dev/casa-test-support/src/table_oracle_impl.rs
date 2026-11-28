@@ -4,7 +4,7 @@
 #[cfg(has_casacore_cpp)]
 use crate::oracle_ffi::*;
 #[cfg(has_casacore_cpp)]
-use crate::oracle_runtime::CasacoreOracleRuntime;
+use crate::oracle_runtime::{CasacoreOracleRuntime, OracleError};
 
 // ===== Safe wrappers for C++ table shim =====
 
@@ -928,23 +928,25 @@ pub(crate) fn cpp_held_reader_open(path: &std::path::Path) -> Result<CppHeldRead
         .ok_or_else(|| "the C++ reader returned a null table".to_owned())
 }
 
-/// Take a read lock on the held table, read `id(0)` and release the lock,
-/// keeping the table open.
 #[cfg(has_casacore_cpp)]
-pub(crate) fn cpp_held_reader_read_id(reader: &mut CppHeldReaderHandle) -> Result<i32, String> {
-    let mut id: i32 = 0;
+pub(crate) fn cpp_held_reader_read_int(
+    reader: &mut CppHeldReaderHandle,
+    keyword: Option<&str>,
+    operation: &'static str,
+) -> Result<i32, OracleError> {
+    let keyword = keyword
+        .map(|name| CasacoreOracleRuntime::c_string("table keyword", name))
+        .transpose()?;
+    let keyword = keyword
+        .as_ref()
+        .map_or(std::ptr::null(), |name| name.as_ptr());
+    let mut value = 0;
     let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
-    let rc = unsafe { cpp_table_held_reader_read_id(reader.0.as_ptr(), &mut id, &mut error) };
-    unsafe {
-        CasacoreOracleRuntime::cpp_status(
-            "table.held_reader_read_id",
-            rc,
-            error,
-            cpp_table_free_error,
-        )
-    }
-    .map_err(|error| error.to_string())?;
-    Ok(id)
+    let rc = unsafe {
+        cpp_table_held_reader_read_int(reader.0.as_ptr(), keyword, &mut value, &mut error)
+    };
+    unsafe { CasacoreOracleRuntime::cpp_status(operation, rc, error, cpp_table_free_error) }?;
+    Ok(value)
 }
 
 /// Close the held table.

@@ -348,10 +348,11 @@ impl Table {
             }
             let persisted_rows = self.require_persisted_rows(&path, &table_dat)?;
             table_dat.raise_row_count(persisted_rows);
+            let control = crate::storage::table_control::StagedTableDat::for_existing_table(&path)?;
             let removed_managers = edit(self, &mut table_dat, &path)?;
             self.note_persisted_write(&path);
             wrote = true;
-            crate::storage::table_control::write_table_dat(&control_path, &table_dat)?;
+            control.publish(&table_dat)?;
             for seq_nr in removed_managers {
                 remove_manager_files(&path, seq_nr).map_err(StorageError::from)?;
             }

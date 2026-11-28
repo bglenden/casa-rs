@@ -184,11 +184,17 @@ struct HeldTableReader {
           id(table, "id") {}
 };
 
-// Take a read lock, read id(0) and release the lock, keeping the table open.
-int32_t held_reader_read_id_impl(HeldTableReader& reader) {
+// Take a read lock, read an Int keyword or id(0), then release the lock.
+int32_t held_reader_read_int_impl(HeldTableReader& reader, const char* keyword) {
     if (!reader.table.lock(casacore::FileLocker::Read, 1))
         throw std::runtime_error("read lock was not acquired");
-    casacore::Int value = reader.id(0);
+    casacore::Int value;
+    try {
+        value = keyword ? reader.table.keywordSet().asInt(keyword) : reader.id(0);
+    } catch (...) {
+        reader.table.unlock();
+        throw;
+    }
     reader.table.unlock();
     return value;
 }
@@ -735,10 +741,10 @@ int32_t cpp_table_held_reader_open(const char* path, void** out_reader,
     } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
     } catch (...) { *out_error = make_error("unknown exception"); return -1; }
 }
-int32_t cpp_table_held_reader_read_id(void* reader, int32_t* out_id,
-                                      char** out_error) {
+int32_t cpp_table_held_reader_read_int(void* reader, const char* keyword,
+                                     int32_t* out_value, char** out_error) {
     try {
-        *out_id = held_reader_read_id_impl(*static_cast<HeldTableReader*>(reader));
+        *out_value = held_reader_read_int_impl(*static_cast<HeldTableReader*>(reader), keyword);
         return 0;
     } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
     } catch (...) { *out_error = make_error("unknown exception"); return -1; }

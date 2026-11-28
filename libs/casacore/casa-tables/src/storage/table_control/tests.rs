@@ -2,6 +2,167 @@
 
 use super::*;
 use std::path::PathBuf;
+use std::{fs, io};
+
+#[test]
+fn path_reader_finishes_its_descriptor_during_repeated_saves() {
+    use crate::{Table, TableOptions};
+    use std::{fs::File, io::Read, sync::mpsc, thread};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("table.dat");
+    let schema = TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)]).unwrap();
+    let mut table = Table::with_schema(schema);
+    let large = "old keyword payload".repeat(1024);
+    let small = "short replacement";
+    let mut save = |value: &str| {
+        table.keywords_mut().upsert(
+            "revision",
+            Value::Scalar(ScalarValue::String(value.to_owned())),
+        );
+        table.save(TableOptions::new(directory.path())).unwrap();
+    };
+    save(&large);
+
+    for next in [small, &large, small, &large, small] {
+        let previous = std::fs::read(&path).unwrap();
+        thread::scope(|scope| {
+            let (opened, wait_for_reader) = mpsc::channel();
+            let (saved, wait_for_writer) = mpsc::channel();
+            let path = &path;
+            let reader = scope.spawn(move || {
+                let mut file = File::open(path).unwrap();
+                let mut actual = vec![0; previous.len()];
+                // Read the AipsIO magic and object length before the save,
+                // then ask the same path-opened file for the rest of the object.
+                let (header, body) = actual.split_at_mut(8);
+                file.read_exact(header).unwrap();
+                opened.send(()).unwrap();
+                wait_for_writer.recv().unwrap();
+                file.read_exact(body)
+                    .expect("the opened descriptor was torn");
+                assert!(actual == previous, "the opened descriptor changed");
+            });
+            wait_for_reader.recv().unwrap();
+            save(next);
+            saved.send(()).unwrap();
+            reader.join().unwrap();
+        });
+        let current = read_table_dat(&path).unwrap();
+        assert_eq!(
+            current.table_desc.table_keywords.get("revision"),
+            Some(&Value::Scalar(ScalarValue::String(next.to_owned())))
+        );
+    }
+}
+
+fn plain_descriptor(rows: u64) -> TableDatContents {
+    let schema = TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)]).unwrap();
+    TableDatContents::from_snapshot(
+        &schema,
+        &RecordValue::default(),
+        &Default::default(),
+        rows,
+        "StManAipsIO",
+        &[],
+        true,
+    )
+}
+
+#[test]
+fn concurrent_descriptor_rewrites_have_private_staging_files() {
+    use std::{sync::Barrier, thread};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("table.dat");
+    let cpp_stage = directory.path().join("table.dat_tmp");
+    fs::write(&cpp_stage, b"casacore's staging file").unwrap();
+    write_table_dat(&path, &plain_descriptor(0)).unwrap();
+    let start = Barrier::new(2);
+    thread::scope(|scope| {
+        for rows in [1, 2] {
+            let path = &path;
+            let start = &start;
+            scope.spawn(move || {
+                let contents = plain_descriptor(rows);
+                start.wait();
+                for _ in 0..16 {
+                    write_table_dat(path, &contents).unwrap();
+                }
+            });
+        }
+    });
+    let actual = fs::read(&path).unwrap();
+    assert!([1, 2].into_iter().any(|rows| {
+        actual.as_slice()
+            == serialize_table_dat(&plain_descriptor(rows))
+                .unwrap()
+                .as_ref()
+    }));
+    assert_eq!(fs::read(cpp_stage).unwrap(), b"casacore's staging file");
+    assert_eq!(directory.path().read_dir().unwrap().count(), 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn descriptor_replacement_respects_existing_modes_and_links() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("table.dat");
+    let referent = directory.path().join("other.dat");
+    let contents = plain_descriptor(1);
+    write_table_dat(&path, &plain_descriptor(0)).unwrap();
+    fs::write(&referent, b"").unwrap();
+    let mode = |file: &Path| fs::metadata(file).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(&path), mode(&referent), "new-file creation mode");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+    write_table_dat(&path, &contents).unwrap();
+    assert_eq!(mode(&path), 0o640, "existing file mode");
+
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o440)).unwrap();
+    let previous = fs::read(&path).unwrap();
+    if crate::publication::check_write_access(&path).is_err() {
+        assert!(matches!(
+            write_table_dat(&path, &plain_descriptor(2)),
+            Err(StorageError::Io(error)) if error.kind() == io::ErrorKind::PermissionDenied
+        ));
+        assert_eq!(fs::read(&path).unwrap(), previous);
+    }
+    fs::remove_file(&referent).unwrap();
+    fs::rename(&path, &referent).unwrap();
+    fs::set_permissions(&referent, fs::Permissions::from_mode(0o640)).unwrap();
+    symlink(&referent, &path).unwrap();
+    assert!(write_table_dat(&path, &plain_descriptor(2)).is_err());
+    assert!(path.symlink_metadata().unwrap().is_symlink());
+    assert_eq!(fs::read(&referent).unwrap(), previous);
+
+    fs::remove_file(&path).unwrap();
+    fs::hard_link(&referent, &path).unwrap();
+    assert!(write_table_dat(&path, &plain_descriptor(2)).is_err());
+    assert_eq!(fs::read(&referent).unwrap(), previous);
+    assert_eq!(fs::read(&path).unwrap(), previous);
+    assert_eq!(directory.path().read_dir().unwrap().count(), 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn prepared_descriptor_rechecks_its_live_destination_before_publication() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("table.dat");
+    write_table_dat(&path, &plain_descriptor(1)).unwrap();
+    let staged = StagedTableDat::for_existing_table(directory.path()).unwrap();
+    let original = directory.path().join("original.dat");
+    fs::rename(&path, &original).unwrap();
+    symlink(&original, &path).unwrap();
+
+    assert!(staged.publish(&plain_descriptor(2)).is_err());
+    assert_eq!(fs::read_link(&path).unwrap(), original);
+    assert_eq!(read_table_dat(&path).unwrap().nrrow, 1);
+    assert_eq!(directory.path().read_dir().unwrap().count(), 2);
+}
 
 fn test_dir(name: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now()

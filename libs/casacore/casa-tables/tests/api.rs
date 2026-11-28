@@ -23,6 +23,9 @@ mod ssm_long_strings;
 mod streamed_scalar_storage;
 #[path = "api_cases/streamed_writer_memory.rs"]
 mod streamed_writer_memory;
+#[cfg(unix)]
+#[path = "api_cases/table_dat_publication.rs"]
+mod table_dat_publication;
 #[path = "api_cases/table_desc_header.rs"]
 mod table_desc_header;
 #[path = "api_cases/table_examples.rs"]
