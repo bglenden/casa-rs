@@ -902,11 +902,13 @@ restricts those slices for each chunk. With a selection such as `0:0~1;100`,
 a chunk might start with channels 1 and 100 while the complete selection
 starts with 0 and 1.
 
-For a linear cube, casa-rs preserves the first pair of the full selected
-channels at each epoch when it reads a wave. It evaluates their centres in
-the same frame as the delivered data. The fine gridding and prediction
-coordinates and the prediction halo then agree with the resident cube
-through gaps and uneven channel spacing.
+For a linear cube, casa-rs preserves the first selected pair at each epoch
+before clipping the read support, and evaluates those centres in the
+interpolation frame. Each wave retains the selected channels that bracket
+it at any observed epoch, including when a Doppler shift changes which
+channels are adjacent. The fine gridding and prediction coordinates and
+prediction halo agree with the resident cube through gaps and uneven
+channel spacing.
 
 ## The cube Briggs weightor grids and looks up its density in different uvw frames
 

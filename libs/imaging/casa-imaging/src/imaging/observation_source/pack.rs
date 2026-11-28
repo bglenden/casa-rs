@@ -662,8 +662,7 @@ impl Packer<'_> {
                     layout
                 };
             let flagged = arrays.row_flagged(sample, &flag_layout.channels, &scratch.routed);
-            let baseline = batch.baselines[sample % per_time];
-            let field = batch.field[time];
+            let (baseline, field) = (batch.baselines[sample % per_time], batch.field[time]);
             let header = NativeRowHeader {
                 selection_spacing_hz,
                 row_flag: flagged || nonfinite_uvw,
