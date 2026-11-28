@@ -10,10 +10,18 @@ pub enum Checkpoint {
     ClipBatchStarted,
     /// The current clip batch has staged its edits in memory.
     ClipBatchStaged,
-    /// The worker has planned MAIN publication and has one last poll.
+    /// A batch of resident FLAG updates is about to be staged.
+    FlagStageStarted(usize),
+    /// A batch of resident FLAG updates has been staged.
+    FlagStageFinished(usize),
+    /// A reporting row is about to be read.
+    ReportRowStarted,
+    /// A reporting row has been counted.
+    ReportRowFinished,
+    /// MAIN publication has been planned and the write lock has yet to be acquired.
     BeforeCommit,
-    /// The last poll passed and the worker will finish publishing MAIN.
-    CommitAccepted,
+    /// MAIN has been committed and its lock released before the task writes HISTORY.
+    MainCommitted,
 }
 
 type Observer = Box<dyn Fn(Checkpoint)>;
@@ -22,7 +30,7 @@ thread_local! {
     static OBSERVER: RefCell<Option<Observer>> = const { RefCell::new(None) };
 }
 
-/// Observe lock-free checkpoints and use one row per clip batch for this run.
+/// Observe lock-free checkpoints and use small batches for this run.
 #[doc(hidden)]
 pub fn with_observer<T>(observer: impl Fn(Checkpoint) + 'static, run: impl FnOnce() -> T) -> T {
     struct Reset(Option<Observer>);
@@ -37,6 +45,10 @@ pub fn with_observer<T>(observer: impl Fn(Checkpoint) + 'static, run: impl FnOnc
 
 pub(super) fn clip_batch_rows(default: usize) -> usize {
     OBSERVER.with_borrow(|observer| if observer.is_some() { 1 } else { default })
+}
+
+pub(super) fn flag_stage_batch_rows(default: usize) -> usize {
+    OBSERVER.with_borrow(|observer| if observer.is_some() { 2 } else { default })
 }
 
 pub(super) fn observe(checkpoint: Checkpoint) {

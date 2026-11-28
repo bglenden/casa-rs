@@ -16,7 +16,7 @@ use casa_ms::MeasurementSet;
 use casa_mstransform::append_task_history;
 
 use super::{
-    channel_bin_widths, command, command_values::Assignments, data_column,
+    channel_bin_widths, check_cancelled, command, command_values::Assignments, data_column,
     flagdata_column_argument, flagdata_history, is_calibration_table, prepare_flagdata_request,
     rflag, shadow, time_chunk_argument, unknown,
 };
@@ -36,19 +36,13 @@ pub(super) fn run(task: &TaskInvocation<'_>, action: &str) -> Result<TaskSuccess
     }
     let path = task.path("vis")?;
     let cancellation = task.cancellation();
-    let check_cancelled = || {
-        if cancellation.is_some_and(|token| token.is_cancelled()) {
-            return Err(TaskFailure::interrupted("flagdata interrupted"));
-        }
-        Ok(())
-    };
     let calibration = is_calibration_table(&path);
     let write_flags = action == "apply";
     let display_option = task.required_text("display")?;
     let column_argument = flagdata_column_argument(task)?;
     let table = MeasurementSet::open(&path)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("flag-list-agent"))?;
-    check_cancelled()?;
+    check_cancelled(task)?;
     let backup = if write_flags && task.flag("flagbackup")? {
         Some(
             save_next_casa_flag_backup(&table, "flagdata")
@@ -57,7 +51,7 @@ pub(super) fn run(task: &TaskInvocation<'_>, action: &str) -> Result<TaskSuccess
     } else {
         None
     };
-    check_cancelled()?;
+    check_cancelled(task)?;
     let top_time_chunk = time_chunk_argument(task)?;
     let commands = input::read(task)?;
     let save = task.flag("savepars")?;
@@ -84,7 +78,7 @@ pub(super) fn run(task: &TaskInvocation<'_>, action: &str) -> Result<TaskSuccess
     let mut agents = Vec::new();
     let mut configured = Vec::new();
     for (index, values) in commands.iter().enumerate() {
-        check_cancelled()?;
+        check_cancelled(task)?;
         let mode = match values.get("mode") {
             Some(ParameterValue::String(mode)) if !matches!(mode.as_str(), "" | "manualflag") => {
                 mode
@@ -147,7 +141,7 @@ pub(super) fn run(task: &TaskInvocation<'_>, action: &str) -> Result<TaskSuccess
             })
             .unzip();
     }
-    check_cancelled()?;
+    check_cancelled(task)?;
     let program = if calibration {
         flagdata_calibration_program(table, &requests, write_flags, commands.len() > 1)
     } else {
@@ -164,6 +158,7 @@ pub(super) fn run(task: &TaskInvocation<'_>, action: &str) -> Result<TaskSuccess
         report.backup_version = backup;
     }
     if !write_flags {
+        check_cancelled(task)?;
         for (report, &(index, values)) in reports.iter().zip(&agents) {
             if let Some(thresholds) = report
                 .as_ref()

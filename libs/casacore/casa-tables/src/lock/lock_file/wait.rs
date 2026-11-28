@@ -76,6 +76,7 @@ impl LockFile {
         lock_type: LockType,
         reservations: Option<&[DelegatedTableWrite]>,
         cancelled: &dyn Fn() -> bool,
+        on_contention: impl FnOnce(&Self),
     ) -> io::Result<LockOutcome> {
         let shared = Arc::clone(&self.shared);
         let _acquisition = {
@@ -92,6 +93,7 @@ impl LockFile {
 
         let mut outcome = self.try_acquire(lock_type)?;
         if outcome == LockOutcome::HeldByAnotherProcess {
+            on_contention(self);
             let table = self.path.parent().unwrap_or(&self.path).to_path_buf();
             let lock = lock_name(lock_type);
             tracing::warn!(
@@ -259,7 +261,19 @@ mod tests {
         let mut lock = LockFile::create_or_open(Path::new(&dir), false, 5.0, false).unwrap();
         assert!(lock.acquire(LockType::Write, 1).unwrap().is_acquired());
         std::fs::write(&ready, b"held").unwrap();
-        let _ = wait_for_file(Path::new(&release), Duration::from_secs(15));
+        let release = Path::new(&release);
+        if wait_for_file(release, Duration::from_secs(15))
+            && std::fs::read(release).unwrap() == b"publish"
+        {
+            let sync = super::super::SyncData {
+                nrrow: 1,
+                nrcolumn: 1,
+                modify_counter: 1,
+                table_change_counter: 1,
+                data_man_change_counters: vec![1],
+            };
+            lock.write_sync_data(&sync).unwrap();
+        }
         let _ = lock.release();
     }
 
@@ -416,6 +430,36 @@ mod tests {
         drop(watcher);
         drop(reservations);
         assert!(child.wait().unwrap().success());
+    }
+
+    #[test]
+    fn interruptible_write_lock_refuses_generation_published_by_foreign_writer() {
+        let tmp = TempDir::new().unwrap();
+        let table_dir = tmp.path().join("table");
+        std::fs::create_dir_all(&table_dir).unwrap();
+        drop(LockFile::create_or_open(&table_dir, true, 5.0, false).unwrap());
+        let ready = tmp.path().join("ready");
+        let release = tmp.path().join("release");
+        let mut writer = spawn_write_lock_holder(&table_dir, &ready, &release);
+
+        let result = TableWriteLock::acquire_interruptibly(&table_dir, &|| {
+            // This callback first runs after the waiter has observed contention
+            // and sampled the publication counter. Release the lock with a write.
+            if !release.exists() {
+                let pending = release.with_extension("pending");
+                std::fs::write(&pending, b"publish").unwrap();
+                std::fs::rename(pending, &release).unwrap();
+            }
+            false
+        });
+        assert!(writer.wait().unwrap().success());
+        assert!(
+            matches!(result, Err(TableError::LockFailed { message, .. }) if message.contains("wrote the table while this writer waited"))
+        );
+
+        let retried = TableWriteLock::acquire_interruptibly(&table_dir, &|| false).unwrap();
+        assert_eq!(retried.modify_counter().unwrap(), Some(1));
+        retried.release().unwrap();
     }
 
     #[test]

@@ -20,16 +20,15 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ChannelSelection, CorrelationSelection, FLAG_COLUMN, FlagDataMode, FlagDataReport,
-    FlaggingError, check_cancelled, data_description_spw_map, display_ms_path, load_i32_cells,
+    ChannelSelection, CorrelationSelection, FLAG_BATCH_ROWS, FLAG_COLUMN, FlagDataMode,
+    FlagDataReport, FlaggingError, check_cancelled, data_description_spw_map, display_ms_path,
+    load_i32_cells,
 };
 use casa_ms::MeasurementSet;
 use casa_ms::stokes_name;
 
 /// Rows read at once; the summary holds a block's ids, never all of them.
 const BLOCK_ROWS: usize = 65_536;
-// Read smaller FLAG batches because each row may contain many channels.
-const FLAG_BATCH_ROWS: usize = 512;
 
 /// The flagged and total samples of one summary entry.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

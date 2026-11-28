@@ -303,6 +303,21 @@ impl TableWriteLock {
         )
     }
 
+    /// Wait interruptibly for the write lock on a table already read by the caller.
+    /// Like [`Self::acquire`], refuse stale data if another process published a
+    /// write while this caller waited.
+    ///
+    /// # Errors
+    /// As [`Self::acquire`], or a lock I/O error if cancelled. Cancellation
+    /// releases any acquired lock.
+    #[cfg(unix)]
+    pub fn acquire_interruptibly(
+        table_dir: &Path,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Self, TableError> {
+        Self::take(table_dir, 1, true, None, Some(cancelled))
+    }
+
     /// Take the write lock as [`acquire`](Self::acquire) does, for a writer
     /// that reads the table afresh once it holds it (it reopens the table
     /// under the lock): a write another process published while it waited
@@ -420,11 +435,13 @@ impl TableWriteLock {
                 false,
             )
             .map_err(lock_io)?;
+            let mut published = None;
             let mut outcome = match cancelled {
                 Some(cancelled) => lock_file.acquire_with_reservation_interruptibly(
                     LockType::Write,
                     reservations.as_deref(),
                     cancelled,
+                    |lock| published = refuse_stale.then(|| published_modify_counter(lock)),
                 ),
                 None => {
                     lock_file.acquire_with_reservation(LockType::Write, 1, reservations.as_deref())
@@ -432,23 +449,20 @@ impl TableWriteLock {
             }
             .map_err(lock_io)?;
             if outcome == LockOutcome::HeldByAnotherProcess && nattempts != 1 {
-                let published = published_modify_counter(&lock_file);
+                published = refuse_stale.then(|| published_modify_counter(&lock_file));
                 outcome = lock_file
                     .acquire_with_reservation(LockType::Write, nattempts, reservations.as_deref())
                     .map_err(lock_io)?;
-                if refuse_stale
-                    && outcome.is_acquired()
-                    && published_modify_counter(&lock_file) != published
-                {
-                    return Err(lock_failed(
-                        "another process wrote the table while this writer waited for its \
-                         write lock; reopen the table and retry"
-                            .into(),
-                    ));
-                }
             }
             if !outcome.is_acquired() {
                 return Err(lock_failed(outcome.refusal(LockType::Write, nattempts)));
+            }
+            if published.is_some_and(|before| published_modify_counter(&lock_file) != before) {
+                return Err(lock_failed(
+                    "another process wrote the table while this writer waited for its \
+                     write lock; reopen the table and retry"
+                        .into(),
+                ));
             }
             if !matches_table_identity(&path, directory_key, &lock_file) {
                 return Err(lock_failed("table directory or lock was replaced".into()));

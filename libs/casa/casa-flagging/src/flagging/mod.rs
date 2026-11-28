@@ -94,6 +94,8 @@ pub use version_storage::{
 
 const FLAG_COLUMN: &str = "FLAG";
 const FLAG_ROW_COLUMN: &str = "FLAG_ROW";
+// Bound each read or resident write even when rows contain many channels.
+const FLAG_BATCH_ROWS: usize = 512;
 const FLAG_VERSION_LIST: &str = "FLAG_VERSION_LIST";
 
 fn is_calibration_table(ms: &MeasurementSet) -> bool {
@@ -683,14 +685,9 @@ fn persist_changed_flags(
     test_hooks::observe(test_hooks::Checkpoint::BeforeCommit);
     check_cancelled(cancellation)?;
     // This session publishes FLAG and FLAG_ROW in batches under the MAIN
-    // write lock. Once accepted, finish the whole session and flush both columns.
-    #[cfg(feature = "flagdata-test-hooks")]
-    test_hooks::observe(test_hooks::Checkpoint::CommitAccepted);
-    let mut write_session = MeasurementSetWriteSession::start_selected_row_mutation(ms, write_plan)
-        .map_err(|error| FlaggingError::MutateFlags {
-            path: ms_path.to_owned(),
-            reason: format!("start changed MAIN flag rows: {error}"),
-        })?;
+    // write lock. Finish both columns once the lock is held and cancellation
+    // has been checked.
+    let mut write_session = start_flag_mutation(ms, write_plan, ms_path, cancellation)?;
     for rows in changes.changed_row_indices.chunks(batch_rows) {
         let flag_values = rows
             .iter()
@@ -729,7 +726,40 @@ fn persist_changed_flags(
             path: ms_path.to_owned(),
             reason: format!("save changed MAIN flag rows: {error}"),
         })?;
+    #[cfg(feature = "flagdata-test-hooks")]
+    test_hooks::observe(test_hooks::Checkpoint::MainCommitted);
     Ok(())
+}
+
+fn start_flag_mutation(
+    ms: &mut MeasurementSet,
+    plan: MeasurementSetWritePlan,
+    ms_path: &str,
+    cancellation: Option<&Cancellation>,
+) -> Result<MeasurementSetWriteSession, FlaggingError> {
+    let start_failed = |error| FlaggingError::MutateFlags {
+        path: ms_path.to_owned(),
+        reason: format!("start changed MAIN flag rows: {error}"),
+    };
+    #[cfg(unix)]
+    if let Some((cancellation, path)) = cancellation.zip(ms.path()) {
+        let lock = TableWriteLock::acquire_interruptibly(path, &|| cancellation.is_cancelled())
+            .map_err(|error| {
+                if cancellation.is_cancelled() {
+                    FlaggingError::Interrupted
+                } else {
+                    FlaggingError::MutateFlags {
+                        path: ms_path.to_owned(),
+                        reason: format!("lock MAIN to publish flag rows: {error}"),
+                    }
+                }
+            })?;
+        check_cancelled(Some(cancellation))?;
+        return MeasurementSetWriteSession::start_selected_row_mutation_holding(ms, plan, lock)
+            .map_err(start_failed);
+    }
+    let _ = cancellation;
+    MeasurementSetWriteSession::start_selected_row_mutation(ms, plan).map_err(start_failed)
 }
 
 /// Open an MS, run native `flagdata`, and save the changed MAIN table.
@@ -852,8 +882,8 @@ fn report_after(
     rows: &[usize],
     changes: ChangeSet,
     backup_version: Option<String>,
-    thresholds: Option<(f64, f64)>,
     time_selection: FlagTimeSelection,
+    cancellation: Option<&Cancellation>,
 ) -> Result<FlagDataReport, FlaggingError> {
     let summary = match changes.summary {
         Some(summary) => summary,
@@ -862,13 +892,14 @@ fn report_after(
                 || (request.selection.timerange.is_none()
                     && request.selection.msselect.is_none())) =>
         {
-            summarize_flags(ms, rows)?
+            summarize_flags(ms, rows, cancellation)?
         }
         None => {
             let summary_rows = selected_rows(ms, request, time_selection)?;
-            summarize_flags(ms, &summary_rows.rows)?
+            summarize_flags(ms, &summary_rows.rows, cancellation)?
         }
     };
+    check_cancelled(cancellation)?;
     Ok(FlagDataReport {
         mode: request.mode,
         selected_rows: changes.selected_rows.unwrap_or(rows.len()),
@@ -877,8 +908,8 @@ fn report_after(
         flagged_samples: summary.flagged_samples,
         total_samples: summary.total_samples,
         backup_version,
-        timedev: thresholds.map(|pair| pair.0),
-        freqdev: thresholds.map(|pair| pair.1),
+        timedev: changes.thresholds.map(|pair| pair.0),
+        freqdev: changes.thresholds.map(|pair| pair.1),
         rflag_report: changes.rflag_report,
         summary: None,
     })
@@ -887,13 +918,19 @@ fn report_after(
 fn summarize_flags(
     ms: &MeasurementSet,
     selected_rows: &[usize],
+    cancellation: Option<&Cancellation>,
 ) -> Result<FlagSummary, FlaggingError> {
     let mut flagged_samples = 0usize;
     let mut total_samples = 0usize;
     for &row in selected_rows {
+        check_cancelled(cancellation)?;
+        #[cfg(feature = "flagdata-test-hooks")]
+        test_hooks::observe(test_hooks::Checkpoint::ReportRowStarted);
         let flags = clone_flag_matrix(ms, row)?;
         flagged_samples += flags.iter().filter(|flag| **flag).count();
         total_samples += flags.len();
+        #[cfg(feature = "flagdata-test-hooks")]
+        test_hooks::observe(test_hooks::Checkpoint::ReportRowFinished);
     }
     Ok(FlagSummary {
         flagged_samples,

@@ -25,8 +25,10 @@ pub(crate) fn _arm_flagdata_test(mode: &str) -> PyResult<()> {
     let control = match mode {
         "observe" => Control::Observe,
         "clip" => Control::Interrupt(Checkpoint::ClipBatchStaged),
+        "flag_stage" => Control::Interrupt(Checkpoint::FlagStageFinished(2)),
+        "report" => Control::Interrupt(Checkpoint::ReportRowFinished),
         "before_commit" => Control::Interrupt(Checkpoint::BeforeCommit),
-        "commit_accepted" => Control::Interrupt(Checkpoint::CommitAccepted),
+        "main_committed" => Control::Interrupt(Checkpoint::MainCommitted),
         _ => return Err(PyValueError::new_err("unknown flagdata test checkpoint")),
     };
     NEXT_FLAGDATA.set(Some(control));

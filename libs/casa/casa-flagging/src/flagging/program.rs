@@ -173,18 +173,19 @@ pub(super) fn run_ms_single(
     let changes =
         stage_selected_ms_request(ms, &selection, request, !persist, model_factory, None)?;
     request.check_cancelled()?;
+    let mut report_cancellation = request.cancellation.as_ref();
     if persist && !changes.changed_row_indices.is_empty() {
-        persist_changed_flags(ms, &changes, &ms_path, request.cancellation.as_ref())?;
+        persist_changed_flags(ms, &changes, &ms_path, report_cancellation)?;
+        report_cancellation = None;
     }
-    let thresholds = changes.thresholds;
     let report = report_after(
         ms,
         request,
         &selection.rows,
         changes,
         backup_version,
-        thresholds,
         time_selection,
+        report_cancellation,
     )?;
     tracing::info!(
         path = %ms_path,
@@ -547,17 +548,15 @@ fn stage_ms_program_request(
     }
     let changed_rows = std::mem::take(&mut changes.changed_row_indices);
     let changed_flag_rows = changes.changed_flag_row_rows;
-    let thresholds = changes.thresholds;
     let report = report_after(
         ms,
         request,
         &selection.rows,
         changes,
         None,
-        thresholds,
         time_selection,
+        request.cancellation.as_ref(),
     )?;
-    request.check_cancelled()?;
     Ok(Some((report, changed_rows, changed_flag_rows)))
 }
 
