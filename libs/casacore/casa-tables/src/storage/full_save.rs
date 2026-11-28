@@ -113,11 +113,20 @@ pub(crate) fn check_manager_write_access(
     affected: &std::collections::HashSet<u32>,
 ) -> Result<(), StorageError> {
     let dat = read_table_dat(&table.join(TABLE_CONTROL_FILE))?;
+    if dat.uses_multifile() {
+        check_private_write_access(&table.join("table.mf"))?;
+    }
     for name in manager_files(table, &dat)? {
         if table_manager_file_sequence(&name).is_some_and(|seq| affected.contains(&seq)) {
-            crate::publication::check_write_access(&table.join(name))?;
+            check_private_write_access(&table.join(name))?;
         }
     }
+    Ok(())
+}
+
+pub(crate) fn check_private_write_access(path: &Path) -> Result<(), StorageError> {
+    crate::publication::private_table_file_metadata(path)?;
+    crate::publication::check_write_access(path)?;
     Ok(())
 }
 

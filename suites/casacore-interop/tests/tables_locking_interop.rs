@@ -777,7 +777,7 @@ fn explicit_flush_keeps_mixed_managers_after_failure() {
 }
 
 #[test]
-fn explicit_flush_keeps_a_held_forward_engine_bound_until_it_closes() {
+fn explicit_flush_keeps_forward_engine_bindings_intact() {
     if !casacore_oracle_available() {
         eprintln!("skipping forward-column readback: C++ casacore not available");
         return;
@@ -792,7 +792,9 @@ fn explicit_flush_keeps_a_held_forward_engine_bound_until_it_closes() {
     let mut table = build_lock_test_table();
     table.bind_forward_column("name", &target).unwrap();
     table.save(opts.clone()).unwrap();
+    table.save(opts.clone()).unwrap();
     let mut writer = Table::open(opts.clone()).unwrap();
+    assert!(writer.is_virtual_column("name"));
     let managers = writer.data_manager_info().to_vec();
     let mut held = HeldCppReaderProcess::open(&path);
     assert_eq!(held.read_id(), 42);
@@ -840,8 +842,84 @@ fn explicit_flush_keeps_a_held_forward_engine_bound_until_it_closes() {
     assert_eq!(files_and_inodes(&path, &files), flushed);
     assert_eq!(read_name(), "from_rust");
     drop(held);
-    writer.flush().unwrap();
+    assert!(writer.flush().is_err());
+    let mut rebound = build_lock_test_table();
+    set_id(&mut rebound, 52);
+    rebound.bind_forward_column("name", &alternate).unwrap();
+    rebound.save(opts.clone()).unwrap();
     assert_eq!(read_name(), "alternate");
+}
+
+#[test]
+fn explicit_flush_refuses_a_same_size_tiled_shape_change_before_writing() {
+    if !casacore_oracle_available() {
+        eprintln!("skipping tiled flush readback: C++ casacore not available");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    let opts = TableOptions::new(path).with_data_manager(DataManagerKind::TiledShapeStMan);
+    let schema = TableSchema::new(vec![ColumnSchema::array_variable(
+        "tiles",
+        PrimitiveType::Float32,
+        Some(2),
+    )])
+    .unwrap();
+    let array = |shape: &[usize], fill: f32| {
+        Value::Array(casa_core::ArrayValue::Float32(ndarray::ArrayD::from_elem(
+            ndarray::IxDyn(shape),
+            fill,
+        )))
+    };
+    let mut table = Table::with_schema(schema);
+    table
+        .add_row(RecordValue::new(vec![RecordField::new(
+            "tiles",
+            array(&[2, 3], 1.0),
+        )]))
+        .unwrap();
+    table.save(opts.clone()).unwrap();
+    let read_cpp = || {
+        TaqlOracle::query(
+            path,
+            "SELECT shape(tiles) AS extent, sum(tiles) AS total FROM $1",
+        )
+        .unwrap()
+        .grid
+        .rows
+    };
+    let before = read_cpp();
+    let mut writer = Table::open(opts.clone()).unwrap();
+    writer
+        .row_accessor_mut()
+        .set_cell(0, "tiles", array(&[3, 2], 3.0))
+        .unwrap();
+    assert!(
+        writer
+            .flush()
+            .unwrap_err()
+            .to_string()
+            .contains("cannot change the shape")
+    );
+    assert_eq!(read_cpp(), before);
+    let old = Table::open(opts.clone()).unwrap();
+    assert_eq!(
+        old.cell_accessor(0, "tiles").unwrap().value().unwrap(),
+        Some(&array(&[2, 3], 1.0))
+    );
+    writer
+        .row_accessor_mut()
+        .set_cell(0, "tiles", array(&[2, 3], 3.0))
+        .unwrap();
+    writer.flush().unwrap();
+    let after = read_cpp();
+    assert_eq!(after[0][0], before[0][0]);
+    assert_eq!(after[0][1].parse::<f32>().unwrap(), 18.0);
+    let new = Table::open(opts).unwrap();
+    assert_eq!(
+        new.cell_accessor(0, "tiles").unwrap().value().unwrap(),
+        Some(&array(&[2, 3], 3.0))
+    );
 }
 
 #[test]

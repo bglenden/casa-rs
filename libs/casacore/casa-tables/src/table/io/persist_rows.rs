@@ -406,12 +406,15 @@ impl Table {
                             self.row_count(),
                             &group_col_descs,
                         )?;
-                        crate::storage::stman_aipsio::write_stman_file(
+                        let name = crate::storage::stman_aipsio::name_from_file(&data_path)
+                            .unwrap_or_default();
+                        crate::storage::stman_aipsio::write_named_stman_file(
                             &data_path,
                             group.seq_nr,
                             &group_col_descs,
                             &rows,
                             casa_aipsio::ByteOrder::BigEndian,
+                            &name,
                         )?;
                     }
                 }

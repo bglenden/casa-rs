@@ -34,6 +34,32 @@ fn open_with_permanent_lock_acquires_immediately() {
 }
 
 #[test]
+fn flush_updates_the_descriptor_count_of_a_named_memory_append() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("memory");
+    let schema = TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)]).unwrap();
+    let mut table = Table::with_schema(schema)
+        .into_named_memory_manager(&path, "mem", LockOptions::new(LockMode::UserLocking))
+        .unwrap();
+    assert!(table.lock(LockType::Write, 1).unwrap());
+    table
+        .add_row(RecordValue::new(vec![RecordField::new(
+            "id",
+            Value::Scalar(ScalarValue::Int32(7)),
+        )]))
+        .unwrap();
+    table.flush().unwrap();
+    table.unlock().unwrap();
+    drop(table);
+    let fresh = Table::open(TableOptions::new(path)).unwrap();
+    assert_eq!(fresh.row_count(), 1);
+    assert_eq!(
+        fresh.get_scalar_cell(0, "id").unwrap(),
+        &ScalarValue::Int32(0)
+    );
+}
+
+#[test]
 fn open_with_user_lock_has_no_lock_until_explicit() {
     let tmp = tempfile::TempDir::new().unwrap();
     let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
